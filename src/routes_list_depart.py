@@ -81,6 +81,56 @@ return true;
 """
 
 
+# Read-only post-click reconciliation. The native game's route_depart.php
+# request can be rejected while the Selenium click itself succeeds. After
+# refreshing routes_main.php we only label it a *definite no-departure* if:
+#   1. the aircraft is still in the game's LANDED list,
+#   2. it is not in the game's INFLIGHT list,
+#   3. the SAME aircraft->route mapping is still present,
+#   4. its native single-route Depart button remains enabled.
+# Otherwise the outcome is uncertain and we abort further departures.
+_RECHECK_GAME_JS = r"""
+const aircraftId = String(arguments[0]), routeId = String(arguments[1]);
+const status = document.getElementById("flightStatus" + aircraftId);
+const inflightList = document.getElementById("inflightList");
+const landedList = document.getElementById("landedList");
+const inflight = !!status && !!inflightList && inflightList.contains(status);
+const landed = !!status && !!landedList && landedList.contains(status);
+const routes = document.querySelector("#routeAction #routesContainer");
+const row = document.getElementById("routeMainList" + routeId);
+let matchingRoute = false, enabled = false;
+if (routes && row && routes.contains(row)) {
+  const links = Array.from(row.querySelectorAll('a[onclick*="fleet_details.php?id="]'));
+  const link = links.length === 1 ? links[0].getAttribute("onclick") || "" : "";
+  const match = link.match(/fleet_details\.php\?id=(\d{1,14})/);
+  matchingRoute = !!match && match[1] === aircraftId;
+  const button = row.querySelector('[id="listDepart' + routeId + '"]');
+  enabled = !!button && !!button.getClientRects().length && !button.disabled &&
+    !button.classList.contains("not-active") &&
+    button.getAttribute("aria-disabled") !== "true";
+}
+const runme = document.getElementById("runme");
+const reply = (runme ? (runme.innerText || "") : "").toLowerCase();
+let reason = "nao_informado";
+if (/insufficient|not enough|unable|cannot|can't|failed|error|rejected|unavailable/.test(reply))
+    reason = "resposta_de_recusa";
+if (/fuel|combust[ií]vel/.test(reply)) reason = "combustivel";
+if (/co2|co₂|carbon/.test(reply)) reason = "co2";
+if (/maintenance|manuten[cç][aã]o/.test(reply)) reason = "manutencao";
+return {inflight, landed, same_route: matchingRoute, button_ready: enabled,
+        response_reason: reason};
+"""
+
+
+def reconcile_failed_confirmation(bot, aircraft_id: str, route_id: str) -> dict:
+    """Read actual refreshed game state; never re-send a departure request."""
+    try:
+        result = bot.js(_RECHECK_GAME_JS, str(aircraft_id), str(route_id))
+        return result if isinstance(result, dict) else {}
+    except WebDriverException:
+        return {}
+
+
 def native_route_button(aircraft_id: str, item: dict) -> dict | None:
     """Validate the real aircraft->route->button correspondence from one row.
 
@@ -136,7 +186,7 @@ def route_list_dispatch(bot, registry, eligible: list, *, limit: int = 20) -> di
     from selective_depart import collect_dispatch_rows, plan_dispatch
 
     result = {"status": "controle_individual_nao_disponivel", "departed": 0,
-              "native_individual": 0, "not_supported": 0}
+              "native_individual": 0, "not_supported": 0, "rejected": 0}
     if not eligible:
         return result
     try:
@@ -237,14 +287,49 @@ def route_list_dispatch(bot, registry, eligible: list, *, limit: int = 20) -> di
                 decision.registration, row["route_id"], type(exc).__name__,
             )
             break
-        if not _confirm_inflight(bot, aircraft_id):
-            result["status"] = "decolagem_sem_confirmacao"
-            log.warning(
-                "Fleet: envio individual da rota %s para %s sem confirmação "
-                "de voo; interrompendo outras decolagens.",
-                row["route_id"], decision.registration,
+        confirmed = _confirm_inflight(bot, aircraft_id)
+        if not confirmed:
+            # _confirm_inflight has already refreshed the game's Routes UI.
+            # If the same route and an active Depart control reappear for a
+            # still-landed aircraft, the command was not accepted. Skip this
+            # plane for the rest of THIS cycle; other approved planes may fly.
+            status = reconcile_failed_confirmation(
+                bot, aircraft_id, row["route_id"]
             )
-            break
+            if status.get("inflight") is True:
+                confirmed = True  # late confirmation after the UI refresh
+            elif (
+                status.get("inflight") is False
+                and status.get("landed") is True
+                and status.get("same_route") is True
+                and status.get("button_ready") is True
+            ):
+                result["rejected"] += 1
+                if result["departed"] == 0:
+                    result["status"] = "comandos_recusados_no_jogo"
+                else:
+                    result["status"] = "decolagens_parciais_com_recusas"
+                log.warning(
+                    "Fleet: %s (rota %s) CONTINUA POUSADA após atualização "
+                    "do jogo; comando individual não foi efetivado "
+                    "(resposta: %s). Sem repetição; verificando outras "
+                    "aeronaves aprovadas.",
+                    decision.registration, row["route_id"],
+                    status.get("response_reason", "nao_informado"),
+                )
+                continue
+            else:
+                result["status"] = "decolagem_sem_confirmacao"
+                log.warning(
+                    "Fleet: envio individual da rota %s para %s com estado "
+                    "inconclusivo após atualizar o jogo "
+                    "(em_voo=%s, pousada=%s, rota_igual=%s, botao_ativo=%s). "
+                    "Interrompendo para evitar ação duplicada.",
+                    row["route_id"], decision.registration,
+                    status.get("inflight"), status.get("landed"),
+                    status.get("same_route"), status.get("button_ready"),
+                )
+                break
         result["departed"] += 1
         result["status"] = "decolagens_confirmadas"
         bot.count("departures")
