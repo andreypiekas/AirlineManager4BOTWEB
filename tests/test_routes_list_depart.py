@@ -219,7 +219,7 @@ def test_inconclusive_flight_state_stops_without_departing_next(tmp_path, monkey
     registry = setup_registry(tmp_path)
     game = NativeGame(rejected_ids={"101"}, inconclusive=True)
     monkeypatch.setattr(
-        module, "_confirm_inflight", lambda bot, aircraft_id: aircraft_id in bot.inflight
+        module, "_confirm_inflight", lambda bot, aircraft_id, **kwargs: aircraft_id in bot.inflight
     )
     approved = [d for d in plan_dispatch(["101", "102", "103"], registry.snapshot())
                 if d.approved]
