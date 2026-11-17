@@ -14,6 +14,7 @@ from urllib.parse import parse_qs
 
 from route_registry import RouteRegistry
 from selective_batch_depart import targeted_depart
+from fleet_single_depart import fleet_dispatch
 
 log = logging.getLogger("am4bot.vuelos")
 _ID = re.compile(r"^[0-9]{1,14}$")
@@ -197,29 +198,37 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
             "options", "experimental_id_batch_depart", False
         )
     )
-    if not exposed and experimental:
-        # This optional fallback is isolated: the real server might ignore
-        # the explicit IDs and depart others. A deliberate user opt-in is
-        # required, so the default path never contacts the endpoint.
-        result = targeted_depart(bot, registry, eligible)
-        summary["mode"] = "seletivo_experimental"
-        summary["status"] = result["status"]
-        summary["departed"] = result["departed"]
-        summary["target_id"] = result.get("target_id", "")
-        registry.record_dispatch_summary(summary)
-        return summary
     if bot.dry_run:
         log.info("[SIMULAÇÃO] Despacho individual: nenhuma ordem enviada.")
         return summary
     if not exposed:
-        log.warning(
-            "Despacho individual indisponível: a interface do jogo não expôs "
-            "um comando específico para nenhuma aeronave aprovada. "
-            "O botão geral permanece bloqueado; modo experimental por IDs está "
-            "DESATIVADO por padrão porque o servidor ainda pode ignorar os IDs."
-        )
-        summary["status"] = "controle_individual_nao_disponivel"
+        # The game frequently omits per-aircraft controls from #landedList.
+        # Try each eligible aircraft's *own Fleet detail panel* before declaring
+        # individual dispatch impossible. This never invokes Depart All.
+        detail = fleet_dispatch(bot, registry, eligible, limit=limit)
+        summary["mode"] = "seletivo_fleet"
+        summary["status"] = detail["status"]
+        summary["departed"] = detail["departed"]
+        summary["native_individual"] = detail["native_individual"]
+        summary["not_supported"] = detail["not_supported"]
         registry.record_dispatch_summary(summary)
+        if detail["status"] != "controle_individual_nao_disponivel":
+            return summary
+        if experimental:
+            # Keep the existing explicit experimental opt-in. Never enable it
+            # implicitly; the game's numeric-ID endpoint is not proven safe.
+            result = targeted_depart(bot, registry, eligible)
+            summary["mode"] = "seletivo_experimental"
+            summary["status"] = result["status"]
+            summary["departed"] = result["departed"]
+            summary["target_id"] = result.get("target_id", "")
+            registry.record_dispatch_summary(summary)
+            return summary
+        log.warning(
+            "Despacho individual indisponível: nem a lista de pousos nem os "
+            "detalhes individuais de Fleet expuseram um comando seguro. "
+            "Decolar todas permanece bloqueado pela configuração."
+        )
         return summary
     for decision in exposed[:max(0, int(limit))]:
         if bot.stopping or bot.dry_run:
