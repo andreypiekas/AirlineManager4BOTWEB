@@ -213,6 +213,7 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
         summary["departed"] = native_routes["departed"]
         summary["native_individual"] = native_routes["native_individual"]
         summary["not_supported"] = native_routes["not_supported"]
+        summary["rejected"] = native_routes["rejected"]
         registry.record_dispatch_summary(summary)
         if native_routes["status"] != "controle_individual_nao_disponivel":
             return summary

@@ -340,6 +340,7 @@ class RouteRegistry:
             "native_individual": max(0, int(summary.get("native_individual") or 0)),
             "not_supported": max(0, int(summary.get("not_supported") or 0)),
             "departed": max(0, int(summary.get("departed") or 0)),
+            "rejected": max(0, int(summary.get("rejected") or 0)),
             "status": str(summary.get("status") or "")[:80],
             "target_id": str(summary.get("target_id") or "")[:20],
             "mode": str(summary.get("mode") or "seletivo")[:24],
