@@ -44,6 +44,7 @@ from marketing import run_marketing
 from notify import Telegram, esc
 from paths import write_atomic
 from reroute import has_pending_reroute
+from game_audit import audit_active
 from route_registry import RouteRegistry
 from selective_depart import selective_dispatch
 from seats import optimize_seats
@@ -803,6 +804,18 @@ class Bot:
 
     def _depart_all(self) -> None:
         registry = RouteRegistry()
+        if audit_active(self):
+            log_flights.warning(
+                "AUDITORIA ATIVA: o próprio jogo bloqueia a operação da frota. "
+                "Abra 'Go to audit' no jogo e conclua as exigências. "
+                "Nenhuma decolagem será enviada enquanto a auditoria estiver ativa."
+            )
+            registry.record_dispatch_summary({
+                "status": "auditoria_ativa",
+                "mode": "bloqueado_pelo_jogo",
+                "simulation": self.dry_run,
+            })
+            return
         if has_pending_reroute():
             log_flights.warning("Decolagem automática aguardando a confirmação de uma troca de rota.")
             registry.record_dispatch_summary({

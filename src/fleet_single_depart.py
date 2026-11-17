@@ -87,6 +87,38 @@ def choose_depart_control(aircraft_id: str, controls: list[dict]) -> dict | None
     return matches[0] if len(matches) == 1 else None
 
 
+def control_diagnostics(aircraft_id: str, controls: list[dict]) -> list[dict]:
+    """Safe, concise feedback for real Fleet markup: no full onclick/URLs.
+
+    The current UI may render the correct 'Depart' button, but its native
+    action could use the bulk endpoint or be disabled by a company audit.
+    This explains why we rejected it, without leaking signed URLs/tokens.
+    """
+    results = []
+    for item in controls or []:
+        label = str(item.get("label") or "")[:40]
+        action = str(item.get("action") or "")
+        if not _DEPART.search(label) and "route_depart.php" not in action.lower():
+            continue
+        request = _ENDPOINT.search(action)
+        mode = ""
+        scope = "sem_endpoint"
+        if request:
+            params = parse_qs(request.group(1), keep_blank_values=True)
+            mode = str(params.get("mode", [""])[0])[:12].lower()
+            ids = params.get("id", []) + params.get("ids", [])
+            scope = ("alvo_correto" if len(ids) == 1 and ids[0] == str(aircraft_id)
+                     else "alvo_divergente_ou_geral")
+        elif "fleet_details.php" in action.lower():
+            scope = "detalhes_da_aeronave"
+        results.append({
+            "rotulo": label, "visivel": bool(item.get("visible")),
+            "desabilitado": bool(item.get("disabled")), "modo": mode or "nao_exposto",
+            "escopo": scope,
+        })
+    return results[:6]
+
+
 def _confirm_inflight(bot, aircraft_id: str) -> bool:
     try:
         WebDriverWait(bot.driver, 6).until(
@@ -133,9 +165,12 @@ def fleet_dispatch(bot, registry, eligible: list, *, limit: int = 20) -> dict:
         action = choose_depart_control(aircraft_id, controls)
         if not action:
             result["not_supported"] += 1
-            labels = [str(c.get("label", ""))[:40] for c in controls[:8] if c.get("visible")]
-            log.info("Fleet: %s sem botão individual verificável (%d controles; visíveis: %s).",
-                     decision.registration, len(controls), labels)
+            details = control_diagnostics(aircraft_id, controls)
+            log.info(
+                "Fleet: %s sem botão individual verificável (%d controles). "
+                "Diagnóstico do botão Depart (sem URL ou credenciais): %s.",
+                decision.registration, len(controls), details,
+            )
             continue
         result["native_individual"] += 1
         if not bot.js(_MARK_FLEET_JS, aircraft_id, action["index"],
