@@ -117,6 +117,8 @@ class NativeGame:
         self.driver = self
 
     def js(self, script, *args):
+        if 'const elements = [document.getElementById("runme")' in script:
+            return {"fingerprint": "0:abcd", "reason": "nao_informado"}
         if "const aircraftId = String(arguments[0]), routeId = String(arguments[1]);" in script:
             aid, rid = args
             return {
@@ -137,7 +139,9 @@ class NativeGame:
             return [{"id": i, "native_actions": []} for i in sorted(self.landed)]
         raise AssertionError("unexpected JS query")
 
-    def execute_script(self, script, aircraft_id):
+    def execute_script(self, script, aircraft_id=None):
+        if 'const elements = [document.getElementById("runme")' in script:
+            return {"fingerprint": "0:abcd", "reason": "nao_informado"}
         assert "inflightList" in script
         return aircraft_id in self.inflight
 
@@ -196,7 +200,7 @@ def test_refused_departure_still_landed_continues_other_approved_aircraft(tmp_pa
     registry = setup_registry(tmp_path)
     game = NativeGame(rejected_ids={"101"})
     monkeypatch.setattr(
-        module, "_confirm_inflight", lambda bot, aircraft_id: aircraft_id in bot.inflight
+        module, "_confirm_inflight", lambda bot, aircraft_id, **kwargs: aircraft_id in bot.inflight
     )
     summary = selective_dispatch(game, registry)
     assert summary["mode"] == "seletivo_rotas_fleet"
@@ -233,7 +237,7 @@ def test_failed_game_state_read_never_assumes_a_refusal(tmp_path, monkeypatch):
     registry = setup_registry(tmp_path)
     game = NativeGame(rejected_ids={"101"})
     monkeypatch.setattr(
-        module, "_confirm_inflight", lambda bot, aircraft_id: False
+        module, "_confirm_inflight", lambda bot, aircraft_id, **kwargs: False
     )
     monkeypatch.setattr(
         module, "reconcile_failed_confirmation", lambda bot, aid, rid: {}
