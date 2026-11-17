@@ -15,6 +15,7 @@ from urllib.parse import parse_qs
 from route_registry import RouteRegistry
 from selective_batch_depart import targeted_depart
 from fleet_single_depart import fleet_dispatch
+from routes_list_depart import route_list_dispatch
 
 log = logging.getLogger("am4bot.vuelos")
 _ID = re.compile(r"^[0-9]{1,14}$")
@@ -202,9 +203,23 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
         log.info("[SIMULAÇÃO] Despacho individual: nenhuma ordem enviada.")
         return summary
     if not exposed:
-        # The game frequently omits per-aircraft controls from #landedList.
-        # Try each eligible aircraft's *own Fleet detail panel* before declaring
-        # individual dispatch impossible. This never invokes Depart All.
+        # Verified live AM4 HTML: #routeMainList<ROUTE_ID> has an aircraft
+        # link to fleet_details.php?id=<AIRCRAFT_ID>, plus the native
+        # #listDepart<ROUTE_ID> button. The action's 'id' is a ROUTE ID.
+        # Prefer this provable association over guessing that route_id == plane_id.
+        native_routes = route_list_dispatch(bot, registry, eligible, limit=limit)
+        summary["mode"] = "seletivo_rotas_fleet"
+        summary["status"] = native_routes["status"]
+        summary["departed"] = native_routes["departed"]
+        summary["native_individual"] = native_routes["native_individual"]
+        summary["not_supported"] = native_routes["not_supported"]
+        registry.record_dispatch_summary(summary)
+        if native_routes["status"] != "controle_individual_nao_disponivel":
+            return summary
+
+        # Fallback for game views without a native route-list action.
+        # The Fleet-detail button may itself use the route ID, and its
+        # conservative verifier will refuse unknown or ambiguous targets.
         detail = fleet_dispatch(bot, registry, eligible, limit=limit)
         summary["mode"] = "seletivo_fleet"
         summary["status"] = detail["status"]
