@@ -82,6 +82,8 @@ se a tentativa falhar. Os custos da operação devem respeitar
    somente quando o estado e o controle nativo de recuperação forem
    verificáveis. Confirme também o resultado da recuperação. Se a
    confirmação faltar, registre a situação como pendente para revisão.
+   Enquanto estiver pendente, o bot suspende trocas, criação de rotas para
+   aviões sem rota, manutenção, oficina e decolagens automáticas da frota.
 
 ### Deixar de criar rotas não interrompe as decolagens
 

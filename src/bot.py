@@ -43,6 +43,7 @@ from market import PriceHistory, buy_thresholds, chart_prices
 from marketing import run_marketing
 from notify import Telegram, esc
 from paths import write_atomic
+from reroute import has_pending_reroute
 from route_registry import RouteRegistry
 from selective_depart import selective_dispatch
 from seats import optimize_seats
@@ -519,9 +520,9 @@ class Bot:
             self._guard(lambda: run_marketing(self), "verificar campanhas de marketing")
         # Maintenance and seat changes go before departures: a landed aircraft can only be repaired,
         # checked or modified while it sits at the base, so plan it before "Depart all" sends it away again.
-        if opt("auto_repair") or opt("auto_check"):
+        if not has_pending_reroute() and (opt("auto_repair") or opt("auto_check")):
             self._guard(lambda: run_maintenance(self), "programar a manutenção")
-        if opt("auto_seats") or self.config.get_bool("options", "auto_mods", True):
+        if not has_pending_reroute() and (opt("auto_seats") or self.config.get_bool("options", "auto_mods", True)):
             self._guard(lambda: optimize_seats(self), "verificar a oficina (assentos e melhorias)")
         # Reconcile persisted aircraft-route assignments before departing again:
         # duplicates can be addressed only while an aircraft is at a base.
@@ -802,6 +803,12 @@ class Bot:
 
     def _depart_all(self) -> None:
         registry = RouteRegistry()
+        if has_pending_reroute():
+            log_flights.warning("Decolagem automática aguardando a confirmação de uma troca de rota.")
+            registry.record_dispatch_summary({
+                "status": "troca_de_rota_pendente", "mode": "bloqueado", "simulation": self.dry_run,
+            })
+            return
         allow_duplicates = self.config.get_bool("options", "allow_duplicate_routes", False)
         auto_route = self.config.get_bool("options", "auto_route", False)
         # Creation/optimization policy must NOT silently control departure.

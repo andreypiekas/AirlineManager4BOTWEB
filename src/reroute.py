@@ -66,6 +66,35 @@ return {codes, existing: counts.length === 1 ? counts[0].textContent.trim() : nu
   bound: Array.from(root.querySelectorAll('script')).some(s => s.textContent.includes(prefix))};
 """
 
+# Observe the game's own request and wait for its response. A lost response
+# cannot be treated as permission to toggle the old route back on.
+_SUBMIT = """
+const [button, aircraft, destination, done] = arguments;
+const $ = window.jQuery;
+if (!$ || button.disabled || button.classList.contains('not-active')) {
+    done(false);
+    return;
+}
+const events = $(document);
+const event = 'ajaxComplete.am4Reroute';
+const finish = result => {
+    clearTimeout(timeout);
+    events.off(event, onComplete);
+    done(result);
+};
+const onComplete = (_, response, settings) => {
+    const url = new URL(settings.url, location.href);
+    if (url.origin === location.origin && url.pathname.endsWith('/new_route_info.php') &&
+        url.searchParams.get('mode') === 'do' && url.searchParams.get('id') === aircraft &&
+        url.searchParams.get('airportId') === destination) {
+        finish(response.status === 200);
+    }
+};
+const timeout = setTimeout(() => finish(false), 18000);
+events.on(event, onComplete);
+button.click();
+"""
+
 
 @dataclass(frozen=True)
 class LiveRoute:
@@ -88,8 +117,8 @@ def _live_route(bot, aircraft_id: str) -> LiveRoute | None:
     return LiveRoute(data["id"], data["paused"], tuple(data["codes"]), data["landed"])
 
 
-def _toggle(bot, route_id: str) -> None:
-    bot.driver.execute_async_script(_GET, f"fleet_ground.php?id={route_id}", "toggle")
+def _toggle(bot, route_id: str) -> bool:
+    return bot.driver.execute_async_script(_GET, f"fleet_ground.php?id={route_id}", "toggle") is True
 
 
 def _check_route(bot, aircraft_id, condition):
@@ -137,14 +166,25 @@ def has_pending_reroute() -> bool:
     return _transaction_path().exists()
 
 
+def _save_job(job, phase: str) -> None:
+    job["phase"] = phase
+    paths.write_atomic(_transaction_path(), json.dumps(job), private=True)
+
+
 def _resolve(bot, registry, job, *, poll=False) -> str:
     """Reconcile by reading the game. Never repeat an uncertain purchase."""
     aircraft_id = job["aircraft_id"]
     if not _ID.fullmatch(aircraft_id) or not _ID.fullmatch(job["old_id"]):
         return "troca_requer_verificacao"
     target = {"origin": job["origin"], "destination": job["destination"]}
+    phase = job["phase"]
+
     def confirmed_new(route):
-        return job["submitted"] and route.id != job["old_id"] and not route.paused and route.matches(target)
+        return (phase in ("creating", "create_answered") and route.id != job["old_id"]
+                and not route.paused and route.matches(target))
+
+    def old_route(route):
+        return route.id == job["old_id"] and route.matches(job["old_route"])
 
     if poll:
         live = _check_route(bot, aircraft_id, confirmed_new)
@@ -160,15 +200,13 @@ def _resolve(bot, registry, job, *, poll=False) -> str:
         log.info("Duplicidade resolvida: %s", summary)
         bot.notify(f"🛫 <b>Rota alterada</b>: {esc(summary)}", category="routes")
         return "trocada"
-    if live and live.id == job["old_id"] and live.matches(job["old_route"]):
-        if live.paused and not bot.dry_run and time.time() >= job.get("restore_after", 0):
-            # The same request toggles in either direction. Wait for a fresh
-            # reading before retrying a restore with an unknown outcome.
-            job["restore_after"] = time.time() + 30
-            paths.write_atomic(_transaction_path(), json.dumps(job), private=True)
+    if live and old_route(live):
+        if live.paused and not bot.dry_run and phase in ("grounding", "ground_answered", "grounded", "create_answered"):
+            _save_job(job, "restoring")
             _toggle(bot, live.id)
-            live = _check_route(bot, aircraft_id, lambda route: route.id == job["old_id"] and not route.paused)
-        if live and live.id == job["old_id"] and live.matches(job["old_route"]) and not live.paused:
+            live = _check_route(bot, aircraft_id, lambda route: old_route(route) and not route.paused)
+        may_close = phase not in ("grounding", "creating") or job["phase"] == "restoring"
+        if may_close and live and old_route(live) and not live.paused:
             _transaction_path().unlink(missing_ok=True)
             return "rota_original_preservada"
     log.error("%s: troca pendente de verificação. Novas trocas aguardam a confirmação do jogo.",
@@ -204,7 +242,7 @@ def replace_route(bot, registry, row, origin, destination, *, keeper_id, expecte
     keeper = _live_route(bot, keeper_id)
     if not keeper or keeper.id == first.id or not keeper.matches(row):
         return "troca_duplicidade_nao_confirmada"
-    if not endpoint_matches(origin, endpoint(code=first.codes[1])):
+    if not endpoint_matches(origin, endpoint(code=first.codes[0])):
         return "troca_aeronave_fora_da_base_de_origem"
     if not bot.driver.execute_async_script(_GET, f"maint_plan.php?aircraft={aircraft_id}", "base"):
         return "troca_base_nao_confirmada"
@@ -212,24 +250,26 @@ def replace_route(bot, registry, row, origin, destination, *, keeper_id, expecte
     if not form:
         return "troca_formulario_ou_reserva_indisponivel"
     current = _live_route(bot, aircraft_id)
-    if current != first or bot.stopping:
+    if current != first or bot.stopping or bot.dry_run:
         return "troca_rota_ou_pouso_nao_confirmado"
     job = dict(aircraft_id=aircraft_id, old_id=first.id,
                old_route={"origin": row["origin"], "destination": row["destination"]},
                registration=row["registration"], model=row["model"], origin=origin, destination=destination,
-               profit=profit, fee=form[1], submitted=False)
-    paths.write_atomic(_transaction_path(), json.dumps(job), private=True)
+               profit=profit, fee=form[1])
+    _save_job(job, "grounding")
     try:
-        _toggle(bot, first.id)
+        if _toggle(bot, first.id):
+            _save_job(job, "ground_answered")
         paused = _check_route(bot, aircraft_id, lambda route: route.id == first.id and route.paused)
         if paused and paused.id == first.id and paused.paused and paused.landed and paused.matches(row):
+            _save_job(job, "grounded")
             form = _prepare_form(bot, aircraft_id, origin, destination)
-            if form and not bot.stopping:
+            if form and not bot.stopping and not bot.dry_run:
                 button, job["fee"] = form
-                job["submitted"] = True
-                paths.write_atomic(_transaction_path(), json.dumps(job), private=True)
-                # WebDriver's normal click is intentionally not retried.
-                button.click()
+                _save_job(job, "creating")
+                answered = bot.driver.execute_async_script(_SUBMIT, button, aircraft_id, destination["id"])
+                if answered:
+                    _save_job(job, "create_answered")
     except WebDriverException:
         log.warning("%s: o jogo interrompeu a troca. Verificando a rota atual.", row["registration"])
-    return _resolve(bot, registry, job, poll=job["submitted"])
+    return _resolve(bot, registry, job, poll=job["phase"] in ("creating", "create_answered"))
