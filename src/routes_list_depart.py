@@ -331,7 +331,8 @@ def route_list_dispatch(bot, registry, eligible: list, *, limit: int = 20) -> di
                 )
                 break
         result["departed"] += 1
-        result["status"] = "decolagens_confirmadas"
+        result["status"] = ("decolagens_parciais_com_recusas"
+                            if result["rejected"] else "decolagens_confirmadas")
         bot.count("departures")
         log.info(
             "Fleet: decolagem individual CONFIRMADA de %s "
