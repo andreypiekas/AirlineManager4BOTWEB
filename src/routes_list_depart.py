@@ -60,7 +60,7 @@ return Array.from(root.querySelectorAll('[id^="routeMainList"]')).map(row => {
 # Validate the same native row AND native button immediately before Selenium
 # clicks. A different aircraft/route after page mutation is never accepted.
 _MARK_ROUTE_JS = r"""
-const [aircraftId, routeId, expected] = arguments.map(String);
+const [aircraftId, routeId, expected] = Array.from(arguments, String);
 if (!/^\d{1,14}$/.test(aircraftId) || !/^\d{1,14}$/.test(routeId)) return false;
 const root = document.querySelector("#routeAction #routesContainer");
 const row = document.getElementById("routeMainList" + routeId);
