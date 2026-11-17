@@ -12,7 +12,7 @@ from route_registry import RouteRegistry, endpoint
 
 @pytest.mark.parametrize("outcome,toggles,expected", [
     ("created", ["101"], "trocada"),
-    ("rejected", ["101", "101"], "rota_original_preservada"),
+    ("rejected", ["101"], "troca_requer_verificacao"),
     ("unreadable", ["101"], "troca_requer_verificacao"),
     ("unknown_old", ["101"], "troca_requer_verificacao"),
 ])
@@ -64,7 +64,149 @@ def test_replace_verifies_the_assignment_or_restores_original(tmp_path, monkeypa
                                  expected_id="101", profit=400) == expected
     assert actions == toggles
     assert submits == [True]
-    assert journal.exists() == (outcome in ("unreadable", "unknown_old"))
+    assert journal.exists() == (outcome in ("rejected", "unreadable", "unknown_old"))
     assert charges == ([100] if outcome == "created" else [])
     relation = next(x for x in registry.snapshot()["relations"] if x["aircraft_id"] == "5")
     assert relation["destination"]["code"] == ("MIA" if outcome == "created" else "PBM")
+
+
+
+def test_uncertain_create_waits_then_restores_the_verified_original(tmp_path, monkeypatch):
+    """A lost AJAX reply must not hold all flights forever or cause a quick double click."""
+    import json
+    import time
+
+    registry = RouteRegistry(tmp_path / "registry.json")
+    original = {"origin": endpoint(code="DAC"), "destination": endpoint(code="OSL")}
+    target = {"origin": endpoint(code="DAC"), "destination": endpoint(code="MIA")}
+    job = {
+        "aircraft_id": "5", "old_id": "101", "registration": "PP-5",
+        "model": "A320", "old_route": original,
+        **target, "phase": "creating", "phase_at": time.time(),
+        "fee": 200, "profit": 400,
+    }
+    pending = tmp_path / "pending.json"
+    pending.write_text(json.dumps(job), encoding="utf-8")
+    route = reroute.LiveRoute("101", True, ("DAC", "OSL"), True)
+    toggles = []
+    bot = SimpleNamespace(dry_run=False)
+    monkeypatch.setattr(reroute, "_transaction_path", lambda: pending)
+    monkeypatch.setattr(reroute, "_live_route", lambda *_: route)
+    monkeypatch.setattr(reroute.time, "sleep", lambda *_: None)
+
+    def restore(_bot, route_id):
+        nonlocal route
+        toggles.append(route_id)
+        route = replace(route, paused=False)
+        return True
+
+    monkeypatch.setattr(reroute, "_toggle", restore)
+    assert not reroute.recover_pending(bot, registry)
+    assert pending.exists() and toggles == []  # no premature undo while AJAX may still commit
+
+    job["phase_at"] -= reroute._UNCONFIRMED_REQUEST_GRACE + 1
+    pending.write_text(json.dumps(job), encoding="utf-8")
+    assert reroute.recover_pending(bot, registry)
+    assert toggles == ["101"]
+    assert not pending.exists()
+
+
+def test_uncertain_create_clears_stable_original_without_toggling(tmp_path, monkeypatch):
+    import json
+    import time
+
+    registry = RouteRegistry(tmp_path / "routes.json")
+    original = {"origin": endpoint(code="DAC"), "destination": endpoint(code="OSL")}
+    job = {
+        "aircraft_id": "5", "old_id": "101", "registration": "PP-5",
+        "model": "A320", "old_route": original,
+        "origin": endpoint(code="DAC"), "destination": endpoint(code="MIA"),
+        "phase": "create_answered",
+        "phase_at": time.time() - reroute._UNCONFIRMED_REQUEST_GRACE - 5,
+        "fee": 200, "profit": 400,
+    }
+    pending = tmp_path / "pending.json"
+    pending.write_text(json.dumps(job), encoding="utf-8")
+    bot = SimpleNamespace(dry_run=False)
+    monkeypatch.setattr(reroute, "_transaction_path", lambda: pending)
+    monkeypatch.setattr(
+        reroute, "_live_route",
+        lambda *_: reroute.LiveRoute("101", False, ("DAC", "OSL"), True),
+    )
+    monkeypatch.setattr(
+        reroute, "_toggle",
+        lambda *_: (_ for _ in ()).throw(AssertionError("Cannot toggle an active original")),
+    )
+    monkeypatch.setattr(reroute.time, "sleep", lambda *_: None)
+
+    assert reroute.recover_pending(bot, registry)
+    assert not pending.exists()
+
+
+def test_uncertain_restoration_is_retried_only_after_grace(tmp_path, monkeypatch):
+    import json
+    import time
+
+    registry = RouteRegistry(tmp_path / "routes.json")
+    original = {"origin": endpoint(code="DAC"), "destination": endpoint(code="OSL")}
+    job = {
+        "aircraft_id": "5", "old_id": "101", "registration": "PP-5",
+        "model": "A320", "old_route": original,
+        "origin": endpoint(code="DAC"), "destination": endpoint(code="MIA"),
+        "phase": "restoring", "phase_at": time.time(),
+        "fee": 200, "profit": 400,
+    }
+    pending = tmp_path / "pending.json"
+    pending.write_text(json.dumps(job), encoding="utf-8")
+    route = reroute.LiveRoute("101", True, ("DAC", "OSL"), True)
+    toggles = []
+    bot = SimpleNamespace(dry_run=False)
+    monkeypatch.setattr(reroute, "_transaction_path", lambda: pending)
+    monkeypatch.setattr(reroute, "_live_route", lambda *_: route)
+    monkeypatch.setattr(reroute.time, "sleep", lambda *_: None)
+
+    def restore(_bot, route_id):
+        nonlocal route
+        toggles.append(route_id)
+        route = replace(route, paused=False)
+        return True
+
+    monkeypatch.setattr(reroute, "_toggle", restore)
+    assert not reroute.recover_pending(bot, registry)
+    assert not toggles
+    job["phase_at"] -= reroute._UNCONFIRMED_REQUEST_GRACE + 1
+    pending.write_text(json.dumps(job), encoding="utf-8")
+    assert reroute.recover_pending(bot, registry)
+    assert toggles == ["101"]
+
+
+def test_route_change_with_reused_internal_id_is_confirmed(tmp_path, monkeypatch):
+    import json
+    import time
+
+    registry = RouteRegistry(tmp_path / "routes.json")
+    original = {"origin": endpoint(code="DAC"), "destination": endpoint(code="OSL")}
+    target = {"origin": endpoint(code="DAC"), "destination": endpoint(code="MIA")}
+    job = {
+        "aircraft_id": "5", "old_id": "101", "registration": "PP-5",
+        "model": "A320", "old_route": original, **target,
+        "phase": "creating", "phase_at": time.time(),
+        "fee": 200, "profit": 400,
+    }
+    pending = tmp_path / "pending.json"
+    pending.write_text(json.dumps(job), encoding="utf-8")
+    charges = []
+    bot = SimpleNamespace(
+        dry_run=False, spent=lambda amount, **_: charges.append(amount),
+        count=lambda *_: None, notify=lambda *_, **__: None,
+    )
+    monkeypatch.setattr(reroute, "_transaction_path", lambda: pending)
+    monkeypatch.setattr(
+        reroute, "_live_route",
+        lambda *_: reroute.LiveRoute("101", False, ("DAC", "MIA"), True),
+    )
+    assert reroute.recover_pending(bot, registry)
+    assert charges == [200]
+    assert not pending.exists()
+    row = registry.snapshot()["relations"][0]
+    assert row["destination"]["code"] == "MIA"
