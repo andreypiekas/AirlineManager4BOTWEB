@@ -6,7 +6,7 @@ from route_registry import RouteRegistry, endpoint
 from selective_depart import plan_dispatch, selective_dispatch
 
 
-def control(label="Depart", action="departAircraft()", *, index=0, visible=True, disabled=False):
+def control(label="Depart", action="departAircraft(101)", *, index=0, visible=True, disabled=False):
     return {"index": index, "label": label, "action": action,
             "visible": visible, "disabled": disabled}
 
@@ -14,8 +14,9 @@ def control(label="Depart", action="departAircraft()", *, index=0, visible=True,
 def test_fleet_button_selection_is_unique_scoped_and_non_bulk():
     chosen = control()
     assert choose_depart_control("101", [chosen]) == chosen
-    assert choose_depart_control("101", [control("Decolar", "")]) is not None
-    assert choose_depart_control("101", [control("Despegar", "")]) is not None
+    assert choose_depart_control("101", [control("Decolar", "")]) is None
+    assert choose_depart_control("101", [control("Despegar", "departFlight(101)")]) is not None
+    assert choose_depart_control("101", [control("Depart", "departAircraft()")]) is None
     assert choose_depart_control("101", [control("Depart All")]) is None
     assert choose_depart_control("101", [control(disabled=True)]) is None
     assert choose_depart_control("101", [control(visible=False)]) is None
@@ -30,6 +31,15 @@ def test_fleet_button_selection_is_unique_scoped_and_non_bulk():
     assert choose_depart_control("101", [
         control("", "Ajax('route_depart.php?mode=single&ids=101','runme')"),
     ]) is not None
+    assert choose_depart_control("101", [
+        control("Depart", "Ajax('route_depart.php?ac=101','runme')"),
+    ]) is not None
+    assert choose_depart_control("101", [
+        control("Depart", "Ajax('route_depart.php?ids=x','runme')"),
+    ]) is None
+    assert choose_depart_control("101", [
+        control("Depart", "Ajax('route_depart.php?ac=103','runme')"),
+    ]) is None
     assert choose_depart_control("not-id", [chosen]) is None
 
 
@@ -49,7 +59,7 @@ class Game:
     def __init__(self, *, button=None, raise_click=False):
         self.landed = {"101", "102", "103"}
         self.inflight = set()
-        self.button = button if button is not None else control()
+        self.button = button
         self.raise_click = raise_click
         self.chosen = ""
         self.ajax_calls = []
@@ -68,10 +78,10 @@ class Game:
             return [{"id": aircraft_id, "native_actions": []}
                     for aircraft_id in sorted(self.landed)]
         if ".querySelectorAll(" in script and "detailsAction" in script and "return Array.from(root" in script:
-            return [self.button]
+            return [self.button or control(action=f"departAircraft({self.chosen})")]
         if "data-am4-fleet-depart" in script:
             assert args[0] == self.chosen
-            assert args[1] == self.button["index"]
+            assert args[1] == (self.button or control())["index"]
             return True
         raise AssertionError("Unrecognized game script")
 
