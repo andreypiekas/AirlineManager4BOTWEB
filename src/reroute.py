@@ -117,6 +117,14 @@ def _live_route(bot, aircraft_id: str) -> LiveRoute | None:
     return LiveRoute(data["id"], data["paused"], tuple(data["codes"]), data["landed"])
 
 
+def landed_departure(bot, row) -> str:
+    aircraft_id = row["aircraft_id"]
+    if not _ID.fullmatch(aircraft_id):
+        return ""
+    live = _live_route(bot, aircraft_id)
+    return live.codes[0] if live and live.landed and not live.paused and live.matches(row) else ""
+
+
 def _toggle(bot, route_id: str) -> bool:
     return bot.driver.execute_async_script(_GET, f"fleet_ground.php?id={route_id}", "toggle") is True
 

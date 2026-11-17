@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Optional
 
-from airport_catalog import by_id, game_code
+from airport_catalog import by_id, game_code, same_airport_identity
 
 _CODE = re.compile(r"^[A-Z]{3,4}$")
 _GAME_ID = re.compile(r"^[0-9]{1,12}$")
@@ -37,11 +37,11 @@ def code_in_label(code: str, label: object) -> bool:
 
 
 def match_hub_options(first_code: str, second_code: str,
-                      options: Iterable[Mapping[str, object]]) -> Optional[HubMatch]:
+                      options: Iterable[Mapping[str, object]], *, departure: str = "") -> Optional[HubMatch]:
     """Choose ONE endpoint as hub only if a unique game option confirms it.
 
-    If both ends are hubs or if labels do not include exact codes, return None.
-    This is deliberate: choosing the wrong base could alter the wrong route.
+    When both ends are selectable, only a separately verified departure
+    airport can resolve the ambiguity.
     """
     first_code, second_code = _code(first_code), _code(second_code)
     if not first_code or not second_code or first_code == second_code:
@@ -58,6 +58,10 @@ def match_hub_options(first_code: str, second_code: str,
                 known is not None and match in (known.iata, known.icao)
             ):
                 matches.add((ident, match, opposite))
+    if departure:
+        matches = {item for item in matches if same_airport_identity(
+            {"id": item[0], "code": item[1]}, {"code": departure}
+        )}
     if len(matches) != 1:
         return None
     ident, code, opposite = matches.pop()

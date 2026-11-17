@@ -35,7 +35,7 @@ from route_strategy import best_reroute, profitable_candidates
 from route_airports import match_hub_options, code_from_candidate, explain_hub_options
 from airport_catalog import game_code
 from route_registry import RouteRegistry, reroute_block_reason, endpoint, route_key
-from reroute import has_pending_reroute, recover_pending, replace_route
+from reroute import has_pending_reroute, landed_departure, recover_pending, replace_route
 from reroute_preflight import check_existing_route
 
 if TYPE_CHECKING:
@@ -501,6 +501,12 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
         hub_match = match_hub_options(
             hub_code, current_dest_code, hub_options
         ) if hub_code and current_dest_code else None
+        if execute and not hub_match and hub_code and current_dest_code:
+            diag = explain_hub_options(hub_code, current_dest_code, hub_options)
+            if diag["reason"] == "bases_ambiguas":
+                departure = landed_departure(bot, row)
+                if departure:
+                    hub_match = match_hub_options(hub_code, current_dest_code, hub_options, departure=departure)
         if hub_match:
             hub_id = hub_match.airport_id
             hub_code = hub_match.code
@@ -524,8 +530,10 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
             )
             pending(
                 aircraft_id,
-                "rota_fora_das_bases" if diag["reason"] == "nenhuma_ponta_da_rota_nas_bases"
-                else "aguardando_identificacao_da_base",
+                {"nenhuma_ponta_da_rota_nas_bases": "rota_fora_das_bases",
+                 "bases_ambiguas": "aguardando_pouso_para_confirmar_base"}.get(
+                    diag["reason"], "aguardando_identificacao_da_base"
+                ),
             )
             continue
         # The game's hub picker must prove we are searching the same origin

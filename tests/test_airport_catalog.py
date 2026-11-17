@@ -50,6 +50,14 @@ def test_neither_route_endpoint_is_owned_hub_means_no_reroute_assumption():
     assert match_hub_options("LAX", "PBM", options) is None
 
 
+def test_confirmed_departure_resolves_a_route_between_two_hubs():
+    options = [{"id": "3499", "text": "Dhaka"}, {"id": "1275", "text": "Detroit"}]
+    assert match_hub_options("DAC", "DTW", options) is None
+    selected = match_hub_options("DAC", "DTW", options, departure="KDTW")
+    assert (selected.airport_id, selected.code, selected.opposite_code) == ("1275", "DTW", "DAC")
+    assert match_hub_options("DAC", "DTW", options, departure="OSL") is None
+
+
 def test_candidate_airport_code_can_be_derived_from_live_game_id():
     assert code_from_candidate({"arr": "645", "name": "Oslo"}) == "OSL"
     assert code_from_candidate({"arr": "3146", "name": "Zandery"}) == "PBM"
