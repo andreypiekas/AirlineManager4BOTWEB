@@ -162,11 +162,22 @@ def control_diagnostics(aircraft_id: str, controls: list[dict]) -> list[dict]:
     return results[:6]
 
 
-def _confirm_inflight(bot, aircraft_id: str) -> bool:
+def _confirm_inflight(bot, aircraft_id: str, *, on_poll=None) -> bool:
+    """Confirm flight and optionally observe read-only UI feedback during wait.
+
+    The caller's observer must never send a game command. Observer failures
+    cannot make a successful takeoff look unsuccessful.
+    """
+    def read_status(driver):
+        if on_poll is not None:
+            try:
+                on_poll(driver)
+            except WebDriverException:
+                pass
+        return bool(driver.execute_script(_INFLIGHT_JS, aircraft_id))
+
     try:
-        WebDriverWait(bot.driver, 6).until(
-            lambda driver: bool(driver.execute_script(_INFLIGHT_JS, aircraft_id))
-        )
+        WebDriverWait(bot.driver, 6).until(read_status)
         return True
     except TimeoutException:
         try:
