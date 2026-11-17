@@ -74,6 +74,8 @@ class Game:
         self.ajax_calls.append(self.chosen)
 
     def js(self, script, *args):
+        if 'routeMainList' in script and 'routesContainer' in script:
+            return []  # This fixture tests the fallback when Fleet routes are absent.
         if "#landedList [id^='flightStatus']" in script:
             return [{"id": aircraft_id, "native_actions": []}
                     for aircraft_id in sorted(self.landed)]
