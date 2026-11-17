@@ -104,16 +104,28 @@ class NativeGame:
     stopping = False
     dry_run = False
 
-    def __init__(self, *, uncertain=False):
+    def __init__(self, *, uncertain=False, rejected_ids=(), inconclusive=False):
         self.landed = {"101", "102", "103"}
         self.inflight = set()
         self.rows = [native_row("101", "890"), native_row("102", "891"),
                      native_row("103", "892")]
         self.clicked = []
         self.uncertain = uncertain
+        self.rejected_ids = set(rejected_ids)
+        self.inconclusive = inconclusive
+        self.attempted = []
         self.driver = self
 
     def js(self, script, *args):
+        if "const aircraftId = String(arguments[0]), routeId = String(arguments[1]);" in script:
+            aid, rid = args
+            return {
+                "inflight": aid in self.inflight,
+                "landed": aid in self.landed and not self.inconclusive,
+                "same_route": any(r["aircraft_id"] == aid and r["route_id"] == rid for r in self.rows),
+                "button_ready": True,
+                "response_reason": "nao_informado",
+            }
         if "data-am4-safe-route-depart" in script:
             aircraft_id, route_id, action = args
             row = [r for r in self.rows
@@ -142,6 +154,9 @@ class NativeGame:
                     from selenium.common.exceptions import WebDriverException
                     raise WebDriverException("response uncertain")
                 assert row["aircraft_id"] in game.landed
+                game.attempted.append((row["aircraft_id"], row["route_id"]))
+                if row["aircraft_id"] in game.rejected_ids:
+                    return  # Game received the native click but refused to depart.
                 game.clicked.append((row["aircraft_id"], row["route_id"]))
                 game.landed.remove(row["aircraft_id"])
                 game.inflight.add(row["aircraft_id"])
@@ -173,3 +188,58 @@ def test_uncertain_native_click_never_attempts_other_aircraft(tmp_path):
     assert result["status"] == "clique_individual_resultado_incerto"
     assert result["departed"] == 0
     assert game.clicked == []
+
+
+def test_refused_departure_still_landed_continues_other_approved_aircraft(tmp_path, monkeypatch):
+    import routes_list_depart as module
+
+    registry = setup_registry(tmp_path)
+    game = NativeGame(rejected_ids={"101"})
+    monkeypatch.setattr(
+        module, "_confirm_inflight", lambda bot, aircraft_id: aircraft_id in bot.inflight
+    )
+    summary = selective_dispatch(game, registry)
+    assert summary["mode"] == "seletivo_rotas_fleet"
+    assert summary["rejected"] == 1
+    assert summary["departed"] == 1
+    assert summary["status"] == "decolagens_parciais_com_recusas"
+    assert game.attempted == [("101", "890"), ("103", "892")]
+    assert game.clicked == [("103", "892")]
+    assert "101" in game.landed
+    assert registry.snapshot()["last_dispatch"]["rejected"] == 1
+
+
+def test_inconclusive_flight_state_stops_without_departing_next(tmp_path, monkeypatch):
+    import routes_list_depart as module
+
+    registry = setup_registry(tmp_path)
+    game = NativeGame(rejected_ids={"101"}, inconclusive=True)
+    monkeypatch.setattr(
+        module, "_confirm_inflight", lambda bot, aircraft_id: aircraft_id in bot.inflight
+    )
+    approved = [d for d in plan_dispatch(["101", "102", "103"], registry.snapshot())
+                if d.approved]
+    result = route_list_dispatch(game, registry, approved)
+    assert result["status"] == "decolagem_sem_confirmacao"
+    assert result["rejected"] == 0
+    assert result["departed"] == 0
+    assert game.attempted == [("101", "890")]
+    assert game.clicked == []
+
+
+def test_failed_game_state_read_never_assumes_a_refusal(tmp_path, monkeypatch):
+    import routes_list_depart as module
+
+    registry = setup_registry(tmp_path)
+    game = NativeGame(rejected_ids={"101"})
+    monkeypatch.setattr(
+        module, "_confirm_inflight", lambda bot, aircraft_id: False
+    )
+    monkeypatch.setattr(
+        module, "reconcile_failed_confirmation", lambda bot, aid, rid: {}
+    )
+    approved = [d for d in plan_dispatch(["101", "102", "103"], registry.snapshot())
+                if d.approved]
+    result = route_list_dispatch(game, registry, approved)
+    assert result["status"] == "decolagem_sem_confirmacao"
+    assert game.attempted == [("101", "890")]
