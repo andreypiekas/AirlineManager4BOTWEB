@@ -322,6 +322,9 @@ def manage_fleet(bot: "Bot") -> None:
         repaired = resolve_duplicate_routes(bot, registry, budget)
         budget -= repaired
     if cfg.get_bool("options", "auto_route") and parked > 0 and budget > 0:
+        # Duplicate-route research and preflight navigate away from the routes
+        # list. Restore it before read_parked needs its routesContainer element.
+        bot.open_popup("routes_main.php", "Routes", "nav_routes")
         created = create_routes(bot, budget)
         budget -= created
         parked -= created
