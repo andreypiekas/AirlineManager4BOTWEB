@@ -59,8 +59,69 @@ return !!list && !!row && list.contains(row);
 """
 
 
+# The game may name an aircraft argument "ac" or "aircraftId", not "ids".
+# Each alias is trusted ONLY when its value equals the aircraft whose Fleet
+# details were loaded. Any unknown/ambiguous scope remains non-clickable.
+_TARGET_KEYS = frozenset({
+    "id", "ids", "ac", "acid", "ac_id", "aircraft", "aircraftid",
+    "aircraft_id", "plane", "planeid", "plane_id",
+})
+_SECRET_KEY = re.compile(r"(?:token|auth|sign|sig|session|secret|csrf|pass|cookie|key)", re.I)
+_DIRECT_JS = re.compile(
+    r"""(?:^|[^\w])(?:departAircraft|departFlight|flightDepart|dispatchAircraft)\s*\(\s*['"]?(\d{1,14})['"]?""",
+    re.I,
+)
+
+
+def _url_scope(aircraft_id: str, action: str) -> tuple[bool, dict]:
+    """Resolve only an explicit game-provided plane target, never ids=x."""
+    request = _ENDPOINT.search(action)
+    if not request:
+        js_match = _DIRECT_JS.search(action)
+        safe_js = bool(js_match and js_match.group(1) == str(aircraft_id))
+        return safe_js, {
+            "tipo": "funcao_individual" if js_match else "sem_endpoint",
+            "alvo": "correto" if safe_js else (
+                "divergente" if js_match else "nao_identificado"
+            ),
+        }
+    params = parse_qs(request.group(1), keep_blank_values=True)
+    normalized = {str(k).strip().lower(): values for k, values in params.items()}
+    target_values = [
+        value for key, values in normalized.items()
+        if key in _TARGET_KEYS for value in values
+    ]
+    modes = normalized.get("mode", [""])
+    mode = str(modes[0]).strip().lower() if len(modes) == 1 else ""
+    explicit_bulk = (
+        mode == "all"
+        or "x" in [str(value).strip().lower() for value in target_values]
+        or bool(re.search(r"\bdepartAll\b", action, re.I))
+    )
+    good_target = len(target_values) == 1 and target_values[0] == str(aircraft_id)
+    # Query keys only: NEVER log the URL, complete action, query values,
+    # signatures, tokens or any user credentials.
+    keys = sorted(
+        key if not _SECRET_KEY.search(key) else "[reservado]"
+        for key in normalized
+    )
+    return good_target and not explicit_bulk, {
+        "tipo": "route_depart",
+        "alvo": "correto" if good_target else (
+            "divergente" if target_values else "nao_identificado"
+        ),
+        "modo": mode[:12] if mode else "nao_exposto",
+        "global": explicit_bulk,
+        "chaves": keys[:12],
+    }
+
+
 def choose_depart_control(aircraft_id: str, controls: list[dict]) -> dict | None:
-    """Aceita só um controle de decolagem não global na janela individual."""
+    """Approve a unique native Depart with an explicit, matching aircraft ID.
+
+    A Fleet-detail button with a generic route_depart URL is NOT enough.
+    It could use the global endpoint with ids=x. No guesswork or bulk fallback.
+    """
     if not _ID.fullmatch(str(aircraft_id)):
         return None
     matches = []
@@ -70,16 +131,12 @@ def choose_depart_control(aircraft_id: str, controls: list[dict]) -> dict | None
         label, action = str(item.get("label") or ""), str(item.get("action") or "")
         if _BULK.search(label) or "fleet_ground.php" in action.lower():
             continue
-        req = _ENDPOINT.search(action)
-        if req:
-            params = parse_qs(req.group(1), keep_blank_values=True)
-            ids = params.get("id", []) + params.get("ids", [])
-            if (len(ids) != 1 or ids[0] != str(aircraft_id)
-                    or params.get("mode", [""])[0].lower() in ("", "all")):
-                continue
-        elif "route_depart.php" in action.lower() or "fleet_details.php" in action.lower():
+        if "fleet_details.php" in action.lower():
             continue
-        elif not _DEPART.search(label):
+        if not (_DEPART.search(label) or _ENDPOINT.search(action)):
+            continue
+        matching, _ = _url_scope(aircraft_id, action)
+        if not matching:
             continue
         if not isinstance(item.get("index"), int) or item["index"] < 0:
             continue
@@ -88,33 +145,19 @@ def choose_depart_control(aircraft_id: str, controls: list[dict]) -> dict | None
 
 
 def control_diagnostics(aircraft_id: str, controls: list[dict]) -> list[dict]:
-    """Safe, concise feedback for real Fleet markup: no full onclick/URLs.
-
-    The current UI may render the correct 'Depart' button, but its native
-    action could use the bulk endpoint or be disabled by a company audit.
-    This explains why we rejected it, without leaking signed URLs/tokens.
-    """
+    """Explain verification failures without exposing authenticated commands."""
     results = []
     for item in controls or []:
         label = str(item.get("label") or "")[:40]
         action = str(item.get("action") or "")
         if not _DEPART.search(label) and "route_depart.php" not in action.lower():
             continue
-        request = _ENDPOINT.search(action)
-        mode = ""
-        scope = "sem_endpoint"
-        if request:
-            params = parse_qs(request.group(1), keep_blank_values=True)
-            mode = str(params.get("mode", [""])[0])[:12].lower()
-            ids = params.get("id", []) + params.get("ids", [])
-            scope = ("alvo_correto" if len(ids) == 1 and ids[0] == str(aircraft_id)
-                     else "alvo_divergente_ou_geral")
-        elif "fleet_details.php" in action.lower():
-            scope = "detalhes_da_aeronave"
+        matching, detail = _url_scope(aircraft_id, action)
         results.append({
             "rotulo": label, "visivel": bool(item.get("visible")),
-            "desabilitado": bool(item.get("disabled")), "modo": mode or "nao_exposto",
-            "escopo": scope,
+            "desabilitado": bool(item.get("disabled")),
+            "controle_individual": bool(matching),
+            **detail,
         })
     return results[:6]
 
