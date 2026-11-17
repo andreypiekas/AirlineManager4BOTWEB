@@ -147,7 +147,7 @@ def plan_dispatch(landed_ids: list[str], report: dict, *, now: float | None = No
         registration = str(row.get("registration") or aircraft_id) if row else aircraft_id
         if row is None or not row.get("origin") or not row.get("destination"):
             reason = "rota_nao_identificada"
-        elif row.get("source") != "game":
+        elif row.get("source") not in ("game", "redirecionamento"):
             reason = "rota_nao_confirmada_no_jogo"
         elif not row.get("route_key"):
             reason = "sem_rota"

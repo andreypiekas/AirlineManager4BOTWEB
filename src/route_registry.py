@@ -168,7 +168,7 @@ class RouteRegistry:
                     entry["grounded_confirmed_at"] = int(time.time())
                 elif not at_base:
                     entry.pop("grounded_confirmed_at", None)
-            if source == "game":
+            if source in ("game", "redirecionamento"):
                 entry["game_verified_at"] = int(time.time())
             if not previous or previous.get("route_key") != entry["route_key"]:
                 entry["assigned_at"] = int(time.time())

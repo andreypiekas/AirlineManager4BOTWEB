@@ -525,11 +525,18 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
             hub_id = hub_match.airport_id
             hub_code = hub_match.code
             current_dest_code = hub_match.opposite_code
-            log.info(
+            if current_origin:
+                log.info(
+                    "Controle de rotas: %s pousada em %s (ID do jogo %s); "
+                    "a alternativa manterá acesso a uma base adquirida.",
+                    row["registration"], hub_code, hub_id,
+                )
+            else:
+                log.info(
                 "Controle de rotas: %s — aeroporto %s (ID do jogo %s) consta das bases da "
                 "companhia; destino atual %s. Isso NÃO confirma a base desta aeronave.",
                 row["registration"], hub_code, hub_id, current_dest_code,
-            )
+                )
         elif not (hub_id and destination.get("id")):
             diag = explain_hub_options(hub_code, current_dest_code, hub_options)
             log.warning(

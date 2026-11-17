@@ -40,6 +40,18 @@ def test_untrusted_or_global_depart_actions_are_rejected():
     assert verified_native_action(id_, [{"value": "route_depart.php?mode=all&ids=24133209"}]) == ""
 
 
+def test_newly_verified_replacement_is_eligible_for_individual_dispatch(tmp_path):
+    registry = registry_with_duplicate(tmp_path)
+    registry.record("102", "PP-B", "A320", endpoint(code="DAC"), endpoint(code="LAX"),
+                    source="redirecionamento")
+    report = registry.snapshot()
+    decision = plan_dispatch(["102"], report)[0]
+    assert decision.approved
+    assert report["duplicate_routes"] == 0
+    row = next(r for r in report["relations"] if r["aircraft_id"] == "102")
+    assert plan_dispatch(["102"], report, now=row["game_verified_at"] + 181)[0].reason == "leitura_de_rota_expirada"
+
+
 def test_report_is_read_only_when_game_has_only_bulk_depart_all(tmp_path, caplog):
     registry = registry_with_duplicate(tmp_path)
 
