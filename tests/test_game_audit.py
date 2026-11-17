@@ -80,10 +80,16 @@ def test_depart_button_diagnostics_redact_signed_urls_and_identify_rejection():
     ]
     report = control_diagnostics("123", controls)
     assert len(report) == 2
-    assert report[0] == {
-        "rotulo": "Depart", "visivel": True, "desabilitado": True,
-        "modo": "all", "escopo": "alvo_divergente_ou_geral",
-    }
-    assert report[1]["escopo"] == "alvo_correto"
+    assert report[0]["rotulo"] == "Depart"
+    assert report[0]["visivel"] is True
+    assert report[0]["desabilitado"] is True
+    assert report[0]["controle_individual"] is False
+    assert report[0]["tipo"] == "route_depart"
+    assert report[0]["alvo"] == "divergente"
+    assert report[0]["global"] is True
+    assert report[0]["modo"] == "all"
+    assert report[1]["alvo"] == "correto"
+    assert report[1]["controle_individual"] is True
+    assert report[1]["global"] is False
     assert report[1]["modo"] == "single"
     assert private not in str(report)
