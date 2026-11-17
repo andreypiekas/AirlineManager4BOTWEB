@@ -71,7 +71,11 @@ se a tentativa falhar. Os custos da operação devem respeitar
 
 1. Confirme a aeronave pousada, seu aeroporto atual, a rota atual e o
    controle nativo **Ground** associado ao ID da rota. A alternativa é
-   recalculada a partir do aeroporto atual, inclusive fora das bases próprias,
+   recalculada a partir do aeroporto atual. Toda rota nova mantém pelo menos
+   uma base adquirida como ponta, permitindo manutenção e A-checks nas
+   viagens de ida e volta. Fora de uma base própria, o destino alternativo
+   deve ser uma das bases adquiridas. O executor relê o seletor de bases
+   imediatamente antes da troca,
    e a origem é conferida no formulário nativo **Reroute**. Verifique alcance, taxa e
    a reserva de caixa antes de acionar o controle.
 2. Acione **Ground** e releia o estado da aeronave no jogo. O comando preserva

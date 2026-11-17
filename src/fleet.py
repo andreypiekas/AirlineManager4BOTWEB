@@ -502,6 +502,7 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
         # either airport may be the actual hub. The unique match in the
         # authenticated game selector decides the planning origin.
         hub_options = bot.js(_HUB_OPTIONS_JS) or []
+        owned_hub_ids = {str(option.get("id")) for option in hub_options}
         hub_match = match_hub_options(
             hub_code, current_dest_code, hub_options
         ) if hub_code and current_dest_code else None
@@ -571,6 +572,10 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
                 # Only a game-verifiable airport code allows comparison with
                 # the historical code-only records, in both directions.
                 if not candidate.code:
+                    continue
+                # Each round trip must include an owned base so maintenance
+                # and A-checks remain reachable on the assigned route.
+                if hub_id not in owned_hub_ids and candidate.arr_id not in owned_hub_ids:
                     continue
                 if current_dest_code and candidate.code == current_dest_code:
                     continue

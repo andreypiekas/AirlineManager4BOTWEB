@@ -33,6 +33,10 @@ fetch(url, {cache:'no-store', signal:controller.signal, redirect:'error'})
     const html = await response.text();
     if (read === 'toggle') return true;
     const page = new DOMParser().parseFromString(html, 'text/html');
+    if (read === 'hubs') {
+      const options = page.querySelectorAll('#hubSelect option');
+      return Array.from(options, option => option.value).filter(id => /^[0-9]{1,12}$/.test(id));
+    }
     if (read === 'base') {
       const row = page.getElementById('controls' + url.searchParams.get('aircraft'));
       return row?.closest('.maint-list-sort')?.dataset.base === '1';
@@ -342,6 +346,9 @@ def replace_route(bot, registry, row, origin, destination, *, keeper_id, expecte
         return "troca_duplicidade_nao_confirmada"
     if not endpoint_matches(origin, endpoint(code=first.codes[0])):
         return "troca_aeronave_fora_da_base_de_origem"
+    owned_hubs = bot.driver.execute_async_script(_GET, "research_main.php", "hubs") or []
+    if origin.get("id") not in owned_hubs and destination.get("id") not in owned_hubs:
+        return "troca_sem_base_propria_para_manutencao"
     # The native reroute form independently verifies this physical origin.
     # Owned-hub membership does not restrict a landed aircraft's rerouting.
     form = _prepare_form(bot, aircraft_id, origin, destination)

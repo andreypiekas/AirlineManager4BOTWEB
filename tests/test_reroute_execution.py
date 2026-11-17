@@ -10,6 +10,23 @@ from airport_catalog import by_code
 from route_registry import RouteRegistry, endpoint
 
 
+def test_rejects_alternative_without_an_owned_base(tmp_path, monkeypatch):
+    registry = RouteRegistry(tmp_path / "registry.json")
+    origin, old, new = (endpoint(by_code(code).game_id, code) for code in ("BGF", "TXL", "FNA"))
+    row = dict(aircraft_id="5", registration="AB-5", model="Aircraft", origin=origin, destination=old)
+    registry.record("5", "AB-5", "Aircraft", origin, old)
+    registry.record("6", "AB-6", "Aircraft", origin, old)
+    bot = SimpleNamespace(dry_run=False, stopping=False,
+                          driver=SimpleNamespace(execute_async_script=lambda *_: [old["id"]]))
+    pending = tmp_path / "pending.json"
+    monkeypatch.setattr(reroute, "_transaction_path", lambda: pending)
+    monkeypatch.setattr(reroute, "_live_route", lambda bot, aircraft:
+                        reroute.LiveRoute("101" if aircraft == "5" else "102", False, ("BGF", "TXL"), True))
+    result = reroute.replace_route(bot, registry, row, origin, new, keeper_id="6", expected_id="101", profit=400)
+    assert result == "troca_sem_base_propria_para_manutencao"
+    assert not pending.exists()
+
+
 @pytest.mark.parametrize("outcome,toggles,expected", [
     ("created", ["101"], "trocada"),
     ("rejected", ["101"], "troca_requer_verificacao"),
@@ -39,7 +56,8 @@ def test_replace_verifies_the_assignment_or_restores_original(tmp_path, monkeypa
     def game_request(script, *_):
         nonlocal live
         if script == reroute._GET:
-            pytest.fail("Native reroute must not require membership in the owned hub list")
+            assert _ == ("research_main.php", "hubs")
+            return [origin["id"], new["id"]]
         submits.append(True)
         if outcome == "rejected":
             return True  # The game's request finished, and the old route is still paused.
