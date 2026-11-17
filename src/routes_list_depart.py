@@ -122,6 +122,67 @@ return {inflight, landed, same_route: matchingRoute, button_ready: enabled,
 """
 
 
+# The live response from route_depart.php is often replaced when the Routes
+# popup is refreshed. Sample it *while* waiting for the flight to appear.
+# Only a fixed failure category and an opaque local fingerprint are returned:
+# never raw response text, HTML, URLs, auth tokens or arbitrary user data.
+_DEPART_FEEDBACK_JS = r"""
+const elements = [document.getElementById("runme"),
+  ...Array.from(document.querySelectorAll(".toast-body,.toast.show,.alert"))];
+const text = elements.filter(e => e && (e.id === "runme" || !!e.getClientRects().length))
+  .map(e => e.innerText || e.textContent || "").join(" ").trim().slice(0, 2800);
+let hash = 2166136261;
+for (let i = 0; i < text.length; i++)
+  hash = Math.imul(hash ^ text.charCodeAt(i), 16777619) >>> 0;
+const plain = text.toLowerCase();
+let reason = "nao_informado";
+if (plain.length > 0) {
+  if (/(?:co2|co₂|carbon)\b/.test(plain) && /(insufficient|not enough|low|missing|need|lacking|falta|sem)/.test(plain))
+      reason = "co2_insuficiente";
+  else if (/(fuel|combust[ií]vel)/.test(plain) && /(insufficient|not enough|low|missing|need|lacking|falta|sem)/.test(plain))
+      reason = "combustivel_insuficiente";
+  else if (/maintenan|manuten[cç]|a.check/.test(plain))
+      reason = "manutencao";
+  else if (/\baudit\b|auditoria/.test(plain))
+      reason = "auditoria";
+  else if (/not enough money|insufficient funds|saldo insuficiente/.test(plain))
+      reason = "saldo_insuficiente";
+  else if (/cooldown|too many requests|try again|wait .+ second|limite de requisi/.test(plain))
+      reason = "limite_temporario";
+  else if (/error|failed|cannot|can't|unable|rejected|unavailable|insufficient|not enough|não foi poss[ií]vel/.test(plain))
+      reason = "recusa_generica";
+}
+return {fingerprint: String(text.length) + ":" + hash.toString(16), reason};
+"""
+
+
+def _reply_observer(bot):
+    """Create a per-attempt reader that ignores old toasts/messages."""
+    from selenium.common.exceptions import WebDriverException
+
+    try:
+        before = bot.js(_DEPART_FEEDBACK_JS) or {}
+    except WebDriverException:
+        before = {}
+    baseline = before.get("fingerprint") if isinstance(before, dict) else ""
+    hint = {"reason": "nao_informado"}
+
+    def sample(driver):
+        try:
+            value = driver.execute_script(_DEPART_FEEDBACK_JS)
+        except WebDriverException:
+            return
+        if not isinstance(value, dict):
+            return
+        if value.get("fingerprint") == baseline:
+            return
+        reason = str(value.get("reason") or "")
+        if reason and reason != "nao_informado":
+            hint["reason"] = reason
+
+    return hint, sample
+
+
 def reconcile_failed_confirmation(bot, aircraft_id: str, route_id: str) -> dict:
     """Read actual refreshed game state; never re-send a departure request."""
     try:
@@ -271,6 +332,7 @@ def route_list_dispatch(bot, registry, eligible: list, *, limit: int = 20) -> di
         if aircraft_id not in ready or len(fresh) != 1 or not fresh[0].approved:
             continue
         result["native_individual"] += 1
+        reply_hint, reply_observer = _reply_observer(bot)
         try:
             control = bot.driver.find_element(
                 By.CSS_SELECTOR,
@@ -287,7 +349,9 @@ def route_list_dispatch(bot, registry, eligible: list, *, limit: int = 20) -> di
                 decision.registration, row["route_id"], type(exc).__name__,
             )
             break
-        confirmed = _confirm_inflight(bot, aircraft_id)
+        confirmed = _confirm_inflight(
+            bot, aircraft_id, on_poll=reply_observer
+        )
         if not confirmed:
             # _confirm_inflight has already refreshed the game's Routes UI.
             # If the same route and an active Depart control reappear for a
@@ -315,7 +379,10 @@ def route_list_dispatch(bot, registry, eligible: list, *, limit: int = 20) -> di
                     "(resposta: %s). Sem repetição; verificando outras "
                     "aeronaves aprovadas.",
                     decision.registration, row["route_id"],
-                    status.get("response_reason", "nao_informado"),
+                    (
+                        reply_hint["reason"] if reply_hint["reason"] != "nao_informado"
+                        else status.get("response_reason", "nao_informado")
+                    ),
                 )
                 continue
             else:
