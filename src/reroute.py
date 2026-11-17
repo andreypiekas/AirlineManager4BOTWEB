@@ -174,13 +174,43 @@ def has_pending_reroute() -> bool:
     return _transaction_path().exists()
 
 
+_UNCONFIRMED_REQUEST_GRACE = 120  # seconds to let a delayed game response settle
+
+
 def _save_job(job, phase: str) -> None:
     job["phase"] = phase
+    job["phase_at"] = time.time()
     paths.write_atomic(_transaction_path(), json.dumps(job), private=True)
 
 
+def _phase_age(job: dict) -> float:
+    """Older journals predate phase_at; retain them and use file mtime."""
+    timestamp = job.get("phase_at")
+    if not isinstance(timestamp, (int, float)):
+        try:
+            timestamp = _transaction_path().stat().st_mtime
+        except OSError:
+            timestamp = time.time()
+    return max(0.0, time.time() - timestamp)
+
+
+def _stable_live_route(bot, aircraft_id: str, condition) -> LiveRoute | None:
+    """Require two matching game reads before clearing or compensating a journal."""
+    first = _live_route(bot, aircraft_id)
+    if not first or not condition(first):
+        return None
+    time.sleep(1)
+    second = _live_route(bot, aircraft_id)
+    return second if second == first and condition(second) else None
+
+
 def _resolve(bot, registry, job, *, poll=False) -> str:
-    """Reconcile by reading the game. Never repeat an uncertain purchase."""
+    """Reconcile a route transaction safely without repeating a route purchase.
+
+    An uncertain create request may have succeeded despite a lost AJAX reply.
+    Give it a grace period, then prove a stable original route before attempting
+    one recovery Ground toggle. The journal survives every inconclusive read.
+    """
     aircraft_id = job["aircraft_id"]
     if not _ID.fullmatch(aircraft_id) or not _ID.fullmatch(job["old_id"]):
         return "troca_requer_verificacao"
@@ -188,8 +218,11 @@ def _resolve(bot, registry, job, *, poll=False) -> str:
     phase = job["phase"]
 
     def confirmed_new(route):
-        return (phase in ("creating", "create_answered") and route.id != job["old_id"]
-                and not route.paused and route.matches(target))
+        # Some game versions may reuse an existing route ID. The independently
+        # verified, changed pair of endpoints is the authoritative evidence.
+        return (phase in ("creating", "create_answered")
+                and not route.paused and route.matches(target)
+                and not route.matches(job["old_route"]))
 
     def old_route(route):
         return route.id == job["old_id"] and route.matches(job["old_route"])
@@ -208,15 +241,52 @@ def _resolve(bot, registry, job, *, poll=False) -> str:
         log.info("Duplicidade resolvida: %s", summary)
         bot.notify(f"🛫 <b>Rota alterada</b>: {esc(summary)}", category="routes")
         return "trocada"
+
     if live and old_route(live):
-        if live.paused and not bot.dry_run and phase in ("grounding", "ground_answered", "grounded", "create_answered"):
-            _save_job(job, "restoring")
-            _toggle(bot, live.id)
-            live = _check_route(bot, aircraft_id, lambda route: old_route(route) and not route.paused)
-        may_close = phase not in ("grounding", "creating") or job["phase"] == "restoring"
-        if may_close and live and old_route(live) and not live.paused:
-            _transaction_path().unlink(missing_ok=True)
-            return "rota_original_preservada"
+        age = _phase_age(job)
+        request_uncertain = phase in ("creating", "create_answered")
+        # A grounding command may have been sent but not yet applied. Never
+        # release its journal immediately just because the old route is visible.
+        ground_uncertain = phase == "grounding" and not live.paused
+        restore_uncertain = phase == "restoring" and live.paused
+        waiting = (request_uncertain or ground_uncertain or restore_uncertain) and (
+            age < _UNCONFIRMED_REQUEST_GRACE
+        )
+        if waiting:
+            log.info(
+                "%s: aguardando estabilização da troca (%s, %.0fs/%ds).",
+                job["registration"], phase, age, _UNCONFIRMED_REQUEST_GRACE,
+            )
+        else:
+            if (live.paused and not bot.dry_run
+                    and phase in ("grounding", "ground_answered", "grounded",
+                                  "creating", "create_answered", "restoring")):
+                # Never toggle a route that has changed in the game. A lost
+                # restoration reply gets a fresh, time-delayed retry only
+                # while the SAME old route remains paused and landed.
+                stable = _stable_live_route(
+                    bot, aircraft_id,
+                    lambda route: old_route(route) and route.paused and route.landed,
+                )
+                if stable:
+                    _save_job(job, "restoring")
+                    _toggle(bot, stable.id)
+                    live = _check_route(
+                        bot, aircraft_id, lambda route: old_route(route) and not route.paused
+                    )
+            if live and old_route(live) and not live.paused:
+                stable = _stable_live_route(
+                    bot, aircraft_id,
+                    lambda route: old_route(route) and not route.paused,
+                )
+                if stable:
+                    _transaction_path().unlink(missing_ok=True)
+                    log.info(
+                        "%s: rota original confirmada e transação pendente encerrada.",
+                        job["registration"],
+                    )
+                    return "rota_original_preservada"
+
     log.error("%s: troca pendente de verificação. Novas trocas aguardam a confirmação do jogo.",
               job["registration"])
     return "troca_requer_verificacao"
