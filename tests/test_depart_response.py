@@ -38,7 +38,8 @@ def test_response_is_categorized_without_returning_raw_text(reply, reason):
     parsed = json.loads(r.stdout)
     assert parsed["reason"] == reason
     assert "text" not in parsed
-    assert reply not in str(parsed)
+    if reply:
+        assert reply not in str(parsed)
 
 
 def test_poll_ignores_old_game_message_and_remembers_new_one():
