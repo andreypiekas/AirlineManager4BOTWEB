@@ -17,7 +17,7 @@ import logging
 import re
 from urllib.parse import parse_qs
 
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 
 from fleet_single_depart import _confirm_inflight
