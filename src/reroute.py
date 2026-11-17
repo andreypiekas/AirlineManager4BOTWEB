@@ -220,7 +220,7 @@ def _resolve(bot, registry, job, *, poll=False) -> str:
     def confirmed_new(route):
         # Some game versions may reuse an existing route ID. The independently
         # verified, changed pair of endpoints is the authoritative evidence.
-        return (phase in ("creating", "create_answered")
+        return (phase in ("creating", "create_answered", "restoring")
                 and not route.paused and route.matches(target)
                 and not route.matches(job["old_route"]))
 
@@ -257,6 +257,7 @@ def _resolve(bot, registry, job, *, poll=False) -> str:
                 "%s: aguardando estabilização da troca (%s, %.0fs/%ds).",
                 job["registration"], phase, age, _UNCONFIRMED_REQUEST_GRACE,
             )
+            return "troca_requer_verificacao"
         else:
             if (live.paused and not bot.dry_run
                     and phase in ("grounding", "ground_answered", "grounded",
