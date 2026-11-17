@@ -33,7 +33,8 @@ def test_route_creation_restores_routes_screen_after_duplicate_research(monkeypa
     monkeypatch.setattr(fleet, "audit_routes", lambda bot, registry: None)
     monkeypatch.setattr(fleet, "RouteRegistry", lambda: object())
 
-    def research(bot, registry, budget):
+    def research(bot, registry, budget, *, reroute_ready):
+        assert reroute_ready
         assert bot.screen == "routes"
         bot.screen = "aircraft_details"
         return 0

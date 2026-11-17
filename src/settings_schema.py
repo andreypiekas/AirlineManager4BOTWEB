@@ -53,6 +53,7 @@ FLEET_SWITCHES = [
     ("auto_route", "Criar rotas para aeronaves estacionadas"),
     ("analyze_duplicate_routes", "Analisar e sugerir correções de rotas repetidas"),
     ("allow_duplicate_routes", "Permitir aeronaves na mesma rota (ida/volta)"),
+    ("reroute_duplicates", "Substituir rotas repetidas automaticamente"),
     ("auto_hangar", "Ampliar o hangar quando estiver cheio"),
     ("auto_seats", "Assentos executiva / primeira conforme a demanda"),
     ("auto_mods", "Melhorias: velocidade, combustível e CO₂"),

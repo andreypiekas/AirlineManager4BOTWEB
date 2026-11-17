@@ -1,0 +1,235 @@
+"""Replace an existing route through the game's Ground toggle and native route form."""
+from __future__ import annotations
+
+import json
+import logging
+import re
+import time
+from dataclasses import dataclass
+
+from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.common.by import By
+
+import paths
+from helpers import fmt, to_int
+from notify import esc
+from route_registry import endpoint, endpoint_matches, same_route
+
+log = logging.getLogger("am4bot.rutas")
+_ID = re.compile(r"[0-9]{1,14}")
+
+# Detached HTML keeps game scripts from running during reads. Only the explicit
+# Ground request can mutate game state. Use the same signature as the game's Ajax().
+_GET = r"""
+const [path, read, done] = arguments;
+const url = new URL(path, window.location.href);
+if (typeof fbSig !== 'undefined') url.searchParams.set('fbSig', fbSig);
+const controller = new AbortController();
+const timer = setTimeout(() => controller.abort(), 5000);
+fetch(url, {cache:'no-store', signal:controller.signal, redirect:'error'})
+  .then(async response => {
+    if (!response.ok) return null;
+    const html = await response.text();
+    if (read === 'toggle') return true;
+    const page = new DOMParser().parseFromString(html, 'text/html');
+    if (read === 'base') {
+      const row = page.getElementById('controls' + url.searchParams.get('aircraft'));
+      return row?.closest('.maint-list-sort')?.dataset.base === '1';
+    }
+    const ground = page.getElementById('routeViewGround_unground');
+    const restore = page.getElementById('routeViewGround_ground');
+    const routeId = button => (button?.getAttribute('onclick') || '')
+      .match(/fleet_ground\.php\?id=([0-9]{1,14})['"]/i)?.[1];
+    const id = routeId(ground);
+    if (!id || id !== routeId(restore)) return null;
+    const paused = ground.classList.contains('hidden');
+    if (paused === restore.classList.contains('hidden')) return null;
+    const codes = Array.from(page.querySelectorAll('.col-5.bg-light span.l-text.exo'),
+      e => e.textContent.trim().toUpperCase());
+    const timer = page.getElementById('timer');
+    const label = timer?.parentElement.textContent.trim() || '';
+    return {id, paused, codes, landed: !timer || /^(Departs in|Sale en|Parte em)\b/i.test(label)};
+  }).then(done, () => done(null)).finally(() => clearTimeout(timer));
+"""
+
+_FORM = r"""
+const panel = document.querySelector('#newRouteInfo #newRouteContainer');
+if (!panel) return null;
+const root = panel.parentElement;
+const codes = Array.from(panel.querySelectorAll('.row.p-0 > .col-3.m-text > b'),
+  e => e.textContent.trim().toUpperCase());
+const counts = panel.querySelectorAll('.row.p-1 > .col-4.px-1.text-right.s-text');
+const fees = panel.querySelectorAll('.text-danger.font-weight-bold');
+const prefix = 'new_route_info.php?mode=do&id=' + arguments[0] + '&airportId=' + arguments[1] + '&';
+return {codes, existing: counts.length === 1 ? counts[0].textContent.trim() : null,
+  fee: fees.length === 1 ? fees[0].textContent.trim() : null,
+  bound: Array.from(root.querySelectorAll('script')).some(s => s.textContent.includes(prefix))};
+"""
+
+
+@dataclass(frozen=True)
+class LiveRoute:
+    id: str
+    paused: bool
+    codes: tuple[str, str]
+    landed: bool
+
+    def matches(self, relation: dict) -> bool:
+        return same_route(relation, {
+            "origin": endpoint(code=self.codes[0]),
+            "destination": endpoint(code=self.codes[1]),
+        })
+
+
+def _live_route(bot, aircraft_id: str) -> LiveRoute | None:
+    data = bot.driver.execute_async_script(_GET, f"fleet_details.php?id={aircraft_id}", "details")
+    if not data or len(data["codes"]) != 2 or not all(endpoint(code=c)["code"] for c in data["codes"]):
+        return None
+    return LiveRoute(data["id"], data["paused"], tuple(data["codes"]), data["landed"])
+
+
+def _toggle(bot, route_id: str) -> None:
+    bot.driver.execute_async_script(_GET, f"fleet_ground.php?id={route_id}", "toggle")
+
+
+def _check_route(bot, aircraft_id, condition):
+    last = None
+    for delay in (0, 1, 2, 3, 4):
+        time.sleep(delay)  # recovery still needs to finish if the bot is stopping
+        try:
+            last = _live_route(bot, aircraft_id)
+        except WebDriverException:
+            last = None
+        if last and condition(last):
+            break
+    return last
+
+
+def _prepare_form(bot, aircraft_id, origin, destination):
+    dest_id = destination["id"]
+    panel = bot.ajax(f"new_route_info.php?id={aircraft_id}&airportId={dest_id}&mode=res", "newRouteInfo")
+    form = bot.js(_FORM, aircraft_id, dest_id)
+    if not form or not form["bound"] or len(form["codes"]) != 2:
+        return None
+    if (not endpoint_matches(origin, endpoint(code=form["codes"][0]))
+            or not endpoint_matches(destination, endpoint(code=form["codes"][1]))):
+        return None
+    if to_int(form["existing"]) != 0:
+        return None
+    fee = to_int(form["fee"])
+    balance = bot.read_money()
+    reserve = bot.config.get_int("settings", "cash_reserve", 0)
+    if fee is None or fee <= 0 or balance is None or balance - fee < reserve:
+        return None
+    auto = panel.find_elements(By.ID, "introAuto")
+    if len(auto) != 1:
+        return None
+    bot.click_element(auto[0])
+    buttons = panel.find_elements(By.CSS_SELECTOR, "#btnCreateNewRoute:not(.not-active):not([disabled])")
+    return (buttons[0], fee) if len(buttons) == 1 else None
+
+
+def _transaction_path():
+    return paths.current().data / "reroute_pending.json"
+
+
+def has_pending_reroute() -> bool:
+    return _transaction_path().exists()
+
+
+def _resolve(bot, registry, job, *, poll=False) -> str:
+    """Reconcile by reading the game. Never repeat an uncertain purchase."""
+    aircraft_id = job["aircraft_id"]
+    if not _ID.fullmatch(aircraft_id) or not _ID.fullmatch(job["old_id"]):
+        return "troca_requer_verificacao"
+    target = {"origin": job["origin"], "destination": job["destination"]}
+    def confirmed_new(route):
+        return job["submitted"] and route.id != job["old_id"] and not route.paused and route.matches(target)
+
+    if poll:
+        live = _check_route(bot, aircraft_id, confirmed_new)
+    else:
+        live = _live_route(bot, aircraft_id)
+    if live and confirmed_new(live):
+        registry.record(aircraft_id, job["registration"], job["model"], **target,
+                        source="redirecionamento", profit_per_day=job["profit"])
+        _transaction_path().unlink(missing_ok=True)
+        bot.spent(job["fee"], invest=True)
+        bot.count("routes")
+        summary = f"{job['registration']} mudou para {job['origin']['code']}–{job['destination']['code']} (taxa ${fmt(job['fee'])})."
+        log.info("Duplicidade resolvida: %s", summary)
+        bot.notify(f"🛫 <b>Rota alterada</b>: {esc(summary)}", category="routes")
+        return "trocada"
+    if live and live.id == job["old_id"] and live.matches(job["old_route"]):
+        if live.paused and not bot.dry_run and time.time() >= job.get("restore_after", 0):
+            # The same request toggles in either direction. Wait for a fresh
+            # reading before retrying a restore with an unknown outcome.
+            job["restore_after"] = time.time() + 30
+            paths.write_atomic(_transaction_path(), json.dumps(job), private=True)
+            _toggle(bot, live.id)
+            live = _check_route(bot, aircraft_id, lambda route: route.id == job["old_id"] and not route.paused)
+        if live and live.id == job["old_id"] and live.matches(job["old_route"]) and not live.paused:
+            _transaction_path().unlink(missing_ok=True)
+            return "rota_original_preservada"
+    log.error("%s: troca pendente de verificação. Novas trocas aguardam a confirmação do jogo.",
+              job["registration"])
+    return "troca_requer_verificacao"
+
+
+def recover_pending(bot, registry) -> bool:
+    path = _transaction_path()
+    if not path.exists():
+        return True
+    try:
+        job = json.loads(path.read_text(encoding="utf-8"))
+        return _resolve(bot, registry, job) != "troca_requer_verificacao"
+    except (OSError, ValueError, KeyError, TypeError, WebDriverException):
+        log.exception("Não foi possível verificar a troca de rota pendente.")
+        return False
+
+
+def replace_route(bot, registry, row, origin, destination, *, keeper_id, expected_id, profit) -> str:
+    """Verify the landed aircraft, stage and submit one real replacement."""
+    if bot.dry_run or bot.stopping or has_pending_reroute():
+        return "troca_adiada"
+    aircraft_id = row["aircraft_id"]
+    if aircraft_id == keeper_id or not all(_ID.fullmatch(value) for value in
+                                           (aircraft_id, keeper_id, expected_id, destination["id"])):
+        return "troca_dados_invalidos"
+    if registry.is_occupied(origin, destination, aircraft_id):
+        return "destino_ocupado_no_jogo"
+    first = _live_route(bot, aircraft_id)
+    if not first or first.id != expected_id or not first.matches(row) or not first.landed or first.paused:
+        return "troca_rota_ou_pouso_nao_confirmado"
+    keeper = _live_route(bot, keeper_id)
+    if not keeper or keeper.id == first.id or not keeper.matches(row):
+        return "troca_duplicidade_nao_confirmada"
+    if not endpoint_matches(origin, endpoint(code=first.codes[1])):
+        return "troca_aeronave_fora_da_base_de_origem"
+    if not bot.driver.execute_async_script(_GET, f"maint_plan.php?aircraft={aircraft_id}", "base"):
+        return "troca_base_nao_confirmada"
+    form = _prepare_form(bot, aircraft_id, origin, destination)
+    if not form:
+        return "troca_formulario_ou_reserva_indisponivel"
+    current = _live_route(bot, aircraft_id)
+    if current != first or bot.stopping:
+        return "troca_rota_ou_pouso_nao_confirmado"
+    job = dict(aircraft_id=aircraft_id, old_id=first.id,
+               old_route={"origin": row["origin"], "destination": row["destination"]},
+               registration=row["registration"], model=row["model"], origin=origin, destination=destination,
+               profit=profit, fee=form[1], submitted=False)
+    paths.write_atomic(_transaction_path(), json.dumps(job), private=True)
+    try:
+        _toggle(bot, first.id)
+        paused = _check_route(bot, aircraft_id, lambda route: route.id == first.id and route.paused)
+        if paused and paused.id == first.id and paused.paused and paused.landed and paused.matches(row):
+            form = _prepare_form(bot, aircraft_id, origin, destination)
+            if form and not bot.stopping:
+                button, job["fee"] = form
+                job["submitted"] = True
+                paths.write_atomic(_transaction_path(), json.dumps(job), private=True)
+                # WebDriver's normal click is intentionally not retried.
+                button.click()
+    except WebDriverException:
+        log.warning("%s: o jogo interrompeu a troca. Verificando a rota atual.", row["registration"])
+    return _resolve(bot, registry, job, poll=job["submitted"])

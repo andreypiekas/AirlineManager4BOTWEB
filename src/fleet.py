@@ -35,6 +35,7 @@ from route_strategy import best_reroute, profitable_candidates
 from route_airports import match_hub_options, code_from_candidate, explain_hub_options
 from airport_catalog import game_code
 from route_registry import RouteRegistry, reroute_block_reason, endpoint, route_key
+from reroute import has_pending_reroute, recover_pending, replace_route
 from reroute_preflight import check_existing_route
 
 if TYPE_CHECKING:
@@ -308,6 +309,8 @@ def measure_load(bot: "Bot") -> None:
 
 def manage_fleet(bot: "Bot") -> None:
     cfg = bot.config
+    registry = RouteRegistry()
+    reroute_ready = recover_pending(bot, registry)
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
     measure_load(bot)
     parked = to_int(bot.js("return $('#hParked').text();")) or 0
@@ -315,13 +318,12 @@ def manage_fleet(bot: "Bot") -> None:
     bot.update_stats(parked=parked, pending=pending)
     log_fleet.info("%d aeronaves estacionadas sem rota, %d pendentes de entrega.", parked, pending)
 
-    registry = RouteRegistry()
     audit_routes(bot, registry)
     budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))
     if not cfg.get_bool("options", "allow_duplicate_routes", True):
-        repaired = resolve_duplicate_routes(bot, registry, budget)
+        repaired = resolve_duplicate_routes(bot, registry, budget, reroute_ready=reroute_ready)
         budget -= repaired
-    if cfg.get_bool("options", "auto_route") and parked > 0 and budget > 0:
+    if not has_pending_reroute() and cfg.get_bool("options", "auto_route") and parked > 0 and budget > 0:
         # Duplicate-route research and preflight navigate away from the routes
         # list. Restore it before read_parked needs its routesContainer element.
         bot.open_popup("routes_main.php", "Routes", "nav_routes")
@@ -341,13 +343,9 @@ def manage_fleet(bot: "Bot") -> None:
 
 
 # ---------------------------------------------------------------------- duplicate-route correction
-def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int) -> int:
-    """Review persisted duplicate assignments and propose a more profitable route.
-
-    Live reassignment of an already routed aircraft is intentionally disabled:
-    the existing creation form cannot be assumed to replace a route. The game
-    has a separate reroute UI, which must be verified before automation is safe.
-    """
+def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
+                             *, reroute_ready: bool = True) -> int:
+    """Plan alternatives independently and apply at most one verified change."""
     report = registry.snapshot(allow_duplicates=False)
     if not report["duplicate_routes"]:
         return 0
@@ -403,8 +401,8 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int) -
             details = " (evidência da rota ou localização expirou; necessária nova leitura)"
         elif reason == "aguardando_confirmacao_no_jogo":
             details = " (necessário comprovar localização na base e rota atual)"
-        elif reason == "troca_de_rota_ainda_nao_validada":
-            details = " (formulário de criação de nova rota não comprova substituição da rota já atribuída)"
+        elif reason == "troca_automatica_desativada":
+            details = " (ative Substituir rotas repetidas automaticamente na aba Frota)"
         elif reason == "sem_alternativa_melhor_que_atual":
             details = " (nenhuma alternativa lucrativa supera a estimativa da rota atual com a margem mínima)"
         elif reason == "aguardando_ativacao_de_analise":
@@ -427,6 +425,7 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int) -
     cfg = bot.config
     market = load_market()
     targets = []
+    keepers = {}
     for duplicate in report["duplicates"]:
         members = [records[a["id"]] for a in duplicate["aircraft"] if a["id"] in records]
         if len(members) < 2:
@@ -435,7 +434,9 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int) -
             -(row["profit_per_day"] if isinstance(row.get("profit_per_day"), (int, float)) else -1),
             row.get("assigned_at", 0), row["aircraft_id"],
         ))
-        targets.extend(members[1:])
+        for row in members[1:]:
+            targets.append(row)
+            keepers[row["aircraft_id"]] = members[0]["aircraft_id"]
     # Fairness: unattempted targets first, then oldest last attempt.
     # Without this, the first N repeated routes were researched forever.
     targets.sort(key=lambda row: (
@@ -447,6 +448,21 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int) -
         for row in targets:
             pending(row["aircraft_id"], "aguardando_ativacao_de_analise")
         return 0
+    execute = reroute_ready and cfg.get_bool("options", "reroute_duplicates") and not bot.dry_run
+    changed = 0
+    if execute:
+        # This game snapshot is a scheduling hint. The executor proves the
+        # exact route and location again independently before any action.
+        landed = set(bot.js("""
+            const now = Date.now() / 1000;
+            return arguments[0].filter(id => {
+                const entry = window.statusData?.[id];
+                return entry?.routeId > 0 && entry.arrived > 0 &&
+                    entry.arrived <= now && Number(entry.grounded) === 0;
+            });
+        """, [row["aircraft_id"] for row in targets]) or [])
+        targets.sort(key=lambda row: (row["aircraft_id"] not in landed,
+                                     reroute_block_reason(row, verified_hub=True) is not None))
     for row in targets:
         aircraft_id = row["aircraft_id"]
         if processed >= budget or bot.stopping:
@@ -611,7 +627,11 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int) -
         # The stored report identifies a collision, but a *fresh*, explicit
         # game reading must confirm the aircraft at base before changing it.
         reason = reroute_block_reason(row, verified_hub=hub_match is not None)
-        if reason:
+        # In live mode, preflight plus replace_route use fresh game reads.
+        # The historical registry often lacks a recent observation for
+        # aircraft outside the first page.
+        live_candidate = execute and hub_match and preflight.route_confirmed
+        if reason and not live_candidate:
             pending(aircraft_id, reason, proposal=proposal)
             continue
         if not preflight.route_confirmed:
@@ -622,21 +642,29 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int) -
             log.info("[SIMULAÇÃO] Redirecionaria %s para %s (lucro estimado ~ $%s/dia).",
                      row["registration"], candidate.name, fmt(proposal["profit_per_day"]))
             continue
-        # Existing routed aircraft are NOT equivalent to parked aircraft
-        # without routes. Our current create_route() uses a new-route form,
-        # not the game's distinct "reroute" control. Until the existing
-        # route replacement workflow is verified in a logged-in session,
-        # only calculate and report proposals; never submit a new-route
-        # purchase as a substitute for modifying an assigned aircraft.
-        pending(aircraft_id, "troca_de_rota_ainda_nao_validada", proposal=proposal)
-        continue
+        if live_candidate:
+            execute = False
+            result = replace_route(
+                bot, registry, row, endpoint(hub_id, code=hub_code),
+                endpoint(candidate.arr_id, code=candidate.code, name=candidate.name),
+                keeper_id=keepers[aircraft_id], expected_id=preflight.route_id,
+                profit=economics.profit_per_day,
+            )
+            if result == "trocada":
+                changed += 1
+            else:
+                registry.note(aircraft_id, result, proposal=proposal)
+                log.warning("Controle de rotas: %s • %s.", row["registration"], result.replace("_", " "))
+        else:
+            pending(aircraft_id, "aguardando_troca_automatica" if cfg.get_bool("options", "reroute_duplicates")
+                    else "troca_automatica_desativada", proposal=proposal)
 
     log.info(
         "Controle de rotas: análise de %d/%d aeronaves com duplicidade neste ciclo; "
         "próximas serão priorizadas por proposta mais antiga.",
         processed, len(targets),
     )
-    return 0  # Planning must never consume the live route-creation budget.
+    return changed  # Only confirmed writes consume the live action budget.
 
 
 # ---------------------------------------------------------------------- routes

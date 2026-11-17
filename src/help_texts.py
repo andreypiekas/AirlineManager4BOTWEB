@@ -32,10 +32,13 @@ HELP: dict[str, str] = {
     "smart_buy": "Compra segundo os preços mais vantajosos do histórico.",
     "auto_repair": "Programa reparos das aeronaves que atingirem o desgaste definido.",
     "auto_check": "Programa o A-check quando restarem poucas horas.",
-    "auto_route": "Cria rotas com demanda adequada para aeronaves estacionadas.",
-    "analyze_duplicate_routes": "Continua calculando alternativas para rotas duplicadas mesmo se a criação automática de novas rotas estiver desligada. Apenas gera propostas, sem executar trocas reais.",
+    "auto_route": "Cria rotas com demanda adequada para aeronaves estacionadas sem rota.",
+    "analyze_duplicate_routes": "Pesquisa e registra propostas para rotas repetidas quando duplicidades estão proibidas, mesmo com a criação de novas rotas desligada. A substituição tem sua própria opção.",
     "route_min_profit_gain_pct": "Melhoria mínima percentual do lucro diário estimado ao sugerir trocar uma rota com lucro atual conhecido (padrão 5%). Estimativas não garantem resultado.",
-    "allow_duplicate_routes": "Desativado: bloqueia novas rotas duplicadas nos dois sentidos e planeja mudar aeronaves repetidas para destinos lucrativos quando elas estiverem confirmadamente na base. Ativado: permite duplicidades.",
+    "allow_duplicate_routes": "Quando desligada, impede novas atribuições repetidas nos dois sentidos e permite a análise de duplicidades existentes. Quando ligada, permite duplicidades e desativa a análise e a substituição.",
+    "reroute_duplicates": "Substitui automaticamente rotas repetidas por alternativas verificadas. "
+                          "Desligada por padrão. Requer análise ativa, duplicidades proibidas e simulação desligada. "
+                          "Permite uma tentativa por ciclo, preserva a reserva de caixa e independe da criação de novas rotas.",
     "auto_hangar": "Compra expansão do hangar quando estiver perto do limite.",
     "repair_wear_pct": "Desgaste percentual a partir do qual deve reparar uma aeronave.",
     "check_hours_min": "Horas restantes para iniciar a programação do A-check.",
@@ -148,9 +151,13 @@ HELP_EN = {
     # ---- fleet
     "auto_repair": "Plans the repair of aircraft whose wear passes the threshold.",
     "auto_check": "Plans the A-check when an aircraft has few hours left.",
-    "auto_route": "Gives parked aircraft a route: the busiest route the aircraft can fly, with the game's autoprice.",
-    "analyze_duplicate_routes": "Computes profitable alternatives for duplicate routes even when automatic new-route creation is off. Proposals only; no live rerouting.",
+    "auto_route": "Gives parked aircraft without a route a suitable route using the game's automatic ticket prices.",
+    "analyze_duplicate_routes": "Finds and saves alternatives when duplicate routes are disallowed, even if new-route creation is off. Replacement has its own setting.",
     "route_min_profit_gain_pct": "Minimum percentage improvement over known estimated current profit before proposing a replacement (default 5%). Estimates are not guaranteed.",
+    "allow_duplicate_routes": "Off blocks new duplicate assignments in either direction and allows analysis of existing duplicates. On allows duplicates and disables their analysis and replacement.",
+    "reroute_duplicates": "Automatically replaces duplicate routes with verified alternatives. "
+                          "Off by default. Requires analysis on, duplicates disallowed, and simulation off. "
+                          "Allows one attempt per cycle, preserves the cash reserve, and works independently of new-route creation.",
     "auto_hangar": "When few hangar slots are left it buys one more (about $25,000) so another aircraft can always be bought.",
     "repair_wear_pct": "Wear from which an aircraft is repaired.",
     "check_hours_min": "The A-check is planned when this many hours or fewer are left.",
@@ -220,7 +227,7 @@ HELP_EN = {
     "telegram_checklist": "Game checklist tasks and rewards.",
     "telegram_simulation": "Proposed actions during dry-run mode.",
     "auto_restart": "If the bot stops because of an error, it starts again by itself after 2 minutes (then 4, 8... up to 30).",
-    "dry_run": "Dry run: the bot does everything the same but buys and plans nothing; it only writes what it would do.",
+    "dry_run": "Simulates actions and records proposals without making purchases or changes in the game.",
     "summary_hour": "Hour from which the daily Telegram summary is sent.",
     "cash_sync_seconds": "Every 30 to 600 seconds between runs, refresh the game page and read the real balance, including changes made on mobile. Never opens Selenium from the web thread.",
     "telegram_test": "Sends a test message to check the token and chat id of config/secrets.ini.",

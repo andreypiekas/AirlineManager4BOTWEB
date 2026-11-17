@@ -32,12 +32,11 @@ Em **Parâmetros → Frota**, configure **Permitir aeronaves na mesma rota
 (ida/volta)**:
 
 - **Desativado (padrão):** o bot rejeita novas atribuições repetidas, inclusive
-  com origem/destino invertidos. Para duplicidades existentes no cadastro,
-  calcula alternativas por lucro líquido diário aproximado e prepara
-  redirecionamentos quando a opção **Criar rotas para aeronaves estacionadas**
-  também estiver ativa.
+  com origem/destino invertidos. Quando **Analisar e sugerir correções de rotas
+  repetidas** está ativa, o bot calcula alternativas por lucro líquido diário
+  estimado para as duplicidades já cadastradas.
 - **Ativado:** permite múltiplas aeronaves no mesmo par de aeroportos.
-  Desativa o processo de correção automática de duplicidades.
+  Desativa a análise e a substituição automática dessas rotas.
 
 Entre os aviões que dividem a rota, o controle prefere preservar aquele com
 maior lucro estimado (ou o registro mais antigo quando não houver comparação)
@@ -57,15 +56,32 @@ A mensagem da manutenção distingue agora aeronaves **na base** e
 significa que ela esteja numa base. Encontrar DAC/OSL no seletor de
 bases da companhia também não comprova a base específica daquele avião.
 
-### Alterações de rotas existentes
+### Substituição automática de rotas repetidas
 
-**O redirecionamento real de uma aeronave que já possui rota está
-temporariamente desabilitado.** O formulário `new_route_info.php` é
-o fluxo de **criação de uma nova rota**, e ainda não foi comprovado
-que ele substitui com segurança a rota de uma aeronave já atribuída.
-O bot continuará calculando, simulando e registrando propostas, inclusive
-fora do modo simulação, mas marcará `troca_de_rota_ainda_nao_validada`
-em vez de enviar ordens de compra de nova rota.
+Em **Parâmetros → Frota**, **Substituir rotas repetidas automaticamente**
+corresponde a `[options] reroute_duplicates` e vem desligada (`off`).
+O bot só autoriza uma troca com
+`reroute_duplicates = on`, `analyze_duplicate_routes = on`,
+`allow_duplicate_routes = off` e `dry_run = off`.
+`auto_route` controla separadamente a criação de rotas para aeronaves sem rota.
+
+A substituição pode ter **no máximo uma tentativa real por ciclo**, inclusive
+se a tentativa falhar. Os custos da operação devem respeitar
+`[settings] cash_reserve`. A sequência exige confirmação no jogo em cada etapa.
+
+1. Confirme a aeronave, sua presença na base de origem, a rota atual e o
+   controle nativo **Ground** associado ao ID da rota. Verifique a taxa e
+   a reserva de caixa antes de acionar o controle.
+2. Acione **Ground** e releia o estado da aeronave no jogo. O comando preserva
+   a atribuição original. Só avance após confirmar que a rota foi pausada
+   e que o vínculo foi preservado.
+3. Use o formulário nativo de rota para o destino proposto. Confirme a
+   substituição com uma nova leitura da aeronave que mostre um novo ID de
+   rota e o destino esperado.
+4. Se houver falha, releia o estado no jogo. Recupere a atribuição original
+   somente quando o estado e o controle nativo de recuperação forem
+   verificáveis. Confirme também o resultado da recuperação. Se a
+   confirmação faltar, registre a situação como pendente para revisão.
 
 ### Deixar de criar rotas não interrompe as decolagens
 
@@ -102,8 +118,8 @@ A funcionalidade de criar rotas para aeronaves **sem rota** continua
 independente e exige confirmações do próprio jogo, incluindo simulação,
 custo e validação do formulário de criação.
 
-O modo **Simulação (sem gastos)** calcula e registra propostas, sem enviar
-pedidos de compra ou decolagem.
+Em **Simulação (sem gastos)**, a análise continua a gerar propostas quando
+habilitada. O modo bloqueia pedidos de substituição, compra e decolagem.
 
 
 ### Pré-validação de troca de rota
@@ -120,8 +136,9 @@ IDs ausentes, múltiplos IDs, aeronave em voo e aeroportos divergentes
 **bloqueiam** a pré-validação. Esta consulta nunca envia uma ação de
 aterramento, criação ou modificação de rota.
 
-A substituição real permanece desativada enquanto o fluxo completo de
-aterramento, criação e rollback não for testado no jogo autenticado.
+A pré-validação confirma o vínculo da rota atual. A execução também exige
+comprovar a localização da aeronave e validar os controles e as leituras de
+confirmação da sequência de substituição.
 
 ## Limites conhecidos
 
@@ -231,17 +248,18 @@ seletiva contínua. A configuração não deve ser usada para contornar
 limitações ou regras do serviço.
 
 
-## Motor de planejamento de rotas — evolução de 08/11/2026
+## Motor de planejamento de rotas
 
-A criação automática de rotas e a análise de rotas repetidas passam a ser
-duas operações **independentes**:
+A criação de rotas, a análise de duplicidades e a substituição têm controles
+próprios.
 
 - `auto_route`: efetivamente cria novas rotas para aeronaves sem rota,
   condicionado a orçamento, permissões, alcance, pista e formulário real.
 - `analyze_duplicate_routes`: **ligada por padrão**, mesmo com `auto_route`
-  desligada. Analisa rotas repetidas, pesquisa destinos e grava propostas,
-  porém **nunca altera uma rota existente** sem o fluxo de substituição
-  validado em uma sessão autenticada.
+  desligada. Analisa rotas repetidas, pesquisa destinos e grava propostas.
+- `reroute_duplicates`: **desligada por padrão**. Autoriza a sequência de
+  substituição descrita acima quando a execução está disponível e todas
+  as condições são atendidas.
 - `route_min_profit_gain_pct`: percentual mínimo de aumento estimado
   do lucro diário ao comparar uma alternativa com um lucro atual estimado
   e disponível. Padrão **5%**. Quando não existe estimativa atual confiável,
@@ -275,9 +293,3 @@ Na aba **Rotas e aeronaves**, cada proposta apresenta destino, lucro
 estimado, aumento projetado quando há referência conhecida, data do
 cálculo e estado da pré-validação do ID da rota no jogo. Esses valores
 não representam lucro realizado nem indicam substituição executada.
-
-**Restrição mantida:** a troca automática real continua desabilitada.
-O bot ainda não tem validação de todas as etapas de ground/reroute/rollback
-do jogo; não será usada a criação de nova rota como substituição implícita
-da rota ativa. A opção de despachar aeronaves continua independente das
-configurações de criação/análise de rotas.
