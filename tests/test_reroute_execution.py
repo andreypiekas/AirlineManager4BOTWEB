@@ -16,13 +16,14 @@ from route_registry import RouteRegistry, endpoint
     ("unreadable", ["101"], "troca_requer_verificacao"),
     ("unknown_old", ["101"], "troca_requer_verificacao"),
 ])
-def test_replace_verifies_the_assignment_or_restores_original(tmp_path, monkeypatch, outcome, toggles, expected):
+@pytest.mark.parametrize("codes", [("LAX", "PBM", "MIA"), ("BGF", "TXL", "FNA")])
+def test_replace_verifies_the_assignment_or_restores_original(tmp_path, monkeypatch, outcome, toggles, expected, codes):
     registry = RouteRegistry(tmp_path / "registry.json")
-    origin, old, new = (endpoint(by_code(code).game_id, code) for code in ("LAX", "PBM", "MIA"))
+    origin, old, new = (endpoint(by_code(code).game_id, code) for code in codes)
     row = dict(aircraft_id="5", registration="AB-5", model="Aircraft", origin=origin, destination=old)
     registry.record("5", "AB-5", "Aircraft", origin, old)
     registry.record("6", "AB-6", "Aircraft", origin, old)
-    live = reroute.LiveRoute("101", False, ("LAX", "PBM"), True)
+    live = reroute.LiveRoute("101", False, codes[:2], True)
     journal = tmp_path / "pending.json"
     actions = []
     charges = []
@@ -38,12 +39,12 @@ def test_replace_verifies_the_assignment_or_restores_original(tmp_path, monkeypa
     def game_request(script, *_):
         nonlocal live
         if script == reroute._GET:
-            return True  # Maintenance confirms the aircraft is at a base.
+            pytest.fail("Native reroute must not require membership in the owned hub list")
         submits.append(True)
         if outcome == "rejected":
             return True  # The game's request finished, and the old route is still paused.
         if outcome == "created":
-            live = reroute.LiveRoute("102", False, ("LAX", "MIA"), True)
+            live = reroute.LiveRoute("102", False, (codes[0], codes[2]), True)
         elif outcome == "unreadable":
             live = None
         # WebDriver may lose the response even if the request reached the game.
@@ -55,7 +56,7 @@ def test_replace_verifies_the_assignment_or_restores_original(tmp_path, monkeypa
     )
     monkeypatch.setattr(reroute, "_transaction_path", lambda: journal)
     monkeypatch.setattr(reroute, "_live_route", lambda bot, aircraft: live if aircraft == "5" else
-                        reroute.LiveRoute("103", False, ("PBM", "LAX"), False))
+                        reroute.LiveRoute("103", False, codes[:2], False))
     monkeypatch.setattr(reroute, "_toggle", toggle)
     monkeypatch.setattr(reroute, "_prepare_form", lambda *_: (object(), 100))
     monkeypatch.setattr(reroute.time, "sleep", lambda *_: None)
@@ -67,7 +68,7 @@ def test_replace_verifies_the_assignment_or_restores_original(tmp_path, monkeypa
     assert journal.exists() == (outcome in ("rejected", "unreadable", "unknown_old"))
     assert charges == ([100] if outcome == "created" else [])
     relation = next(x for x in registry.snapshot()["relations"] if x["aircraft_id"] == "5")
-    assert relation["destination"]["code"] == ("MIA" if outcome == "created" else "PBM")
+    assert relation["destination"]["code"] == (codes[2] if outcome == "created" else codes[1])
 
 
 

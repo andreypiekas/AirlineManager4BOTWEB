@@ -69,8 +69,10 @@ A substituição pode ter **no máximo uma tentativa real por ciclo**, inclusive
 se a tentativa falhar. Os custos da operação devem respeitar
 `[settings] cash_reserve`. A sequência exige confirmação no jogo em cada etapa.
 
-1. Confirme a aeronave, sua presença na base de origem, a rota atual e o
-   controle nativo **Ground** associado ao ID da rota. Verifique a taxa e
+1. Confirme a aeronave pousada, seu aeroporto atual, a rota atual e o
+   controle nativo **Ground** associado ao ID da rota. A alternativa é
+   recalculada a partir do aeroporto atual, inclusive fora das bases próprias,
+   e a origem é conferida no formulário nativo **Reroute**. Verifique alcance, taxa e
    a reserva de caixa antes de acionar o controle.
 2. Acione **Ground** e releia o estado da aeronave no jogo. O comando preserva
    a atribuição original. Só avance após confirmar que a rota foi pausada

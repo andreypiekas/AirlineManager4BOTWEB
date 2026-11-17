@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from urllib.parse import parse_qs
 
-from route_registry import RouteRegistry
+from route_registry import RouteRegistry, endpoint, endpoint_matches
 from selective_batch_depart import targeted_depart
 from fleet_single_depart import fleet_dispatch
 from routes_list_depart import route_list_dispatch
@@ -73,6 +73,47 @@ class DispatchDecision:
     registration: str = ""
 
 
+class _ReturnToHubRegistry:
+    """Supply a live return check to every native flow's policy revalidation.
+
+    The callback lives only in dispatch snapshots, never in persisted registry
+    data. Each invocation reads the aircraft again instead of caching approval.
+    The target is an existing proposal's origin, not an inferred company hub.
+    """
+
+    def __init__(self, bot, registry: RouteRegistry):
+        self.bot = bot
+        self.registry = registry
+
+    def __getattr__(self, name):
+        return getattr(self.registry, name)
+
+    def snapshot(self, *, allow_duplicates: bool = True) -> dict:
+        report = self.registry.snapshot(allow_duplicates=allow_duplicates)
+        if getattr(getattr(self.bot, "config", None), "get_bool", lambda *a: False)(
+            "options", "reroute_duplicates", False
+        ):
+            report["_duplicate_return_check"] = self._can_return
+        return report
+
+    def _can_return(self, row: dict) -> bool:
+        from reroute import _live_route
+        from selenium.common.exceptions import WebDriverException
+
+        proposal = row.get("proposal")
+        origin = endpoint(code=proposal.get("origin_code")) if isinstance(proposal, dict) else endpoint()
+        if not origin["code"]:
+            return False
+        try:
+            live = _live_route(self.bot, str(row["aircraft_id"]))
+        except (WebDriverException, KeyError, TypeError, ValueError):
+            return False
+        if not live or not live.landed or live.paused or not live.matches(row):
+            return False
+        departure, arrival = (endpoint(code=code) for code in live.codes)
+        return not endpoint_matches(departure, origin) and endpoint_matches(arrival, origin)
+
+
 def _rank_for_keep(row: dict) -> tuple:
     profit = row.get("profit_per_day")
     return (
@@ -117,9 +158,12 @@ def plan_dispatch(landed_ids: list[str], report: dict, *, now: float | None = No
             reason = "leitura_de_rota_expirada"
         elif aircraft_id in blocked:
             reason = "rota_duplicada_reservada"
+            check_return = report.get("_duplicate_return_check")
+            if callable(check_return) and check_return(row):
+                reason = "retorno_para_redirecionamento"
         else:
             reason = "aprovada"
-        decisions.append(DispatchDecision(aircraft_id, reason == "aprovada",
+        decisions.append(DispatchDecision(aircraft_id, reason in ("aprovada", "retorno_para_redirecionamento"),
                                           reason, registration))
     return decisions
 
@@ -165,7 +209,8 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
     one-plane control, operate in read-only mode and record the blocker.
     """
     landed = collect_dispatch_rows(bot)
-    report = registry.snapshot(allow_duplicates=False)
+    dispatch_registry = _ReturnToHubRegistry(bot, registry)
+    report = dispatch_registry.snapshot(allow_duplicates=False)
     decisions = plan_dispatch([row.get("id") for row in landed], report)
     native = {str(row["id"]): row.get("native_actions") or [] for row in landed}
     eligible = [d for d in decisions if d.approved]
@@ -207,7 +252,7 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
         # link to fleet_details.php?id=<AIRCRAFT_ID>, plus the native
         # #listDepart<ROUTE_ID> button. The action's 'id' is a ROUTE ID.
         # Prefer this provable association over guessing that route_id == plane_id.
-        native_routes = route_list_dispatch(bot, registry, eligible, limit=limit)
+        native_routes = route_list_dispatch(bot, dispatch_registry, eligible, limit=limit)
         summary["mode"] = "seletivo_rotas_fleet"
         summary["status"] = native_routes["status"]
         summary["departed"] = native_routes["departed"]
@@ -221,7 +266,7 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
         # Fallback for game views without a native route-list action.
         # The Fleet-detail button may itself use the route ID, and its
         # conservative verifier will refuse unknown or ambiguous targets.
-        detail = fleet_dispatch(bot, registry, eligible, limit=limit)
+        detail = fleet_dispatch(bot, dispatch_registry, eligible, limit=limit)
         summary["mode"] = "seletivo_fleet"
         summary["status"] = detail["status"]
         summary["departed"] = detail["departed"]
@@ -233,6 +278,8 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
         if experimental:
             # Keep the existing explicit experimental opt-in. Never enable it
             # implicitly; the game's numeric-ID endpoint is not proven safe.
+            # Return exceptions apply only to native individual controls, so
+            # this path rechecks the original registry without that exception.
             result = targeted_depart(bot, registry, eligible)
             summary["mode"] = "seletivo_experimental"
             summary["status"] = result["status"]
@@ -258,7 +305,7 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
             log.warning("Despacho individual: comando mudou para %s. Abortando.", decision.registration)
             break
         # Fresh route evidence and duplicate decisions before each irreversible click.
-        reevaluated = plan_dispatch([decision.aircraft_id], registry.snapshot(allow_duplicates=False))
+        reevaluated = plan_dispatch([decision.aircraft_id], dispatch_registry.snapshot(allow_duplicates=False))
         if len(reevaluated) != 1 or not reevaluated[0].approved:
             log.warning("Despacho individual: %s perdeu elegibilidade. Abortando.", decision.registration)
             break

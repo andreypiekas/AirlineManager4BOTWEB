@@ -32,8 +32,8 @@ from helpers import clean_response, fmt, to_int
 from notify import esc
 from route_optimizer import rank_candidates
 from route_strategy import best_reroute, profitable_candidates
-from route_airports import match_hub_options, code_from_candidate, explain_hub_options
-from airport_catalog import game_code
+from route_airports import HubMatch, match_hub_options, code_from_candidate, explain_hub_options
+from airport_catalog import by_code, game_code
 from route_registry import RouteRegistry, reroute_block_reason, endpoint, route_key
 from reroute import has_pending_reroute, landed_departure, recover_pending, replace_route
 from reroute_preflight import check_existing_route
@@ -48,6 +48,17 @@ log_market = logging.getLogger("am4bot.aviones")
 MAX_ROUTE_TRIES = 16  # compare more profit-ranked destinations, including occupied-route fallbacks
 BIG_SEATS = 150      # from this capacity an aircraft is "big": long routes, goal candidate
 GOAL_SAFETY = 2      # a small aircraft must pay back in less than half the time left to the goal
+
+_LANDED_DUPLICATES_JS = """
+const now = Date.now() / 1000;
+return arguments[0].filter(id => {
+    const entry = window.statusData?.[id];
+    // The game sets arrived=0 once the aircraft is landed.
+    return entry?.routeId > 0 && entry.arrived !== null && entry.arrived !== undefined &&
+        Number.isFinite(Number(entry.arrived)) && Number(entry.arrived) <= now &&
+        Number(entry.grounded) === 0;
+});
+"""
 
 # Everything below reads the game by structure (ids, classes, data attributes, onclick handlers),
 # never by visible text, so the bot works with the game in English, Spanish or any other language.
@@ -453,14 +464,7 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
     if execute:
         # This game snapshot is a scheduling hint. The executor proves the
         # exact route and location again independently before any action.
-        landed = set(bot.js("""
-            const now = Date.now() / 1000;
-            return arguments[0].filter(id => {
-                const entry = window.statusData?.[id];
-                return entry?.routeId > 0 && entry.arrived > 0 &&
-                    entry.arrived <= now && Number(entry.grounded) === 0;
-            });
-        """, [row["aircraft_id"] for row in targets]) or [])
+        landed = set(bot.js(_LANDED_DUPLICATES_JS, [row["aircraft_id"] for row in targets]) or [])
         targets.sort(key=lambda row: (row["aircraft_id"] not in landed,
                                      reroute_block_reason(row, verified_hub=True) is not None))
     for row in targets:
@@ -501,6 +505,15 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
         hub_match = match_hub_options(
             hub_code, current_dest_code, hub_options
         ) if hub_code and current_dest_code else None
+        current_origin = None
+        if execute:
+            departure = landed_departure(bot, row)
+            current_origin = by_code(departure) if departure else None
+            if current_origin:
+                # Native Reroute starts at the aircraft's current airport,
+                # including airports outside the company's owned hubs.
+                opposite = current_dest_code if departure == hub_code else hub_code
+                hub_match = HubMatch(current_origin.game_id, departure, opposite)
         if execute and not hub_match and hub_code and current_dest_code:
             diag = explain_hub_options(hub_code, current_dest_code, hub_options)
             if diag["reason"] == "bases_ambiguas":
@@ -538,7 +551,7 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
             continue
         # The game's hub picker must prove we are searching the same origin
         # as the existing assignment. Never optimize from an unrelated hub.
-        selected = bot.js(
+        selected = current_origin is not None or bot.js(
             "var e=document.getElementById('hubSelect');"
             "if(!e || !Array.from(e.options).some(x=>x.value===arguments[0]))return false;"
             "e.value=arguments[0];e.dispatchEvent(new Event('change',{bubbles:true}));"

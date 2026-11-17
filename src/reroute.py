@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
 
 import paths
 from helpers import fmt, to_int
@@ -60,9 +61,13 @@ const codes = Array.from(panel.querySelectorAll('.row.p-0 > .col-3.m-text > b'),
   e => e.textContent.trim().toUpperCase());
 const counts = panel.querySelectorAll('.row.p-1 > .col-4.px-1.text-right.s-text');
 const fees = panel.querySelectorAll('.text-danger.font-weight-bold');
+const specs = panel.querySelector('.row.py-2 .xs-text')?.textContent || '';
+const range = (specs.match(/([\d,]+)\s*km\//i) || [])[1];
+const distance = panel.querySelector('.row.p-0 > .col-2 > span')?.textContent.trim();
 const prefix = 'new_route_info.php?mode=do&id=' + arguments[0] + '&airportId=' + arguments[1] + '&';
 return {codes, existing: counts.length === 1 ? counts[0].textContent.trim() : null,
   fee: fees.length === 1 ? fees[0].textContent.trim() : null,
+  range, distance,
   bound: Array.from(root.querySelectorAll('script')).some(s => s.textContent.includes(prefix))};
 """
 
@@ -153,6 +158,9 @@ def _prepare_form(bot, aircraft_id, origin, destination):
         return None
     if to_int(form["existing"]) != 0:
         return None
+    distance, max_range = to_int(form.get("distance")), to_int(form.get("range"))
+    if distance is None or max_range is None or distance <= 0 or distance > max_range:
+        return None
     fee = to_int(form["fee"])
     balance = bot.read_money()
     reserve = bot.config.get_int("settings", "cash_reserve", 0)
@@ -162,8 +170,19 @@ def _prepare_form(bot, aircraft_id, origin, destination):
     if len(auto) != 1:
         return None
     bot.click_element(auto[0])
-    buttons = panel.find_elements(By.CSS_SELECTOR, "#btnCreateNewRoute:not(.not-active):not([disabled])")
-    return (buttons[0], fee) if len(buttons) == 1 else None
+    # Native autoprice fills business/first prices on 200/400 ms timers.
+    # Wait for the game's own validation to activate Create route.
+    def ready(driver):
+        prices_ready = driver.execute_script("""
+            return ['eSeat', 'bSeat', 'fSeat'].every(id => {
+                const field = document.getElementById(id);
+                return !!field && (field.disabled || Number(field.value) > 0);
+            });
+        """)
+        buttons = panel.find_elements(By.CSS_SELECTOR, "#btnCreateNewRoute:not(.not-active):not([disabled])")
+        return buttons[0] if prices_ready and len(buttons) == 1 else False
+
+    return WebDriverWait(bot.driver, 5).until(ready), fee
 
 
 def _transaction_path():
@@ -323,8 +342,8 @@ def replace_route(bot, registry, row, origin, destination, *, keeper_id, expecte
         return "troca_duplicidade_nao_confirmada"
     if not endpoint_matches(origin, endpoint(code=first.codes[0])):
         return "troca_aeronave_fora_da_base_de_origem"
-    if not bot.driver.execute_async_script(_GET, f"maint_plan.php?aircraft={aircraft_id}", "base"):
-        return "troca_base_nao_confirmada"
+    # The native reroute form independently verifies this physical origin.
+    # Owned-hub membership does not restrict a landed aircraft's rerouting.
     form = _prepare_form(bot, aircraft_id, origin, destination)
     if not form:
         return "troca_formulario_ou_reserva_indisponivel"
