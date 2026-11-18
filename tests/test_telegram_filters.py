@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import time
 from configparser import ConfigParser
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,7 +69,7 @@ def test_categoria_desativada_nao_enfileira(category):
     bot = bot_with_flags(off=[category])
     assert bot.notify("Mensagem filtrada", category=category) is False
     assert bot.telegram.calls == []
-    other = "errors" if category != "errors" else "fuel"
+    other = "co2" if category == "fuel" else "fuel"
     assert bot.notify("Mensagem permitida", category=other) is True
     assert bot.telegram.calls == [("Mensagem permitida", False)]
 
@@ -93,6 +94,47 @@ def test_mensagens_de_perfis_diferentes_sao_identificadas():
     bot.config.profile = SimpleNamespace(is_main=False, label="Companhia X")
     assert bot.notify("<b>Compra</b>", category="fuel")
     assert bot.telegram.calls == [("[Companhia X] <b>Compra</b>", False)]
+
+
+@pytest.mark.parametrize("category", ["status", "errors"])
+@pytest.mark.parametrize("silent", [False, True])
+@pytest.mark.parametrize("is_main,label,escaped_label", [
+    (True, "principal", "principal"),
+    (False, "Companhia <X>&", "Companhia &lt;X&gt;&amp;"),
+])
+def test_status_e_erros_identificam_origem_com_escape_html(
+    monkeypatch, category, silent, is_main, label, escaped_label,
+):
+    monkeypatch.setattr("bot.socket.gethostname", lambda: "host<&>")
+    monkeypatch.setattr("bot.os.getpid", lambda: 2288164)
+    utc = time.struct_time((2026, 11, 17, 23, 45, 0, 1, 321, 0))
+    monkeypatch.setattr("bot.time.gmtime", lambda: utc)
+    bot = bot_with_flags()
+    bot.config.profile = SimpleNamespace(is_main=is_main, label=label)
+    message = "<b>Bot</b>: erro &lt;serviço&gt;"
+
+    assert bot.notify(message, silent=silent, category=category)
+    assert bot.telegram.calls == [(
+        f"<code>host=host&lt;&amp;&gt; perfil={escaped_label} "
+        f"pid=2288164 utc=2026-11-17T23:45:00Z</code>\n{message}",
+        silent,
+    )]
+
+
+@pytest.mark.parametrize("category", [None, *sorted(CATEGORIES - {"status", "errors"})])
+@pytest.mark.parametrize("is_main", [True, False])
+def test_demais_categorias_e_legado_preservam_texto_sem_metadados(monkeypatch, category, is_main):
+    def unexpected_hostname():
+        pytest.fail("Notificação operacional não deve consultar a origem")
+
+    monkeypatch.setattr("bot.socket.gethostname", unexpected_hostname)
+    bot = bot_with_flags()
+    bot.config.profile = SimpleNamespace(is_main=is_main, label="Companhia <X>&")
+    message = "<b>Ação</b> confirmada"
+
+    assert bot.notify(message, silent=True, category=category)
+    expected = message if is_main else f"[Companhia &lt;X&gt;&amp;] {message}"
+    assert bot.telegram.calls == [(expected, True)]
 
 
 def test_telegram_sem_credenciais_nao_enfileira():

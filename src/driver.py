@@ -24,6 +24,15 @@ log = logging.getLogger("am4bot.app")
 _LINUX_BROWSERS = ("/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome")
 
 
+class _SelectedChromeService(Service):
+    """Keep the factory's selected executable authoritative without changing os.environ."""
+
+    def env_path(self) -> Optional[str]:
+        # Selenium >= 4.26 checks SE_CHROMEDRIVER in both Service.__init__ and
+        # ChromiumDriver.__init__; setting service.path alone is not enough.
+        return None
+
+
 def _system_chrome() -> tuple[Optional[str], Optional[str]]:
     """(chromedriver, browser) installed by the Linux distribution, or (None, None) to let Selenium Manager decide."""
     if os.name == "nt":
@@ -114,10 +123,17 @@ def create_driver(url: str, keep_session: bool = False, headless: bool = False) 
     chromedriver, browser = _selected_chrome()
     if chromedriver:
         options.binary_location = browser
-        log.debug("Usando ChromeDriver do sistema: %s; navegador: %s.", chromedriver, browser)
         output, log_path = _open_driver_log()
         try:
-            service = Service(executable_path=chromedriver, log_output=output)
+            service = _SelectedChromeService(executable_path=chromedriver, log_output=output)
+            service.path = chromedriver
+            inherited_driver = os.environ.get("SE_CHROMEDRIVER")
+            if inherited_driver and inherited_driver != service.path:
+                log.info(
+                    "SE_CHROMEDRIVER herdado ignorado; ChromeDriver efetivo: %s.",
+                    service.path,
+                )
+            log.debug("ChromeDriver efetivo: %s; navegador: %s.", service.path, browser)
             try:
                 driver = webdriver.Chrome(service=service, options=options)
             except Exception:
@@ -125,7 +141,7 @@ def create_driver(url: str, keep_session: bool = False, headless: bool = False) 
                     "Falha ao iniciar ChromeDriver (%s). Confira %s e "
                     "'sudo journalctl -k -n 100 --no-pager'. "
                     "No Ubuntu Snap, teste 'chromedriver --version' com o usuário do serviço.",
-                    chromedriver, log_path,
+                    service.path, log_path,
                 )
                 raise
         finally:

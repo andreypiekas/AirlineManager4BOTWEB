@@ -148,6 +148,10 @@ Se os registros mostrarem `HTTPConnectionPool(host='localhost', port=...)` com `
 
 Se a reinicialização falhar com `Service /usr/bin/chromedriver unexpectedly exited. Status code was: 1`, possíveis causas incluem Chromium Snap, uma sessão de usuário necessária ao Snap indisponível, incompatibilidade entre navegador/driver ou o encerramento do navegador por falta de memória. O código 1 sozinho não determina a causa.
 
+As notificações de status e erro identificam o servidor, o perfil e o PID da execução que as enviou. Compare essa origem com `hostname` e `systemctl show am4bot@principal -p MainPID` antes de relacionar o alerta ao serviço do painel. O reinício automático do navegador pode ocorrer dentro do mesmo processo Python; confira também os horários no journal, mesmo se o PID não mudou.
+
+Quando o bot seleciona um driver local, inclusive pelo par `AM4_CHROMEDRIVER_BINARY` / `AM4_CHROME_BINARY`, esse caminho tem prioridade sobre `SE_CHROMEDRIVER` herdado pelo processo. O log registra o driver efetivamente selecionado. Sem um par local selecionado, a descoberta normal do Selenium é preservada.
+
 O bot atualizado captura a saída do processo ChromeDriver em **`data/logs/chromedriver.log`**, arquivo com permissões 0600. Em perfis adicionais, usa `profiles/NOME/data/logs/chromedriver.log`. O log pode conter detalhes de navegação: remova dados sensíveis antes de compartilhá-lo.
 
 Comandos para diagnóstico, executados no servidor como usuário da instalação:

@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 import re
+import socket
 import threading
 import time
 from dataclasses import dataclass, replace
@@ -339,7 +341,15 @@ class Bot:
         if category and not self.config.get_bool("options", f"telegram_{category}", True):
             return False
         profile = self.config.profile
-        self.telegram.send(text if profile.is_main else f"[{esc(profile.label)}] {text}", silent)
+        if category in ("status", "errors"):
+            origin = (
+                f"host={socket.gethostname()} perfil={profile.label} pid={os.getpid()} "
+                f"utc={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"
+            )
+            text = f"<code>{esc(origin)}</code>\n{text}"
+        elif not profile.is_main:
+            text = f"[{esc(profile.label)}] {text}"
+        self.telegram.send(text, silent)
         return True
 
     def count(self, key: str, amount: int = 1) -> None:
