@@ -86,6 +86,103 @@ def test_ranks_best_viable_candidate_per_hub_in_deterministic_order():
     assert first["hubs"][0]["scenario_count"] == 2
 
 
+def test_newer_observation_supersedes_older_profitable_route_even_if_reversed():
+    older = _scenario(
+        observed_at=NOW - 120,
+        origin=endpoint("456"),
+        destination=endpoint("123"),
+        model="a320",
+        financial={"source": "route_optimizer", "observed_at": NOW - 120,
+                   "profit_per_day": 9000},
+    )
+    newer = _scenario(
+        financial={"source": "route_optimizer", "observed_at": NOW,
+                   "profit_per_day": 2000},
+    )
+    first = _rank(scenarios=[older, newer])
+    reversed_result = _rank(scenarios=[newer, older])
+
+    assert first == reversed_result
+    assert len(first["recommendations"]) == 1
+    assert first["recommendations"][0]["profit_per_day"] == 2000
+    superseded = next(row for row in first["candidates"]
+                      if row["profit_per_day"] == 9000)
+    assert superseded["status"] == "dados_a_confirmar"
+    assert "pesquisa_substituida" in superseded["pending"]
+
+
+def test_conflicting_observations_at_same_time_do_not_recommend_route():
+    first = _scenario(financial={"source": "route_optimizer", "observed_at": NOW,
+                                 "profit_per_day": 2000})
+    conflicting = _scenario(
+        model="a320",
+        financial={"source": "route_optimizer", "observed_at": NOW,
+                   "profit_per_day": 9000},
+    )
+    report = _rank(scenarios=[first, conflicting])
+    reversed_report = _rank(scenarios=[conflicting, first])
+
+    assert report == reversed_report
+    assert report["recommendations"] == []
+    assert len(report["candidates"]) == 2
+    assert all(row["status"] == "dados_a_confirmar" for row in report["candidates"])
+    assert all("pesquisas_conflitantes" in row["pending"] for row in report["candidates"])
+
+
+def test_newest_incomplete_research_blocks_fallback_to_outdated_profitable_data():
+    older = _scenario(
+        observed_at=NOW - 60,
+        financial={"source": "route_optimizer", "observed_at": NOW - 60,
+                   "profit_per_day": 9000},
+    )
+    incomplete = _scenario(demand_verified=False)
+    result = _rank(scenarios=[older, incomplete])
+
+    assert result["recommendations"] == []
+    assert all(row["status"] == "dados_a_confirmar" for row in result["candidates"])
+    assert "pesquisa_substituida" in next(
+        row for row in result["candidates"] if row["profit_per_day"] == 9000
+    )["pending"]
+    assert "demanda_a_confirmar" in next(
+        row for row in result["candidates"] if row["profit_per_day"] == 2500
+    )["pending"]
+
+
+def test_exact_repeated_observation_does_not_create_false_conflict():
+    scenario = _scenario()
+    result = _rank(scenarios=[scenario, deepcopy(scenario)])
+
+    assert len(result["recommendations"]) == 1
+    assert result["recommendations"][0]["status"] == "viavel"
+    assert all(not row["pending"] for row in result["candidates"])
+
+
+def test_equivalent_reverse_route_and_model_case_do_not_create_false_conflict():
+    forward = _scenario()
+    reversed_route = _scenario(
+        model="a320", origin=endpoint("456"), destination=endpoint("123"),
+    )
+    result = _rank(scenarios=[forward, reversed_route])
+
+    assert len(result["recommendations"]) == 1
+    assert all(row["status"] == "viavel" for row in result["candidates"])
+
+
+def test_tied_conflicts_have_stable_order_with_reversed_endpoints_and_model_case():
+    forward = _scenario()
+    reversed_route = _scenario(
+        model="a320", origin=endpoint("456"), destination=endpoint("123"),
+        demand_remaining=200,
+    )
+    first = _rank(scenarios=[forward, reversed_route])
+    second = _rank(scenarios=[reversed_route, forward])
+
+    assert first == second
+    assert first["recommendations"] == []
+    assert all("pesquisas_conflitantes" in row["pending"]
+               for row in first["candidates"])
+
+
 @pytest.mark.parametrize("input_scenarios", [None, [], [None, "bad", 5]])
 def test_empty_or_malformed_scenarios_keep_owned_hubs_pending(input_scenarios):
     result = _rank(hubs=_inventory("123", "789"), scenarios=input_scenarios)

@@ -271,13 +271,17 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
            for row in rows):
         log.warning("Controle de rotas: paginação inconsistente entre linhas; leitura ignorada.")
         return False
-    if page is not None and actual_page is not None and page != actual_page:
+    if page is not None and page != actual_page:
         log.warning("Controle de rotas: página solicitada %s, página exibida %s; leitura ignorada.",
                     page, actual_page)
         return False
-    if total_pages is not None and actual_total is not None and total_pages != actual_total:
+    if total_pages is not None and total_pages != actual_total:
         log.warning("Controle de rotas: paginação mudou de %s para %s; leitura ignorada.",
                     total_pages, actual_total)
+        return False
+    if actual_page is not None and actual_total is not None and actual_page > actual_total:
+        log.warning("Controle de rotas: página %s excede total %s; leitura ignorada.",
+                    actual_page, actual_total)
         return False
     page = actual_page if actual_page is not None else page
     total_pages = actual_total if actual_total is not None else total_pages
@@ -291,7 +295,7 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
     maintenance_seen = 0
     maintenance_at_base = 0
     maintenance_away = 0
-    detected = 0
+    observations = []
     seen_aircraft: set[str] = set()
     for row in rows:
         if not isinstance(row, dict):
@@ -315,15 +319,16 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
             base = grounded[identity]
         origin = endpoint(row.get("origin_id"), row.get("origin_code"))
         destination = endpoint(row.get("destination_id"), row.get("destination_code"))
-        if registry.record(identity, registration, model, origin, destination, at_base=base):
-            detected += 1
-        else:
-            registry.observe(identity, registration, model, at_base=base)
+        observations.append({
+            "aircraft_id": identity, "registration": registration, "model": model,
+            "origin": origin, "destination": destination, "at_base": base,
+        })
     missing = sum(1 for row in rows
                   if isinstance(row, dict) and not ((row.get("origin_id") or row.get("origin_code"))
                           and (row.get("destination_id") or row.get("destination_code"))))
-    registry.record_scan(len(rows), detected, missing,
-                         aircraft_ids=list(seen_aircraft), page=page, total_pages=total_pages)
+    detected = registry.record_scan(len(rows), 0, missing,
+                                    aircraft_ids=list(seen_aircraft), page=page,
+                                    total_pages=total_pages, route_observations=observations)
     if rows:
         log.info(
             "Controle de rotas: %d aeronaves visíveis, %d rotas identificadas, "

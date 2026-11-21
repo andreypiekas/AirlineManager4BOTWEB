@@ -15,11 +15,22 @@ from typing import Optional
 
 import paths
 from airport_catalog import game_code
-from route_registry import RouteRegistry, endpoint
+from route_registry import RouteRegistry
 
 _LOCK = threading.RLock()
 _AIRPORT_ID = re.compile(r"^[0-9]{1,12}$")
 _MAX_ESTIMATE_AGE = 3 * 86400
+
+
+def _hub_id(value: object) -> str:
+    """Normalize a positive game airport ID without accepting arbitrary values."""
+    if isinstance(value, bool) or value is None:
+        return ""
+    raw = str(value).strip()
+    if not _AIRPORT_ID.fullmatch(raw):
+        return ""
+    number = int(raw)
+    return str(number) if number else ""
 
 
 def _current_route_profit(row: dict, now: int) -> Optional[float]:
@@ -50,10 +61,11 @@ class HubRegistry:
         for item in options:
             if not isinstance(item, dict):
                 continue
-            airport_id = str(item.get("id") or "").strip()
-            if not _AIRPORT_ID.fullmatch(airport_id) or int(airport_id) == 0:
+            airport_id = _hub_id(item.get("id"))
+            if not airport_id:
                 continue
-            title = str(item.get("text") or item.get("title") or "").strip()[:160]
+            title = (str(item.get("text") or "").strip()
+                     or str(item.get("title") or "").strip())[:160]
             code = game_code(airport_id, item.get("code"))
             hubs[airport_id] = {"id": airport_id, "code": code, "name": title}
         if not hubs:
@@ -76,15 +88,27 @@ class HubRegistry:
         with _LOCK:
             saved = deepcopy(self._load())
         now = int(time.time() if now is None else now)
-        hubs = saved.get("hubs", [])
-        route_report = routes if routes is not None else RouteRegistry().snapshot()
+        # Older records may contain padded IDs. Normalize them only in the
+        # snapshot so reading a historical registry never rewrites its file.
+        normalized = {}
+        for hub in saved.get("hubs", []):
+            if not isinstance(hub, dict):
+                continue
+            airport_id = _hub_id(hub.get("id"))
+            if airport_id:
+                normalized[airport_id] = {**hub, "id": airport_id}
+        hubs = list(normalized.values())
+        # Hub and route records belong to the same profile/data directory,
+        # even if another profile becomes active after this instance is made.
+        route_report = (routes if routes is not None else
+                        RouteRegistry(self.path.with_name("routes_registry.json")).snapshot())
         relations = route_report.get("relations", [])
         confirmed = {hub["id"]: [] for hub in hubs}
         unknown = []
         for row in relations:
             # Existing route records lack a verified per-aircraft home hub.
             # Only a separate game-confirmed home_hub_id/source pair is sufficient.
-            home_id = str(row.get("home_hub_id") or "")
+            home_id = _hub_id(row.get("home_hub_id"))
             if row.get("home_hub_source") == "game" and home_id in confirmed:
                 confirmed[home_id].append(row)
             else:

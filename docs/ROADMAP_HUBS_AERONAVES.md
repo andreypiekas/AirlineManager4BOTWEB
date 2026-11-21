@@ -68,8 +68,14 @@ bases adquiríveis, a tela mostra **Disponibilidade de compra a verificar**.
 
 **Situação em 21/11/2026.** Inventário e API de hubs, catálogo persistente
 de candidatos, avaliação da próxima aeronave, consultas web e capturas
-desktop/móvel de demonstração estão implementados com testes locais. A
-auditoria de rotas acumula páginas observadas e expõe a cobertura parcial.
+desktop/móvel de demonstração estão implementados com testes locais. O ranking
+prioriza a pesquisa mais recente e identifica conflitos de evidência. A tela
+permite filtrar modelos e ordenar recomendações por lucro ou retorno. A
+auditoria de rotas acumula páginas observadas, grava cada lote em uma operação
+atômica e expõe a cobertura parcial. Um diagnóstico somente leitura permite
+inspecionar fontes do DOM em uma sessão do jogo já autenticada. O catálogo
+de expansão agora trata duplicatas conflitantes, registros legados inválidos
+e leituras incompletas, com desempate por menor investimento.
 A etapa 1 ainda requer homologar o HTML e a navegação no jogo autenticado,
 identificar o vínculo individual de base e obter preços e demanda reais.
 A etapa 4 ainda requer comparação dos registros com a companhia em operação,

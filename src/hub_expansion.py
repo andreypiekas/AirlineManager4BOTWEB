@@ -44,6 +44,43 @@ def _profit(value: object) -> Optional[float]:
     return round(number, 2) if math.isfinite(number) else None
 
 
+def _airport_id(value: object) -> Optional[str]:
+    """Normalize old integer identifiers without admitting arbitrary values."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    airport_id = str(value).strip()
+    return airport_id if _ID.fullmatch(airport_id) else None
+
+
+def _stored_candidates(value: object) -> list[dict]:
+    """Read legacy catalog rows defensively and keep their evidence conservative."""
+    if not isinstance(value, list):
+        return []
+    candidates = {}
+    duplicate_ids = set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        airport_id = _airport_id(raw.get("id"))
+        if airport_id is None or airport_id in duplicate_ids:
+            continue
+        normalized = {
+            **raw,
+            "id": airport_id,
+            "name": str(raw.get("name") or "").strip()[:160],
+            "code": game_code(airport_id, raw.get("code")),
+            "hub_price": _amount(raw.get("hub_price")),
+            "scenario": raw.get("scenario") if isinstance(raw.get("scenario"), dict) else {},
+        }
+        if airport_id in candidates:
+            # Conflicting persisted duplicates cannot be treated as fresh evidence.
+            candidates[airport_id].update({"observed_at": None, "scenario": {}})
+            duplicate_ids.add(airport_id)
+            continue
+        candidates[airport_id] = normalized
+    return list(candidates.values())
+
+
 class HubExpansionRegistry:
     def __init__(self, path: Optional[Path] = None):
         self.path = Path(path) if path is not None else paths.current().data / "hub_expansion.json"
@@ -64,26 +101,34 @@ class HubExpansionRegistry:
         if not isinstance(options, list):
             return False
         incoming = {}
+        incomplete = False
         for item in options:
             if not isinstance(item, dict):
+                incomplete = True
                 continue
-            airport_id = str(item.get("id") or "").strip()
-            if not _ID.fullmatch(airport_id) or item.get("purchasable") is not True:
+            if item.get("purchasable") is not True:
                 continue
-            incoming[airport_id] = {
+            airport_id = _airport_id(item.get("id"))
+            if airport_id is None:
+                incomplete = True
+                continue
+            candidate = {
                 "id": airport_id,
                 "name": str(item.get("name") or "").strip()[:160],
                 "code": game_code(airport_id, item.get("code")),
                 "hub_price": _amount(item.get("hub_price")),
             }
+            if airport_id in incoming and incoming[airport_id] != candidate:
+                return False
+            incoming[airport_id] = candidate
         if not incoming:
             return False
+        verified_complete = complete is True and not incomplete
         with _LOCK:
             current = self._load()
             observed_at = int(time.time())
-            previous = {c["id"]: c for c in current.get("candidates", [])
-                        if isinstance(c, dict) and _ID.fullmatch(str(c.get("id") or ""))}
-            if not complete:
+            previous = {c["id"]: c for c in _stored_candidates(current.get("candidates"))}
+            if not verified_complete:
                 # Legacy records inherited the catalog timestamp. Capture it
                 # before the partial refresh advances the catalog timestamp.
                 for item in previous.values():
@@ -99,21 +144,21 @@ class HubExpansionRegistry:
                                          "observed_at": observed_at}
                             for airport_id, item in incoming.items()}
             current.update({"source": "game_purchase_catalog", "observed_at": observed_at,
-                            "catalog_complete": bool(complete),
+                            "catalog_complete": verified_complete,
                             "candidates": sorted(incoming.values(), key=lambda row: (row.get("code") or "", row["id"]))})
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
 
     def record_research(self, airport_id: str, research: dict) -> bool:
         """Store a game-researched and model-specific projected route scenario."""
-        airport_id = str(airport_id or "").strip()
-        if not _ID.fullmatch(airport_id) or not isinstance(research, dict):
+        airport_id = _airport_id(airport_id)
+        if airport_id is None or not isinstance(research, dict):
             return False
         if research.get("source") != "game_research":
             return False
         with _LOCK:
             current = self._load()
-            candidates = current.get("candidates", [])
+            candidates = _stored_candidates(current.get("candidates"))
             row = next((item for item in candidates if item.get("id") == airport_id), None)
             if row is None:
                 return False
@@ -128,6 +173,7 @@ class HubExpansionRegistry:
                 "hangar_price": _amount(research.get("hangar_price")),
                 "profit_per_day": _profit(research.get("profit_per_day")),
             }
+            current["candidates"] = candidates
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
 
@@ -141,9 +187,11 @@ class HubExpansionRegistry:
         reserve_value = _amount(reserve)
         available = max(0, cash_value - reserve_value) if cash_value is not None and reserve_value is not None else None
         catalog_time = saved.get("observed_at")
+        stored_candidates = _stored_candidates(saved.get("candidates"))
+        owned = {_airport_id(value) for value in (owned_hub_ids or set())}
         candidates = []
-        for raw in saved.get("candidates", []):
-            if not isinstance(raw, dict) or raw.get("id") in (owned_hub_ids or set()):
+        for raw in stored_candidates:
+            if raw["id"] in owned:
                 continue
             row = {k: raw.get(k) for k in ("id", "name", "code", "hub_price")}
             scenario = raw.get("scenario") if isinstance(raw.get("scenario"), dict) else {}
@@ -156,7 +204,7 @@ class HubExpansionRegistry:
             investment = round(sum(valid_costs), 2) if all(v is not None for v in valid_costs) else None
             profit = _profit(scenario.get("profit_per_day"))
             research_time = scenario.get("observed_at")
-            fresh_research = (isinstance(research_time, int) and
+            fresh_research = (type(research_time) is int and
                               0 <= now - research_time <= MAX_AGE_SECONDS)
             ready = (catalog_fresh and fresh_research and scenario.get("source") == "game_research"
                      and scenario.get("route_feasible") is True and scenario.get("demand_verified") is True
@@ -176,8 +224,9 @@ class HubExpansionRegistry:
             candidates.append(row)
         candidates.sort(key=lambda row: (row["status"] != "viavel",
                                          -(row["profit_per_day"] or 0) if row["status"] == "viavel" else 0,
+                                         row["investment"] if row["status"] == "viavel" else float("inf"),
                                          row.get("code") or "", row.get("id") or ""))
         return {"candidates": candidates, "source": saved.get("source"),
-                "observed_at": catalog_time, "catalog_complete": saved.get("catalog_complete", False),
+                "observed_at": catalog_time, "catalog_complete": saved.get("catalog_complete") is True,
                 "available_cash": available, "cash": cash_value, "reserve": reserve_value,
-                "availability_pending": not bool(saved.get("candidates"))}
+                "availability_pending": not bool(stored_candidates)}

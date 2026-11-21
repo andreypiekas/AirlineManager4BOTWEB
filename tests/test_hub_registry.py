@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+import paths
 from hub_registry import HubRegistry
 from route_registry import RouteRegistry, endpoint
 
@@ -23,6 +24,60 @@ def test_hub_selector_keeps_empty_hubs_and_rejects_placeholder(tmp_path):
     assert not hubs.record_options([])
     assert not hubs.record_options([{"id": "0"}])
     assert len(hubs.snapshot({"relations": []})["hubs"]) == 2
+
+
+def test_hub_ids_are_canonical_and_blank_selector_text_uses_title(tmp_path):
+    registry = HubRegistry(tmp_path / "hubs.json")
+    assert registry.record_options([
+        {"id": "000123", "text": "  ", "title": "  Chapecó ", "code": " xap "},
+        {"id": "123", "text": " ", "title": "Chapecó", "code": "XAP"},
+    ])
+    snapshot = registry.snapshot({"relations": [
+        {"aircraft_id": "1", "home_hub_id": 123, "home_hub_source": "game"},
+    ]})
+    assert len(snapshot["hubs"]) == 1
+    assert snapshot["hubs"][0]["id"] == "123"
+    assert snapshot["hubs"][0]["name"] == "Chapecó"
+    assert snapshot["hubs"][0]["code"] == "XAP"
+    assert snapshot["hubs"][0]["aircraft_count"] == 1
+
+
+def test_legacy_hub_ids_are_read_without_rewriting_saved_data(tmp_path):
+    filename = tmp_path / "hubs.json"
+    legacy = {"source": "game_hub_select", "observed_at": 123456,
+              "hubs": [{"id": "000123", "code": "XAP", "name": "Chapecó"}]}
+    filename.write_text(json.dumps(legacy), encoding="utf-8")
+    registry = HubRegistry(filename)
+    report = registry.snapshot({"relations": [
+        {"aircraft_id": "1", "home_hub_id": " 123 ", "home_hub_source": "game"},
+    ]})
+    assert report["hubs"][0]["id"] == "123"
+    assert report["hubs"][0]["aircraft_count"] == 1
+    assert json.loads(filename.read_text(encoding="utf-8")) == legacy
+
+
+def test_snapshot_reads_routes_from_the_same_profile_as_its_hubs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    first = paths.Profile("first")
+    second = paths.Profile("second")
+    first_hubs = HubRegistry(first.data / "hubs_registry.json")
+    second_hubs = HubRegistry(second.data / "hubs_registry.json")
+    assert first_hubs.record_options([{"id": "123", "text": "A"}])
+    assert second_hubs.record_options([{"id": "123", "text": "B"}])
+
+    for profile, registration in ((first, "PP-FIRST"), (second, "PP-SECOND")):
+        route_path = profile.data / "routes_registry.json"
+        route_registry = RouteRegistry(route_path)
+        route_registry.record(registration, registration, "A320", endpoint("123"), endpoint("456"))
+        saved = json.loads(route_path.read_text(encoding="utf-8"))
+        saved["aircraft"][registration].update({"home_hub_id": "123", "home_hub_source": "game"})
+        route_path.write_text(json.dumps(saved), encoding="utf-8")
+
+    monkeypatch.setattr(paths, "_current", second)
+    first_report = first_hubs.snapshot()
+    second_report = second_hubs.snapshot()
+    assert [row["registration"] for row in first_report["hubs"][0]["aircraft"]] == ["PP-FIRST"]
+    assert [row["registration"] for row in second_report["hubs"][0]["aircraft"]] == ["PP-SECOND"]
 
 
 def test_route_endpoints_do_not_assign_an_aircraft_to_a_hub(tmp_path):

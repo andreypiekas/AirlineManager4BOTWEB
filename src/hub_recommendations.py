@@ -50,6 +50,12 @@ MAX_CASH_AGE_SECONDS = 900
 _HUB_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _FINANCIAL_SOURCES = {"route_optimizer", "game_research"}
 _COST_SOURCES = {"game_market", "game_research"}
+_RESEARCH_EVIDENCE_FIELDS = (
+    "source", "observed_at", "distance_km", "range_km", "runway_m",
+    "required_runway_m", "demand_remaining", "demand_verified",
+    "range_verified", "runway_verified", "route_feasible", "route_available",
+    "stopover", "financial", "costs",
+)
 
 
 def _number(value: object, *, positive: bool = False) -> Optional[float]:
@@ -106,7 +112,12 @@ def _ordering(row: dict) -> tuple:
     return (-profit if profit is not None else float("inf"),
             row["investment"] if row["investment"] is not None else float("inf"),
             row["hub_code"], row["hub_id"], row["model"].casefold(),
-            row["route_key"] or "", -(_number(row.get("observed_at")) or 0))
+            row["route_key"] or "", -(_number(row.get("observed_at")) or 0),
+            row["model"],
+            *(row[side][field] for side in ("origin", "destination")
+              for field in ("id", "code", "name", "normalized_name")),
+            str(row["financial_source"]), str(row["costs_source"]),
+            tuple(row["pending"]))
 
 
 def rank_next_aircraft(
@@ -156,6 +167,7 @@ def rank_next_aircraft(
                        and all(isinstance(item, dict) for item in relations))
     known_routes = relations if relations_known else []
     candidates = []
+    observations_by_route = {}
     raw_scenarios = scenarios if isinstance(scenarios, Iterable) and not isinstance(
         scenarios, (str, bytes, dict)) else []
     for scenario in raw_scenarios:
@@ -274,7 +286,7 @@ def rank_next_aircraft(
             status = "viavel"
         return_days = (investment / profit if investment is not None and profit is not None
                        and profit > 0 else None)
-        candidates.append({
+        candidate = {
             "hub_id": hub_id, "hub_code": hub["code"], "hub_name": hub["name"],
             "model": aircraft_model, "route_key": key,
             "origin": origin, "destination": destination,
@@ -285,7 +297,42 @@ def rank_next_aircraft(
             if status == "viavel" and _number(return_days) is not None else None,
             "status": status, "pending": sorted(set(missing)),
             "financial_source": financial.get("source"), "costs_source": costs.get("source"),
-        })
+        }
+        candidates.append(candidate)
+        if key and aircraft_model:
+            identity = (hub_id, aircraft_model.casefold(), key)
+            observations_by_route.setdefault(identity, []).append((candidate, scenario))
+
+    # A later game observation replaces an earlier one for the same hub,
+    # aircraft model and undirected route. Conflicting observations with the
+    # exact same timestamp cannot establish which research is authoritative.
+    for observations in observations_by_route.values():
+        if len(observations) < 2:
+            continue
+        latest = max(
+            row["observed_at"] if row["observed_at"] is not None else float("-inf")
+            for row, _ in observations
+        )
+        latest_observations = [
+            scenario for row, scenario in observations
+            if (row["observed_at"] if row["observed_at"] is not None
+                else float("-inf")) == latest
+        ]
+        conflicting = any(
+            scenario.get(field) != latest_observations[0].get(field)
+            for scenario in latest_observations[1:]
+            for field in _RESEARCH_EVIDENCE_FIELDS
+        )
+        for row, _ in observations:
+            observed_at = row["observed_at"]
+            reason = ("pesquisa_substituida"
+                      if observed_at is None or observed_at < latest else
+                      "pesquisas_conflitantes" if conflicting else None)
+            if reason:
+                row["pending"] = sorted(set([*row["pending"], reason]))
+                if row["status"] == "viavel":
+                    row["status"] = "dados_a_confirmar"
+                    row["payback_days"] = None
 
     status_rank = {"viavel": 0, "saldo_insuficiente": 1, "sem_lucro": 2,
                    "rota_inviavel": 3, "rota_ocupada": 4,

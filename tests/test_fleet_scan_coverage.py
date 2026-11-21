@@ -9,6 +9,7 @@ import pytest
 import route_registry
 from fleet import _ROUTE_AUDIT_JS, audit_routes, audit_routes_rolling
 from route_registry import RouteRegistry
+from route_registry import endpoint
 
 
 def _row(aircraft_id, page=1, total_pages=4, destination="GRU"):
@@ -123,6 +124,61 @@ def test_empty_or_inconsistent_page_is_not_counted_as_rolling_coverage(tmp_path)
     bot.rows = [_row(101, page=1), _row(102, page=2)]
     assert audit_routes(bot, registry) is False
     assert registry.snapshot()["total"] == 0
+
+
+def test_rolling_audit_requires_explicit_page_and_total_evidence(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes.json")
+
+    class Bot:
+        def __init__(self, row):
+            self.row = row
+
+        def js(self, _script):
+            return [self.row]
+
+    for missing_field in ("scan_page", "scan_total_pages"):
+        row = _row(101, page=1, total_pages=2)
+        row[missing_field] = None
+        assert audit_routes_rolling(Bot(row), registry, total_pages=2,
+                                    load_page=lambda _page: True) == []
+        assert registry.snapshot()["total"] == 0
+        assert registry.snapshot()["scan_coverage"] is None
+
+
+def test_audit_persists_complete_page_in_one_atomic_write(tmp_path, monkeypatch):
+    registry = RouteRegistry(tmp_path / "routes.json")
+    assert registry.record("101", "PP-101", "A320", endpoint(code="XAP"),
+                           endpoint(code="GRU"), profit_per_day=125)
+
+    writes = []
+    original_save = registry._save
+
+    def capture_save(data):
+        writes.append(data["last_scan"].copy())
+        original_save(data)
+
+    monkeypatch.setattr(registry, "_save", capture_save)
+
+    class Bot:
+        def js(self, _script):
+            unverified = _row(102, destination="")
+            unverified["origin_code"] = ""
+            return [_row(101, destination="FLN"), unverified, _row(101, destination="FLN")]
+
+    assert audit_routes(Bot(), registry)
+    assert len(writes) == 1
+    assert {key: writes[0][key] for key in ("visible", "identified", "missing_airports")} == {
+        "visible": 3, "identified": 1, "missing_airports": 1,
+    }
+
+    snapshot = registry.snapshot()
+    assert snapshot["total"] == 2
+    assert snapshot["scan_coverage"]["unique_aircraft"] == 2
+    aircraft = {row["aircraft_id"]: row for row in snapshot["relations"]}
+    assert aircraft["101"]["destination"]["code"] == "FLN"
+    assert "profit_per_day" not in aircraft["101"]
+    assert aircraft["102"]["status"] == "rota_nao_identificada"
+    assert sum(item["action"] == "rota_alterada" for item in snapshot["history"]) == 1
 
 
 def test_duplicate_ids_on_one_page_only_record_once(tmp_path):

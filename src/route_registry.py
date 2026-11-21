@@ -143,6 +143,78 @@ class RouteRegistry:
     def _save(self, data: dict) -> None:
         paths.write_atomic(self.path, json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
 
+    @staticmethod
+    def _record_in(data: dict, aircraft_id: str, registration: str, model: str,
+                   origin: dict, destination: dict, *, source: str = "game",
+                   profit_per_day: Optional[float] = None, at_base: Optional[bool] = None,
+                   stopover: Optional[dict] = None, now: int) -> None:
+        previous = data["aircraft"].get(aircraft_id, {})
+        entry = dict(previous)
+        key = route_key(origin, destination)
+        entry.update({
+            "aircraft_id": aircraft_id,
+            "registration": str(registration or previous.get("registration") or aircraft_id),
+            "model": str(model or previous.get("model") or "?"),
+            "origin": origin,
+            "destination": destination,
+            "route_key": key,
+            "source": source,
+            "status": "ativa" if previous.get("route_key") != key else previous.get("status", "ativa"),
+            "last_seen": now,
+        })
+        if profit_per_day is not None:
+            entry["profit_per_day"] = round(float(profit_per_day), 2)
+            entry["profit_route_key"] = key
+            entry["profit_estimated_at"] = now
+        elif previous.get("route_key") != key:
+            entry.pop("profit_per_day", None)
+            entry.pop("profit_route_key", None)
+            entry.pop("profit_estimated_at", None)
+        if stopover is not None:
+            entry["stopover"] = stopover
+        if at_base is not None:
+            entry["at_base"] = bool(at_base)
+            if at_base and source == "game":
+                entry["grounded_confirmed_at"] = now
+            elif not at_base:
+                entry.pop("grounded_confirmed_at", None)
+        if source in ("game", "redirecionamento"):
+            entry["game_verified_at"] = now
+        if not previous or previous.get("route_key") != key:
+            entry["assigned_at"] = now
+            entry.pop("proposal", None)
+            if stopover is None:
+                entry.pop("stopover", None)
+            data["history"].append({
+                "at": now, "aircraft_id": aircraft_id,
+                "registration": entry["registration"],
+                "action": "rota_registrada" if not previous else "rota_alterada",
+                "previous": previous.get("route_key"), "route": key, "source": source,
+            })
+            data["history"] = data["history"][-_MAX_HISTORY:]
+        data["aircraft"][aircraft_id] = entry
+
+    @staticmethod
+    def _observe_in(data: dict, aircraft_id: str, registration: str, model: str,
+                    at_base: Optional[bool], now: int) -> None:
+        previous = data["aircraft"].get(aircraft_id, {})
+        entry = dict(previous)
+        entry.update({
+            "aircraft_id": aircraft_id,
+            "registration": str(registration or previous.get("registration") or aircraft_id),
+            "model": str(model or previous.get("model") or "?"),
+            "last_seen": now,
+        })
+        if not previous:
+            entry["status"] = "rota_nao_identificada"
+        if at_base is not None:
+            entry["at_base"] = bool(at_base)
+            if at_base:
+                entry["grounded_confirmed_at"] = now
+            else:
+                entry.pop("grounded_confirmed_at", None)
+        data["aircraft"][aircraft_id] = entry
+
     def record(self, aircraft_id: str, registration: str, model: str,
                origin: dict, destination: dict, *, source: str = "game",
                profit_per_day: Optional[float] = None, at_base: Optional[bool] = None,
@@ -153,49 +225,9 @@ class RouteRegistry:
             return False
         with _LOCK:
             data = _state(self.path)
-            previous = data["aircraft"].get(aircraft_id, {})
-            entry = dict(previous)
-            entry.update({
-                "aircraft_id": aircraft_id,
-                "registration": str(registration or previous.get("registration") or aircraft_id),
-                "model": str(model or previous.get("model") or "?"),
-                "origin": origin,
-                "destination": destination,
-                "route_key": route_key(origin, destination),
-                "source": source,
-                "status": "ativa" if previous.get("route_key") != route_key(origin, destination) else previous.get("status", "ativa"),
-                "last_seen": int(time.time()),
-            })
-            if profit_per_day is not None:
-                entry["profit_per_day"] = round(float(profit_per_day), 2)
-                entry["profit_route_key"] = entry["route_key"]
-                entry["profit_estimated_at"] = int(time.time())
-            elif previous.get("route_key") != entry["route_key"]:
-                entry.pop("profit_per_day", None)
-                entry.pop("profit_route_key", None)
-                entry.pop("profit_estimated_at", None)
-            if stopover is not None:
-                entry["stopover"] = stopover
-            if at_base is not None:
-                entry["at_base"] = bool(at_base)
-                if at_base and source == "game":
-                    entry["grounded_confirmed_at"] = int(time.time())
-                elif not at_base:
-                    entry.pop("grounded_confirmed_at", None)
-            if source in ("game", "redirecionamento"):
-                entry["game_verified_at"] = int(time.time())
-            if not previous or previous.get("route_key") != entry["route_key"]:
-                entry["assigned_at"] = int(time.time())
-                entry.pop("proposal", None)
-                if stopover is None:
-                    entry.pop("stopover", None)
-                data["history"].append({
-                    "at": int(time.time()), "aircraft_id": aircraft_id,
-                    "registration": entry["registration"], "action": "rota_registrada" if not previous else "rota_alterada",
-                    "previous": previous.get("route_key"), "route": entry["route_key"], "source": source,
-                })
-                data["history"] = data["history"][-_MAX_HISTORY:]
-            data["aircraft"][aircraft_id] = entry
+            self._record_in(data, aircraft_id, registration, model, origin, destination,
+                            source=source, profit_per_day=profit_per_day, at_base=at_base,
+                            stopover=stopover, now=int(time.time()))
             self._save(data)
             return True
 
@@ -207,23 +239,7 @@ class RouteRegistry:
             return False
         with _LOCK:
             data = _state(self.path)
-            previous = data["aircraft"].get(aircraft_id, {})
-            entry = dict(previous)
-            entry.update({
-                "aircraft_id": aircraft_id,
-                "registration": str(registration or previous.get("registration") or aircraft_id),
-                "model": str(model or previous.get("model") or "?"),
-                "last_seen": int(time.time()),
-            })
-            if not previous:
-                entry["status"] = "rota_nao_identificada"
-            if at_base is not None:
-                entry["at_base"] = bool(at_base)
-                if at_base:
-                    entry["grounded_confirmed_at"] = int(time.time())
-                else:
-                    entry.pop("grounded_confirmed_at", None)
-            data["aircraft"][aircraft_id] = entry
+            self._observe_in(data, aircraft_id, registration, model, at_base, int(time.time()))
             self._save(data)
             return True
 
@@ -319,16 +335,38 @@ class RouteRegistry:
     def record_scan(self, visible: int, identified: int, missing_airports: int, *,
                     aircraft_ids: Optional[list[str]] = None,
                     page: Optional[int] = None,
-                    total_pages: Optional[int] = None) -> None:
+                    total_pages: Optional[int] = None,
+                    route_observations: Optional[list[dict]] = None) -> int:
         """Persist the audit outcome even if no aircraft route was identified.
 
-        Does not change any existing assignment; the panel can explain why
-        the last attempt produced no new route relations. Page coverage is a
-        rolling observation, never proof that the changing fleet was fully read.
+        When route observations are supplied, update the visible aircraft and
+        scan coverage in one atomic file write. Without them, preserve existing
+        assignments. Coverage remains a rolling, partial observation.
         """
         with _LOCK:
             data = _state(self.path)
             now = int(time.time())
+            if route_observations is not None:
+                identified = 0
+                processed: set[str] = set()
+                for row in route_observations:
+                    if not isinstance(row, dict):
+                        continue
+                    identity = str(row.get("aircraft_id") or "").strip()
+                    if not identity or identity in processed:
+                        continue
+                    processed.add(identity)
+                    registration = row.get("registration") or identity
+                    model = row.get("model") or ""
+                    origin = row.get("origin") or {}
+                    destination = row.get("destination") or {}
+                    at_base = row.get("at_base")
+                    if route_key(origin, destination) is not None:
+                        self._record_in(data, identity, registration, model, origin, destination,
+                                        at_base=at_base, now=now)
+                        identified += 1
+                    else:
+                        self._observe_in(data, identity, registration, model, at_base, now)
             data["last_scan"] = {
                 "at": now,
                 "visible": max(0, int(visible)),
@@ -391,6 +429,7 @@ class RouteRegistry:
                 })
                 data["scan_coverage"] = coverage
             self._save(data)
+            return identified
 
     @staticmethod
     def _valid_page(raw: object) -> Optional[int]:

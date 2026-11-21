@@ -590,6 +590,18 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <h2 data-t="Próxima aeronave por base">Próxima aeronave por base</h2>
         <p id="hubRecommendationsStatus" role="status" aria-live="polite"></p>
         <p id="hubRecommendationsScope" class="hub-section-note"></p>
+        <div class="hubs-controls">
+          <label class="hubs-field"><span data-t="Filtrar por modelo">Filtrar por modelo</span>
+            <select id="hubRecommendationModel" aria-controls="hubRecommendationsGrid">
+              <option value="" data-t="Todos os modelos">Todos os modelos</option>
+            </select></label>
+          <label class="hubs-field"><span data-t="Ordenar recomendações">Ordenar recomendações</span>
+            <select id="hubRecommendationSort" aria-controls="hubRecommendationsGrid">
+              <option value="profit" data-t="Maior lucro estimado/dia">Maior lucro estimado/dia</option>
+              <option value="payback" data-t="Menor prazo de retorno">Menor prazo de retorno</option>
+            </select></label>
+        </div>
+        <p id="hubRecommendationsCount" class="hub-section-note" role="status" aria-live="polite"></p>
         <div class="hubs-grid" id="hubRecommendationsGrid" aria-label="Recomendações por base" data-t-aria-label="Recomendações por base"></div>
       </div>
       <div class="hub-card hub-subsection">
@@ -713,6 +725,10 @@ const EN = {
   "identificadas": "identified", "Estimativas pendentes": "Pending estimates",
   "Consulta do hub": "Hub checked", "Saldo conferido em": "Balance checked at",
   "Próxima aeronave por base": "Next aircraft by hub", "Recomendações por base": "Recommendations by hub",
+  "Filtrar por modelo": "Filter by model", "Todos os modelos": "All models",
+  "Ordenar recomendações": "Sort recommendations", "Recomendações exibidas": "Recommendations shown",
+  "Nenhuma recomendação corresponde ao modelo selecionado.": "No recommendations match the selected model.",
+  "Saldo a confirmar.": "Cash balance pending verification.",
   "Cenários aprovados": "Approved scenarios", "Bases analisadas": "Hubs analysed",
   "Nenhuma base adquirida identificada.": "No owned hubs identified.",
   "Aguardando pesquisa de demanda, custos e rotas no jogo.": "Awaiting game research for demand, costs and routes.",
@@ -1273,6 +1289,68 @@ function sortHubCandidates(rows, order) {
   if (order === "name") { return [...rows].sort(hubCompareName); }
   return [...rows];
 }
+function hubRecommendationModels(candidates) {
+  const models = new Map();
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    const model = typeof candidate?.model === "string" ? candidate.model.trim() : "";
+    const key = hubSearchText(model);
+    if (key && !models.has(key)) { models.set(key, model); }
+  }
+  return [...models.values()].sort((a, b) => a.localeCompare(b, LANG === "en" ? "en" : "pt-BR"));
+}
+function compareHubRecommendationRows(a, b, order) {
+  const firstViable = a.candidate?.status === "viavel";
+  const secondViable = b.candidate?.status === "viavel";
+  if (firstViable !== secondViable) { return firstViable ? -1 : 1; }
+  const metrics = order === "payback"
+    ? [["payback_days", true], ["profit_per_day", false]]
+    : [["profit_per_day", false], ["payback_days", true]];
+  for (const [metric, ascending] of metrics) {
+    const first = a.candidate?.[metric], second = b.candidate?.[metric];
+    const firstKnown = Number.isFinite(first) && (metric !== "payback_days" || first > 0);
+    const secondKnown = Number.isFinite(second) && (metric !== "payback_days" || second > 0);
+    if (firstKnown !== secondKnown) { return firstKnown ? -1 : 1; }
+    if (firstKnown && first !== second) { return ascending ? first - second : second - first; }
+  }
+  const hubOrder = hubCompareName(a.hub, b.hub);
+  if (hubOrder) { return hubOrder; }
+  const modelOrder = String(a.candidate?.model || "").localeCompare(String(b.candidate?.model || ""), LANG === "en" ? "en" : "pt-BR");
+  if (modelOrder) { return modelOrder; }
+  const routeOrder = String(a.candidate?.route_key || "").localeCompare(String(b.candidate?.route_key || ""));
+  if (routeOrder) { return routeOrder; }
+  return (b.candidate?.observed_at || 0) - (a.candidate?.observed_at || 0);
+}
+function hubRecommendationRows(report, model, order) {
+  const hubs = Array.isArray(report.hubs) ? report.hubs : [];
+  const candidates = Array.isArray(report.candidates) ? report.candidates : [];
+  const selectedModel = hubSearchText(String(model || "").trim());
+  const byHub = new Map();
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object" ||
+        (selectedModel && hubSearchText(String(candidate.model || "").trim()) !== selectedModel)) {
+      continue;
+    }
+    const id = String(candidate.hub_id);
+    if (!byHub.has(id)) { byHub.set(id, []); }
+    byHub.get(id).push(candidate);
+  }
+  const rows = [];
+  for (const hub of hubs) {
+    const matching = byHub.get(String(hub.id)) || [];
+    if (!matching.length && hub.recommendation && (!selectedModel ||
+      hubSearchText(String(hub.recommendation.model || "").trim()) === selectedModel)) {
+      matching.push(hub.recommendation);
+    }
+    if (matching.length) {
+      const ranked = matching.map(candidate => ({hub, candidate}));
+      ranked.sort((a, b) => compareHubRecommendationRows(a, b, order));
+      rows.push(ranked[0]);
+    } else if (!selectedModel) {
+      rows.push({hub, candidate: null});
+    }
+  }
+  return rows.sort((a, b) => compareHubRecommendationRows(a, b, order));
+}
 function addHubMetric(list, label, value) {
   const item = document.createElement("div");
   const term = document.createElement("dt"); term.textContent = tr(label);
@@ -1448,22 +1526,40 @@ function renderHubExpansion(report) {
 function renderHubRecommendations(report) {
   const grid = $("hubRecommendationsGrid"); grid.replaceChildren();
   const hubs = Array.isArray(report.hubs) ? report.hubs : [];
+  const candidates = Array.isArray(report.candidates) ? report.candidates : [];
+  const modelControl = $("hubRecommendationModel");
+  const previouslySelected = modelControl.value;
+  const models = hubRecommendationModels(candidates);
+  const selectedModel = models.find(model => hubSearchText(model) === hubSearchText(previouslySelected));
+  if (previouslySelected && !selectedModel) { models.push(previouslySelected); }
+  modelControl.replaceChildren();
+  const allModels = document.createElement("option");
+  allModels.value = ""; allModels.textContent = tr("Todos os modelos");
+  modelControl.append(allModels);
+  for (const model of models) {
+    const option = document.createElement("option");
+    option.value = model; option.textContent = model; modelControl.append(option);
+  }
+  modelControl.value = selectedModel || previouslySelected;
+  const rows = hubRecommendationRows(report, modelControl.value, $("hubRecommendationSort").value);
+  $("hubRecommendationsCount").textContent = tr("Recomendações exibidas") + ": " + rows.length + " / " + hubs.length;
   const approved = Array.isArray(report.recommendations) ? report.recommendations.length : 0;
   $("hubRecommendationsStatus").textContent = tr("Cenários aprovados") + ": " + approved +
     " · " + tr("Bases analisadas") + ": " + hubs.length;
-  $("hubRecommendationsScope").textContent = tr("Aguardando pesquisa de demanda, custos e rotas no jogo.") +
-    " " + tr("Saldo conferido em") + ": " + hubDate(report.cash_observed_at) + ".";
+  $("hubRecommendationsScope").textContent =
+    (candidates.length ? "" : tr("Aguardando pesquisa de demanda, custos e rotas no jogo.") + " ") +
+    (report.cash_observed_at ? tr("Saldo conferido em") + ": " + hubDate(report.cash_observed_at) + "."
+      : tr("Saldo a confirmar."));
   const labels = {viavel: "Recomendação disponível", saldo_insuficiente: "Saldo insuficiente",
     sem_lucro: "Sem lucro", rota_ocupada: "Rota ocupada", rota_indisponivel: "Rota indisponível",
     rota_inviavel: "Rota inviável", dados_a_confirmar: "Dados a confirmar"};
-  for (const hub of hubs) {
+  for (const {hub, candidate} of rows) {
     const card = document.createElement("article"); card.className = "hub-card";
     const heading = document.createElement("h3"); heading.textContent = hubName(hub);
     const state = document.createElement("span"); state.className = "hub-state";
-    state.dataset.state = hub.status === "viavel" ? "viavel" : "dados_a_confirmar";
-    state.textContent = tr(labels[hub.status] || "Dados a confirmar");
-    const candidate = hub.recommendation || (Array.isArray(report.candidates)
-      ? report.candidates.find(row => row.hub_id === hub.id) : null);
+    const status = candidate?.status || hub.status || "dados_a_confirmar";
+    state.dataset.state = status;
+    state.textContent = tr(labels[status] || "Dados a confirmar");
     const metrics = document.createElement("dl"); metrics.className = "hub-metrics";
     if (candidate) {
       const route = airportLabel(candidate.origin) + " ↔ " + airportLabel(candidate.destination);
@@ -1492,9 +1588,11 @@ function renderHubRecommendations(report) {
     }
     grid.append(card);
   }
-  if (!hubs.length) {
+  if (!rows.length) {
     const empty = document.createElement("p"); empty.className = "hub-empty";
-    empty.textContent = tr("Nenhuma base adquirida identificada."); grid.append(empty);
+    empty.textContent = modelControl.value ? tr("Nenhuma recomendação corresponde ao modelo selecionado.")
+      : tr("Nenhuma base adquirida identificada.");
+    grid.append(empty);
   }
 }
 async function loadHubs() {
@@ -1538,8 +1636,14 @@ async function loadHubRecommendations() {
     hubRecommendationsReport = null;
     $("hubRecommendationsStatus").textContent = tr("Não foi possível consultar recomendações.");
     $("hubRecommendationsScope").textContent = "";
+    $("hubRecommendationsCount").textContent = "";
     $("hubRecommendationsGrid").replaceChildren();
   }
+}
+for (const id of ["hubRecommendationModel", "hubRecommendationSort"]) {
+  $(id).addEventListener("change", () => {
+    if (hubRecommendationsReport) { renderHubRecommendations(hubRecommendationsReport); }
+  });
 }
 for (const id of ["hubsSearch", "hubsSort"]) {
   $(id).addEventListener(id === "hubsSearch" ? "input" : "change", () => {
