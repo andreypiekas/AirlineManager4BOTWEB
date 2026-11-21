@@ -15,6 +15,7 @@ import re
 import socket
 import threading
 import time
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, Optional
@@ -60,6 +61,7 @@ log_telegram = logging.getLogger("am4bot.telegram")
 
 # Fuel and CO2 prices change every 30 minutes: buy at most once per price window.
 PRICE_WINDOW_SECONDS = 1800
+PROBE_MIN_IDLE_SECONDS = 5.0
 
 COUNTER_KEYS = ("fuel_bought", "fuel_spent", "co2_bought", "co2_spent", "departures", "routes", "aircraft", "repairs", "checks",
                 "hangar", "campaigns", "campaign_spent", "seats", "seats_spent", "mods", "mods_spent")
@@ -137,6 +139,9 @@ class Bot:
         self._stats_lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self._probe_condition = threading.Condition()
+        self._probe_request: Optional[Future] = None
+        self._probe_ready = False
         self._thread: Optional[threading.Thread] = None
         self.history = PriceHistory()
         self._dry_windows: dict[str, int] = {}
@@ -172,10 +177,52 @@ class Bot:
             self.state = BotState.STOPPING
         self._stop.set()
         self._wake.set()
+        with self._probe_condition:
+            self._probe_condition.notify_all()
 
     def run_now(self) -> None:
         """Skip the remaining wait and start the next cycle immediately."""
         self._wake.set()
+        with self._probe_condition:
+            self._probe_condition.notify_all()
+
+    def request_game_source_probe(self, timeout: float = 3.0) -> tuple[str, Optional[dict]]:
+        """Queue one read-only diagnostic exclusively for the idle bot worker.
+
+        HTTP threads never read Selenium. A busy cycle, unavailable session,
+        concurrent request or expired wait returns a generic status immediately.
+        """
+        if threading.current_thread() is self._thread:
+            return "busy", None
+        with self._probe_condition:
+            if (not self._probe_ready or self._probe_request is not None
+                    or not self.is_alive() or self.driver is None
+                    or self.state != BotState.RUNNING or self._stop.is_set()
+                    or self._wake.is_set()):
+                return "busy", None
+            request = Future()
+            self._probe_request = request
+            self._probe_condition.notify_all()
+        try:
+            return request.result(timeout=timeout)
+        except FutureTimeout:
+            request.cancel()
+            return "timeout", None
+
+    def _execute_game_source_probe(self, request: Future) -> None:
+        """Run the diagnostic on the Selenium-owning worker thread only."""
+        outcome: tuple[str, Optional[dict]] = ("unavailable", None)
+        try:
+            if (threading.current_thread() is self._thread and not self._stop.is_set()
+                    and not self._wake.is_set() and self.driver is not None
+                    and self.state == BotState.RUNNING and self._is_logged_in(timeout=0)):
+                from game_source_probe import probe_game_sources
+
+                outcome = ("ok", probe_game_sources(self))
+        except Exception:
+            # Driver exceptions sometimes embed the page URL, cookie or session ID.
+            outcome = ("unavailable", None)
+        request.set_result(outcome)
 
     def is_alive(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
@@ -624,23 +671,60 @@ class Bot:
         self.next_cycle_at = time.time() + seconds
         log.info("Próxima verificação em %d min %02d s%s.", seconds // 60, seconds % 60, reason)
         deadline = time.monotonic() + seconds
+        interval = max(30, min(600, self.config.get_int("settings", "cash_sync_seconds", 60)))
+        next_cash_check = time.monotonic() + interval
         try:
+            with self._probe_condition:
+                self._probe_ready = True
             while not self._stop.is_set():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
+                if self._wake.is_set() or time.monotonic() >= deadline:
                     break
-                interval = max(30, min(600, self.config.get_int("settings", "cash_sync_seconds", 60)))
-                # A user-requested run, or shutdown, must interrupt the wait.
-                if self._wake.wait(min(remaining, interval)):
+                request = None
+                with self._probe_condition:
+                    if self._probe_request is None and not self._wake.is_set() and not self._stop.is_set():
+                        remaining = max(0.0, min(deadline, next_cash_check) - time.monotonic())
+                        self._probe_condition.wait(remaining)
+                    if self._wake.is_set() or self._stop.is_set():
+                        break
+                    if self._probe_request is not None:
+                        queued = self._probe_request
+                        self._probe_request = None
+                        if queued.set_running_or_notify_cancel():
+                            # Leave the scheduled cycle and cash sync their time window.
+                            if min(deadline, next_cash_check) - time.monotonic() < PROBE_MIN_IDLE_SECONDS:
+                                queued.set_result(("busy", None))
+                            else:
+                                self._probe_ready = False
+                                request = queued
+                if request is not None:
+                    try:
+                        self._execute_game_source_probe(request)
+                    finally:
+                        with self._probe_condition:
+                            self._probe_ready = True
+                    continue
+                if time.monotonic() >= deadline:
                     break
-                if self._stop.is_set() or self._wake.is_set() or deadline - time.monotonic() <= 0:
-                    break
-                try:
-                    self._sync_cash_from_game()
-                except _SOFT_ERRORS as exc:
-                    log_money.warning("Não consegui sincronizar o caixa (%s); tentarei novamente.", exc.__class__.__name__)
-                # Fatal browser disconnections must propagate to _run's restart path.
+                if time.monotonic() >= next_cash_check:
+                    with self._probe_condition:
+                        self._probe_ready = False
+                    try:
+                        self._sync_cash_from_game()
+                    except _SOFT_ERRORS as exc:
+                        log_money.warning("Não consegui sincronizar o caixa (%s); tentarei novamente.", exc.__class__.__name__)
+                    finally:
+                        with self._probe_condition:
+                            self._probe_ready = True
+                    # Cash reads and probes stay on the same worker thread.
+                    interval = max(30, min(600, self.config.get_int("settings", "cash_sync_seconds", 60)))
+                    next_cash_check = time.monotonic() + interval
         finally:
+            with self._probe_condition:
+                self._probe_ready = False
+                pending = self._probe_request
+                self._probe_request = None
+                if pending is not None and pending.set_running_or_notify_cancel():
+                    pending.set_result(("busy", None))
             self._wake.clear()
             self.next_cycle_at = None
 

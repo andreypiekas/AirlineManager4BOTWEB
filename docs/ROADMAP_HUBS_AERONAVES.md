@@ -73,7 +73,9 @@ prioriza a pesquisa mais recente e identifica conflitos de evidência. A tela
 permite filtrar modelos e ordenar recomendações por lucro ou retorno. A
 auditoria de rotas acumula páginas observadas, grava cada lote em uma operação
 atômica e expõe a cobertura parcial. Um diagnóstico somente leitura permite
-inspecionar fontes do DOM em uma sessão do jogo já autenticada. O catálogo
+inspecionar fontes do DOM em uma sessão do jogo já autenticada, pela seção
+recolhível da tela e por uma API administrativa autenticada. Essa consulta é
+enfileirada para o thread do próprio bot durante uma espera entre ciclos. O catálogo
 de expansão agora trata duplicatas conflitantes, registros legados inválidos
 e leituras incompletas, com desempate por menor investimento.
 A etapa 1 ainda requer homologar o HTML e a navegação no jogo autenticado,

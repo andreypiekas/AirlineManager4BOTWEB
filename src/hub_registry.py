@@ -60,14 +60,24 @@ class HubRegistry:
         hubs = {}
         for item in options:
             if not isinstance(item, dict):
-                continue
-            airport_id = _hub_id(item.get("id"))
+                return False
+            raw_id = item.get("id")
+            airport_id = _hub_id(raw_id)
             if not airport_id:
+                if (isinstance(raw_id, bool)
+                        or raw_id is not None and not isinstance(raw_id, (str, int))
+                        or str(raw_id or "").strip() not in {"", "0"}):
+                    # A malformed non-placeholder option makes the snapshot
+                    # incomplete, so never replace the last verified catalog.
+                    return False
                 continue
             title = (str(item.get("text") or "").strip()
                      or str(item.get("title") or "").strip())[:160]
             code = game_code(airport_id, item.get("code"))
-            hubs[airport_id] = {"id": airport_id, "code": code, "name": title}
+            hub = {"id": airport_id, "code": code, "name": title}
+            if airport_id in hubs and hubs[airport_id] != hub:
+                return False
+            hubs[airport_id] = hub
         if not hubs:
             return False
         with _LOCK:

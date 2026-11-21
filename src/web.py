@@ -9,6 +9,7 @@ assets/web/index.html and a JSON API:
 * POST /api/settings          {"settings": {key: int}, "options": {key: bool}, "text": {key: str}}
 * POST /api/control           {"action": "start" | "stop" | "run_now" | "quit"}  (quit: stop the bot and close
                               the program; used by scripts/web_parar.ps1)
+* POST /api/admin/game-source-probe  authorized, read-only snapshot of the active game's DOM
 
 Safety: by default it only listens on 127.0.0.1. To open it to the local network ([web] host = 0.0.0.0)
 a token is required ([web] token in config/secrets.ini); without one the server stays on 127.0.0.1.
@@ -198,6 +199,27 @@ class WebDashboard:
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
         )
 
+    def game_source_probe(self) -> tuple[int, dict]:
+        """Ask the bot worker to read its own game session during an idle wait."""
+        try:
+            result, report = self.bot.request_game_source_probe()
+            if result == "ok" and isinstance(report, dict):
+                return HTTPStatus.OK, {"ok": True, "report": report}
+            if result == "busy":
+                return HTTPStatus.CONFLICT, {
+                    "ok": False, "message": "Bot ocupado. Tente novamente entre os ciclos."
+                }
+            if result == "timeout":
+                return HTTPStatus.GATEWAY_TIMEOUT, {
+                    "ok": False, "message": "Tempo limite do diagnóstico excedido."
+                }
+        except Exception:
+            # The HTTP boundary never logs exceptions or sensitive driver details.
+            pass
+        return HTTPStatus.SERVICE_UNAVAILABLE, {
+            "ok": False, "message": "Não foi possível consultar a sessão atual."
+        }
+
     def update_routes(self, payload: dict) -> tuple[bool, str]:
         """Manual registry corrections are auditable and never change routes in-game."""
         if payload.get("action") != "register":
@@ -322,14 +344,18 @@ class WebDashboard:
                 pass
 
             # -- access control
-            def _allowed(self) -> bool:
+            def _allowed(self, *, require_token: bool = False,
+                         allow_query_token: bool = True) -> bool:
                 token = dashboard.cfg.web_token
                 if token:
-                    query = parse_qs(urlparse(self.path).query).get("token", [""])[0]
+                    query = (parse_qs(urlparse(self.path).query).get("token", [""])[0]
+                             if allow_query_token else "")
                     cookies = dict(part.strip().split("=", 1) for part in (self.headers.get("Cookie") or "").split(";")
                                    if "=" in part)
                     given = query or cookies.get(COOKIE, "") or self.headers.get("X-Token", "")
                     return hmac.compare_digest(given.encode(), token.encode())
+                if require_token:
+                    return False
                 host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
                 return _is_loopback(host)
 
@@ -384,7 +410,11 @@ class WebDashboard:
                 self._send(HTTPStatus.NOT_FOUND, b"Not found", "text/plain")
 
             def do_POST(self) -> None:  # noqa: N802 - http.server API
-                if not self._allowed() or self.headers.get("X-AM4") != "1":
+                path = urlparse(self.path).path
+                admin_probe = path == "/api/admin/game-source-probe"
+                if (not self._allowed(require_token=admin_probe,
+                                      allow_query_token=not admin_probe)
+                        or self.headers.get("X-AM4") != "1"):
                     return self._deny()
                 length = parse_int(self.headers.get("Content-Length", "0")) or 0
                 if length > MAX_BODY:
@@ -395,7 +425,11 @@ class WebDashboard:
                     return self._json({"ok": False, "message": "JSON inválido."}, 400)
                 if not isinstance(payload, dict):
                     return self._json({"ok": False, "message": "JSON inválido."}, 400)
-                path = urlparse(self.path).path
+                if admin_probe:
+                    if payload:
+                        return self._json({"ok": False, "message": "Envie um objeto JSON vazio."}, 400)
+                    status, report = dashboard.game_source_probe()
+                    return self._json(report, status)
                 if path == "/api/settings":
                     ok, message = dashboard.update_settings(payload)
                 elif path == "/api/routes":

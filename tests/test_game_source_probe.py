@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+from html.parser import HTMLParser
 
 import pytest
 
@@ -58,6 +59,7 @@ def test_running_bot_is_read_once_and_untrusted_fields_are_removed():
     assert report["sources"]["owned_hub_options"]["attribute_presence"]["value"] is True
     assert report["sources"]["fleet_routes"]["linked_aircraft_ids"] == ["24133209"]
     assert report["status_data"]["numeric_ids"] == ["999"]
+    assert report["sources"]["owned_hub_options"]["id_parseable_nodes"] is None
     assert "custom_source" not in report["sources"]
     assert secret not in json.dumps(report)
 
@@ -94,8 +96,10 @@ def test_existing_bot_js_entrypoint_works_with_driver_without_game_login():
     bot = Bot.__new__(Bot)
     bot.driver = Driver()
     report = probe_game_sources(bot)
-    assert report["pagination"] == {
-        "current_page": 2, "total_pages": 4, "evidence_conflict": False}
+    assert report["pagination"]["current_page"] == 2
+    assert report["pagination"]["total_pages"] == 4
+    assert report["pagination"]["evidence_conflict"] is False
+    assert not any(report["pagination"]["evidence"].values())
     assert bot.driver.calls == [PROBE_JS]
 
 
@@ -143,15 +147,24 @@ def test_malicious_response_cannot_inject_page_values_or_secrets():
                         "linked_aircraft_id_count": 60,
                         "numeric_ids": [secret] * 43 + ["77", "78"],
                         "numeric_id_count": 53,
+                        "id_parseable_nodes": secret,
                         "pagination": {"raw": secret}}},
                     "pagination": {"current_page": secret, "total_pages": True,
-                                   "evidence_conflict": secret, "raw": secret},
+                                   "evidence_conflict": secret, "raw": secret,
+                                   "evidence": {"popup_present": "true",
+                                                "active_page_numeric": True,
+                                                "secret": secret}},
                     "status_data": {"numeric_ids": [secret, "7"]},
                     "secret": secret}
 
     report = probe_game_sources(Bot())
-    assert report["pagination"] == {
-        "current_page": None, "total_pages": None, "evidence_conflict": False}
+    assert report["pagination"]["current_page"] is None
+    assert report["pagination"]["total_pages"] is None
+    assert report["pagination"]["evidence_conflict"] is False
+    assert report["pagination"]["evidence"]["popup_present"] is False
+    assert report["pagination"]["evidence"]["active_page_numeric"] is True
+    assert "secret" not in report["pagination"]["evidence"]
+    assert report["sources"]["fleet_routes"]["id_parseable_nodes"] is None
     assert report["sources"]["fleet_routes"]["linked_aircraft_ids"] == ["42", "43"]
     assert report["sources"]["fleet_routes"]["linked_aircraft_ids_truncated"] is True
     assert report["sources"]["fleet_routes"]["numeric_ids"] == ["77", "78"]
@@ -227,6 +240,7 @@ globalThis.window = Object.freeze({
     assert "SECRET_" not in result.stdout
     assert raw["sources"]["owned_hub_options"]["numeric_ids"] == ["123", "456"]
     assert raw["sources"]["owned_hub_options"]["count"] == 3
+    assert raw["sources"]["owned_hub_options"]["id_parseable_nodes"] == 2
     assert raw["sources"]["owned_hub_options"]["attribute_presence"]["data-iata"] is True
     assert raw["sources"]["aircraft_catalog"]["numeric_ids"] == ["785", "786"]
     assert raw["sources"]["fleet_routes"]["numeric_ids"] == ["36562620"]
@@ -236,8 +250,18 @@ globalThis.window = Object.freeze({
     assert raw["sources"]["research_results"]["numeric_ids"] == ["789"]
     assert raw["sources"]["routes_active_page"]["numeric_ids"] == ["2"]
     assert raw["sources"]["fleet_popup"]["count"] == 1
-    assert raw["pagination"] == {"current_page": 2, "total_pages": 4,
-                                 "evidence_conflict": False}
+    assert raw["pagination"]["current_page"] == 2
+    assert raw["pagination"]["total_pages"] == 4
+    assert raw["pagination"]["evidence_conflict"] is False
+    assert raw["pagination"]["evidence"] == {
+        "popup_present": True,
+        "pagination_present": True,
+        "active_page_present": True,
+        "current_page_attribute_numeric": True,
+        "active_page_numeric": True,
+        "total_pages_attribute_numeric": True,
+        "loading_indicator_present": False,
+    }
     assert raw["status_data"]["count"] == 4
     assert raw["status_data"]["numeric_ids"] == ["24133209", "24133210"]
 
@@ -288,6 +312,123 @@ globalThis.window = {statusData: null};
     assert response.returncode == 0, response.stderr
     assert "secret_password" not in response.stdout
     report = json.loads(response.stdout)
-    assert report["pagination"] == {"current_page": None, "total_pages": None,
-                                    "evidence_conflict": True}
+    assert report["pagination"]["current_page"] is None
+    assert report["pagination"]["total_pages"] is None
+    assert report["pagination"]["evidence_conflict"] is True
+    assert report["pagination"]["evidence"]["active_page_numeric"] is True
     assert report["sources"]["routes_active_page"]["numeric_ids"] == ["2"]
+
+
+def test_static_game_html_fixture_requires_explicit_hub_ids_and_reports_loader(tmp_path):
+    if not shutil.which("node"):
+        pytest.skip("Node.js is required to run the embedded DOM probe")
+
+    # Fragment shaped like the known 2026-11-17 AM4 route-list HTML. An option
+    # without value gets its text as the implicit .value in real browsers.
+    html = """
+    <div id="popContent" data-current-page="2" data-total-pages="4">
+      <nav class="pagination" data-total-pages="4">
+        <a class="active" data-page="2">2</a>
+      </nav>
+      <div class="row listDepartable" id="routeMainList36562620">
+        <a onclick="Ajax('fleet_details.php?id=24265127','detailsAction')">PP-141-4</a>
+      </div>
+      <img src="/assets/loader.svg">
+    </div>
+    <select id="hubSelect">
+      <option>789</option>
+      <option value="123">XAP</option>
+      <option value="123">XAP duplicate</option>
+      <option value="SECRET_TOKEN">Secret label</option>
+    </select>
+    """
+
+    class GameFixture(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.popup = {}
+            self.pagination = {}
+            self.active = None
+            self.in_active = False
+            self.row = {}
+            self.link = {}
+            self.options = []
+            self.option = None
+            self.loader = {}
+
+        def handle_starttag(self, tag, attributes):
+            attrs = dict(attributes)
+            if attrs.get("id") == "popContent":
+                self.popup = attrs
+            elif tag == "nav" and "pagination" in attrs.get("class", "").split():
+                self.pagination = attrs
+            elif tag == "a" and "active" in attrs.get("class", "").split():
+                self.active = {"attrs": attrs, "text": ""}
+                self.in_active = True
+            elif attrs.get("id", "").startswith("routeMainList"):
+                self.row = attrs
+            elif tag == "a" and "fleet_details.php" in attrs.get("onclick", ""):
+                self.link = attrs
+            elif tag == "img" and "loader" in attrs.get("src", ""):
+                self.loader = attrs
+            elif tag == "option":
+                self.option = {"attrs": attrs, "text": ""}
+                self.options.append(self.option)
+
+        def handle_data(self, data):
+            if self.option is not None:
+                self.option["text"] += data
+            if self.in_active:
+                self.active["text"] += data
+
+        def handle_endtag(self, tag):
+            if tag == "option":
+                self.option = None
+            elif tag == "a":
+                self.in_active = False
+
+    fixture = GameFixture()
+    fixture.feed(html)
+    assert fixture.link["onclick"].startswith("Ajax('fleet_details.php?id=24265127")
+    nodes = {
+        "#popContent": [{"attrs": fixture.popup}],
+        "#popContent .pagination": [{"attrs": fixture.pagination}],
+        "#popContent .pagination .active, #popContent .pagination [aria-current='page']": [
+            fixture.active],
+        "#popContent [id^='routeMainList']": [
+            {"attrs": fixture.row, "link": fixture.link}],
+        "#popContent img[src*='loader']": [{"attrs": fixture.loader}],
+        "#hubSelect option": fixture.options,
+    }
+    js = "const fixture = " + json.dumps(nodes) + ";\n" + r"""
+function node(entry) {
+  const attrs = entry.attrs;
+  return {
+    id: attrs.id || '',
+    value: attrs.value || entry.text || '',
+    textContent: entry.text || '',
+    getAttribute: key => Object.prototype.hasOwnProperty.call(attrs, key) ? attrs[key] : null,
+    hasAttribute: key => Object.prototype.hasOwnProperty.call(attrs, key),
+    querySelector: key => key === "a[onclick*='fleet_details.php']" && entry.link ?
+      node({attrs: entry.link}) : null
+  };
+}
+globalThis.document = {querySelectorAll: selector => (fixture[selector] || []).map(node)};
+globalThis.window = {statusData: null};
+""" + "\nconsole.log(JSON.stringify((new Function(" + json.dumps(PROBE_JS) + "))()));\n"
+    path = tmp_path / "game_fixture.js"
+    path.write_text(js, encoding="utf-8")
+    result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "SECRET_TOKEN" not in result.stdout
+    raw = json.loads(result.stdout)
+    report = probe_game_sources(type("Bot", (), {"js": lambda self, _script: raw})())
+    assert report["sources"]["owned_hub_options"]["count"] == 4
+    assert report["sources"]["owned_hub_options"]["numeric_ids"] == ["123"]
+    assert report["sources"]["owned_hub_options"]["id_parseable_nodes"] == 2
+    assert report["sources"]["fleet_routes"]["numeric_ids"] == ["36562620"]
+    assert report["sources"]["fleet_routes"]["linked_aircraft_ids"] == ["24265127"]
+    assert report["pagination"]["current_page"] == 2
+    assert report["pagination"]["total_pages"] == 4
+    assert report["pagination"]["evidence_conflict"] is False
+    assert all(report["pagination"]["evidence"].values())

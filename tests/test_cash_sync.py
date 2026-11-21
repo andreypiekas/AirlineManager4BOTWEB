@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from selenium.common.exceptions import WebDriverException
 
+import bot as bot_module
 from bot import Bot, Stats
 from dashboard import snapshot
 from settings_schema import ALL_FIELDS, clamp_settings
@@ -48,6 +49,9 @@ def bot_for_cash(*, money=1000, driver=None, interval=60):
     bot.driver = driver or Driver()
     bot._stop = threading.Event()
     bot._wake = threading.Event()
+    bot._probe_condition = threading.Condition()
+    bot._probe_request = None
+    bot._probe_ready = False
     bot._stats_lock = threading.Lock()
     bot._stats = Stats(money=money)
     bot._next_event = None
@@ -106,31 +110,27 @@ def test_valor_estimado_apos_compra_nao_finge_ser_leitura_do_jogo():
     assert bot.stats().money_read_at is None
 
 
-def test_durante_espera_sincroniza_sem_disparar_ciclo():
+def test_durante_espera_sincroniza_sem_disparar_ciclo(monkeypatch):
     bot = bot_for_cash()
     calls = []
+    elapsed = [100.0]
+    monkeypatch.setattr(bot_module, "time", SimpleNamespace(
+        time=lambda: elapsed[0], monotonic=lambda: elapsed[0]))
 
-    class Wake:
-        def __init__(self):
-            self.ticks = 0
-            self.cleared = False
+    def advance_wait(timeout):
+        assert 0 < timeout <= 60
+        elapsed[0] += timeout
 
-        def wait(self, timeout):
-            assert 0 < timeout <= 60
-            self.ticks += 1
-            return self.ticks == 2
+    monkeypatch.setattr(bot._probe_condition, "wait", advance_wait)
 
-        def is_set(self):
-            return False
+    def sync_and_wake():
+        calls.append("refresh")
+        bot.run_now()
 
-        def clear(self):
-            self.cleared = True
-
-    bot._wake = Wake()
-    bot._sync_cash_from_game = lambda: calls.append("refresh")
+    bot._sync_cash_from_game = sync_and_wake
     bot._sleep_until_next_cycle()
     assert calls == ["refresh"]
-    assert bot._wake.cleared
+    assert not bot._wake.is_set()
     assert bot.next_cycle_at is None
     assert bot.driver.calls == 0
 

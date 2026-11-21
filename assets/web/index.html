@@ -399,6 +399,16 @@ footer strong { font-weight: 600; color: var(--aqua); }
 .hub-state[data-state="saldo_insuficiente"] { color:var(--warn); border-color:#876541; }
 .hub-state[data-state="sem_lucro"] { color:var(--bad); border-color:#834e49; }
 .hub-empty { padding:14px; border:1px dashed var(--border-strong); color:var(--muted); font-size:12px; }
+.hub-probe > summary { margin:-6px -4px 0; padding:10px 4px; font-size:14px; }
+.hub-probe-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin:14px 0; }
+.hub-probe-actions button { min-height:42px; }
+.hub-probe-actions p { margin:0; flex:1 1 200px; overflow-wrap:anywhere; }
+.hub-probe-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:9px; margin:12px 0; }
+.hub-probe-grid > div { min-width:0; padding:10px 12px; background:var(--panel-hi); border:1px solid var(--border); }
+.hub-probe-grid dt { color:var(--muted); font-size:11px; }
+.hub-probe-grid dd { margin:6px 0 0; font:700 12px/1.6 "Cascadia Mono", Consolas, monospace; overflow-wrap:anywhere; }
+.hub-probe [data-state="error"] { color:var(--bad); }
+.hub-probe [data-state="success"] { color:var(--signal); }
 @media (max-width:600px) {
   .hubs-section { padding:12px; }
   .hubs-header { align-items:stretch; }
@@ -408,6 +418,9 @@ footer strong { font-weight: 600; color: var(--aqua); }
   .hubs-field { width:100%; }
   .hub-card { padding:14px; }
   .hub-card .hub-metrics { gap:8px; }
+  .hub-probe-actions { display:grid; grid-template-columns:minmax(0,1fr); }
+  .hub-probe-actions button { width:100%; }
+  .hub-probe-grid { grid-template-columns:minmax(0,1fr); }
 }
 @media (max-width:950px) { .route-notes {grid-template-columns:1fr;} .route-manual {grid-template-columns:1fr;} }
 </style>
@@ -632,6 +645,20 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <p id="hubExpansionCount" class="hub-section-note" role="status" aria-live="polite"></p>
         <div class="hubs-grid" id="hubExpansionGrid" aria-label="Candidatos a novos hubs" data-t-aria-label="Candidatos a novos hubs"></div>
       </div>
+      <details class="hub-card hub-subsection hub-probe" id="gameSourceProbePanel">
+        <summary data-t="Diagnóstico de fontes do jogo">Diagnóstico de fontes do jogo</summary>
+        <p class="hub-section-note" data-t="Consulta manual somente de leitura da tela atual do jogo. Nenhuma operação será executada no jogo.">Consulta manual somente de leitura da tela atual do jogo. Nenhuma operação será executada no jogo.</p>
+        <div class="hub-probe-actions">
+          <button id="gameSourceProbeRun" type="button" class="primary" aria-controls="gameSourceProbeResults" data-t="Verificar fontes agora">Verificar fontes agora</button>
+          <p id="gameSourceProbeStatus" role="status" aria-live="polite" aria-atomic="true" data-t="Aguardando verificação manual.">Aguardando verificação manual.</p>
+        </div>
+        <div id="gameSourceProbeResults" hidden aria-label="Resultado do diagnóstico" data-t-aria-label="Resultado do diagnóstico">
+          <p id="gameSourceProbeSummary" class="hub-section-note hub-coverage"></p>
+          <dl id="gameSourceProbeSources" class="hub-probe-grid"></dl>
+          <p id="gameSourceProbePagination" class="hub-section-note"></p>
+          <p id="gameSourceProbeEvidence" class="hub-section-note"></p>
+        </div>
+      </details>
     </section>
   </main>
 </div>
@@ -674,6 +701,32 @@ const EN = {
   "Visão geral": "Overview", "Registro operacional": "Operations log", "Parâmetros": "Parameters",
   "Hubs e Aeronaves": "Hubs & Aircraft", "HUBS E AERONAVES": "HUBS & AIRCRAFT",
   "INVENTÁRIO / LEITURA": "INVENTORY / READ ONLY", "BASES ADQUIRIDAS": "OWNED HUBS",
+  "Diagnóstico de fontes do jogo": "Game source diagnostics",
+  "Consulta manual somente de leitura da tela atual do jogo. Nenhuma operação será executada no jogo.":
+    "Manual read-only check of the current game screen. No game operations will be performed.",
+  "Verificar fontes agora": "Check sources now", "Resultado do diagnóstico": "Diagnostic results",
+  "Aguardando verificação manual.": "Waiting for a manual check.",
+  "Consultando fontes da tela atual…": "Checking sources on the current screen…",
+  "Verificação concluída.": "Check completed.",
+  "Acesso negado. Verifique a autorização no painel.": "Access denied. Check dashboard authorization.",
+  "O jogo está ocupado. Tente novamente.": "Game is busy. Try again.",
+  "Tempo esgotado. Verifique se o jogo está carregado.": "Timed out. Check that the game has loaded.",
+  "Sessão do jogo indisponível. Verifique o bot.": "Game session unavailable. Check the bot.",
+  "Não foi possível verificar as fontes do jogo.": "Could not check the game sources.",
+  "Fontes visíveis": "Visible sources", "Elementos": "Elements", "IDs distintos": "Unique IDs",
+  "Com ID": "With ID", "Estado do jogo": "Game state", "Página": "Page", "de": "of",
+  "Página atual não identificada": "Current page unknown", "Total de páginas não identificado": "Total pages unknown",
+  "Evidência contraditória de paginação": "Conflicting pagination evidence",
+  "Paginação sem conflito identificado": "No pagination conflict detected",
+  "Evidências": "Evidence", "Nenhuma evidência adicional de paginação.": "No additional pagination evidence.",
+  "Janela da frota": "Fleet window", "Paginação visível": "Pagination visible",
+  "Página ativa visível": "Active page visible", "Número da página no painel": "Page number on panel",
+  "Página ativa numérica": "Numeric active page", "Total de páginas numérico": "Numeric total pages",
+  "Carregamento em andamento": "Loading in progress", "Bases adquiridas no seletor": "Owned hubs in selector",
+  "Bases disponíveis para compra": "Hubs available to purchase", "Catálogo de aeronaves": "Aircraft catalog",
+  "Rotas da frota": "Fleet routes", "Aeronaves estacionadas": "Parked aircraft",
+  "Atributos de hub da frota": "Fleet hub attributes", "Atributos de aeronaves da frota": "Fleet aircraft attributes",
+  "Resultados de pesquisa": "Research results",
   "Bases identificadas pelo seletor do jogo. Vínculos de aeronaves aguardam confirmação individual.": "Hubs identified by the game selector. Aircraft assignments require individual confirmation.",
   "Última leitura": "Last read", "Aguardando leitura de bases no jogo.": "Waiting for hub data from the game.",
   "Aeronaves confirmadas": "Confirmed aircraft", "Rotas com estimativa": "Routes with estimates",
@@ -821,16 +874,24 @@ function setLanguage(lang) {
   for (const e of document.querySelectorAll("[data-t-aria-label]")) { e.setAttribute("aria-label", tr(e.dataset.tAriaLabel)); }
   if (hubInventoryReport) { renderHubs(hubInventoryReport); }
   if (hubExpansionReport) { renderHubExpansion(hubExpansionReport); }
+  if (gameSourceProbeReport) {
+    renderGameSourceProbe(gameSourceProbeReport);
+    showGameSourceProbeStatus("Verificação concluída.", "success");
+  } else if (gameSourceProbeFailure) {
+    showGameSourceProbeStatus(gameSourceProbeFailure, "error");
+  } else if (gameSourceProbeLoading) {
+    showGameSourceProbeStatus("Consultando fontes da tela atual…", "pending");
+  }
   return true;
 }
 
-async function api(path, body) {
+async function api(path, body, withStatus = false) {
   const options = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json", "X-AM4": "1"},
                                            body: JSON.stringify(body)};
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({ok: false, message: tr("Resposta inválida")}));
   if (!response.ok && data.ok === undefined) { data.ok = false; }
-  return data;
+  return withStatus ? {status: response.status, data} : data;
 }
 
 // ------------------------------------------------------------------ status tiles
@@ -1671,6 +1732,131 @@ for (const id of ["hubExpansionSearch", "hubExpansionFilter", "hubExpansionSort"
     if (hubExpansionReport) { renderHubExpansion(hubExpansionReport); }
   });
 }
+
+// ------------------------------------------------------------------ manual, read-only game source diagnostics
+const gameSourceProbeItems = [
+  ["owned_hub_options", "Bases adquiridas no seletor"],
+  ["purchase_hub_options", "Bases disponíveis para compra"],
+  ["aircraft_catalog", "Catálogo de aeronaves"],
+  ["fleet_routes", "Rotas da frota"],
+  ["fleet_parked", "Aeronaves estacionadas"],
+  ["fleet_home_hub_attributes", "Atributos de hub da frota"],
+  ["fleet_aircraft_attributes", "Atributos de aeronaves da frota"],
+  ["research_results", "Resultados de pesquisa"],
+];
+const gameSourcePageEvidence = [
+  ["popup_present", "Janela da frota"],
+  ["pagination_present", "Paginação visível"],
+  ["active_page_present", "Página ativa visível"],
+  ["current_page_attribute_numeric", "Número da página no painel"],
+  ["active_page_numeric", "Página ativa numérica"],
+  ["total_pages_attribute_numeric", "Total de páginas numérico"],
+  ["loading_indicator_present", "Carregamento em andamento"],
+];
+let gameSourceProbeReport = null;
+let gameSourceProbeFailure = null;
+let gameSourceProbeLoading = false;
+const gameSourceSafeCount = value => Number.isSafeInteger(value) && value >= 0 && value <= 10000000 ? value : 0;
+const gameSourcePageNumber = value => Number.isInteger(value) && value > 0 && value <= 999 ? value : null;
+
+function showGameSourceProbeStatus(message, state) {
+  const status = $("gameSourceProbeStatus");
+  status.removeAttribute("data-t");
+  status.dataset.state = state;
+  status.textContent = tr(message);
+}
+
+function renderGameSourceProbe(report) {
+  if (!report || typeof report !== "object" || !report.sources ||
+      typeof report.sources !== "object" || !report.pagination || typeof report.pagination !== "object" ||
+      !report.status_data || typeof report.status_data !== "object") {
+    throw new Error("Invalid game source diagnostic response");
+  }
+  const sources = $("gameSourceProbeSources");
+  sources.replaceChildren();
+  let visible = 0;
+  for (const [key, label] of gameSourceProbeItems) {
+    const source = report.sources[key] || {};
+    const count = gameSourceSafeCount(source.count);
+    const distinct = gameSourceSafeCount(source.numeric_id_count);
+    const identified = source.id_parseable_nodes == null ? null :
+      Math.min(count, gameSourceSafeCount(source.id_parseable_nodes));
+    if (count > 0) { visible++; }
+    const item = document.createElement("div");
+    const name = document.createElement("dt"); name.textContent = tr(label);
+    const value = document.createElement("dd");
+    value.textContent = tr("Elementos") + ": " + count + " · " + tr("IDs distintos") + ": " + distinct +
+      (identified === null ? "" : " · " + tr("Com ID") + ": " + identified + " / " + count);
+    item.append(name, value);
+    sources.append(item);
+  }
+  const status = report.status_data;
+  const stateItem = document.createElement("div");
+  const stateName = document.createElement("dt"); stateName.textContent = tr("Estado do jogo");
+  const stateValue = document.createElement("dd");
+  stateValue.textContent = tr("Elementos") + ": " + gameSourceSafeCount(status.count) + " · " +
+    tr("IDs distintos") + ": " + gameSourceSafeCount(status.numeric_id_count);
+  stateItem.append(stateName, stateValue);
+  sources.append(stateItem);
+  $("gameSourceProbeSummary").textContent = tr("Fontes visíveis") + ": " + visible + " / " + gameSourceProbeItems.length;
+
+  const pagination = report.pagination;
+  const page = gameSourcePageNumber(pagination.current_page);
+  const total = gameSourcePageNumber(pagination.total_pages);
+  const pageDescription = page === null ? tr("Página atual não identificada") :
+    tr("Página") + " " + page + (total === null ? "" : " " + tr("de") + " " + total);
+  const totalDescription = total === null ? " · " + tr("Total de páginas não identificado") : "";
+  const consistency = pagination.evidence_conflict === true ?
+    tr("Evidência contraditória de paginação") : tr("Paginação sem conflito identificado");
+  $("gameSourceProbePagination").textContent = pageDescription + totalDescription + " · " + consistency;
+  $("gameSourceProbePagination").dataset.state = pagination.evidence_conflict === true ? "error" : "";
+
+  const evidence = pagination.evidence && typeof pagination.evidence === "object" ? pagination.evidence : {};
+  const observed = gameSourcePageEvidence.filter(([key]) => evidence[key] === true).map(([, label]) => tr(label));
+  $("gameSourceProbeEvidence").textContent = observed.length ?
+    tr("Evidências") + ": " + observed.join(" · ") : tr("Nenhuma evidência adicional de paginação.");
+  $("gameSourceProbeResults").hidden = false;
+}
+
+function gameSourceProbeError(status) {
+  if (status === 403) { return "Acesso negado. Verifique a autorização no painel."; }
+  if (status === 409) { return "O jogo está ocupado. Tente novamente."; }
+  if (status === 504) { return "Tempo esgotado. Verifique se o jogo está carregado."; }
+  if (status === 503) { return "Sessão do jogo indisponível. Verifique o bot."; }
+  return "Não foi possível verificar as fontes do jogo.";
+}
+
+async function runGameSourceProbe() {
+  if (gameSourceProbeLoading) { return; }
+  gameSourceProbeLoading = true;
+  gameSourceProbeFailure = null;
+  gameSourceProbeReport = null;
+  $("gameSourceProbeRun").disabled = true;
+  $("gameSourceProbePanel").setAttribute("aria-busy", "true");
+  $("gameSourceProbeResults").hidden = true;
+  showGameSourceProbeStatus("Consultando fontes da tela atual…", "pending");
+  try {
+    const {status, data} = await api("/api/admin/game-source-probe", {}, true);
+    if (status < 200 || status >= 300 || data?.ok !== true) {
+      gameSourceProbeFailure = gameSourceProbeError(status);
+      showGameSourceProbeStatus(gameSourceProbeFailure, "error");
+      return;
+    }
+    renderGameSourceProbe(data.report);
+    gameSourceProbeReport = data.report;
+    showGameSourceProbeStatus("Verificação concluída.", "success");
+  } catch (_) {
+    gameSourceProbeFailure = gameSourceProbeError();
+    showGameSourceProbeStatus(gameSourceProbeFailure, "error");
+  } finally {
+    gameSourceProbeLoading = false;
+    $("gameSourceProbeRun").disabled = false;
+    $("gameSourceProbePanel").removeAttribute("aria-busy");
+  }
+}
+$("gameSourceProbeRun").addEventListener("click", runGameSourceProbe);
+// ------------------------------------------------------------------ end manual game source diagnostics
+
 let routeReport = null;
 let lastRouteFetch = 0;
 const airportLabel = value => {

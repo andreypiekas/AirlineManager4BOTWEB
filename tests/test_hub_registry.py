@@ -42,6 +42,25 @@ def test_hub_ids_are_canonical_and_blank_selector_text_uses_title(tmp_path):
     assert snapshot["hubs"][0]["aircraft_count"] == 1
 
 
+def test_malformed_or_conflicting_selector_cannot_erase_verified_hubs(tmp_path):
+    registry = HubRegistry(tmp_path / "hubs.json")
+    assert registry.record_options([{"id": "123", "text": "Chapecó"},
+                                    {"id": "456", "text": "Guarulhos"}])
+    previous = registry.path.read_bytes()
+
+    assert not registry.record_options([{"id": "789", "text": "Nova base"},
+                                        {"id": "invalid", "text": "Erro"}])
+    assert not registry.record_options([{"id": "789", "text": "Nova base"}, None])
+    assert not registry.record_options([{"id": "789", "text": "Nova base"},
+                                        {"id": "000789", "text": "Outra base"}])
+    assert not registry.record_options([{"id": "789", "text": "Nova base"},
+                                        {"id": False, "text": "Inválido"}])
+    assert not registry.record_options([{"id": "789", "text": "Nova base"},
+                                        {"id": [], "text": "Inválido"}])
+    assert registry.path.read_bytes() == previous
+    assert {hub["id"] for hub in registry.snapshot({"relations": []})["hubs"]} == {"123", "456"}
+
+
 def test_legacy_hub_ids_are_read_without_rewriting_saved_data(tmp_path):
     filename = tmp_path / "hubs.json"
     legacy = {"source": "game_hub_select", "observed_at": 123456,

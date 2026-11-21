@@ -10,8 +10,11 @@ navigate, send requests, persist state, or invoke game controls.
 The result contains only fixed selector names, element counts, numeric game IDs,
 bounded page numbers, and booleans indicating whether allowlisted DOM
 attributes exist. IDs are sampled up to 40 per source, with separate total
-counts and truncation flags. ``pagination`` records only page numbers supported
-by DOM evidence and flags conflicting observations.
+counts and truncation flags. ID-bearing sources additionally report the number
+of nodes with an explicit, parseable ID. ``pagination`` records only page
+numbers supported by DOM evidence, flags conflicting observations, and reports
+which known selectors and attributes supplied numeric evidence. A loading
+indicator is reported without exposing its URL.
 The source view depends on the popup currently displayed. Missing selectors are
 expected when their corresponding game pane is closed.
 
@@ -39,6 +42,15 @@ from typing import Any
 SAMPLE_LIMIT = 40
 _NUMERIC_ID = re.compile(r"^[1-9][0-9]{0,13}$")
 _MAX_COUNT = 10_000_000
+_PAGINATION_EVIDENCE = (
+    "popup_present",
+    "pagination_present",
+    "active_page_present",
+    "current_page_attribute_numeric",
+    "active_page_numeric",
+    "total_pages_attribute_numeric",
+    "loading_indicator_present",
+)
 
 # Only these literal selectors and attribute *names* may appear in the result.
 # Attribute values are examined exclusively to extract strictly numeric IDs.
@@ -106,7 +118,8 @@ function idFromNode(node, spec) {
   let candidate = '';
   switch (spec.id_source) {
     case 'option':
-      candidate = attr('value') || node.value || '';
+      // The implicit option.value can equal its label, which is not an airport ID.
+      candidate = attr('value');
       break;
     case 'route':
       candidate = (String(node.id || '').match(/^routeMainList([0-9]{1,14})$/) || [])[1];
@@ -150,8 +163,11 @@ for (const spec of specs) {
   }
   const ids = new Set();
   const linked = new Set();
+  let parseableNodes = 0;
   for (const node of nodes) {
-    addNumericId(ids, idFromNode(node, spec));
+    const id = idFromNode(node, spec);
+    if (id !== null) parseableNodes++;
+    addNumericId(ids, id);
     if (spec.key === 'fleet_routes' && typeof node.querySelector === 'function') {
       const link = node.querySelector("a[onclick*='fleet_details.php']");
       const aircraftId = link &&
@@ -163,6 +179,9 @@ for (const spec of specs) {
   result.sources[spec.key] = {
     count: nodes.length, attribute_presence: attributes, ...summarizeIds(ids)
   };
+  if (spec.id_source !== 'none') {
+    result.sources[spec.key].id_parseable_nodes = parseableNodes;
+  }
   if (spec.key === 'fleet_routes') {
     result.sources[spec.key].linked_aircraft_ids = Array.from(linked).slice(0, sampleLimit);
     result.sources[spec.key].linked_aircraft_id_count = linked.size;
@@ -178,19 +197,31 @@ const totalValues = new Set();
 const observe = (set, value) => {
   const parsed = pageNumber(value);
   if (parsed !== null) set.add(parsed);
+  return parsed !== null;
 };
-for (const node of document.querySelectorAll('#popContent')) {
-  observe(pageValues, safeAttribute(node, 'data-current-page'));
-  observe(totalValues, safeAttribute(node, 'data-total-pages'));
+const popupNodes = document.querySelectorAll('#popContent');
+const paginationNodes = document.querySelectorAll('#popContent .pagination');
+const activeNodes = document.querySelectorAll(
+  "#popContent .pagination .active, #popContent .pagination [aria-current='page']");
+let currentAttributeNumeric = false;
+let totalAttributeNumeric = false;
+let activePageNumeric = false;
+for (const node of popupNodes) {
+  currentAttributeNumeric = observe(pageValues, safeAttribute(node, 'data-current-page')) ||
+    currentAttributeNumeric;
+  totalAttributeNumeric = observe(totalValues, safeAttribute(node, 'data-total-pages')) ||
+    totalAttributeNumeric;
 }
-for (const node of document.querySelectorAll('#popContent .pagination')) {
-  observe(pageValues, safeAttribute(node, 'data-current-page'));
-  observe(totalValues, safeAttribute(node, 'data-total-pages'));
+for (const node of paginationNodes) {
+  currentAttributeNumeric = observe(pageValues, safeAttribute(node, 'data-current-page')) ||
+    currentAttributeNumeric;
+  totalAttributeNumeric = observe(totalValues, safeAttribute(node, 'data-total-pages')) ||
+    totalAttributeNumeric;
 }
-for (const node of document.querySelectorAll(
-    "#popContent .pagination .active, #popContent .pagination [aria-current='page']")) {
-  observe(pageValues, safeAttribute(node, 'data-page'));
-  observe(pageValues, node.textContent);
+for (const node of activeNodes) {
+  activePageNumeric = observe(pageValues, safeAttribute(node, 'data-page')) ||
+    activePageNumeric;
+  activePageNumeric = observe(pageValues, node.textContent) || activePageNumeric;
 }
 const currentPage = pageValues.size === 1 ? Array.from(pageValues)[0] : null;
 const totalPages = totalValues.size === 1 ? Array.from(totalValues)[0] : null;
@@ -198,7 +229,18 @@ result.pagination = {
   current_page: currentPage,
   total_pages: totalPages,
   evidence_conflict: pageValues.size > 1 || totalValues.size > 1 ||
-    (currentPage !== null && totalPages !== null && currentPage > totalPages)
+    (currentPage !== null && totalPages !== null && currentPage > totalPages),
+  evidence: {
+    popup_present: popupNodes.length > 0,
+    pagination_present: paginationNodes.length > 0,
+    active_page_present: activeNodes.length > 0,
+    current_page_attribute_numeric: currentAttributeNumeric,
+    active_page_numeric: activePageNumeric,
+    total_pages_attribute_numeric: totalAttributeNumeric,
+    // Equivalent to the existing Bot.open_popup() loader check.
+    loading_indicator_present:
+      document.querySelectorAll("#popContent img[src*='loader']").length > 0
+  }
 };
 
 const hasStatus = typeof window !== 'undefined' &&
@@ -258,6 +300,12 @@ def _sanitize(raw: Any) -> dict:
             "attribute_presence": {name: attrs.get(name) is True for name in spec["attrs"]},
             **_id_fields(entry),
         }
+        if spec["id_source"] != "none":
+            matched = entry.get("id_parseable_nodes")
+            cleaned_entry["id_parseable_nodes"] = (
+                min(matched, cleaned_entry["count"])
+                if type(matched) is int and 0 <= matched <= _MAX_COUNT else None
+            )
         if spec["key"] == "fleet_routes":
             linked = _ids(entry.get("linked_aircraft_ids"))
             cleaned_entry["linked_aircraft_ids"] = linked
@@ -271,6 +319,8 @@ def _sanitize(raw: Any) -> dict:
     status = status if isinstance(status, dict) else {}
     pagination = raw.get("pagination")
     pagination = pagination if isinstance(pagination, dict) else {}
+    evidence = pagination.get("evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
     current_page = _page(pagination.get("current_page"))
     total_pages = _page(pagination.get("total_pages"))
     return {
@@ -282,6 +332,8 @@ def _sanitize(raw: Any) -> dict:
             "evidence_conflict": pagination.get("evidence_conflict") is True or (
                 current_page is not None and total_pages is not None
                 and current_page > total_pages),
+            "evidence": {name: evidence.get(name) is True
+                         for name in _PAGINATION_EVIDENCE},
         },
         "status_data": {"present": status.get("present") is True,
                         "count": _count(status.get("count")), **_id_fields(status)},
