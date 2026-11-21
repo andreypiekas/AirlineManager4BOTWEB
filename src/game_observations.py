@@ -1,0 +1,323 @@
+"""Conservative, read-only observations from the authenticated game DOM."""
+from __future__ import annotations
+
+import logging
+import math
+import re
+import threading
+
+from hub_expansion import HubExpansionRegistry
+from hub_registry import HubRegistry
+
+log = logging.getLogger("am4bot.observations")
+
+# Only the currently selected airport can have an observed price. The country
+# selector contains no price evidence, and the airport details load asynchronously.
+_SELECTED_HUB_PRICE_JS = r"""
+const select = document.querySelector('#hubAirportSelector');
+const option = select && select.selectedOptions && select.selectedOptions[0];
+const details = document.querySelector('#airportInfo');
+const cost = document.querySelector('#hubCostInfo');
+if (!option || !details || !cost || option.disabled ||
+    !/^[1-9][0-9]{0,11}$/.test(option.value)) return null;
+if (typeof window !== 'undefined' && window.jQuery && window.jQuery.active > 0) return null;
+if ([details, cost].some(el => el.querySelector &&
+    (el.querySelector('img[src*="loader"]') || el.querySelector('[aria-busy="true"]')))) return null;
+const id = option.value;
+const label = String(option.textContent || '').trim();
+const rawCode = (option.dataset.iata || option.dataset.icao ||
+  (label.match(/\(([A-Z]{3,4})\)/) || [])[1] || '').trim().toUpperCase();
+const code = /^[A-Z]{3,4}$/.test(rawCode) ? rawCode : '';
+const detailText = String(details.textContent || '').trim();
+const normalize = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const detailId = details.getAttribute('data-airport-id');
+const costId = typeof cost.getAttribute === 'function' ? cost.getAttribute('data-airport-id') : null;
+if ((detailId && detailId !== id) || (costId && costId !== id)) return null;
+const airportName = label.replace(/\s*\([A-Z]{3,4}\)\s*$/, '').trim();
+const confirmed = detailId === id || (code.length >= 3 &&
+  new RegExp('\\b' + code + '\\b', 'i').test(detailText)) ||
+  (airportName.length >= 4 && normalize(detailText).includes(normalize(airportName)));
+if (!confirmed) return null;
+const priceMatch = String(cost.textContent || '').match(/(?:US\s*\$|USD\s*|\$)\s*([1-9][0-9.,]*)/i);
+if (!priceMatch) return null;
+const amount = priceMatch[1];
+if (!(/^\d+$/.test(amount) || /^[1-9]\d{0,2}(?:,\d{3})+$/.test(amount) ||
+      /^[1-9]\d{0,2}(?:\.\d{3})+$/.test(amount))) return null;
+const price = Number(amount.replace(/[.,]/g, ''));
+if (!Number.isSafeInteger(price) || price <= 0) return null;
+const costText = String(cost.textContent || '');
+const pointsMatch = costText.match(/(?:^|\D)([0-9][0-9,]*)\s*(?:points?|pontos?)\b/i);
+if (/\b(?:points?|pontos?)\b/i.test(costText) && !pointsMatch) return null;
+const points = pointsMatch ? Number(pointsMatch[1].replace(/,/g, '')) : 0;
+if (!Number.isSafeInteger(points) || points < 0) return null;
+return {id, name: label, code, purchasable: true, hub_price: price, hub_points: points};
+"""
+
+# The game's New Hub form first loads the country list, then fetches the
+# airport options and finally the selected airport's price through AJAX.
+# Only selection events are sent. The Purchase hub action is never invoked.
+_HUB_COUNTRIES_JS = r"""
+const select = document.querySelector('#hubcountrySelector');
+return select ? Array.from(select.options)
+  .filter(el => !el.disabled && el.value && el.value.length <= 120)
+  .map(el => el.value) : [];
+"""
+
+_HUB_AIRPORT_OPTIONS_JS = r"""
+const select = document.querySelector('#hubAirportSelector');
+if (!select || (window.jQuery && window.jQuery.active > 0)) return null;
+const country = document.querySelector('#hubcountrySelector');
+const ids = Array.from(select.options).filter(el => !el.disabled &&
+  /^[1-9][0-9]{0,11}$/.test(el.value)).map(el => el.value);
+const pending = window.__am4HubCountrySwitch;
+if (pending && country && country.value === pending.country) {
+  if (JSON.stringify(ids) === JSON.stringify(pending.previous)) return null;
+  delete window.__am4HubCountrySwitch;
+}
+return ids;
+"""
+
+_SELECT_MARKET_COUNTRY_JS = r"""
+const select = document.querySelector('#hubcountrySelector');
+if (!select || !Array.from(select.options).some(el =>
+    el.value === arguments[0] && !el.disabled)) return false;
+if (select.value !== arguments[0]) {
+  const airport = document.querySelector('#hubAirportSelector');
+  window.__am4HubCountrySwitch = {
+    country: arguments[0],
+    previous: airport ? Array.from(airport.options).filter(el => !el.disabled &&
+      /^[1-9][0-9]{0,11}$/.test(el.value)).map(el => el.value) : []
+  };
+  select.value = arguments[0];
+  select.dispatchEvent(new Event('change', {bubbles: true}));
+}
+return true;
+"""
+
+_SELECT_MARKET_AIRPORT_JS = r"""
+const select = document.querySelector('#hubAirportSelector');
+if (!select || !Array.from(select.options).some(el =>
+    el.value === arguments[0] && !el.disabled)) return false;
+select.value = arguments[0];
+select.dispatchEvent(new Event('change', {bubbles: true}));
+return true;
+"""
+
+# Inspect the DOM after the game's own search has loaded. Unlike the normal
+# fleet reader, this does not turn missing/invalid demand fields into zero.
+_VERIFIED_ROUTE_DEMAND_JS = r"""
+const result = document.querySelector('#resResult');
+if (!result || result.querySelector('img[src*="loader"]') ||
+    result.querySelector('[aria-busy="true"]')) return null;
+if (typeof window !== 'undefined' && window.jQuery && window.jQuery.active > 0) return null;
+const rows = Array.from(result.querySelectorAll('#list .sorter'));
+if (!rows.length || rows.length > 1000) return null;
+return rows.map(el => ({
+  dep_id: ((String(el.getAttribute('onclick') || '').match(/(?:[?&]|\b)dep=(\d+)(?!\d)/) || [])[1]) || null,
+  arr_id: ((String(el.getAttribute('onclick') || '').match(/(?:[?&]|\b)arr=(\d+)(?!\d)/) || [])[1]) || null,
+  distance: el.getAttribute('data-distance'),
+  y: el.getAttribute('data-yclass'),
+  j: el.getAttribute('data-jclass'),
+  f: el.getAttribute('data-fclass')
+}));
+"""
+
+_AIRPORT_ID = re.compile(r"^[1-9][0-9]{0,11}$")
+_COUNT = re.compile(r"^[0-9]{1,9}$")
+_DISTANCE = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
+
+
+def _stable_read(bot: object, script: str) -> object:
+    """Return only an identical pair of DOM reads while the worker is active."""
+    try:
+        first = bot.js(script)
+        if first is None or getattr(bot, "stopping", False):
+            return None
+        stop = getattr(bot, "_stop", None)
+        interrupted = stop.wait(0.3) if stop is not None else threading.Event().wait(0.3)
+        if interrupted or getattr(bot, "stopping", False):
+            return None
+        second = bot.js(script)
+        return second if first == second else None
+    except Exception:  # Selenium errors can expose session details in their repr.
+        log.debug("A leitura da página do jogo não foi concluída.")
+        return None
+
+
+def _verified_demand(candidates: list, rows: object, origin: str) -> list[dict]:
+    """Require every raw game row to agree with the fleet search response."""
+    if not isinstance(rows, list) or not rows or len(rows) != len(candidates):
+        return []
+    expected = {str(item.arr_id): item for item in candidates}
+    if len(expected) != len(candidates):
+        return []
+    samples = []
+    seen = set()
+    for raw in rows:
+        if not isinstance(raw, dict):
+            return []
+        destination = raw.get("arr_id")
+        if (raw.get("dep_id") != origin
+                or not isinstance(destination, str) or not _AIRPORT_ID.fullmatch(destination)
+                or destination == origin or destination in seen or destination not in expected):
+            return []
+        distance_raw = raw.get("distance")
+        counts_raw = [raw.get(key) for key in ("y", "j", "f")]
+        if (not isinstance(distance_raw, str) or not _DISTANCE.fullmatch(distance_raw)
+                or any(not isinstance(value, str) or not _COUNT.fullmatch(value)
+                       for value in counts_raw)):
+            return []
+        distance = float(distance_raw)
+        counts = [int(value) for value in counts_raw]
+        candidate = expected[destination]
+        if (not math.isfinite(distance) or distance <= 0
+                or not math.isclose(distance, candidate.distance, rel_tol=0, abs_tol=0.001)
+                or counts != [candidate.y, candidate.j, candidate.f]):
+            return []
+        samples.append({"arr_id": destination, "distance": distance,
+                        "y": counts[0], "j": counts[1], "f": counts[2]})
+        seen.add(destination)
+    return samples
+
+
+def collect_visible_hub_price(bot: object) -> bool:
+    """Persist a selected hub price only after stable, correlated game reads."""
+    observation = _stable_read(bot, _SELECTED_HUB_PRICE_JS)
+    return (isinstance(observation, dict) and
+            HubExpansionRegistry().record_catalog([observation], complete=False))
+
+
+def _wait_airport_options(bot: object) -> list[str]:
+    """Wait for a stable, post-country-switch airport list from the game."""
+    for _ in range(16):
+        options = _stable_read(bot, _HUB_AIRPORT_OPTIONS_JS)
+        if isinstance(options, list) and options:
+            verified = [item for item in options if isinstance(item, str)
+                        and _AIRPORT_ID.fullmatch(item)]
+            if len(verified) == len(options) and len(set(verified)) == len(verified):
+                return verified
+        if getattr(bot, "stopping", False):
+            break
+        stop = getattr(bot, "_stop", None)
+        if (stop.wait(0.25) if stop is not None else threading.Event().wait(0.25)):
+            break
+    return []
+
+
+def collect_hub_market_prices(bot: object, *, per_cycle: int = 3) -> int:
+    """Read rotating purchase prices across countries, resuming after restarts."""
+    if getattr(bot, "stopping", False) or per_cycle < 1:
+        return 0
+    registry = HubExpansionRegistry()
+    collected = 0
+    attempts = 0
+    visited = set()
+
+    def inspect_airport(country: str, airport_id: str) -> bool:
+        nonlocal attempts, collected
+        attempts += 1
+        visited.add((country, airport_id))
+        observation = None
+        if bot.js(_SELECT_MARKET_AIRPORT_JS, airport_id):
+            for _ in range(10):
+                value = _stable_read(bot, _SELECTED_HUB_PRICE_JS)
+                if isinstance(value, dict) and value.get("id") == airport_id:
+                    observation = value
+                    break
+                if getattr(bot, "stopping", False):
+                    break
+        recorded = bool(observation and registry.record_catalog([observation], complete=False))
+        registry.record_catalog_attempt(country, airport_id, success=recorded)
+        if recorded:
+            collected += 1
+        return recorded
+
+    bot.open_popup("hubs_new.php", "New Hub", "nav_new_hub")
+    try:
+        countries = bot.js(_HUB_COUNTRIES_JS) or []
+        countries = list(dict.fromkeys(item for item in countries
+                                       if isinstance(item, str) and 0 < len(item) <= 120))
+        if not countries:
+            return 0
+        # Retry one previously missing price per cycle, while normal scanning
+        # keeps progressing independently of a temporarily unreadable airport.
+        for retry in registry.due_catalog_retries():
+            country, airport_id = retry["country"], retry["airport_id"]
+            if country not in countries or attempts >= per_cycle:
+                continue
+            if bot.js(_SELECT_MARKET_COUNTRY_JS, country):
+                airports = _wait_airport_options(bot)
+                if airport_id in airports:
+                    inspect_airport(country, airport_id)
+                else:
+                    registry.record_catalog_attempt(country, airport_id, success=False)
+        cursor = registry.catalog_scan_position()
+        previous_country = cursor.get("country")
+        if previous_country in countries:
+            country_index = countries.index(previous_country)
+            if cursor.get("airport_id") is None:
+                country_index = (country_index + 1) % len(countries)
+        else:
+            country_index = countries.index("Brazil") if "Brazil" in countries else 0
+        previous_airport = cursor.get("airport_id")
+        checked_countries = 0
+        # Bound the work in each cycle even when several countries have no airports.
+        while attempts < per_cycle and checked_countries < min(len(countries), 4):
+            country = countries[country_index]
+            if not bot.js(_SELECT_MARKET_COUNTRY_JS, country):
+                break
+            airports = _wait_airport_options(bot)
+            start = 0
+            if previous_country == country and previous_airport in airports:
+                start = airports.index(previous_airport) + 1
+            if start >= len(airports):
+                registry.record_catalog_scan_position(country, None)
+                country_index = (country_index + 1) % len(countries)
+                previous_country, previous_airport = None, None
+                checked_countries += 1
+                continue
+            for airport_id in airports[start:]:
+                if attempts >= per_cycle or getattr(bot, "stopping", False):
+                    break
+                if (country, airport_id) not in visited:
+                    inspect_airport(country, airport_id)
+                # The cursor advances after each attempted airport, including
+                # missing prices; retry scheduling is tracked independently.
+                registry.record_catalog_scan_position(country, airport_id)
+            break
+        if collected:
+            log.info("Catálogo de hubs: %d/%d preços confirmados e persistidos.", collected, attempts)
+        return collected
+    finally:
+        bot.close_popup(quiet=True)
+
+
+def collect_owned_hub_demand(bot: object) -> int:
+    """Search one purchased hub per cycle, using the game's read-only research."""
+    from fleet import _HUB_OPTIONS_JS, search_routes
+
+    if getattr(bot, "stopping", False):
+        return 0
+    bot.open_popup("routes_main.php", "Routes", "nav_routes")
+    try:
+        bot.ajax("research_main.php", "routeAction")
+        options = bot.js(_HUB_OPTIONS_JS) or []
+        if not HubRegistry().record_options(options):
+            return 0
+        ids = [str(option.get("id")) for option in options if isinstance(option, dict)]
+        origin = HubExpansionRegistry().next_demand_origin(ids)
+        if origin is None:
+            return 0
+        distance = max(300, bot.config.get_int("settings", "route_max_distance_big", 6000))
+        runway = max(0, bot.config.get_int("settings", "route_min_runway", 5000))
+        candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
+        rows = _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS)
+        samples = _verified_demand(candidates, rows, origin)
+        if not samples:
+            log.debug("Pesquisa de demanda do hub %s incompleta ou sem resultados confirmados.", origin)
+            return 0
+        count = HubExpansionRegistry().record_demand(origin, samples)
+        log.info("Pesquisa de demanda: hub %s, %d destinos confirmados.", origin, count)
+        return count
+    finally:
+        bot.close_popup(quiet=True)

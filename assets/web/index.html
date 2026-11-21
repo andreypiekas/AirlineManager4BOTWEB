@@ -769,7 +769,7 @@ const EN = {
   "Saldo conhecido": "Known balance", "Reserva configurada": "Configured reserve",
   "Lucro estimado do hub/dia": "Estimated hub profit/day", "Detalhes do cenário": "Scenario details",
   "Modelo pesquisado": "Researched model", "Rota pesquisada": "Researched route",
-  "Custo do hub": "Hub cost", "Custo da aeronave": "Aircraft cost",
+  "Custo do hub": "Hub cost", "Custo em pontos": "Cost in points", "pontos": "points", "Custo da aeronave": "Aircraft cost",
   "Taxa da rota": "Route fee", "Custo do hangar": "Hangar cost",
   "Pesquisa de rota pendente.": "Route research pending.", "Rota não identificada": "Route not identified",
   "Observação do cenário": "Scenario observed", "Consulta do catálogo": "Catalog checked",
@@ -1558,6 +1558,8 @@ function renderHubExpansion(report) {
     const title = document.createElement("summary"); title.textContent = tr("Detalhes do cenário");
     const evidence = document.createElement("dl"); evidence.className = "hub-metrics";
     addHubMetric(evidence, "Custo do hub", hubMoney(hub.hub_price));
+    addHubMetric(evidence, "Custo em pontos", Number.isSafeInteger(hub.hub_points)
+      ? nf.format(hub.hub_points) + " " + tr("pontos") : tr("Sem dados"));
     addHubMetric(evidence, "Custo da aeronave", hubMoney(scenario.aircraft_price));
     addHubMetric(evidence, "Taxa da rota", hubMoney(scenario.route_fee));
     addHubMetric(evidence, "Custo do hangar", hubMoney(scenario.hangar_price));

@@ -15,7 +15,7 @@ from typing import Optional
 
 import paths
 from airport_catalog import game_code
-from route_registry import RouteRegistry
+from route_registry import HOME_HUB_EVIDENCE, RouteRegistry
 
 _LOCK = threading.RLock()
 _AIRPORT_ID = re.compile(r"^[0-9]{1,12}$")
@@ -44,6 +44,49 @@ def _current_route_profit(row: dict, now: int) -> Optional[float]:
             or not 0 <= now - stamp <= _MAX_ESTIMATE_AGE):
         return None
     return float(value)
+
+
+def _home_hub_verification(row: dict, owned_hubs: set[str], now: int) -> dict:
+    """Validate a per-aircraft game observation without using its route or position.
+
+    Source and observation time are stored by RouteRegistry alongside the
+    aircraft. The hub selector establishes ownership, not that aircraft's base.
+    Legacy observations missing provenance remain available for investigation.
+    """
+    home_id = _hub_id(row.get("home_hub_id"))
+    source = row.get("home_hub_source")
+    observed_at = row.get("home_hub_verified_at")
+    evidence = row.get("home_hub_evidence")
+    aircraft_id = str(row.get("aircraft_id") or "").strip()
+    evidence_matches = (evidence == HOME_HUB_EVIDENCE
+                        and bool(re.fullmatch(r"[0-9]{1,14}", aircraft_id))
+                        and row.get("home_hub_evidence_aircraft_id") == aircraft_id)
+    valid_time = (not isinstance(observed_at, bool)
+                  and isinstance(observed_at, (int, float))
+                  and math.isfinite(observed_at)
+                  and 0 < observed_at <= now)
+    if not home_id:
+        reason = "home_hub_not_observed"
+    elif source != "game":
+        reason = "source_unverified"
+    elif not valid_time:
+        reason = "timestamp_unverified"
+    elif not evidence_matches:
+        reason = "evidence_unverified"
+    elif row.get("home_hub_conflict_id"):
+        reason = "conflicting_game_observations"
+    elif home_id not in owned_hubs:
+        reason = "hub_not_in_owned_catalog"
+    else:
+        reason = "confirmed"
+    return {
+        "status": "confirmed" if reason == "confirmed" else "unknown",
+        "reason": reason,
+        "home_hub_id": home_id or None,
+        "source": source if isinstance(source, str) else None,
+        "verified_at": observed_at if valid_time else None,
+        "evidence": evidence if evidence_matches else None,
+    }
 
 
 class HubRegistry:
@@ -114,15 +157,19 @@ class HubRegistry:
                         RouteRegistry(self.path.with_name("routes_registry.json")).snapshot())
         relations = route_report.get("relations", [])
         confirmed = {hub["id"]: [] for hub in hubs}
+        owned_hub_ids = set(confirmed)
         unknown = []
         for row in relations:
-            # Existing route records lack a verified per-aircraft home hub.
-            # Only a separate game-confirmed home_hub_id/source pair is sufficient.
-            home_id = _hub_id(row.get("home_hub_id"))
-            if row.get("home_hub_source") == "game" and home_id in confirmed:
-                confirmed[home_id].append(row)
+            if not isinstance(row, dict):
+                continue
+            # Retain the original source/timestamp and annotate the snapshot
+            # without changing either the supplied rows or the stored route file.
+            verification = _home_hub_verification(row, owned_hub_ids, now)
+            aircraft = {**row, "home_hub_verification": verification}
+            if verification["status"] == "confirmed":
+                confirmed[verification["home_hub_id"]].append(aircraft)
             else:
-                unknown.append(row)
+                unknown.append(aircraft)
         result = []
         for hub in hubs:
             aircraft = confirmed[hub["id"]]

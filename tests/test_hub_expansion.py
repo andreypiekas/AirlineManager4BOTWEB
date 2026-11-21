@@ -42,6 +42,22 @@ def test_full_verified_case_calculates_investment_and_payback(tmp_path):
     assert registry.snapshot(cash=20000, reserve=2000, owned_hub_ids={"123"})["candidates"] == []
 
 
+def test_point_cost_is_preserved_and_blocks_incomplete_financial_recommendation(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([{**_candidate(), "hub_points": 20}])
+    assert registry.record_research("123", _research())
+    candidate = registry.snapshot(cash=50000)["candidates"][0]
+    assert candidate["hub_price"] == 5000
+    assert candidate["hub_points"] == 20
+    assert candidate["investment"] == 16000
+    assert candidate["status"] == "dados_a_confirmar"
+
+    assert not registry.record_catalog([{**_candidate(), "hub_points": "20"}])
+    assert registry.snapshot(cash=50000)["candidates"][0]["hub_points"] == 20
+    assert registry.record_catalog([{**_candidate(), "hub_points": 0}])
+    assert registry.snapshot(cash=50000)["candidates"][0]["status"] == "viavel"
+
+
 def test_missing_prices_bad_demand_and_missing_cash_are_pending(tmp_path):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     registry.record_catalog([_candidate(price=None)])

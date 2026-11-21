@@ -218,7 +218,20 @@ class Bot:
                     and self.state == BotState.RUNNING and self._is_logged_in(timeout=0)):
                 from game_source_probe import probe_game_sources
 
-                outcome = ("ok", probe_game_sources(self))
+                report = probe_game_sources(self)
+                sources = report.get("sources", {})
+                if (getattr(self.config, "get_bool", lambda *_args: False)(
+                        "options", "collect_market_observations")
+                        and sources.get("purchase_hub_cost", {}).get("count")
+                        and sources.get("purchase_hub_airport_info", {}).get("count")
+                        and sources.get("purchase_hub_selector", {}).get("count")):
+                    from game_observations import collect_visible_hub_price
+
+                    try:
+                        collect_visible_hub_price(self)
+                    except Exception:  # noqa: BLE001 - keep the sanitized diagnostic available
+                        log.debug("Preço de compra não confirmado durante diagnóstico.")
+                outcome = ("ok", report)
         except Exception:
             # Driver exceptions sometimes embed the page URL, cookie or session ID.
             outcome = ("unavailable", None)
@@ -563,6 +576,12 @@ class Bot:
     def _cycle(self) -> None:
         self._ensure_session()
         opt = lambda key: self.config.get_bool("options", key)  # noqa: E731
+        if opt("collect_market_observations"):
+            from game_observations import collect_hub_market_prices
+
+            self._guard(lambda: collect_hub_market_prices(
+                self, per_cycle=max(1, min(10, self.config.get_int("settings", "hub_prices_per_cycle", 3)))),
+                "coletar preços de compra de hubs")
         log.info("Verificando a companhia aérea ...%s", " [SIMULAÇÃO: nenhuma compra ou planejamento é executado]" if self.dry_run else "")
         self._next_event = None
         self._guard(self._check_tutorial, "verificar o tutorial")
@@ -586,6 +605,10 @@ class Bot:
         # duplicates can be addressed only while an aircraft is at a base.
         # The registry is also updated when automatic buying and routing are off.
         self._guard(lambda: manage_fleet(self), "auditar rotas e gerenciar a frota")
+        if opt("collect_market_observations"):
+            from game_observations import collect_owned_hub_demand
+
+            self._guard(lambda: collect_owned_hub_demand(self), "coletar demanda dos hubs")
         if opt("auto_depart"):
             self._guard(self._depart_all, "decolar aeronaves")
         else:

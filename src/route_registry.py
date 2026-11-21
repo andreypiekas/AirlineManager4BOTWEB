@@ -24,9 +24,13 @@ _SCAN_WINDOW_SECONDS = 3600
 _MAX_SCAN_PAGES = 250
 _MAX_PAGE_AIRCRAFT = 40
 _MAX_PAGES_PER_CYCLE = 5
+_MAX_LIVE_AUDIT_PAGES = 25
 _GAME_AIRCRAFT_ID_RE = re.compile(r"^[0-9]{1,14}$")
 _AIRPORT_ID_RE = re.compile(r"^\d{1,12}$")
 _IATA_RE = re.compile(r"^[A-Z]{3,4}$")
+# The route-card DOM hook is a candidate until a reader supplies the exact,
+# per-aircraft element evidence. Neither route endpoint is proof of home base.
+HOME_HUB_EVIDENCE = "route_card:data-home-hub-id"
 
 
 def registry_file() -> Path:
@@ -336,6 +340,8 @@ class RouteRegistry:
                     aircraft_ids: Optional[list[str]] = None,
                     page: Optional[int] = None,
                     total_pages: Optional[int] = None,
+                    expected_routes: Optional[int] = None,
+                    audit_run_id: Optional[str] = None,
                     route_observations: Optional[list[dict]] = None) -> int:
         """Persist the audit outcome even if no aircraft route was identified.
 
@@ -353,7 +359,7 @@ class RouteRegistry:
                     if not isinstance(row, dict):
                         continue
                     identity = str(row.get("aircraft_id") or "").strip()
-                    if not identity or identity in processed:
+                    if not _GAME_AIRCRAFT_ID_RE.fullmatch(identity) or identity in processed:
                         continue
                     processed.add(identity)
                     registration = row.get("registration") or identity
@@ -367,6 +373,28 @@ class RouteRegistry:
                         identified += 1
                     else:
                         self._observe_in(data, identity, registration, model, at_base, now)
+                    home = str(row.get("home_hub_id") or "").strip()
+                    if re.fullmatch(r"[1-9][0-9]{0,11}", home):
+                        entry = data["aircraft"][identity]
+                        proven_before = entry.get("home_hub_evidence") == HOME_HUB_EVIDENCE
+                        if proven_before and entry.get("home_hub_id") != home:
+                            # A conflicting observation cannot silently replace
+                            # a previously proven, permanent aircraft assignment.
+                            entry["home_hub_conflict_id"] = home
+                            entry["home_hub_conflict_at"] = now
+                            continue
+                        if entry.get("home_hub_id") != home:
+                            for key in ("home_hub_verified_at", "home_hub_evidence",
+                                        "home_hub_evidence_aircraft_id"):
+                                entry.pop(key, None)
+                        entry["home_hub_id"] = home
+                        entry["home_hub_source"] = "game"
+                        entry["home_hub_observed_at"] = now
+                        if (row.get("home_hub_evidence") == HOME_HUB_EVIDENCE
+                                and row.get("home_hub_evidence_aircraft_id") == identity):
+                            entry["home_hub_evidence"] = HOME_HUB_EVIDENCE
+                            entry["home_hub_evidence_aircraft_id"] = identity
+                            entry["home_hub_verified_at"] = now
             data["last_scan"] = {
                 "at": now,
                 "visible": max(0, int(visible)),
@@ -376,14 +404,20 @@ class RouteRegistry:
             if aircraft_ids is not None:
                 page = self._valid_page(page)
                 total_pages = self._valid_page(total_pages)
+                if type(expected_routes) is not int or not 0 < expected_routes <= 50000:
+                    expected_routes = None
+                if not isinstance(audit_run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", audit_run_id):
+                    audit_run_id = None
                 if total_pages and page and page > total_pages:
                     page = None
                 coverage = data.get("scan_coverage")
                 updated_at = coverage.get("updated_at") if isinstance(coverage, dict) else None
                 if not isinstance(updated_at, (int, float)) or now < updated_at or \
                         now - updated_at >= _SCAN_WINDOW_SECONDS or \
-                        (total_pages and coverage.get("total_pages") not in (None, total_pages)):
-                    coverage = {"pages": {}, "sequence": 0, "total_pages": total_pages}
+                        (total_pages and coverage.get("total_pages") not in (None, total_pages)) or \
+                        coverage.get("expected_routes") != expected_routes:
+                    coverage = {"pages": {}, "sequence": 0, "total_pages": total_pages,
+                                "expected_routes": expected_routes}
                 pages = coverage.get("pages")
                 if not isinstance(pages, dict):
                     pages = {}
@@ -402,6 +436,8 @@ class RouteRegistry:
                 observation = {
                     **data["last_scan"], "aircraft_ids": recorded_ids,
                 }
+                if audit_run_id:
+                    observation["audit_run_id"] = audit_run_id
                 if page:
                     coverage["sequence"] = max(0, int(coverage.get("sequence") or 0)) + 1
                     observation["sequence"] = coverage["sequence"]
@@ -413,6 +449,26 @@ class RouteRegistry:
                     aircraft_id for entry in pages.values()
                     for aircraft_id in entry.get("aircraft_ids", [])
                 }
+                page_rows = [pages.get(str(number)) for number in range(1, (total_pages or 0) + 1)]
+                combined_ids = [aircraft_id for entry in pages.values()
+                                for aircraft_id in entry.get("aircraft_ids", [])]
+                repeated_ids = len(combined_ids) - len(set(combined_ids))
+                complete = (audit_run_id is not None and expected_routes is not None
+                            and total_pages is not None
+                            and len(pages) == total_pages and repeated_ids == 0
+                            and len(combined_ids) == expected_routes
+                            and total_pages == (expected_routes + 19) // 20
+                            and all(isinstance(entry, dict)
+                                    and entry.get("audit_run_id") == audit_run_id
+                                    and 0 < entry.get("visible", 0) <= 20
+                                    and len(entry.get("aircraft_ids", [])) == entry["visible"]
+                                    for entry in page_rows))
+                if complete:
+                    data["last_verified_full_audit"] = {
+                        "at": now, "audit_run_id": audit_run_id,
+                        "expected_routes": expected_routes,
+                        "total_pages": total_pages, "unique_aircraft": len(combined_ids),
+                    }
                 unknown = coverage.get("unknown_page")
                 unknown_at = unknown.get("at") if isinstance(unknown, dict) else None
                 if isinstance(unknown_at, (int, float)) and \
@@ -425,6 +481,9 @@ class RouteRegistry:
                     "window_seconds": _SCAN_WINDOW_SECONDS,
                     "observed_pages": len(pages),
                     "unique_aircraft": len(all_ids),
+                    "expected_routes": expected_routes,
+                    "repeated_aircraft_across_pages": repeated_ids,
+                    "full_page_coverage_verified": complete,
                     "partial": True,
                 })
                 data["scan_coverage"] = coverage
@@ -438,7 +497,8 @@ class RouteRegistry:
         number = int(raw)
         return number if number <= _MAX_SCAN_PAGES else None
 
-    def next_scan_pages(self, total_pages: int, *, limit: int = 2) -> list[int]:
+    def next_scan_pages(self, total_pages: int, *, limit: int = 2,
+                        max_pages: int = _MAX_PAGES_PER_CYCLE) -> list[int]:
         """Choose the least recently observed pages without clearing the roster.
 
         A page number is only a position in a changing list. Callers must
@@ -447,7 +507,7 @@ class RouteRegistry:
         total = self._valid_page(total_pages)
         if total is None or limit <= 0:
             return []
-        count = min(int(limit), _MAX_PAGES_PER_CYCLE, total)
+        count = min(int(limit), max(0, int(max_pages)), _MAX_LIVE_AUDIT_PAGES, total)
         with _LOCK:
             coverage = _state(self.path).get("scan_coverage") or {}
         pages = coverage.get("pages", {}) if coverage.get("total_pages") == total else {}
@@ -557,6 +617,7 @@ class RouteRegistry:
             "allow_duplicates": bool(allow_duplicates),
             "last_scan": data.get("last_scan"),
             "scan_coverage": data.get("scan_coverage"),
+            "last_verified_full_audit": data.get("last_verified_full_audit"),
             "last_dispatch": data.get("last_dispatch"),
             "experimental_departure_pilot": data.get("experimental_departure_pilot"),
             "partial": True,  # the game may expose only a page of the fleet at a time

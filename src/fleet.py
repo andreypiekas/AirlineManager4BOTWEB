@@ -19,7 +19,9 @@ Screen facts (verified 2026-09-30):
 from __future__ import annotations
 
 import logging
+import re
 import time
+import uuid
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -36,7 +38,8 @@ from route_strategy import best_reroute, profitable_candidates
 from route_airports import HubMatch, match_hub_options, code_from_candidate, explain_hub_options
 from airport_catalog import by_code, game_code
 from hub_registry import HubRegistry
-from route_registry import RouteRegistry, reroute_block_reason, endpoint, route_key
+from hub_expansion import HubExpansionRegistry
+from route_registry import HOME_HUB_EVIDENCE, RouteRegistry, reroute_block_reason, endpoint, route_key
 from reroute import (aircraft_details_missing, confirm_stopover, has_pending_reroute,
                      landed_departure, recover_pending, replace_route)
 from reroute_preflight import check_existing_route
@@ -194,7 +197,7 @@ _ROUTE_AUDIT_JS = """
 const popup = typeof document.querySelector === "function" ? document.querySelector("#popContent") : null;
 const pagination = popup && popup.querySelector ? popup.querySelector(".pagination") : null;
 const active = pagination && pagination.querySelector ?
-  pagination.querySelector(".active, [aria-current='page'], .page-item.not-active > .page-link") : null;
+  pagination.querySelector(".page-item.not-active > .page-link, .page-item.active > .page-link, .page-link[aria-current='page']") : null;
 const pageNumber = value => /^[1-9][0-9]{0,2}$/.test(String(value || "").trim()) ?
   Number(String(value).trim()) : null;
 const scanPage = pageNumber(active && active.textContent) ||
@@ -209,7 +212,7 @@ const scanTotalPages = pageNumber(pagination && pagination.getAttribute &&
   pagination.getAttribute("data-total-pages")) ||
   pageNumber(popup && popup.getAttribute && popup.getAttribute("data-total-pages")) ||
   pageNumber(totalFromRouteCount);
-return Array.from(document.querySelectorAll("#popContent [id^='routeMainList']")).map(row => {
+return Array.from(document.querySelectorAll("#popContent #routeAction #routesContainer [id^='routeMainList']")).map(row => {
   // The existing seats module identifies routes by this real game link.
   const detailLink = row.querySelector("a[onclick*='fleet_details.php']");
   const link = detailLink || row.querySelector("a");
@@ -245,6 +248,7 @@ return Array.from(document.querySelectorAll("#popContent [id^='routeMainList']")
     aircraft_id: aircraftId,
     scan_page: scanPage,
     scan_total_pages: scanTotalPages,
+    scan_route_count: routeCount ? Number(routeCount[1]) : null,
     registration: label.split(" - ")[0] || aircraftId,
     model: label.includes(" - ") ? label.split(" - ").slice(1).join(" - ") : "",
     origin_id: getAttr("data-dep", "data-origin-id") || depFromHook,
@@ -252,6 +256,9 @@ return Array.from(document.querySelectorAll("#popContent [id^='routeMainList']")
     origin_code: getAttr("data-origin-code", "data-dep-code") || (codes ? codes[1] : ""),
     destination_code: getAttr("data-destination-code", "data-arr-code") || (codes ? codes[2] : ""),
     route_label: routeText.slice(0, 80),
+    // The only home-hub evidence is an explicit per-aircraft field.
+    home_hub_id: (row.getAttribute("data-home-hub-id") ||
+      (detailLink && detailLink.getAttribute("data-home-hub-id")) || "").trim(),
     at_base: atBaseRaw === "1" || atBaseRaw === "true" ? true :
       atBaseRaw === "0" || atBaseRaw === "false" ? false : null,
     in_flight: !!row.querySelector("[id^='routesTimer']")
@@ -261,9 +268,11 @@ return Array.from(document.querySelectorAll("#popContent [id^='routeMainList']")
 
 
 def audit_routes(bot: "Bot", registry: RouteRegistry, *,
-                 page: Optional[int] = None, total_pages: Optional[int] = None) -> bool:
+                 page: Optional[int] = None, total_pages: Optional[int] = None,
+                 _rows: Optional[list[dict]] = None,
+                 _audit_run_id: Optional[str] = None) -> bool:
     """Accumulate one visible page, keeping route assignments from other pages."""
-    rows = bot.js(_ROUTE_AUDIT_JS) or []
+    rows = (bot.js(_ROUTE_AUDIT_JS) or []) if _rows is None else _rows
     if not isinstance(rows, list):
         rows = []
     if page is not None and not rows:
@@ -272,9 +281,11 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
     metadata = rows[0] if rows and isinstance(rows[0], dict) else {}
     actual_page = RouteRegistry._valid_page(metadata.get("scan_page"))
     actual_total = RouteRegistry._valid_page(metadata.get("scan_total_pages"))
+    expected_routes = metadata.get("scan_route_count")
     if any(isinstance(row, dict) and (
             RouteRegistry._valid_page(row.get("scan_page")) != actual_page or
-            RouteRegistry._valid_page(row.get("scan_total_pages")) != actual_total)
+            RouteRegistry._valid_page(row.get("scan_total_pages")) != actual_total or
+            row.get("scan_route_count") != expected_routes)
            for row in rows):
         log.warning("Controle de rotas: paginação inconsistente entre linhas; leitura ignorada.")
         return False
@@ -326,16 +337,25 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
             base = grounded[identity]
         origin = endpoint(row.get("origin_id"), row.get("origin_code"))
         destination = endpoint(row.get("destination_id"), row.get("destination_code"))
+        home_hub_id = row.get("home_hub_id")
+        home_hub_evidence = ({"home_hub_evidence": HOME_HUB_EVIDENCE,
+                              "home_hub_evidence_aircraft_id": identity}
+                             if isinstance(home_hub_id, str)
+                             and re.fullmatch(r"[1-9][0-9]{0,11}", home_hub_id) else {})
         observations.append({
             "aircraft_id": identity, "registration": registration, "model": model,
             "origin": origin, "destination": destination, "at_base": base,
+            "home_hub_id": home_hub_id,
+            **home_hub_evidence,
         })
     missing = sum(1 for row in rows
                   if isinstance(row, dict) and not ((row.get("origin_id") or row.get("origin_code"))
                           and (row.get("destination_id") or row.get("destination_code"))))
     detected = registry.record_scan(len(rows), 0, missing,
                                     aircraft_ids=list(seen_aircraft), page=page,
-                                    total_pages=total_pages, route_observations=observations)
+                                    total_pages=total_pages, expected_routes=expected_routes,
+                                    audit_run_id=_audit_run_id,
+                                    route_observations=observations)
     if rows:
         log.info(
             "Controle de rotas: %d aeronaves visíveis, %d rotas identificadas, "
@@ -373,6 +393,233 @@ def audit_routes_rolling(bot: "Bot", registry: RouteRegistry, *, total_pages: in
         if not audit_routes(bot, registry, page=page, total_pages=total_pages):
             break
         visited.append(page)
+    return visited
+
+
+_ROUTES_PAGER_LINKS_JS = r"""
+return Array.from(document.querySelectorAll('#popContent .pagination [onclick]'))
+  .map(node => String(node.getAttribute('onclick') || ''))
+  .map(action => action.match(/^\s*Ajax\s*\(\s*(['"])(routes\.php\?start=(\d+)&sort=(?:[\w-]|%[0-9a-f]{2})*)\1\s*,\s*(['"])(routeAction)\4\s*,\s*this\s*\)\s*;?\s*$/i))
+  .filter(Boolean)
+  .map(match => ({offset: Number(match[3]), target: match[5], url: match[2]}));
+"""
+
+
+def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cycle: int = 3) -> list[int]:
+    """Audit verified AJAX pages across bounded cycles, restoring the initial view."""
+
+    if pages_per_cycle <= 0 or getattr(bot, "stopping", False):
+        return []
+
+    def snapshot(expected_total: Optional[int] = None,
+                 expected_count: Optional[int] = None) -> Optional[tuple[int, int, list[dict]]]:
+        """Accept only two identical, internally consistent page reads."""
+        rows = bot.js(_ROUTE_AUDIT_JS) or []
+        if not isinstance(rows, list) or not 0 < len(rows) <= 20:
+            return None
+        if any(not isinstance(row, dict) for row in rows):
+            return None
+        identities = [str(row.get("aircraft_id") or "") for row in rows]
+        if (any(not re.fullmatch(r"[0-9]{1,14}", identity) for identity in identities)
+                or len(identities) != len(set(identities))):
+            return None
+        page = RouteRegistry._valid_page(rows[0].get("scan_page"))
+        total = RouteRegistry._valid_page(rows[0].get("scan_total_pages"))
+        if (page is None or total is None or page > total or
+                (expected_total is not None and total != expected_total) or
+                (expected_count is not None and rows[0].get("scan_route_count") != expected_count)):
+            return None
+        if any(RouteRegistry._valid_page(row.get("scan_page")) != page or
+               RouteRegistry._valid_page(row.get("scan_total_pages")) != total or
+               row.get("scan_route_count") != rows[0].get("scan_route_count")
+               for row in rows):
+            return None
+        if bot.js(_ROUTE_AUDIT_JS) != rows:
+            return None
+        return page, total, rows
+
+    try:
+        initial = snapshot()
+        if initial is None:
+            return []
+        start, total, initial_rows = initial
+        route_count = initial_rows[0].get("scan_route_count")
+        if type(route_count) is not int or not 0 < route_count <= 50000:
+            route_count = None
+        audit_run_id = uuid.uuid4().hex
+        if total == 1:
+            return [start] if audit_routes(bot, registry, page=start, total_pages=total,
+                                           _rows=initial_rows,
+                                           _audit_run_id=audit_run_id) else []
+        links = bot.js(_ROUTES_PAGER_LINKS_JS) or []
+    except Exception as exc:  # noqa: BLE001 - the popup can disappear mid-read
+        log.warning("Auditoria paginada: leitura inicial interrompida (%s).", type(exc).__name__)
+        return []
+
+    if not isinstance(links, list):
+        return []
+    adjacent = {20 * (page - 1) for page in (start - 1, start + 1)
+                if 1 <= page <= total}
+
+    def valid_link(link: object, offset: int) -> bool:
+        if not isinstance(link, dict) or type(link.get("offset")) is not int:
+            return False
+        if link["offset"] != offset:
+            return False
+        url = link.get("url")
+        return link.get("target") == "routeAction" and isinstance(url, str) and bool(
+            re.fullmatch(rf"routes\.php\?start={offset}&sort=(?:[\w-]|%[0-9a-fA-F]{{2}})*", url))
+
+    first_links = [link for link in links
+                   if isinstance(link, dict) and link.get("offset") in adjacent
+                   and valid_link(link, link["offset"])]
+    # Page numbers and prev/next buttons can expose the same AJAX link twice.
+    # A different URL for the same offset is ambiguous and must stop the audit.
+    if (not first_links or any(
+            len({link["url"] for link in first_links if link["offset"] == offset}) > 1
+            for offset in adjacent)):
+        log.warning("Auditoria paginada: links AJAX da página %d não confirmados.", start)
+        return []
+    target = "routeAction"
+    initial_url = first_links[0].get("url")
+    restore_url = (re.sub(r"start=\d+", f"start={(start - 1) * 20}", initial_url, count=1)
+                   if initial_url else f"routes.php?start={(start - 1) * 20}")
+    unverified_navigation = False
+    verified_rows = initial_rows
+
+    def after_ajax(next_page: int, previous_rows: list[dict], *,
+                   restore: bool) -> Optional[list[dict]]:
+        previous_ids = {row["aircraft_id"] for row in previous_rows}
+        for attempt in range(4):
+            try:
+                captured = snapshot(None if restore else total,
+                                    None if restore else route_count)
+            except Exception:  # noqa: BLE001 - AJAX may replace the DOM mid-read
+                captured = None
+            if captured is not None and captured[0] == next_page:
+                loaded_rows = captured[2]
+                if {row["aircraft_id"] for row in loaded_rows} != previous_ids:
+                    return loaded_rows
+            # AJAX may return while the previous route list is still visible.
+            if attempt < 3:
+                time.sleep(0.1)
+        return None
+
+    def load(page: int, *, restore: bool = False) -> bool:
+        nonlocal unverified_navigation, verified_rows
+        if not restore and getattr(bot, "stopping", False):
+            return False
+        try:
+            captured = snapshot(None if restore else total,
+                                None if restore else route_count)
+            if captured is None:
+                return False
+            current, _, current_rows = captured
+            if current == page:
+                verified_rows = current_rows
+                return True
+
+            for _ in range(max(total, current)):
+                if not restore and getattr(bot, "stopping", False):
+                    return False
+                if current == page:
+                    verified_rows = current_rows
+                    return True
+                next_page = current + (1 if page > current else -1)
+                page_links = bot.js(_ROUTES_PAGER_LINKS_JS) or []
+                matches = [link for link in page_links
+                           if valid_link(link, (next_page - 1) * 20)] if isinstance(page_links, list) else []
+                urls = {link["url"] for link in matches}
+                if len(urls) != 1:
+                    log.warning("Auditoria paginada: falta link válido da página %d para %d.",
+                                current, next_page)
+                    return False
+                unverified_navigation = True
+                bot.ajax(urls.pop(), target)
+                confirmed = after_ajax(next_page, current_rows, restore=restore)
+                if confirmed is None:
+                    log.warning("Auditoria paginada: página %d sem confirmação do jogo.", next_page)
+                    return False
+                unverified_navigation = False
+                current = next_page
+                current_rows = confirmed
+            return False
+        except Exception as exc:  # noqa: BLE001 - Ajax may already have updated the DOM
+            log.warning("Auditoria paginada: falha ao carregar página %d (%s).",
+                        page, type(exc).__name__)
+            return False
+
+    staged: list[tuple[int, list[dict]]] = []
+    staged_ids: set[str] = set()
+    restored: Optional[tuple[int, int, list[dict]]] = None
+    try:
+        for page in registry.next_scan_pages(total, limit=pages_per_cycle, max_pages=25):
+            if not load(page):
+                break
+            # Keep page evidence until the original view and total are verified.
+            page_ids = {row["aircraft_id"] for row in verified_rows}
+            if staged_ids.intersection(page_ids):
+                log.warning("Auditoria paginada: aeronaves repetidas entre páginas do ciclo; "
+                            "amostragem descartada por possível deslocamento da frota.")
+                staged.clear()
+                break
+            staged_ids.update(page_ids)
+            staged.append((page, verified_rows))
+    finally:
+        try:
+            current = snapshot()
+            if current is None or current[0] != start or unverified_navigation:
+                if current is not None and not unverified_navigation:
+                    load(start, restore=True)
+                current = snapshot()
+                if current is None or current[0] != start or unverified_navigation:
+                    # Recover a changed-but-unconfirmed AJAX view with a
+                    # same-target URL derived from a verified native pager link.
+                    bot.ajax(restore_url, target)
+                for attempt in range(4):
+                    restored = snapshot()
+                    if restored is not None and restored[0] == start:
+                        break
+                    if attempt < 3:
+                        time.sleep(0.1)
+            else:
+                restored = current
+        except Exception as exc:  # noqa: BLE001 - best-effort UI restoration
+            log.warning("Auditoria paginada: falha ao restaurar página %d (%s).",
+                        start, type(exc).__name__)
+
+    if restored is None or restored[0] != start:
+        log.warning("Auditoria paginada: página inicial %d não confirmada; cobertura descartada.", start)
+        return []
+    if (restored[1] != total or
+            (route_count is not None and restored[2][0].get("scan_route_count") != route_count)):
+        # The fleet size or pagination changed while browsing. Invalidate
+        # prior coverage using the verified current page before continuing.
+        audit_routes(bot, registry, page=start, total_pages=restored[1], _rows=restored[2])
+        log.warning("Auditoria paginada: contagem alterada durante leitura; cobertura reiniciada.")
+        return []
+    if unverified_navigation:
+        log.warning("Auditoria paginada: navegação AJAX não confirmada; lote descartado.")
+        return []
+
+    visited = []
+    for page, rows in staged:
+        if not audit_routes(bot, registry, page=page, total_pages=total, _rows=rows,
+                            _audit_run_id=audit_run_id):
+            break
+        visited.append(page)
+    coverage = registry.snapshot().get("scan_coverage") or {}
+    log.info("Auditoria paginada: %d páginas confirmadas neste ciclo; cobertura %s/%s, "
+             "IDs repetidos=%s, total conferido=%s.",
+             len(visited), coverage.get("observed_pages", 0), total,
+             coverage.get("repeated_aircraft_across_pages", 0),
+             bool(coverage.get("full_page_coverage_verified")))
+    if coverage.get("full_page_coverage_verified"):
+        proof = registry.snapshot().get("last_verified_full_audit") or {}
+        log.info("Auditoria integral comprovada no ciclo %s: %s aeronaves únicas "
+                 "em %s páginas, de %s rotas anunciadas pelo jogo.",
+                 proof.get("audit_run_id"), proof.get("unique_aircraft"),
+                 proof.get("total_pages"), proof.get("expected_routes"))
     return visited
 
 
@@ -415,6 +662,9 @@ def manage_fleet(bot: "Bot") -> None:
     log_fleet.info("%d aeronaves estacionadas sem rota, %d pendentes de entrega.", parked, pending)
 
     audit_routes(bot, registry)
+    if cfg.get_bool("options", "audit_route_pages", False):
+        audit_routes_live_pages(bot, registry,
+                                pages_per_cycle=cfg.get_int("settings", "fleet_audit_pages_per_cycle", 3))
     budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))
     if not cfg.get_bool("options", "allow_duplicate_routes", True):
         if reroute_ready:
@@ -833,7 +1083,8 @@ def read_parked(bot: "Bot") -> list[ParkedAircraft]:
     return parked
 
 
-def search_routes(bot: "Bot", hub_id: str, max_distance: int, min_runway: int) -> list[RouteCandidate]:
+def search_routes(bot: "Bot", hub_id: str, max_distance: int, min_runway: int, *,
+                  persist_demand: bool = False) -> list[RouteCandidate]:
     bot.ajax(
         f"research_main.php?mode=search&rwy={min_runway}&dist={max_distance}&depId={hub_id}&arr=0&arrId=0&charter=0",
         "resResult",
@@ -851,6 +1102,11 @@ def search_routes(bot: "Bot", hub_id: str, max_distance: int, min_runway: int) -
             to_int(row["y"]) or 0, to_int(row["j"]) or 0, to_int(row["f"]) or 0, to_int(row["rwy"]) or 0,
             code_from_candidate(row),
         ))
+    if persist_demand and candidates:
+        samples = [{"arr_id": item.arr_id, "distance": item.distance,
+                    "y": item.y, "j": item.j, "f": item.f} for item in candidates]
+        count = HubExpansionRegistry().record_demand(hub_id, samples)
+        log.info("Pesquisa de rotas: %d amostras de demanda persistidas para hub %s.", count, hub_id)
     return candidates
 
 

@@ -81,11 +81,14 @@ e leituras incompletas, com desempate por menor investimento.
 A inspeção manual autenticada de 21/11 confirmou seletores e amostras reais
 de paginação, preços de compra, demanda e bases adquiridas. O jogo exibiu
 205 rotas e paginação por deslocamentos de 20, com 11 páginas estimadas.
-Ainda falta integrar essas fontes ao catálogo persistente por perfil,
-homologar um ciclo real de leitura paginada e provar o vínculo individual de
-base para cada aeronave. A etapa 4 também requer comparar os registros e a
-interface com a companhia em operação, incluindo instalação Linux. Os dados
-da inspeção e os limites de homologação estão registrados em
+Os coletores persistentes de preços de compra e demanda por rota já foram
+integrados ao ciclo do bot. A auditoria paginada preserva a evidência de cada
+página e exige uma mesma execução, contagens consistentes e IDs únicos para
+comprovar cobertura integral. Ainda faltam uma execução operacional autenticada
+da nova versão e uma fonte comprovável para o vínculo individual de base por
+aeronave. A etapa 4 também requer comparar os registros e a interface com a
+companhia em operação, incluindo instalação Linux. Os dados da inspeção,
+as alterações e os limites de homologação estão registrados em
 [`ENTREGAS_ROADMAP.md`](ENTREGAS_ROADMAP.md).
 
 1. **Confirmar as fontes no jogo.** Em uma sessão autenticada e de leitura,
