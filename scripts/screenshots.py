@@ -226,8 +226,8 @@ def web_shots(output: Path) -> None:
         driver = webdriver.Chrome(options=options)
         wait = WebDriverWait(driver, 25)
 
-        def navigate(*, mobile=False, tab=None, routes=False, tall=False):
-            width, height = (430, 1120) if mobile else (1536, 1200 if tall else 940)
+        def navigate(*, mobile=False, tab=None, routes=False):
+            width, height = (430, 1120) if mobile else (1536, 1280 if tab is not None or routes else 940)
             driver.set_window_size(width, height)
             driver.get(url)
             wait.until(lambda d: d.find_element(By.ID, "kMoney").text not in ("", "—"))
@@ -239,11 +239,14 @@ def web_shots(output: Path) -> None:
             if routes:
                 driver.find_element(By.CSS_SELECTOR, 'a[href="#routes"]').click()
                 wait.until(lambda d: "DEMO-02" in d.find_element(By.ID, "routeDuplicates").text)
-            driver.execute_script("window.scrollTo(0, 0)")
+            if mobile and tab is not None:
+                driver.execute_script("document.getElementById('settingsView').scrollIntoView()")
+            else:
+                driver.execute_script("window.scrollTo(0, 0)")
             time.sleep(0.6)
 
-        def shot(name, *, mobile=False, tab=None, routes=False, tall=False):
-            navigate(mobile=mobile, tab=tab, routes=routes, tall=tall)
+        def shot(name, *, mobile=False, tab=None, routes=False):
+            navigate(mobile=mobile, tab=tab, routes=routes)
             dest = output / name
             if not driver.save_screenshot(str(dest)):
                 raise RuntimeError(f"Falha ao salvar captura: {name}")
@@ -251,8 +254,8 @@ def web_shots(output: Path) -> None:
 
         shot("web-visao-geral.png")
         for index, tab in enumerate(("mercado", "frota", "aeronaves", "opcoes", "telegram")):
-            shot(f"web-config-{tab}.png", tab=index, tall=tab == "telegram")
-        shot("web-rotas.png", routes=True, tall=True)
+            shot(f"web-config-{tab}.png", tab=index)
+        shot("web-rotas.png", routes=True)
         shot("web-mobile.png", mobile=True)
         shot("web-mobile-config.png", mobile=True, tab=0)
     finally:
