@@ -1,6 +1,6 @@
 # Roadmap de Hubs e Aeronaves
 
-**Próxima implementação do painel web**
+**Em execução — primeira entrega de inventário disponível em branch de desenvolvimento.**
 
 O objetivo é responder duas perguntas da companhia. Em quais bases vale
 alocar a próxima aeronave? Qual aeroporto vale adquirir como nova base?
@@ -119,3 +119,22 @@ recomendações podem avançar em paralelo sobre os mesmos dados por perfil.
 - A navegação funciona em desktop e celular, com dados isolados por perfil.
   As duas visões funcionam a partir da última leitura disponível e só
   oferecem ações de consulta e comparação.
+
+
+## Estado de execução (21/11/2026)
+
+- [x] Inventário local por perfil baseado no seletor de hubs já consultado,
+      com validação de IDs e horário da fonte.
+- [x] API de consulta autenticada e tela inicial de Hubs e Aeronaves.
+- [x] Testes unitários adicionados para fonte, identidade, estimativas e perfis.
+- [ ] Confirmar em sessão autenticada que o seletor enumera integralmente
+      as bases adquiridas.
+- [ ] Confirmar campo de base própria **por aeronave**, inclusive em
+      páginas diferentes e para bases sem aeronaves.
+- [ ] Coletar e relacionar estimativas válidas de lucro à rota vigente.
+- [ ] Implantar ranking de alocação de próxima aeronave, novos hubs e payback.
+- [ ] Homologar contra o jogo, executar CI, validar mobile e atualizar capturas.
+
+A primeira tela deliberadamente mostra dados desconhecidos como
+**Sem dados** ou **Base a confirmar**. Não representa uma implementação
+completa das etapas 1 e 2. Ver o [histórico técnico](HISTORICO_IMPLEMENTACOES.md).
