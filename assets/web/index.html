@@ -325,6 +325,34 @@ footer strong { font-weight: 600; color: var(--aqua); }
   .tile:first-child .value { font-size: 30px; }
   .settings-group { padding: 13px; }
 }
+/* Overview: reliable game metrics and dense, expandable event rows. */
+.insights { border: 1px solid var(--border); background: var(--rail); padding: 13px 15px 11px; margin: -5px 0 19px; }
+.insights-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.insights-head .eyebrow { color: var(--aqua); }
+.insights-head a { color: var(--signal); font: 700 10px "Cascadia Mono", Consolas, monospace; text-decoration: none; }
+.insights-head a:hover { text-decoration: underline; }
+.insight-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; }
+.insight { min-width: 0; padding: 8px 11px 9px; border: 1px solid var(--border); background: var(--panel); }
+.insight .label { display: block; color: var(--muted); font: 700 9px/1.4 "Cascadia Mono", Consolas, monospace; text-transform: uppercase; letter-spacing: .04em; }
+.insight strong { display: block; margin: 4px 0 1px; color: var(--ink); font: 700 21px/1.15 "Bahnschrift", "Segoe UI", sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.insight strong.has-duplicates { color: var(--warn); }
+.insight small { display: block; color: var(--muted); font: 10px/1.4 "Cascadia Mono", Consolas, monospace; min-height: 14px; overflow-wrap: anywhere; }
+.insight-note { margin: 9px 0 0; color: var(--muted); font: 10px/1.5 "Cascadia Mono", Consolas, monospace; }
+#log { font-size: 10.5px; line-height: 1.4; }
+#log > div { display: flex; align-items: baseline; gap: 6px; padding: 3px 10px; min-height: 23px; white-space: nowrap; }
+#log .ts, #log .log-level, #log .log-tag { flex: none; white-space: nowrap; }
+#log .log-tag { max-width: 125px; overflow: hidden; text-overflow: ellipsis; }
+#log .log-message { display: block; min-width: 0; flex: 1; text-align: left; border: 0; border-radius: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+#log .log-message:hover { color: var(--aqua); }
+#log > div.expanded { align-items: flex-start; }
+#log > div.expanded .log-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 1520px) { .insight-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 800px) {
+  .insight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .insights { padding: 11px; }
+  #log .log-tag { max-width: 80px; }
+  #log > div { gap: 4px; padding: 3px 7px; }
+}
 .model-selector { width: 100%; max-width: 310px; }
 .model-hint { color: var(--muted); font: 11px/1.6 "Cascadia Mono", Consolas, monospace;
   border-left: 2px solid var(--aqua); padding: 9px 12px; margin: 8px 0 14px; }
@@ -474,6 +502,17 @@ footer strong { font-weight: 600; color: var(--aqua); }
       <div class="tile"><div class="label" data-t="🌿 CO₂">🌿 CO₂</div><div class="value" id="kCo2">—</div><div class="sub" id="kCo2Sub"></div><div class="bar"><i id="bCo2"></i></div></div>
       <div class="tile"><div class="label" data-t="🛩️ Frota">🛩️ Frota</div><div class="value" id="kFleet">—</div><div class="sub" id="kFleetSub"></div></div>
       <div class="tile"><div class="label" data-t="🎯 Meta">🎯 Meta</div><div class="value" id="kGoal">—</div><div class="sub" id="kGoalSub"></div><div class="bar"><i id="bGoal"></i></div></div>
+    </section>
+    <section class="insights" aria-label="Pulso operacional" data-t-aria-label="Pulso operacional">
+      <div class="insights-head"><span class="eyebrow" data-t="PULSO OPERACIONAL / ÚLTIMAS LEITURAS">PULSO OPERACIONAL / ÚLTIMAS LEITURAS</span><a href="#routes" data-t="Ver detalhes da frota →">Ver detalhes da frota →</a></div>
+      <div class="insight-grid">
+        <div class="insight"><span class="label" data-t="Rendimento estimado / dia">Rendimento estimado / dia</span><strong id="insightIncome">—</strong><small data-t="Estimativa da companhia">Estimativa da companhia</small></div>
+        <div class="insight"><span class="label" data-t="Rotas identificadas">Rotas identificadas</span><strong id="insightRoutes">—</strong><small id="insightRoutesDetail" data-t="Aguardando auditoria">Aguardando auditoria</small></div>
+        <div class="insight"><span class="label" data-t="Duplicidades atuais">Duplicidades atuais</span><strong id="insightDuplicates">—</strong><small id="insightDuplicatesDetail" data-t="Aguardando auditoria">Aguardando auditoria</small></div>
+        <div class="insight"><span class="label" data-t="Último despacho">Último despacho</span><strong id="insightDepartures">—</strong><small id="insightDeparturesDetail" data-t="Sem despacho registrado">Sem despacho registrado</small></div>
+        <div class="insight"><span class="label" data-t="Próximo ciclo">Próximo ciclo</span><strong id="insightCycle">—</strong><small id="insightCycleDetail" data-t="Bot aguardando execução">Bot aguardando execução</small></div>
+      </div>
+      <p class="insight-note" id="insightTrust" data-t="Aguardando leitura da frota no jogo.">Aguardando leitura da frota no jogo.</p>
     </section>
     <div class="section-bar"><span data-t="02 / CENTRO DE OPERAÇÕES">02 / CENTRO DE OPERAÇÕES</span><span class="counter">MONITOR / CONFIG</span></div>
     <div class="grid">
@@ -822,6 +861,22 @@ const EN = {
   "COMANDOS / CONTROLE": "COMMAND / CONTROL", "SUA COMPANHIA EM TEMPO REAL": "YOUR AIRLINE IN REAL TIME",
   "Uma visão clara de tudo que importa. Decisões, recursos e atividade da frota em um só lugar.": "Everything that matters. Decisions, resources and fleet activity in one place.",
   "01 / TELEMETRIA DA COMPANHIA": "01 / AIRLINE TELEMETRY", "02 / CENTRO DE OPERAÇÕES": "02 / OPERATIONS CENTER",
+  "Pulso operacional": "Operational pulse", "PULSO OPERACIONAL / ÚLTIMAS LEITURAS": "OPERATIONS / LATEST READINGS",
+  "Ver detalhes da frota →": "Fleet details →", "Rendimento estimado / dia": "Estimated income / day",
+  "Estimativa da companhia": "Airline estimate", "Rotas identificadas": "Identified routes",
+  "Duplicidades atuais": "Current duplicate routes", "Último despacho": "Latest dispatch",
+  "Próximo ciclo": "Next cycle", "Aguardando auditoria": "Waiting for audit",
+  "Sem despacho registrado": "No dispatch recorded", "Bot aguardando execução": "Bot waiting to start",
+  "Aguardando leitura da frota no jogo.": "Waiting for in-game fleet data.",
+  "de {x} aeronaves com rota": "out of {x} aircraft with routes",
+  "{x} aeronaves envolvidas": "{x} aircraft affected", "Avaliação às {x}": "Evaluated at {x}",
+  "simulação": "dry run", "Decolagens confirmadas": "Confirmed departures",
+  "Em execução": "Running", "Reinício automático": "Automatic restart",
+  "Frota conferida às {x}": "Fleet verified at {x}",
+  "Cadastro histórico: {x} registros": "Historical registry: {x} records",
+  "Rotas dependem da auditoria de cada página.": "Routes require each page to be audited.",
+  "Leitura da frota desatualizada. Aguardando nova conferência no jogo.": "Fleet reading is stale. Waiting for in-game verification.",
+  "Falha ao carregar o resumo de rotas.": "Could not load route summary.",
   "Fluxo de eventos em tempo real": "Real-time event stream", "Parâmetros operacionais": "Operational parameters",
   "Configurações": "Settings", "As opções são salvas automaticamente; os valores numéricos precisam ser salvos. Consulte a ajuda no README.":
     "Switches are saved as you change them; numbers with “Save”. The full help is in the README.",
@@ -882,6 +937,7 @@ function setLanguage(lang) {
   for (const e of document.querySelectorAll("[data-t-title]")) { e.title = tr(e.dataset.tTitle); }
   for (const e of document.querySelectorAll("[data-t-placeholder]")) { e.placeholder = tr(e.dataset.tPlaceholder); }
   for (const e of document.querySelectorAll("[data-t-aria-label]")) { e.setAttribute("aria-label", tr(e.dataset.tAriaLabel)); }
+  if (overviewRouteReport) { renderOverviewRoutes(overviewRouteReport); }
   if (hubInventoryReport) { renderHubs(hubInventoryReport); }
   if (hubExpansionReport) { renderHubExpansion(hubExpansionReport); }
   if (gameSourceProbeReport) {
@@ -956,7 +1012,56 @@ function renderStatus(s) {
   setText("kGoalSub", [(g.name || "").replace(/^(?:Auto|Automático): /, ""), g.price_text, g.eta_text ? tr("previsão {x}", g.eta_text) : null]
     .filter(Boolean).join(" · "));
   setBar("bGoal", g.pct);
+  $("insightIncome").textContent = s.income_day == null ? "—" : compact(s.income_day);
+  $("insightCycle").textContent = s.next_cycle_in != null ? clock(s.next_cycle_in) :
+    s.restart_in != null ? clock(s.restart_in) : "—";
+  $("insightCycleDetail").textContent = s.next_cycle_in != null ? tr("Em execução") :
+    s.restart_in != null ? tr("Reinício automático") : tr("Bot aguardando execução");
   $("updated").textContent = s.updated_at ? tr("Atualizado {x}", timeText(s.updated_at)) : "";
+}
+
+// The route registry contains historical records, so overview counts require a fresh game roster.
+let overviewRouteReport = null;
+let lastOverviewRouteFetch = 0;
+function renderOverviewRoutes(report) {
+  overviewRouteReport = report;
+  lastOverviewRouteFetch = Date.now();
+  const verified = report.current_roster_verified === true;
+  const current = Array.isArray(report.current_relations) ? report.current_relations : [];
+  const withRoute = current.filter(row => Number.isInteger(row.game_route_id) && row.game_route_id > 0);
+  const identified = verified ? withRoute.filter(row => !row.route_data_stale &&
+    airportLabel(row.origin) !== "—" && airportLabel(row.destination) !== "—").length : null;
+  $("insightRoutes").textContent = identified == null ? "—" : nf.format(identified);
+  $("insightDuplicates").textContent = verified && Number.isInteger(report.current_duplicate_routes)
+    ? nf.format(report.current_duplicate_routes) : "—";
+  $("insightDuplicates").classList.toggle("has-duplicates", verified && report.current_duplicate_routes > 0);
+  $("insightRoutesDetail").textContent = verified
+    ? tr("de {x} aeronaves com rota", nf.format(withRoute.length)) : tr("Aguardando auditoria");
+  $("insightDuplicatesDetail").textContent = verified
+    ? tr("{x} aeronaves envolvidas", nf.format(report.current_affected_aircraft || 0)) : tr("Aguardando auditoria");
+  const dispatch = report.last_dispatch;
+  $("insightDepartures").textContent = dispatch && Number.isInteger(dispatch.departed)
+    ? nf.format(dispatch.departed) : "—";
+  $("insightDeparturesDetail").textContent = dispatch && Number.isFinite(dispatch.at)
+    ? tr("Avaliação às {x}", timeText(dispatch.at)) + (dispatch.simulation ? " · " + tr("simulação") : "")
+    : tr("Sem despacho registrado");
+  const historical = tr("Cadastro histórico: {x} registros", nf.format(report.total || 0));
+  $("insightTrust").textContent = verified && Number.isFinite(report.current_roster_observed_at)
+    ? tr("Frota conferida às {x}", timeText(report.current_roster_observed_at)) + " · " + historical + ". " +
+      tr("Rotas dependem da auditoria de cada página.")
+    : report.current_roster_available ? tr("Leitura da frota desatualizada. Aguardando nova conferência no jogo.") +
+      " · " + historical + "."
+      : tr("Aguardando leitura da frota no jogo.") + " " + historical + ".";
+}
+async function loadOverviewRoutes() {
+  lastOverviewRouteFetch = Date.now();
+  try {
+    const report = await api("/api/routes");
+    if (!report || !Array.isArray(report.current_relations)) { throw new Error("Invalid route summary"); }
+    renderOverviewRoutes(report);
+  } catch (_) {
+    $("insightTrust").textContent = tr("Falha ao carregar o resumo de rotas.");
+  }
 }
 
 // ------------------------------------------------------------------ log
@@ -977,9 +1082,18 @@ function addLines(lines) {
     row.hidden = !!filter && filter !== l.tag;
     const ts = document.createElement("span"); ts.className = "ts";
     ts.textContent = "[" + timeText(l.time) + "] ";
-    const lv = document.createElement("span"); lv.style.color = l.level_colour; lv.textContent = "[" + l.level + "] ";
-    const tg = document.createElement("span"); tg.style.color = l.tag_colour; tg.textContent = "[" + l.tag + "] ";
-    const msg = document.createElement("span"); msg.textContent = (l.emoji ? l.emoji + " " : "") + l.message;
+    const lv = document.createElement("span"); lv.className = "log-level";
+    lv.style.color = l.level_colour; lv.textContent = "[" + l.level + "]";
+    const tg = document.createElement("span"); tg.className = "log-tag";
+    tg.style.color = l.tag_colour; tg.textContent = "[" + l.tag + "]";
+    const msg = document.createElement("button"); msg.type = "button"; msg.className = "log-message";
+    msg.textContent = (l.emoji ? l.emoji + " " : "") + l.message;
+    msg.title = msg.textContent;
+    msg.setAttribute("aria-expanded", "false");
+    msg.addEventListener("click", () => {
+      const expanded = row.classList.toggle("expanded");
+      msg.setAttribute("aria-expanded", String(expanded));
+    });
     if (l.level_key === "WARNING" || l.level_key === "ERROR" || l.level_key === "CRITICAL") { msg.style.color = l.level_colour; }
     row.append(ts, lv, tg, msg);
     box.appendChild(row);
@@ -1910,6 +2024,7 @@ const airportLabel = value => {
 };
 function renderRoutes(report) {
   routeReport = report;
+  renderOverviewRoutes(report);
   const verified = report.current_roster_verified === true;
   const scope = $("routeScope").value;
   const current = scope === "current";
@@ -2096,6 +2211,7 @@ async function tick() {
     renderStatus(await api("/api/status"));
     const log = await api("/api/log?since=" + lastId);
     if (log.lines && log.lines.length) { addLines(log.lines); }
+    if (!$("overview").hidden && Date.now() - lastOverviewRouteFetch > 60000) { await loadOverviewRoutes(); }
     if (!$("routesView").hidden && Date.now() - lastRouteFetch > 15000) { await loadRoutes(); }
     if (!$("hubsView").hidden && Date.now() - lastHubsFetch > 15000) { await loadHubs(); }
   } catch (e) {

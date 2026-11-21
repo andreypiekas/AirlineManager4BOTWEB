@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-21 — Visão geral operacional e registros compactos
+
+### Implementado
+
+- A **Visão geral** ganhou uma faixa de indicadores de alta densidade para rendimento diário estimado, rotas identificadas na frota atual, duplicidades comprovadas, decolagens confirmadas no último despacho e prazo até o próximo ciclo. Todos os dados vêm das APIs existentes `GET /api/status` e `GET /api/routes`.
+- O resumo de rotas só divulga contagens quando o cadastro da frota atual está verificado pelo jogo. A identificação exige ID de rota válido, origem e destino disponíveis e auditoria vigente da associação individual. O painel diferencia a frota conferida do **cadastro histórico acumulado** e indica quando a leitura ficou desatualizada.
+- A atualização do resumo ocorre a cada **60 segundos** enquanto a Visão geral está aberta e reutiliza respostas da página **Rotas e Aeronaves**. A telemetria principal continua com ciclo de dois segundos. A exibição do último despacho inclui o horário da avaliação e sinaliza simulações.
+- Os registros operacionais usam linhas menores, colunas compactas e uma mensagem de uma linha com reticências. Um clique ou acionamento pelo teclado expande individualmente a mensagem completa, preservando filtros, cores de severidade e rolagem automática.
+- O layout se adapta a telas grandes, intermediárias e celulares. Há destaque visual para duplicidades confirmadas. As novas informações receberam traduções em inglês.
+
+### Validação e limites
+
+- Testes estáticos garantem a presença dos indicadores e a compactação expansível do log. Um teste executa a lógica real em Node.js e verifica que dados históricos ou frota desatualizada não são divulgados como rotas/duplicidades atuais.
+- A cobertura de origem e destino depende da auditoria incremental das páginas do jogo. A faixa informa quantas rotas foram identificadas entre os vínculos atuais e não pressupõe cobertura integral. O rendimento diário é uma estimativa proveniente do status existente.
+- Não houve atualização da aplicação no servidor nesta entrega. A implantação deve ser realizada separadamente após validação da `main`.
+
 ## 2026-11-21 — Frota real, rotas atuais e resultado dos voos
 
 ### Diagnóstico autenticado
