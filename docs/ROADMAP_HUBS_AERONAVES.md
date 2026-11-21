@@ -133,7 +133,8 @@ recomendações podem avançar em paralelo sobre os mesmos dados por perfil.
       páginas diferentes e para bases sem aeronaves.
 - [ ] Coletar e relacionar estimativas válidas de lucro à rota vigente.
 - [ ] Implantar ranking de alocação de próxima aeronave, novos hubs e payback.
-- [ ] Homologar contra o jogo, executar CI, validar mobile e atualizar capturas.
+- [x] Executar CI da entrega H01: 387 testes aprovados em Python 3.10 e 3.13.
+- [ ] Homologar contra o jogo, validar mobile com dados reais e atualizar capturas.
 
 A primeira tela deliberadamente mostra dados desconhecidos como
 **Sem dados** ou **Base a confirmar**. Não representa uma implementação
