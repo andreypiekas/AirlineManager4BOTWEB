@@ -163,6 +163,12 @@ class RouteRegistry:
             })
             if profit_per_day is not None:
                 entry["profit_per_day"] = round(float(profit_per_day), 2)
+                entry["profit_route_key"] = entry["route_key"]
+                entry["profit_estimated_at"] = int(time.time())
+            elif previous.get("route_key") != entry["route_key"]:
+                entry.pop("profit_per_day", None)
+                entry.pop("profit_route_key", None)
+                entry.pop("profit_estimated_at", None)
             if stopover is not None:
                 entry["stopover"] = stopover
             if at_base is not None:
@@ -233,6 +239,7 @@ class RouteRegistry:
                 })
                 data["history"] = data["history"][-_MAX_HISTORY:]
             for field in ("origin", "destination", "stopover", "route_key", "proposal", "profit_per_day",
+                          "profit_route_key", "profit_estimated_at",
                           "game_verified_at"):
                 row.pop(field, None)
             row.update({

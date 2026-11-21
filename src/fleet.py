@@ -35,6 +35,7 @@ from route_optimizer import estimate_route, rank_candidates
 from route_strategy import best_reroute, profitable_candidates
 from route_airports import HubMatch, match_hub_options, code_from_candidate, explain_hub_options
 from airport_catalog import by_code, game_code
+from hub_registry import HubRegistry
 from route_registry import RouteRegistry, reroute_block_reason, endpoint, route_key
 from reroute import (aircraft_details_missing, confirm_stopover, has_pending_reroute,
                      landed_departure, recover_pending, replace_route)
@@ -545,6 +546,7 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
         # either airport may be the actual hub. The unique match in the
         # authenticated game selector decides the planning origin.
         hub_options = bot.js(_HUB_OPTIONS_JS) or []
+        HubRegistry().record_options(hub_options)
         owned_hub_ids = {str(option.get("id")) for option in hub_options}
         hub_match = match_hub_options(
             hub_code, current_dest_code, hub_options
@@ -842,6 +844,7 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
         # Creating a route closes the popup, so start from a fresh Routes > Research screen every time.
         bot.open_popup("routes_main.php", "Routes", "nav_routes")
         bot.ajax("research_main.php", "routeAction")
+        HubRegistry().record_options(bot.js(_HUB_OPTIONS_JS) or [])
         hub_id = bot.js("return $('#hubSelect').val() || (typeof depId !== 'undefined' ? String(depId) : null);")
         origin = parked_specs(bot, aircraft.id) if allow_stopover else None
         if origin:

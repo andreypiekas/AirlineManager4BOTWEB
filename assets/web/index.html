@@ -360,6 +360,13 @@ footer strong { font-weight: 600; color: var(--aqua); }
 .route-manual { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:14px; }
 .route-manual label { display:grid; gap:5px; color:var(--muted); font-size:11px; }
 .route-manual button, .route-manual .manual-result { grid-column:1/-1; }
+.hubs-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin:16px 0; }
+.hub-card { padding:19px; border:1px solid var(--border); background:var(--panel); min-width:0; }
+.hub-card h2 { font-size:21px; margin:6px 0 13px; overflow-wrap:anywhere; }
+.hub-card p { color:var(--muted); font-size:12px; line-height:1.7; }
+.hub-card strong { color:var(--signal); }
+.hub-card details { margin-top:12px; font-size:12px; }
+.hub-card summary { cursor:pointer; }
 @media (max-width:950px) { .route-notes {grid-template-columns:1fr;} .route-manual {grid-template-columns:1fr;} }
 </style>
 </head>
@@ -382,6 +389,7 @@ footer strong { font-weight: 600; color: var(--aqua); }
       <a href="#activity"><span class="index">02/</span><span data-t="Registro operacional">Registro operacional</span></a>
       <a href="#parameters"><span class="index">03/</span><span data-t="Parâmetros">Parâmetros</span></a>
       <a href="#routes"><span class="index">04/</span><span data-t="Rotas e aeronaves">Rotas e aeronaves</span></a>
+      <a href="#hubs"><span class="index">05/</span><span data-t="Hubs e Aeronaves">Hubs e Aeronaves</span></a>
     </nav>
     <div class="side-actions">
       <span class="eyebrow" data-t="COMANDOS / CONTROLE">COMANDOS / CONTROLE</span>
@@ -507,6 +515,23 @@ footer strong { font-weight: 600; color: var(--aqua); }
       </form>
     </details>
   </main>
+  <main class="workspace settings-workspace" id="hubsView" hidden>
+    <div class="topline"><span class="path">AM4 / OPERATIONS / HUBS</span><span data-t="HUBS E AERONAVES">HUBS E AERONAVES</span><span class="live">● INVENTORY</span></div>
+    <header class="settings-hero">
+      <span class="eyebrow" data-t="INVENTÁRIO / LEITURA">INVENTÁRIO / LEITURA</span>
+      <h1>HUBS<span>.</span></h1>
+      <p data-t="Bases identificadas pelo seletor do jogo. Vínculos de aeronaves aguardam confirmação individual.">Bases identificadas pelo seletor do jogo. Vínculos de aeronaves aguardam confirmação individual.</p>
+      <a href="#overview" class="settings-back" data-t="← Voltar ao painel">← Voltar ao painel</a>
+    </header>
+    <section class="card" style="padding:19px">
+      <div class="routes-header">
+        <div><strong data-t="BASES ADQUIRIDAS">BASES ADQUIRIDAS</strong><p id="hubsStatus" role="status" aria-live="polite"></p></div>
+        <button id="hubsRefresh" type="button" data-t="Atualizar relatório">Atualizar relatório</button>
+      </div>
+      <div class="hubs-grid" id="hubsGrid"></div>
+      <div class="hub-card"><h2 data-t="Base a confirmar">Base a confirmar</h2><p id="hubsUnconfirmed"></p><div id="hubsUnconfirmedList"></div></div>
+    </section>
+  </main>
 </div>
 <script>
 "use strict";
@@ -545,6 +570,15 @@ const EN = {
 
   "Ir para o conteúdo": "Skip to content", "● SISTEMA / ESTADO": "● SYSTEM / STATUS",
   "Visão geral": "Overview", "Registro operacional": "Operations log", "Parâmetros": "Parameters",
+  "Hubs e Aeronaves": "Hubs & Aircraft", "HUBS E AERONAVES": "HUBS & AIRCRAFT",
+  "INVENTÁRIO / LEITURA": "INVENTORY / READ ONLY", "BASES ADQUIRIDAS": "OWNED HUBS",
+  "Bases identificadas pelo seletor do jogo. Vínculos de aeronaves aguardam confirmação individual.": "Hubs identified by the game selector. Aircraft assignments require individual confirmation.",
+  "Última leitura": "Last read", "Aguardando leitura de bases no jogo.": "Waiting for hub data from the game.",
+  "Aeronaves confirmadas": "Confirmed aircraft", "Rotas com estimativa": "Routes with estimates",
+  "Sem dados": "No data", "Ver aeronaves": "View aircraft", "Base a confirmar": "Hub to confirm",
+  "Nenhuma base confirmada até o momento.": "No confirmed hubs yet.",
+  "aeronaves sem vínculo individual de base confirmado.": "aircraft without a verified home hub.",
+  "Não foi possível consultar as bases.": "Could not load hubs.",
   "Aeronaves registradas": "Registered aircraft", "Rotas duplicadas": "Duplicate routes", "Aeronaves envolvidas": "Affected aircraft",
   "Política de duplicidade": "Duplicate policy", "Permitidas": "Allowed", "Bloqueadas": "Blocked",
   "Alternativa": "Alternative", "dia": "day", "Nenhuma relação encontrada.": "No route relations found.",
@@ -1031,11 +1065,14 @@ function activateWorkspaceFromHash() {
   const target = location.hash;
   const isSettings = target === "#parameters";
   const isRoutes = target === "#routes";
-  $("overview").hidden = isSettings || isRoutes;
+  const isHubs = target === "#hubs";
+  $("overview").hidden = isSettings || isRoutes || isHubs;
   $("settingsView").hidden = !isSettings;
   $("routesView").hidden = !isRoutes;
+  $("hubsView").hidden = !isHubs;
   if (isRoutes) { loadRoutes(); }
-  const current = isRoutes ? "#routes" : isSettings ? "#parameters" : target === "#activity" ? "#activity" : "#overview";
+  if (isHubs) { loadHubs(); }
+  const current = isHubs ? "#hubs" : isRoutes ? "#routes" : isSettings ? "#parameters" : target === "#activity" ? "#activity" : "#overview";
   for (const link of document.querySelectorAll(".nav-list a")) {
     const selected = link.getAttribute("href") === current;
     link.classList.toggle("active", selected);
@@ -1052,6 +1089,56 @@ activateWorkspaceFromHash();
 
 
 // ------------------------------------------------------------------ persistent route registry
+let lastHubsFetch = 0;
+async function loadHubs() {
+  try {
+    const report = await api("/api/hubs");
+    if (!report || !Array.isArray(report.hubs) || !Array.isArray(report.unconfirmed_aircraft)) {
+      throw new Error("Invalid hubs response");
+    }
+    lastHubsFetch = Date.now();
+    $("hubsStatus").textContent = report.observed_at
+      ? tr("Última leitura") + ": " + new Date(report.observed_at * 1000).toLocaleString(LANG === "en" ? "en-GB" : "pt-BR")
+      : tr("Aguardando leitura de bases no jogo.");
+    const grid = $("hubsGrid"); grid.replaceChildren();
+    for (const hub of report.hubs) {
+      const card = document.createElement("article"); card.className = "hub-card";
+      const heading = document.createElement("h2");
+      heading.textContent = (hub.code ? hub.code + " · " : "") + (hub.name || "#" + hub.id);
+      const summary = document.createElement("p");
+      summary.textContent = tr("Aeronaves confirmadas") + ": " + hub.aircraft_count +
+        " · " + tr("Rotas com estimativa") + ": " + hub.estimated_routes;
+      const profit = document.createElement("strong");
+      profit.textContent = hub.estimated_profit_per_day == null ? tr("Sem dados") :
+        "$ " + Number(hub.estimated_profit_per_day).toLocaleString(LANG === "en" ? "en-GB" : "pt-BR") + "/" + tr("dia");
+      card.append(heading, summary, profit);
+      if (hub.aircraft.length) {
+        const details = document.createElement("details");
+        const title = document.createElement("summary"); title.textContent = tr("Ver aeronaves"); details.append(title);
+        for (const row of hub.aircraft) {
+          const line = document.createElement("p");
+          line.textContent = (row.registration || row.aircraft_id) + " · " + (row.model || "—") +
+            " · " + airportLabel(row.origin) + " ↔ " + airportLabel(row.destination);
+          details.append(line);
+        }
+        card.append(details);
+      }
+      grid.append(card);
+    }
+    if (!report.hubs.length) { grid.textContent = tr("Nenhuma base confirmada até o momento."); }
+    $("hubsUnconfirmed").textContent = report.unconfirmed_aircraft.length + " " + tr("aeronaves sem vínculo individual de base confirmado.");
+    const pending = $("hubsUnconfirmedList"); pending.replaceChildren();
+    const details = document.createElement("details");
+    const title = document.createElement("summary"); title.textContent = tr("Ver aeronaves"); details.append(title);
+    for (const row of report.unconfirmed_aircraft) {
+      const line = document.createElement("p");
+      line.textContent = (row.registration || row.aircraft_id) + " · " + (row.model || "—");
+      details.append(line);
+    }
+    if (report.unconfirmed_aircraft.length) { pending.append(details); }
+  } catch (_) { $("hubsStatus").textContent = tr("Não foi possível consultar as bases."); }
+}
+$("hubsRefresh").addEventListener("click", loadHubs);
 let routeReport = null;
 let lastRouteFetch = 0;
 const airportLabel = value => {
@@ -1205,6 +1292,7 @@ async function tick() {
     const log = await api("/api/log?since=" + lastId);
     if (log.lines && log.lines.length) { addLines(log.lines); }
     if (!$("routesView").hidden && Date.now() - lastRouteFetch > 15000) { await loadRoutes(); }
+    if (!$("hubsView").hidden && Date.now() - lastHubsFetch > 15000) { await loadHubs(); }
   } catch (e) {
     $("state").textContent = tr("Sem conexão com o bot"); $("pill").className = "pill ERROR";
   }
