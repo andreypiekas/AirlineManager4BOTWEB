@@ -829,6 +829,8 @@ const EN = {
   "{x} com rota": "{x} with routes", "contagem parcial": "partial count",
   "última contagem desatualizada": "last count is stale",
   "Frota total no jogo": "Total fleet in game", "registros históricos de rotas": "historical route records",
+  "Preços de hubs registrados": "Hub prices recorded", "Amostras de demanda": "Demand samples",
+  "recentes": "recent", "Demanda atualizada em": "Demand updated at",
   "Registros sem base individual confirmada": "Records without confirmed home hub",
   "hangar {x} vagas": "hangar {x} free", "previsão {x}": "arrives {x}", "Atualizado {x}": "Updated {x}",
   "Meta": "Goal", "Valores": "Values", "Salvar": "Save", "vazio = mais rentável": "empty = most profitable",
@@ -1545,6 +1547,22 @@ function renderHubExpansion(report) {
     (report.availability_pending ? "" : " " + tr("Saldo conhecido") + ": " + hubMoney(report.cash) +
       " · " + tr("Reserva configurada") + ": " + hubMoney(report.reserve) + ".") +
     (report.cash_observed_at ? " " + tr("Saldo conferido em") + ": " + hubDate(report.cash_observed_at) + "." : "");
+  const pricedHubs = report.candidates.filter(hub =>
+    Number.isFinite(hub.hub_price) && hub.hub_price >= 0).length;
+  const observations = [];
+  observations.push(tr("Preços de hubs registrados") + ": " + nf.format(pricedHubs) +
+    " / " + nf.format(report.candidates.length) + ".");
+  if (Number.isFinite(report.demand_samples)) {
+    let demand = tr("Amostras de demanda") + ": " + nf.format(report.demand_samples);
+    if (Number.isFinite(report.demand_fresh_samples)) {
+      demand += " (" + nf.format(report.demand_fresh_samples) + " " + tr("recentes") + ")";
+    }
+    observations.push(demand + ".");
+  }
+  if (Number.isFinite(report.demand_observed_at)) {
+    observations.push(tr("Demanda atualizada em") + ": " + hubDate(report.demand_observed_at) + ".");
+  }
+  $("hubExpansionScope").textContent += " " + observations.join(" ");
   const verified = report.candidates.filter(hub =>
     ["viavel", "saldo_insuficiente", "sem_lucro"].includes(hub.status)).length;
   $("hubExpansionCoverage").textContent = tr("Cenários verificados") + ": " + verified + " / " +

@@ -87,6 +87,11 @@ def test_hubs_filters_and_sort_controls_are_labeled_and_target_the_grids():
     assert '"Todos os modelos": "All models"' in html
     assert '"Ordenar recomendações": "Sort recommendations"' in html
     assert '"Nenhuma recomendação corresponde ao modelo selecionado.":' in html
+    assert '"Preços de hubs registrados": "Hub prices recorded"' in html
+    assert '"Amostras de demanda": "Demand samples"' in html
+    assert 'report.demand_fresh_samples' in html
+    assert 'report.demand_observed_at' in html
+    assert 'nf.format(pricedHubs)' in html
     assert '.hubs-controls { display:grid; grid-template-columns:minmax(0,1fr); }' in html
 
 

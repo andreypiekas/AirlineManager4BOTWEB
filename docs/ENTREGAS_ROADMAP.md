@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-21 — Confirmação operacional da coleta e acompanhamento no painel
+
+### Evidências de execução autenticada
+
+- Na versão `2d395f8`, implantada após backup integral no servidor `192.168.101.234`, o log do serviço `am4bot@principal` confirmou **3/3 preços de hubs persistidos no mesmo ciclo**. A API posterior mostrou **9 aeroportos candidatos com preço** e **1.000 amostras de demanda**, contra 550 antes das correções. O cursor de catálogo avançou pelo Brasil; coleta de preços e de demanda segue ativada.
+- A API autenticada retornou **218 aeronaves na frota** com contagem verificada e atual. Composição do jogo no instante da consulta: **205 aeronaves com rota**, **0 estacionadas** e **13 entregas pendentes**. A lista de rotas tinha **255 IDs históricos**, que não representam aeronaves atualmente possuídas. O seletor do jogo informou **30 hubs adquiridos**.
+- A auditoria de rotas tinha **11 das 11 páginas observadas ao longo de ciclos diferentes**, com **192 IDs únicos** e **13 IDs repetidos entre páginas**. Como aeronaves mudam de posição durante a paginação, `full_page_coverage_verified=False`. A prova de uma passagem integral estável e o hub de origem individual continuam pendentes.
+- Configuração observada: coleta de mercado e auditoria ativas, **3 preços de hubs** e **3 páginas de frota** por ciclo, ciclos normalmente a cada **5 a 10 minutos**, podendo antecipar conforme a operação. A pesquisa de demanda amostra uma base adquirida por ciclo.
+
+### Melhoria desta entrega
+
+- A tela **Novos hubs** passa a exibir quantos candidatos têm preço de compra registrado, o total de amostras persistidas de demanda, quantas seguem recentes e a data da última pesquisa. Os dados são lidos da API já existente e não executam ações no jogo.
+- As traduções em inglês e verificações estáticas da interface foram atualizadas.
+
+### Pendências de homologação
+
+- Confirmar a cobertura contínua da coleta em outros países, a base individual de cada aeronave e uma auditoria completa em uma única passagem estável. O total verificado da frota permanece separado do cadastro histórico.
+
 ## 2026-11-21 — Correção da coleta de preços na página autenticada de hubs
 
 **Diagnóstico real:** o jogo abre `hubs_new.php`, preenche `#hubAirportSelector` após carregar o país e substitui `#airportInfo` via `airport_info.php?mode=hub&id=<aeroporto>`. Dentro dessa resposta há uma linha `<tr id="hubCostInfo">` cujo segundo `<td>` separa o valor em dólares dos pontos por `<br>`. O `textContent` dessa linha une os valores, por exemplo `$ 11,520,00020 Points`, inviabilizando a análise numérica anterior. A resposta também contém a atribuição `arrId = <id>` no script do aeroporto selecionado.
