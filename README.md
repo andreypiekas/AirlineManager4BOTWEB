@@ -1,6 +1,6 @@
 <div align="center">
   <h1>AM / 04 · TORRE DE CONTROLE</h1>
-  <p><strong>Airline Manager 4 Bot / Flight Operations</strong></p>
+  <p><strong>AirlineManager4BOTWEB</strong></p>
   <p>Automação para o <a href="https://www.airlinemanager.com">Airline Manager 4</a> com painel desktop e web: decolagens, combustível, CO₂, manutenção, campanhas de marketing, rotas e compra de aeronaves.</p>
 </div>
 
@@ -16,7 +16,7 @@ curl -fsSLo instalar-am4.sh https://raw.githubusercontent.com/andreypiekas/Airli
 
 1. Informe o login do jogo quando solicitado. A senha fica oculta. Para pular, pressione **Enter** no campo de e-mail.
 2. Abra no navegador o endereço completo que aparece no terminal. Com `--rede-local`, o link inclui um token para acesso pela rede local.
-3. Revise **Parâmetros** no painel. Um perfil novo começa com **Simulação (sem gastos)** ativada. Se você pulou o login, o painel abre e o bot fica parado até configurar as credenciais.
+3. Revise **Parâmetros → Opções**. O instalador ativa **Simulação (sem gastos)** para perfis novos. Se você pulou o login, siga a seção de primeiro acesso do guia Linux para cadastrar as credenciais.
 
 O instalador prepara Python, Chromium e o serviço `am4bot@principal`, que abre o painel após reiniciar o servidor. Se faltar o `curl`, instale com `sudo apt-get install curl`.
 
@@ -46,26 +46,17 @@ python3 -m venv .venv
 .venv/bin/python src/main.py
 ~~~
 
-Configure o login na interface desktop e ative **Simulação (sem gastos)** antes de iniciar os testes. Para usar somente o painel em uma instalação já configurada, execute `.venv/bin/python src/main.py --web`.
+Configure o login na interface desktop e ative **Simulação (sem gastos)** antes de iniciar os testes. Para usar o painel web depois, marque **Lembrar credenciais** e execute `.venv/bin/python src/main.py --web`.
 
 </details>
-
-## Novo centro de operações
-
-O painel web e o aplicativo desktop agora usam a identidade **AM/04 — Torre de Controle**: design técnico de alto contraste, telemetria com leitura rápida, console de eventos e comandos separados dos parâmetros. O painel web é responsivo e não depende de fontes, CSS ou serviços externos.
-
-**No painel web, os parâmetros agora ficam em uma tela própria.** Use **Parâmetros** no menu lateral para alterar as categorias Mercado, Frota, Aeronaves, Opções e Telegram. A tela principal mantém indicadores, registros e um resumo textual da última alteração. Interruptores são salvos ao clicar; números e modelos exibem aviso de edição pendente até escolher **Salvar alterações**. Rascunhos continuam disponíveis ao mudar de categoria durante a sessão.
-
-**[Conheça a arquitetura visual e os contratos da interface](docs/IDENTIDADE_VISUAL.md)**
-
-As capturas abaixo são geradas **diretamente a partir do aplicativo**, com uma companhia de demonstração. Não exibem contas reais, credenciais ou partidas executadas. A identidade web usa o tema escuro; o desktop oferece também tema claro.
 
 ## Funcionalidades
 
 - Decola aeronaves prontas e verifica os voos.
 - Compra combustível e CO₂ usando histórico de preços, níveis mínimos e limites de saldo.
 - Programa reparos e revisões A-check, e amplia vagas do hangar quando necessário.
-- Avalia rotas, demanda, autonomia, assentos e melhorias das aeronaves.
+- Cria rotas diretas ou com escala quando viável, analisa duplicidades e pode trocar rotas repetidas.
+- Avalia assentos e melhorias das aeronaves conforme a demanda e o custo.
 - Planeja novas aquisições com estimativas de rentabilidade e metas de crescimento.
 - Gerencia campanhas de reputação e ecológicas segundo o retorno estimado.
 - Acompanha tarefas do jogo e coleta recompensas disponíveis.
@@ -77,36 +68,72 @@ As estimativas adaptam-se aos modos Fácil e Realista e dependem das informaçõ
 
 ## Controle de rotas e duplicidades
 
-A aba **Rotas e aeronaves** apresenta o registro persistente por companhia, com
-aeronave, matrícula, origem, destino, lucro aproximado, duplicidades, últimas
-leituras, propostas de troca e histórico de alterações. As rotas são comparadas
-sem considerar o sentido: `DUB → GRU` e `GRU → DUB` são equivalentes.
+Em **Rotas e aeronaves**, o painel web lista as aeronaves já identificadas por
+perfil, com lucro diário estimado, duplicidades, propostas de troca e histórico.
+O cadastro acumula leituras ao longo dos ciclos, inclusive quando o jogo exibe
+só parte da frota. Uma correção manual nessa tela atualiza apenas o relatório.
+O controle trata `DUB → GRU` e `GRU → DUB` como a mesma rota.
 
-Em **Parâmetros → Frota**, a opção **Permitir aeronaves na mesma rota
-(ida/volta)** determina se o bot poderá criar rotas repetidas. Desativada por
-padrão, ela impede novas duplicidades e propõe uma rota alternativa lucrativa
-para registros já duplicados. A troca automática só ocorre com identificação
-e confirmação confiáveis no jogo, com a aeronave na base, e após verificação
-de custo e elegibilidade. Quando os dados são insuficientes, o relatório
-mantém uma pendência e **não altera** o jogo.
+### Trocar uma rota repetida
 
-O controle é cumulativo e **não presume que já leu toda a frota**, já que o
-jogo pode exibir listas parciais por página. Permite corrigir manualmente um
-vínculo no cadastro, sem modificar a rota real. Consulte o
-[guia de controle e segurança das rotas](docs/CONTROLE_ROTAS.md).
+1. Em **Parâmetros → Frota**, mantenha **Permitir aeronaves na mesma rota (ida/volta)** desligado e **Analisar e sugerir correções de rotas repetidas** ligado. Esses são os padrões.
+2. Confira as alternativas em **Rotas e aeronaves**. O campo **Ajuste de rota: lucro mínimo adicional (%)** controla o ganho exigido quando há uma estimativa confiável da rota atual.
+3. Para autorizar alterações no jogo, ligue **Substituir rotas repetidas automaticamente** (desligado por padrão) e desligue **Simulação (sem gastos)** em **Parâmetros → Opções**.
 
-Na criação automática de rotas para aeronaves novas, o bot pode pesquisar
-um stopover para alcançar um destino além do alcance direto. A origem deve
-ser uma base própria, os dois trechos precisam caber na autonomia e o jogo
-precisa confirmar a escala.
+O bot faz no máximo uma tentativa real de troca por ciclo. Ele confirma no jogo
+a aeronave pousada, o aeroporto atual e o vínculo da rota. A taxa precisa caber
+no saldo disponível acima da reserva de caixa. A rota alternativa mantém uma
+base adquirida em uma das pontas para permitir manutenção e A-check na ida ou
+na volta. Se a aeronave estiver pousada fora de uma base própria, a alternativa
+precisa levá-la a uma base adquirida.
+
+A troca automática se aplica a rotas diretas. Quando o resultado de uma troca
+fica pendente de confirmação, as decolagens automáticas aguardam a verificação.
+
+### Criar rotas para aeronaves sem rota
+
+Ative **Criar rotas para aeronaves estacionadas** em **Parâmetros → Frota**.
+O bot pode tentar uma escala (*stopover*) quando identifica a aeronave
+estacionada em uma base adquirida e conhece seu modelo e alcance. A busca por
+escala entra em ação quando o limite de distância configurado excede o alcance
+direto. O bot verifica as pistas, a autonomia em cada trecho e a distância
+total dentro do limite configurado. Se a pesquisa não encontrar uma escala
+adequada, o bot tenta rotas diretas. Se o pedido de criação com escala já foi
+enviado e ainda aguarda confirmação, o bot volta a conferir a aeronave na
+próxima leitura da frota.
+
+A opção avançada `route_stopover` vem ligada na seção `[options]` do
+`settings.ini` do perfil. Com ela ligada, uma aeronave sem rota identificada
+fora das bases adquiridas fica para revisão.
+
+### Política de decolagens
+
+Em **Parâmetros → Opções**, **Decolar aeronaves** controla as partidas.
+**Bloquear decolagens com rotas duplicadas** vem desligado. Para reter esses
+voos, ligue o bloqueio e mantenha **Despacho individual seguro quando houver
+rotas duplicadas** ligado. Com duplicidades conhecidas, o bot usa os comandos
+individuais que conseguir confirmar no jogo. Se o despacho individual estiver
+desligado, o bot retém todas as partidas enquanto houver duplicidades
+conhecidas. A tela **Rotas e aeronaves** mostra as aeronaves aprovadas, as
+retidas e as partidas confirmadas.
+
+[Guia de controle de rotas e decolagens](docs/CONTROLE_ROTAS.md)
 
 ## Interface — AM/04 Torre de Controle
 
+As capturas foram geradas pelo aplicativo com uma companhia de demonstração.
+O painel web usa tema escuro e se adapta ao celular. O desktop também oferece
+tema claro.
+
+[Guia da interface](docs/IDENTIDADE_VISUAL.md)
+
 ### Painel operacional
 
-![Torre de Controle AM/04 — painel principal com telemetria e registro operacional](screenshots/web-visao-geral.png)
+![Painel web com indicadores da companhia, comandos do bot e registros de operação](screenshots/web-visao-geral.png)
 
-Painel compacto com indicadores da companhia, eventos do bot e confirmação da última alteração. O menu **Parâmetros** abre uma página separada; as rotinas de execução continuam na visão geral.
+### Rotas e aeronaves
+
+![Relatório de rotas no painel web com uma duplicidade e uma proposta de troca](screenshots/web-rotas.png)
 
 ### Configurações em tela dedicada
 
@@ -116,7 +143,11 @@ Painel compacto com indicadores da companhia, eventos do bot e confirmação da 
 | Aeronaves | Opções |
 | ![Parâmetros das Aeronaves na interface web](screenshots/web-config-aeronaves.png) | ![Parâmetros de Opções na interface web](screenshots/web-config-opcoes.png) |
 
-Os interruptores são salvos automaticamente e exibem confirmação; números e modelos precisam do botão **Salvar alterações**. Campos não salvos permanecem disponíveis ao trocar de categoria na sessão atual.
+![Parâmetros do Telegram com filtros de notificações e botão para teste de envio](screenshots/web-config-telegram.png)
+
+No painel web, abra **Parâmetros** no menu lateral. Os interruptores são salvos
+ao clicar. Para gravar números e modelos, use **Salvar alterações**. Os campos
+em edição permanecem disponíveis ao trocar de categoria na sessão atual.
 
 ### Acesso pelo celular
 
@@ -139,26 +170,46 @@ Os interruptores são salvos automaticamente e exibem confirmação; números e 
 
 ### Regenerar as capturas
 
-O gerador [\`scripts/screenshots.py\`](scripts/screenshots.py) inicia **somente uma interface de demonstração local**, sem login no jogo, compras, decolagens ou credenciais verdadeiras. Ele captura desktop e web na resolução apropriada, e remove imagens obsoletas **apenas depois de completar todas as novas capturas**.
+O gerador [`scripts/screenshots.py`](scripts/screenshots.py) abre as interfaces
+desktop e web com dados fictícios em uma pasta temporária. Ele usa um painel
+local e atualiza `screenshots/` depois que todas as capturas forem geradas.
 
-No Ubuntu com X11/Xvfb e Chrome instalado:
+No Ubuntu com Tkinter, Xvfb, xauth e Chrome instalados, use o ambiente virtual
+do projeto:
 
 ~~~bash
-python -m pip install -r requirements.txt
-xvfb-run -a -s "-screen 0 1920x1200x24" python scripts/screenshots.py
+.venv/bin/python -m pip install -r requirements.txt
+xvfb-run -a -s "-screen 0 1920x1200x24" .venv/bin/python scripts/screenshots.py
 ~~~
 
-No Windows com ambiente gráfico, execute \`python scripts/screenshots.py\`. Para reproduzir automaticamente em uma branch no GitHub, consulte o workflow [Atualizar capturas AM/04](.github/workflows/screenshots.yml).
-
-
+No Windows com ambiente gráfico, execute `.venv\Scripts\python.exe scripts\screenshots.py`.
+No GitHub, execute o workflow [Atualizar capturas AM/04](.github/workflows/screenshots.yml)
+em uma branch de documentação.
 
 ## Perfis de diferentes companhias
 
-Cada perfil usa credenciais, configurações, dados, sessão do navegador e porta web independentes. Use **--profile companhia2** para iniciar outro perfil. O perfil principal utiliza as pastas **config/** e **data/**; os demais ficam em **profiles/nome/**. Evite executar o mesmo perfil em dois computadores simultaneamente.
+Cada perfil tem configurações, credenciais, dados, sessão do navegador e porta
+web próprios. Para adicionar uma companhia no desktop, use **Perfis** na
+barra lateral ou inicie o aplicativo com `--profile companhia2`. No
+instalador Linux, use `bash instalar.sh --rede-local --perfil companhia2`.
+Cadastre o login do jogo no novo perfil antes de iniciar o bot.
+
+| Arquivos | Perfil principal | Demais perfis |
+| --- | --- | --- |
+| Preferências | `config/settings.ini` | `profiles/<nome>/settings.ini` |
+| Segredos | `config/secrets.ini` | `profiles/<nome>/secrets.ini` |
+| Sessão do navegador | `config/session/` | `profiles/<nome>/session/` |
+| Dados e registros | `data/` | `profiles/<nome>/data/` |
+
+Na criação de um perfil, as configurações do Telegram podem ser copiadas do
+perfil de origem. Confira o token e o chat de destino antes de iniciar o bot.
 
 ## Telegram
 
-Crie um bot por meio do [@BotFather](https://t.me/BotFather), envie uma mensagem a ele e consulte a API **getUpdates** para obter o chat_id. Em **config/secrets.ini**, configure:
+Crie um bot por meio do [@BotFather](https://t.me/BotFather), envie uma
+mensagem a ele e consulte o método `getUpdates` da API para obter o
+`chat_id`. Configure a seção abaixo em `config/secrets.ini` para o perfil
+principal ou em `profiles/<nome>/secrets.ini` para os demais perfis.
 
 ~~~ini
 [telegram]
@@ -166,7 +217,10 @@ bot_token = SEU_TOKEN
 chat_id = SEU_CHAT_ID
 ~~~
 
-Para testar a integração, execute **python src/notify.py**. Mantenha o arquivo de segredos privado (chmod 600 no Linux).
+No painel web, abra **Parâmetros → Telegram → Enviar mensagem de teste**. No
+desktop, use **Telegram → Testar Telegram**. O teste funciona mesmo com
+os filtros desligados. Se alterar o token ou o chat com o bot em
+execução, reinicie o bot para aplicar os dados aos avisos automáticos.
 
 ## Guia detalhado das configurações
 
@@ -178,7 +232,7 @@ Passe o mouse sobre uma configuração para abrir a ajuda contextual em portugu�
 
 - **Perfis** — Cada perfil usa uma conta, configurações, dados e sessão do navegador independentes.
 - **Conta** — Credenciais de acesso ao Airline Manager. Deixe em branco para fazer login manualmente no Chrome.
-- **Lembrar credenciais** — Armazena as credenciais localmente em config/secrets.ini, que não é enviado ao Git.
+- **Lembrar credenciais** — Armazena as credenciais no `secrets.ini` do perfil.
 - **Iniciar bot** — Abre o navegador e inicia os ciclos automáticos. Salve as configurações antes.
 - **Parar bot** — Interrompe o bot após concluir a etapa atual e fecha o navegador.
 - **Executar ciclo agora** — Executa imediatamente uma nova verificação, sem aguardar o intervalo.
@@ -223,8 +277,8 @@ Passe o mouse sobre uma configuração para abrir a ajuda contextual em portugu�
 - **Rotas / pedidos por ciclo** — Limita novas rotas e pedidos de aeronaves por ciclo.
 - **Oficina: retorno em até ≤ dias** — Prazo máximo para recuperar o custo de melhorias e perda de receita durante a parada.
 - **Reparar aeronaves desgastadas** — Programa reparos das aeronaves que atingirem o desgaste definido.
-- **Programar revisões A-check** — Programa o A-check quando restarem poucas horas.
-- **Criar rotas para aeronaves estacionadas** — Cria rotas com demanda adequada para aeronaves estacionadas.
+- **Programar A-checks** — Programa a revisão quando restarem poucas horas.
+- **Criar rotas para aeronaves estacionadas** — Cria rotas para aeronaves estacionadas que ainda estão sem rota.
 - **Ampliar o hangar quando estiver cheio** — Compra expansão do hangar quando estiver perto do limite.
 - **Assentos executiva / primeira conforme a demanda** — Distribui assentos entre econômica, executiva e primeira classe conforme a demanda.
 - **Melhorias: velocidade, combustível e CO₂** — Avalia melhorias de velocidade, consumo de combustível e emissões de CO₂.
@@ -238,22 +292,21 @@ A compra automática oferece duas estratégias quando **Economizar para uma aero
 
 **Importante:** a opção **Permitir compras intermediárias antes da meta** permite que o bot compre outras aeronaves enquanto economiza para o modelo selecionado. **Desative-a se deseja comprar somente o modelo escolhido.** A seleção respeita a reserva de caixa e não faz compras quando a frota exige tratamento de rotas.
 
-![Seleção de aeronaves no painel web](screenshots/web-config-aeronaves.png)
-
 - **Comprar aeronaves** — Ativa ou desativa a automação de aquisição de aeronaves.
 - **Economizar para uma aeronave desejada** — Ativa a estratégia de progressão ou de modelo específico; sem ela, o bot ignora a meta.
 - **Permitir compras intermediárias antes da meta** — Permite aquisições complementares somente quando antecipam a meta.
 - **Modelo da compra automática** — Progressão automática ou aeronave específica escolhida na lista do mercado; salva em `goal_model`.
 - **Modelo fixo (sem meta ativa)** — Usado somente quando **Economizar para uma aeronave desejada** está desativado. Vazio significa comprar a aeronave mais rentável disponível.
 
-**Motor da aeronave — nova configuração:** fica na mesma aba **Aeronaves** e vale tanto para a progressão automática quanto para compras de modelo específico.
+**Motorização da aeronave**, na aba **Aeronaves**, vale para progressão automática e compras de modelo específico.
 
 - **Padrão do jogo:** preserva a escolha de motorização feita pelo jogo (comportamento anterior).
 - **Mais rápido:** seleciona a opção com maior velocidade **somente se o formulário fornecer velocidades comparáveis**.
 - **Menor consumo:** seleciona a opção de menor consumo **somente se o formulário fornecer dados comparáveis**.
 - **Motor específico:** informe um nome que apareça na opção de compra, por exemplo `Trent 972`. A correspondência deve ser única.
 
-**Segurança:** o bot inspeciona as opções de motor na janela real de aquisição antes de clicar em **Comprar**. Se a página não apresentar um seletor nativo identificável, se houver ambiguidade ou se a seleção não for confirmada pelo formulário, **não realiza o pedido**. Isso é especialmente importante para aeronaves caras. O recurso não contorna CAPTCHA e não troca motores de aeronaves já adquiridas. Como não há um HTML autenticado do jogo incluído neste repositório, a compatibilidade da seleção automática com a página real ainda precisa ser validada no servidor; os testes atuais usam formulários simulados.
+Ao escolher uma motorização diferente do padrão, o bot prossegue quando
+consegue identificar e confirmar a escolha no formulário de aquisição.
 
 - **Preço máximo sem meta (0 = livre)** — Limite aplicável à estratégia sem meta; zero remove o limite.
 
@@ -274,7 +327,7 @@ A lista de modelos é preenchida após o bot consultar o mercado. Caso esteja va
 - **Manter a sessão do navegador** — Mantém os cookies e os dados da sessão do Chrome.
 - **Navegador em segundo plano (headless)** — Executa o navegador oculto; CAPTCHAs ainda exigem intervenção manual.
 - **Reiniciar automaticamente após erro** — Reinicia automaticamente após falhas, com intervalo crescente.
-- **Simulação (sem gastos)** — Simula ações sem executar compras ou mudanças no jogo.
+- **Simulação (sem gastos)** — Avalia ações em uma sessão autenticada, preserva a companhia e grava os registros localmente. Os alertas de simulação podem ser enviados ao Telegram.
 
 ### Saldo em tempo real no painel
 
@@ -289,7 +342,7 @@ No painel web, abra **Parâmetros → Telegram**. No desktop, use a aba **Telegr
 - **Chave geral** — Liga/desliga todos os envios. Ao religar, as preferências individuais são preservadas.
 - **Erros e interrupções** — Falhas operacionais e encerramentos inesperados; recomendado manter ligado.
 - **Início e parada** — Mensagens quando o bot inicia ou para normalmente.
-- **Resumo diário** — Saldo, estoques, frota, compras e resultado do dia; ajuste o horário de envio no mesmo painel.
+- **Resumo diário** — Saldo, estoques, frota, compras e resultado do dia. O envio ocorre no primeiro ciclo a partir do horário configurado, segundo a hora local da máquina.
 - **Decolagens** — Avisos de partidas.
 - **Compras de combustível e de CO₂** — Duas opções independentes, para receber somente os abastecimentos desejados.
 - **Rotas criadas e aeronaves encomendadas** — Avisos de expansão da malha e da frota.
@@ -297,25 +350,22 @@ No painel web, abra **Parâmetros → Telegram**. No desktop, use a aba **Telegr
 - **Campanhas de marketing e tarefas** — Notificações de campanhas, atividades e recompensas.
 - **Simulação** — Avisos de ações simuladas (sem compras reais).
 
-A aba inclui um **teste de envio**, que pode ser usado mesmo com filtros desligados, para confirmar a comunicação com o Telegram. A configuração usa o token e o chat ID mantidos exclusivamente em `config/secrets.ini`; o painel não exibe esses segredos.
-
-Os filtros **não impedem decolagens, compras nem outras operações**, e não eliminam mensagens do log local. Eles apenas decidem quais eventos serão enviados ao Telegram. Todos os tipos permanecem habilitados por padrão após a atualização para preservar o comportamento anterior; personalize os interruptores conforme sua necessidade.
-
-### Registros e notificações
-
-- **Registros** — O bot informa compras, partidas, rotas, manutenção, erros e tarefas executadas. O painel web e o aplicativo mostram os mesmos eventos.
-- **Telegram** — Configure a seção `[telegram]` em `config/secrets.ini`. Em **Parâmetros → Telegram** selecione individualmente os avisos que deseja receber.
-- **Modo simulação** — Ative para verificar as decisões sem fazer compras nem modificar a companhia aérea.
+Por padrão, todos os tipos de aviso vêm ligados. Os filtros controlam o
+envio ao Telegram, enquanto o bot continua registrando os eventos no painel.
 
 ### Painel web e operação contínua
 
-Execute `python src/main.py --web` para iniciar somente o painel web. O endereço padrão é `http://127.0.0.1:8744/`. Para acesso pela rede local, utilize token de autenticação. Os scripts da pasta `scripts/` ajudam na execução no Windows e no Raspberry Pi.
+Execute `python src/main.py --web` no ambiente virtual para abrir o painel
+sem a janela desktop. Com **Iniciar o bot ao abrir** ativado, o serviço web
+também inicia os ciclos do bot. O endereço padrão é `http://127.0.0.1:8744/`.
+Para acesso pela rede local, configure o endereço de escuta em `[web] host`
+e um token no `secrets.ini` do perfil. No Linux, o instalador faz isso com
+`--rede-local`.
 
-### Segurança e compatibilidade
+### Arquivos de segredos
 
-Mantenha `config/secrets.ini` privado e não faça commit de credenciais. O idioma do aplicativo é português brasileiro por padrão, com inglês opcional. O bot somente seleciona português dentro do jogo se esse idioma existir nas opções da conta; caso contrário, preserva o idioma atual do jogo.
-
-
+Mantenha o `secrets.ini` de cada perfil privado e fora do Git. No Linux,
+restrinja o acesso com `chmod 600` no arquivo.
 
 ## Arquivos de configuração
 
@@ -324,6 +374,7 @@ Mantenha `config/secrets.ini` privado e não faça commit de credenciais. O idio
 - **config/secrets.ini**: credenciais do jogo, token do painel web e Telegram; mantenha privado.
 - **profiles/nome/**: configuração e dados dos perfis adicionais.
 - **data/prices.json**: histórico de preços; **data/market.json**: mercado de aeronaves; **data/state.json**: estado e contadores do bot.
+- **data/routes_registry.json**: cadastro de rotas, propostas de troca e histórico do perfil principal. Cada perfil adicional tem seu cadastro na própria pasta `data/`.
 - **data/logs/am4bot.log**: registro de execução.
 
 As seções de configuração são **[settings]** (valores numéricos), **[options]** (botões de ativação), **[web]** (rede e porta), **[app]** (aparência e idioma pt_BR ou en) e **[selectors]** (seletores do jogo, definidos apenas no arquivo de padrões).
@@ -335,39 +386,3 @@ As seções de configuração são **[settings]** (valores numéricos), **[optio
 - As estimativas de lucro não garantem resultados.
 - A automação pode ser restrita pelos termos do jogo; confira as regras antes de utilizá-la.
 - O projeto usa a licença MIT. O aviso de copyright obrigatório está preservado no arquivo [LICENSE](LICENSE).
-
-
-### Política independente de decolagens
-
-**Desativar "Criar rotas para aeronaves estacionadas" não desativa decolagens.**
-A opção `auto_route` controla apenas a criação de novas rotas;
-`allow_duplicate_routes` controla a autorização de novas rotas repetidas.
-O despacho continua sendo controlado por `auto_depart` e pela opção
-independente `block_duplicate_departures = off` (**padrão**).
-Assim aeronaves com rotas existentes continuam podendo decolar pelo comando
-geral mesmo que haja rotas repetidas. Para impedir decolagens dessas rotas,
-ative explicitamente "Bloquear decolagens com rotas duplicadas" em Opções;
-nesse caso o bot só tentará controles individuais comprovados no jogo e
-não enviará "Decolar todas" com duplicidades conhecidas.
-
-### Despacho seletivo e segurança contra rotas duplicadas
-
-Com **Permitir aeronaves na mesma rota (ida/volta) = desativado**, o bot
-identifica os conflitos pelo histórico e tenta despachar individualmente
-as aeronaves aprovadas. A nova configuração **Despacho individual seguro
-quando houver rotas duplicadas** fica habilitada por padrão.
-
-**Ação real só ocorre se a interface do jogo disponibilizar um comando
-individual da própria aeronave**, com ID explícito e conferido antes do
-clique. O comando `route_depart.php?mode=all` nunca é usado como despacho
-individual. Se não existir botão ou ação equivalente por aeronave, o bot
-**não usa Decolar todas e não tenta uma URL suposta**. Isso pode manter
-aeronaves aguardando, mas evita decolagens indevidas. A aba **Rotas e
-aeronaves** mostra as aprovadas, retidas, comandos individuais detectados
-e decolagens confirmadas.
-
-O otimizador continua calculando alternativas de rotas duplicadas. A nova
-pré-validação consulta os detalhes da aeronave para identificar o
-**ID da rota existente** e conferir seus aeroportos; não envia comandos de
-grounding ou alteração. O redirecionamento automático real continua
-desligado até validação da sequência completa e do rollback no jogo.

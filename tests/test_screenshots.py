@@ -6,7 +6,6 @@ o navegador isoladamente e valida cada imagem depois de gravada.
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,14 +27,15 @@ def generated_names() -> tuple[str, ...]:
 def test_capturas_atuais_documentadas_no_readme():
     names = generated_names()
     docs = README.read_text(encoding="utf-8")
-    assert len(names) == 12
     assert len(names) == len(set(names))
-    assert all(name.endswith(".png") for name in names)
+    assert set(names) == {path.name for path in (ROOT / "screenshots").glob("*.png")}
     assert "web-visao-geral.png" in names
     assert "web-mobile-config.png" in names
     assert "desktop-mercado-light.png" in names
+    assert "web-rotas.png" in names
+    assert "web-config-telegram.png" in names
     for name in names:
-        assert f"screenshots/{name}" in docs, f"README não referencia {name}"
+        assert docs.count(f"screenshots/{name}") == 1, f"Confira a referência a {name} no README"
 
 
 def test_documentacao_nao_utiliza_arquivos_obsoletos():
@@ -57,6 +57,8 @@ def test_gerador_usa_navegacao_atual_e_nao_aciona_o_bot():
     assert 'config.AppConfig.save = lambda self: None' in script
     assert 'config.AppConfig.web_token = property(lambda self: "")' in script
     assert 'demo@example.invalid' in script
+    assert 'os.chdir(demo)' in script
+    assert 'web.server.server_address[1]' in script
     assert "GENERATED =" in script
     assert 'if caminho.name not in GENERATED:' in script
 
@@ -71,9 +73,6 @@ def test_logs_de_demonstração_são_portugueses():
     assert "AM/04 pronto." in script
 
 
-def test_readme_utiliza_imagens_locais():
+def test_readme_utiliza_o_nome_canonico_do_repositorio():
     docs = README.read_text(encoding="utf-8")
-    refs = re.findall(r"screenshots/([a-z0-9-]+\.png)", docs)
-    assert len(refs) >= 12
-    assert all(name in generated_names() for name in refs)
     assert "github.com/andreypiekas/AirlineManager4BOTWEB" in docs

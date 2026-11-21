@@ -82,11 +82,12 @@ as principais traduções, o JavaScript e os nomes exibidos nos logs.
 
 ## Atualização e imagens
 
-As imagens em `screenshots/` são capturas da interface **AM/04 compacta**,
-geradas em uma sessão demonstrativa e sem dados da conta do usuário:
+As imagens em `screenshots/` mostram a interface **AM/04** com dados de
+demonstração.
 
 - `web-visao-geral.png`: operações e telemetria.
-- `web-config-*.png`: páginas de Mercado, Frota, Aeronaves e Opções.
+- `web-rotas.png`: cadastro da frota, rotas repetidas, propostas e histórico.
+- `web-config-*.png`: abas Mercado, Frota, Aeronaves, Opções e Telegram.
 - `web-mobile*.png`: comportamento responsivo no celular.
 - `desktop-*.png`: aplicativo desktop com controles equivalentes.
 
