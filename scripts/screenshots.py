@@ -226,8 +226,8 @@ def web_shots(output: Path) -> None:
         driver = webdriver.Chrome(options=options)
         wait = WebDriverWait(driver, 25)
 
-        def navigate(*, mobile=False, tab=None, routes=False):
-            width, height = (430, 1120) if mobile else (1536, 940)
+        def navigate(*, mobile=False, tab=None, routes=False, tall=False):
+            width, height = (430, 1120) if mobile else (1536, 1200 if tall else 940)
             driver.set_window_size(width, height)
             driver.get(url)
             wait.until(lambda d: d.find_element(By.ID, "kMoney").text not in ("", "—"))
@@ -242,8 +242,8 @@ def web_shots(output: Path) -> None:
             driver.execute_script("window.scrollTo(0, 0)")
             time.sleep(0.6)
 
-        def shot(name, *, mobile=False, tab=None, routes=False):
-            navigate(mobile=mobile, tab=tab, routes=routes)
+        def shot(name, *, mobile=False, tab=None, routes=False, tall=False):
+            navigate(mobile=mobile, tab=tab, routes=routes, tall=tall)
             dest = output / name
             if not driver.save_screenshot(str(dest)):
                 raise RuntimeError(f"Falha ao salvar captura: {name}")
@@ -251,8 +251,8 @@ def web_shots(output: Path) -> None:
 
         shot("web-visao-geral.png")
         for index, tab in enumerate(("mercado", "frota", "aeronaves", "opcoes", "telegram")):
-            shot(f"web-config-{tab}.png", tab=index)
-        shot("web-rotas.png", routes=True)
+            shot(f"web-config-{tab}.png", tab=index, tall=tab == "telegram")
+        shot("web-rotas.png", routes=True, tall=True)
         shot("web-mobile.png", mobile=True)
         shot("web-mobile-config.png", mobile=True, tab=0)
     finally:
