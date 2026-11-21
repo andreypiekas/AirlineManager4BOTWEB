@@ -35,7 +35,7 @@ from route_strategy import best_reroute, profitable_candidates
 from route_airports import HubMatch, match_hub_options, code_from_candidate, explain_hub_options
 from airport_catalog import by_code, game_code
 from route_registry import RouteRegistry, reroute_block_reason, endpoint, route_key
-from reroute import has_pending_reroute, landed_departure, recover_pending, replace_route
+from reroute import aircraft_details_missing, has_pending_reroute, landed_departure, recover_pending, replace_route
 from reroute_preflight import check_existing_route
 
 if TYPE_CHECKING:
@@ -58,6 +58,12 @@ return arguments[0].filter(id => {
         Number.isFinite(Number(entry.arrived)) && Number(entry.arrived) <= now &&
         Number(entry.grounded) === 0;
 });
+"""
+
+_STATUS_AIRCRAFT_JS = """
+return Object.entries(window.statusData || {})
+  .filter(([id, row]) => /^[0-9]{1,14}$/.test(id) && typeof row?.reg === "string")
+  .map(([id]) => id);
 """
 
 # Everything below reads the game by structure (ids, classes, data attributes, onclick handlers),
@@ -185,8 +191,7 @@ return Array.from(document.querySelectorAll("#popContent [id^='routeMainList']")
   const link = detailLink || row.querySelector("a");
   const idFromLink = ((detailLink ? detailLink.getAttribute("onclick") : "") || "")
     .match(/fleet_details\\.php\\?id=(\\d+)/);
-  const aircraftId = (idFromLink && idFromLink[1]) ||
-    (row.id.match(/^routeMainList(\\d+)$/) || [])[1] || "";
+  const aircraftId = (idFromLink && idFromLink[1]) || "";
   const label = link ? link.textContent.trim() : "";
   const tableData = Array.from(row.querySelectorAll("[data-dep], [data-arr], [data-origin], [data-destination], [data-route]"));
   const attrs = [row, ...tableData];
@@ -332,6 +337,8 @@ def manage_fleet(bot: "Bot") -> None:
     audit_routes(bot, registry)
     budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))
     if not cfg.get_bool("options", "allow_duplicate_routes", True):
+        if reroute_ready:
+            reconcile_missing_duplicate_aircraft(bot, registry)
         repaired = resolve_duplicate_routes(bot, registry, budget, reroute_ready=reroute_ready)
         budget -= repaired
     if not has_pending_reroute() and cfg.get_bool("options", "auto_route") and parked > 0 and budget > 0:
@@ -354,6 +361,39 @@ def manage_fleet(bot: "Bot") -> None:
 
 
 # ---------------------------------------------------------------------- duplicate-route correction
+def reconcile_missing_duplicate_aircraft(bot: "Bot", registry: RouteRegistry) -> None:
+    """Retire historical duplicate entries after corroborating an empty detail response."""
+    recent = getattr(bot, "recent_fleet", None)
+    fleet = recent(180) if callable(recent) else None
+    maintenance_ids = {str(ac.id) for ac in fleet or []}
+    if not maintenance_ids:
+        return
+    report = registry.snapshot(allow_duplicates=False)
+    stale = [
+        row for row in report["relations"]
+        if row["duplicate"] and row["aircraft_id"] not in maintenance_ids
+        and row.get("source") in ("game", "redirecionamento")
+        and time.time() - (row.get("last_seen") or 0) >= 180
+    ]
+    if not stale:
+        return
+    status_ids = set(bot.js(_STATUS_AIRCRAFT_JS) or [])
+    if not maintenance_ids.issubset(status_ids):
+        return
+    for row in stale:
+        aircraft_id = row["aircraft_id"]
+        if bot.stopping:
+            break
+        if aircraft_id in status_ids or not aircraft_details_missing(bot, aircraft_id):
+            continue
+        if registry.retire_missing_assignment(aircraft_id, expected_route=row["route_key"]):
+            log.info(
+                "Controle de rotas: %s (ID %s) ausente do status e da manutenção, "
+                "com detalhes vazios no jogo. Registro histórico de rota arquivado.",
+                row["registration"], aircraft_id,
+            )
+
+
 def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
                              *, reroute_ready: bool = True) -> int:
     """Plan alternatives independently and apply at most one verified change."""

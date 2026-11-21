@@ -108,6 +108,47 @@ def test_stale_game_route_is_not_authorized(tmp_path):
     assert decisions[0].reason == "leitura_de_rota_expirada"
 
 
+def test_dispatch_refreshes_stale_evidence_and_keeps_duplicate_interlock(tmp_path, monkeypatch):
+    import fleet
+    import reroute
+    import route_registry
+
+    with monkeypatch.context() as stale:
+        stale.setattr(route_registry.time, "time", lambda: 100)
+        registry = registry_with_duplicate(tmp_path)
+    monkeypatch.setattr(route_registry.time, "time", lambda: 400)
+
+    class Bot:
+        dry_run = True
+        stopping = False
+
+        def js(self, script, *args):
+            if script == fleet._ROUTE_AUDIT_JS:
+                return [{"aircraft_id": "101", "origin_code": "DAC", "destination_code": "OSL"}]
+            return [{"id": aircraft_id} for aircraft_id in ("101", "102", "103", "999")]
+
+    reads = []
+
+    def read_route(_, aircraft_id):
+        reads.append(aircraft_id)
+        routes = {
+            "102": reroute.LiveRoute("5002", False, ("OSL", "DAC"), True),
+            "103": reroute.LiveRoute("5003", False, ("LAX", "PBM"), True),
+        }
+        return routes.get(aircraft_id)
+
+    monkeypatch.setattr(reroute, "_live_route", read_route)
+    summary = selective_dispatch(Bot(), registry)
+
+    assert reads == ["102", "103", "999"]
+    assert summary["approved"] == 2
+    assert summary["departed"] == 0
+    assert {row["id"]: row["reason"] for row in summary["blocked_aircraft"]} == {
+        "102": "rota_duplicada_reservada",
+        "999": "rota_nao_identificada",
+    }
+
+
 def test_verified_native_click_is_targeted_and_confirmed(tmp_path):
     registry = registry_with_duplicate(tmp_path)
     clicked = []

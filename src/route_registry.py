@@ -243,6 +243,23 @@ class RouteRegistry:
             self._save(data)
             return True
 
+    def retire_missing_assignment(self, aircraft_id: str, *, expected_route: str) -> bool:
+        """Archive a route whose aircraft was confirmed absent from the live fleet."""
+        with _LOCK:
+            data = _state(self.path)
+            row = data["aircraft"].get(aircraft_id)
+            if not row or not expected_route or row.get("route_key") != expected_route:
+                return False
+            data["history"].append({
+                "at": int(time.time()), "aircraft_id": aircraft_id,
+                "registration": row.get("registration", aircraft_id),
+                "action": "aeronave_fora_da_frota", "previous": expected_route,
+            })
+            data["history"] = data["history"][-_MAX_HISTORY:]
+            del data["aircraft"][aircraft_id]
+            self._save(data)
+            return True
+
     def mark_plan_attempt(self, aircraft_id: str) -> bool:
         """Rotate planning fairly even for aircraft with no viable alternative.
 

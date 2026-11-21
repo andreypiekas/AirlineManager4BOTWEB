@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass
 from urllib.parse import parse_qs
 
+from selenium.common.exceptions import WebDriverException
+
 from route_registry import RouteRegistry, endpoint, endpoint_matches
 from selective_batch_depart import targeted_depart
 from fleet_single_depart import fleet_dispatch
@@ -98,7 +100,6 @@ class _ReturnToHubRegistry:
 
     def _can_return(self, row: dict) -> bool:
         from reroute import _live_route
-        from selenium.common.exceptions import WebDriverException
 
         proposal = row.get("proposal")
         origin = endpoint(code=proposal.get("origin_code")) if isinstance(proposal, dict) else endpoint()
@@ -201,6 +202,46 @@ def collect_dispatch_rows(bot) -> list[dict]:
     return bot.js(_LANDED_JS) or []
 
 
+def _refresh_landed_routes(bot, registry, landed_ids, *, limit: int) -> None:
+    """Refresh live route evidence after fleet research can have aged the registry."""
+    from fleet import audit_routes
+    from reroute import _live_route
+
+    def needs_read(report):
+        return [
+            decision.aircraft_id for decision in plan_dispatch(landed_ids, report)
+            if decision.reason in ("leitura_de_rota_expirada", "rota_nao_identificada",
+                                   "rota_nao_confirmada_no_jogo")
+        ]
+
+    if limit <= 0 or not needs_read(registry.snapshot(allow_duplicates=False)):
+        return
+    audit_routes(bot, registry)
+    report = registry.snapshot(allow_duplicates=False)
+    records = {row["aircraft_id"]: row for row in report["relations"]}
+    refreshed = 0
+    for aircraft_id in needs_read(report)[:limit]:
+        if bot.stopping:
+            break
+        try:
+            live = _live_route(bot, aircraft_id)
+        except WebDriverException:
+            continue
+        if not live or not live.landed or live.paused:
+            continue
+        record = records.get(aircraft_id, {})
+        if record and live.matches(record):
+            origin, destination = record["origin"], record["destination"]
+        else:
+            origin, destination = (endpoint(code=code) for code in live.codes)
+        refreshed += registry.record(
+            aircraft_id, record.get("registration", ""), record.get("model", ""),
+            origin, destination,
+        )
+    if refreshed:
+        log.info("Despacho individual: %d rotas revalidadas nos detalhes de Fleet.", refreshed)
+
+
 def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict:
     """Execute verified per-aircraft native controls, never the Depart All button.
 
@@ -209,9 +250,11 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
     one-plane control, operate in read-only mode and record the blocker.
     """
     landed = collect_dispatch_rows(bot)
+    landed_ids = [row.get("id") for row in landed]
+    _refresh_landed_routes(bot, registry, landed_ids, limit=limit)
     dispatch_registry = _ReturnToHubRegistry(bot, registry)
     report = dispatch_registry.snapshot(allow_duplicates=False)
-    decisions = plan_dispatch([row.get("id") for row in landed], report)
+    decisions = plan_dispatch(landed_ids, report)
     native = {str(row["id"]): row.get("native_actions") or [] for row in landed}
     eligible = [d for d in decisions if d.approved]
     rejected = [d for d in decisions if not d.approved]
@@ -232,7 +275,11 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
         "duplicates_known": report["duplicate_routes"],
         "approved": len(eligible), "blocked": len(rejected),
         "native_individual": len(exposed), "not_supported": unexposed,
-        "departed": 0, "status": "simulacao" if bot.dry_run else "pendente",
+        "departed": 0, "status": (
+            "simulacao" if bot.dry_run else
+            "pendente" if eligible else
+            "sem_aeronaves_aprovadas" if decisions else "sem_aeronaves_prontas"
+        ),
         "blocked_aircraft": [
             {"id": d.aircraft_id, "registration": d.registration, "reason": d.reason}
             for d in rejected[:40]
@@ -246,6 +293,8 @@ def selective_dispatch(bot, registry: RouteRegistry, *, limit: int = 20) -> dict
     )
     if bot.dry_run:
         log.info("[SIMULAÇÃO] Despacho individual: nenhuma ordem enviada.")
+        return summary
+    if not eligible:
         return summary
     if not exposed:
         # Verified live AM4 HTML: #routeMainList<ROUTE_ID> has an aircraft

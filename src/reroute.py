@@ -32,6 +32,7 @@ fetch(url, {cache:'no-store', signal:controller.signal, redirect:'error'})
     if (!response.ok) return null;
     const html = await response.text();
     if (read === 'toggle') return true;
+    if (read === 'missing') return response.status === 200 && !html.trim();
     const page = new DOMParser().parseFromString(html, 'text/html');
     if (read === 'hubs') {
       const options = page.querySelectorAll('#hubSelect option');
@@ -132,6 +133,12 @@ def landed_departure(bot, row) -> str:
         return ""
     live = _live_route(bot, aircraft_id)
     return live.codes[0] if live and live.landed and not live.paused and live.matches(row) else ""
+
+
+def aircraft_details_missing(bot, aircraft_id: str) -> bool:
+    if not _ID.fullmatch(aircraft_id):
+        return False
+    return bot.driver.execute_async_script(_GET, f"fleet_details.php?id={aircraft_id}", "missing") is True
 
 
 def _toggle(bot, route_id: str) -> bool:
