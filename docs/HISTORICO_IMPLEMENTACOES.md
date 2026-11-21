@@ -68,7 +68,14 @@ foi comprovado. Não confundir implementação em código com homologação no j
 
 - JavaScript completo da página: análise sintática em V8 **aprovada**
   na montagem da alteração.
-- Testes Python, lint e compilação: **pendentes do CI do pull request**.
+- GitHub Actions após correção do teste de navegação:
+  **387 testes aprovados em Python 3.10 e 387 em Python 3.13**.
+  `ruff check`, `compileall` e `instalar.sh --ajuda`: aprovados nas duas versões.
+  [Execução CI aprovada](https://github.com/andreypiekas/AirlineManager4BOTWEB/actions/runs/44927156193).
+- Na primeira execução, um teste anterior exigia literalmente apenas
+  duas telas secundárias; `tests/test_settings_workspace.py` foi atualizado
+  para validar também a navegação para Hubs. A suíte completa foi reexecutada
+  sem falhas.
 - Teste com sessão real do Airline Manager 4: **não realizado**.
 - Comparação com bases adquiridas e frota real: **não realizada**.
 - Capturas de tela: **não atualizadas** nesta entrega.
