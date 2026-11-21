@@ -338,6 +338,56 @@ def test_failed_hub_price_is_retried_without_repeating_every_airport(tmp_path, m
         "2941", "2957", "3101"}
 
 
+def test_hub_price_waits_for_ajax_before_advancing_airport(tmp_path, monkeypatch):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
+    price_reads = iter([None, None, {"id": "2966", "name": "Almeirim", "code": "MEU",
+                                    "purchasable": True, "hub_price": 11_520_000,
+                                    "hub_points": 20}])
+
+    class Stop:
+        delays = []
+
+        def wait(self, seconds):
+            self.delays.append(seconds)
+            return False
+
+    class Bot:
+        stopping = False
+
+        def __init__(self):
+            self._stop = Stop()
+            self.selected = []
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            pass
+
+        def js(self, script, *args):
+            if script == game_observations._HUB_COUNTRIES_JS:
+                return ["Brazil"]
+            if script == game_observations._SELECT_MARKET_COUNTRY_JS:
+                return True
+            if script == game_observations._SELECT_MARKET_AIRPORT_JS:
+                self.selected.append(args[0])
+                return True
+            raise AssertionError("Unrecognized game operation")
+
+    def read(_bot, script):
+        if script == game_observations._HUB_AIRPORT_OPTIONS_JS:
+            return ["2966"]
+        return next(price_reads)
+
+    monkeypatch.setattr(game_observations, "_stable_read", read)
+    bot = Bot()
+    assert game_observations.collect_hub_market_prices(bot, per_cycle=1) == 1
+    assert bot.selected == ["2966"]
+    assert bot._stop.delays == [0.2, 0.2]
+    assert registry.snapshot()["candidates"][0]["hub_price"] == 11_520_000
+
+
 def test_price_read_failure_cannot_refresh_stored_observation(tmp_path, monkeypatch):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)

@@ -277,12 +277,18 @@ def collect_hub_market_prices(bot: object, *, per_cycle: int = 3) -> int:
         visited.add((country, airport_id))
         observation = None
         if bot.js(_SELECT_MARKET_AIRPORT_JS, airport_id):
-            for _ in range(10):
+            # AJAX replaces #airportInfo after the change event. A first
+            # empty read returns immediately, so poll before switching to the
+            # next airport or we would keep reading the preceding airport.
+            for _ in range(20):
                 value = _stable_read(bot, _SELECTED_HUB_PRICE_JS)
                 if isinstance(value, dict) and value.get("id") == airport_id:
                     observation = value
                     break
                 if getattr(bot, "stopping", False):
+                    break
+                stop = getattr(bot, "_stop", None)
+                if (stop.wait(0.2) if stop is not None else threading.Event().wait(0.2)):
                     break
         recorded = bool(observation and registry.record_catalog([observation], complete=False))
         registry.record_catalog_attempt(country, airport_id, success=recorded)

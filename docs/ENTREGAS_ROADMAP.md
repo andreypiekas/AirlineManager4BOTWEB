@@ -8,6 +8,7 @@
 
 - `src/game_observations.py` coleta o preço e os pontos separadamente a partir dos nós de texto da célula do custo. Exige valor monetário inteiro e pontos válidos, preservando o bloqueio para números fracionários ou ambíguos.
 - Valida o ID da resposta AJAX (`arrId`) contra o ID selecionado, rejeitando dados da seleção anterior. A coleta continua exigindo duas leituras DOM idênticas e detecta elementos em carregamento. Requisições AJAX em outras partes da página deixam de impedir uma leitura já correlacionada e estável.
+- Na primeira execução dessa correção no Zentria, o log registrou `id_conflict` durante a troca rápida de aeroportos. A tentativa com resposta vazia encerrava imediatamente e avançava para outro aeroporto enquanto a requisição anterior ainda carregava. Agora cada tentativa aguarda até 20 leituras com pausa interrompível de 0,2 segundo para receber o novo ID antes de avançar. Um teste verifica duas leituras AJAX vazias seguidas de uma resposta válida.
 - Diagnósticos de preços passam a inspecionar a mesma estrutura de célula e o ID da resposta. Um novo teste reproduz o HTML observado com dólar e pontos separados, a seleção anterior e atividade AJAX simultânea.
 
 ### Homologação
