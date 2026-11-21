@@ -855,10 +855,10 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
         if not hub_id:
             log.warning("Não encontrei a base de origem na busca de rotas.")
             break
-        def available(candidate):
-            return candidate.arr_id != str(hub_id) and (allow_duplicates or (
-                route_key(endpoint(hub_id), endpoint(candidate.arr_id)) not in used_pairs
-                and not registry.is_occupied(endpoint(hub_id), endpoint(candidate.arr_id), aircraft.id)
+        def available(candidate: RouteCandidate, origin_id=hub_id, aircraft_id=aircraft.id) -> bool:
+            return candidate.arr_id != str(origin_id) and (allow_duplicates or (
+                route_key(endpoint(origin_id), endpoint(candidate.arr_id)) not in used_pairs
+                and not registry.is_occupied(endpoint(origin_id), endpoint(candidate.arr_id), aircraft_id)
             ))
 
         economics = dict(
