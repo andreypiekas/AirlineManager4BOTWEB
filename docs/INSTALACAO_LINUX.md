@@ -4,34 +4,30 @@ Instalador destinado a **Raspberry Pi OS (Debian Bookworm/Trixie)** e **Ubuntu 2
 
 ## Instalação pelo terminal
 
-Copie e execute o comando no próprio Raspberry Pi ou computador Ubuntu:
+No terminal do servidor, execute como usuário normal com acesso a `sudo`:
 
 ```bash
-git clone https://github.com/andreypiekas/ArlineManager4BOTWEB.git
-cd ArlineManager4BOTWEB
-bash instalar.sh --rede-local
+curl -fsSLo instalar-am4.sh https://raw.githubusercontent.com/andreypiekas/AirlineManager4BOTWEB/main/instalar.sh && bash instalar-am4.sh --rede-local
 ```
 
-**Atalho para instalação automática sem clonar antes:** confira o conteúdo do arquivo remoto antes de executá-lo. Uma alternativa é:
+O instalador baixa o projeto em `~/AirlineManager4Bot`, instala Python e Chromium, cria o ambiente `.venv` e configura o painel como serviço do sistema. Se você já tem um clone do projeto, execute `bash instalar.sh --rede-local` de dentro dele.
+
+### Login e primeiro acesso
+
+O instalador pede o login do jogo caso esteja pendente. A senha fica oculta. Pressione **Enter** no campo de e-mail para pular e abrir apenas o painel. Para uma instalação sem perguntas de login, use `--sem-login`.
+
+Ao final, abra o endereço completo exibido no terminal. Com `--rede-local`, ele vem com um token para acesso na mesma rede, como `http://192.168.1.50:8744/?token=TOKEN_GERADO`. Guarde o link com o token em local privado. Sem `--rede-local`, o endereço padrão é `http://127.0.0.1:8744/` no servidor, acessível também por túnel SSH.
+
+Se você pulou o login, adicione-o depois na pasta do projeto:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/andreypiekas/ArlineManager4BOTWEB/main/instalar.sh -o instalar.sh
-bash instalar.sh --rede-local
+.venv/bin/python scripts/configurar_linux.py --configurar-login
+sudo systemctl restart am4bot@principal
 ```
 
-Nesse segundo método, o script baixa o projeto em `$HOME/AirlineManager4Bot`. Se executado de dentro do clone, ele usa a pasta do clone e não cria uma cópia duplicada.
+Use `--perfil NOME` no comando de configuração e `am4bot@NOME` no comando do serviço se tiver escolhido outro perfil. As credenciais ficam em `config/secrets.ini` no perfil principal e em `profiles/NOME/secrets.ini` nos demais, com acesso restrito ao usuário do bot.
 
-O script instala via APT Python, Tk e dependências básicas; no **Raspberry Pi OS/Debian**, instala `chromium` e `chromium-driver`. No **Ubuntu**, instala os pacotes de transição para Chromium distribuído por Snap. Cria `.venv`, instala `requirements.txt` isoladamente, prepara as configurações do perfil, registra `am4bot@.service` e habilita a inicialização no boot.
-
-### Primeiro acesso
-
-Ao final, o instalador mostra um endereço semelhante a:
-
-```text
-http://192.168.1.50:8744/?token=TOKEN_GERADO_AUTOMATICAMENTE
-```
-
-Esse endereço funciona **somente na rede local** quando foi usado `--rede-local`. O token é secreto: **não compartilhe**, não exponha a porta 8744 na internet e não publique o arquivo `config/secrets.ini`. Sem `--rede-local`, o painel fica disponível apenas em `http://127.0.0.1:8744/` no próprio Linux (pode acessar por túnel SSH).
+Perfis novos começam em **Simulação (sem gastos)**. Abra **Parâmetros → Opções** para revisar antes de mudar para operações reais. O painel volta após a reinicialização do servidor e a opção **Iniciar o bot ao abrir** controla se o bot também inicia.
 
 ### Firewall UFW no Ubuntu e Debian
 
@@ -58,17 +54,6 @@ sudo ss -lntp | grep ':8744'
 
 Uma regra antiga que já permita `8744/tcp` a partir de `Anywhere` **continua existindo**, pois o instalador não apaga regras do administrador. Revise e remova regras públicas desnecessárias de forma consciente. Não encaminhe a porta do painel no roteador para a internet.
 
-A senha do jogo **não é solicitada por padrão**. Para configurá-la sem mostrá-la no terminal, execute o instalador com `--configurar-login`, ou rode depois:
-
-```bash
-python3 scripts/configurar_linux.py --configurar-login
-sudo systemctl restart am4bot@principal
-```
-
-Os dados ficam em `config/secrets.ini` com permissão somente para o proprietário. O instalador não grava credenciais nos arquivos de código, nos logs ou na unidade systemd.
-
-**Segurança da primeira execução:** perfis novos são criados com `dry_run = on` (simulação). O painel permite revisar configurações e acompanhar o bot. Desative a opção **Simulação (sem gastos)** na aba Opções somente quando a configuração estiver correta. Uma reinstalação **não reativa** a simulação se você já a desativou.
-
 ### Gerenciar o bot
 
 ```bash
@@ -82,7 +67,7 @@ sudo journalctl -u am4bot@principal -f
 Para conferir o endereço e o token novamente:
 
 ```bash
-python3 scripts/configurar_linux.py --mostrar-acesso --ip 192.168.1.50
+.venv/bin/python scripts/configurar_linux.py --mostrar-acesso --ip 192.168.1.50
 ```
 
 ### Perfis diferentes
@@ -103,7 +88,8 @@ Cada perfil possui seus próprios dados, credenciais, ajustes e sessão Chromium
 | `--rede-local` | Habilita acesso LAN, gera token e ajusta o UFW ativo apenas para a sub-rede detectada |
 | `--ufw-rede 192.168.101.0/24` | Define explicitamente a sub-rede privada autorizada no UFW (requer `--rede-local`) |
 | `--sem-ufw` | Não altera o UFW, mesmo quando o painel é habilitado na LAN |
-| `--configurar-login` | Solicita e-mail/senha por meio de um terminal interativo |
+| `--configurar-login` | Solicita o login mesmo se ele já estiver configurado |
+| `--sem-login` | Pula a configuração de login |
 | `--perfil companhia2` | Configura serviço para outro perfil |
 | `--sem-iniciar` | Registra e habilita o serviço sem ligá-lo imediatamente |
 | `--diretorio /caminho` | Usa um diretório de instalação personalizado, sem espaços |
@@ -112,23 +98,13 @@ Cada perfil possui seus próprios dados, credenciais, ajustes e sessão Chromium
 
 ### Atualização e reinstalação
 
-Se você instalou dentro do clone do GitHub:
+Entre na pasta exibida pelo instalador (normalmente `~/AirlineManager4Bot`) e execute:
 
 ```bash
-cd ~/ArlineManager4BOTWEB
-git pull --ff-only
-bash instalar.sh --rede-local
+git pull --ff-only && bash instalar.sh
 ```
 
-Se utilizou o atalho de instalação em `~/AirlineManager4Bot`:
-
-```bash
-cd ~/AirlineManager4Bot
-git pull --ff-only
-bash instalar.sh --rede-local
-```
-
-O instalador **não executa `git reset`**, não remove arquivos de dados e não substitui credenciais. Se houver alterações locais incompatíveis com o `git pull`, resolva-as antes de atualizar. Nunca copie manualmente o mesmo diretório de sessão do Chrome com o serviço ativo.
+Para atualizar a URL de um clone antigo, rode `git remote set-url origin https://github.com/andreypiekas/AirlineManager4BOTWEB.git` nessa mesma pasta. A atualização reaproveita credenciais, preferências e dados do perfil. Use `--perfil NOME` se você estiver atualizando o serviço de um perfil adicional.
 
 ### Diagnóstico
 
@@ -137,7 +113,7 @@ O instalador **não executa `git reset`**, não remove arquivos de dados e não 
 - Confira os eventos: `sudo journalctl -u am4bot@principal -n 100 --no-pager`.
 - Se o Chromium ou o ChromeDriver não iniciar, confira `chromium --version` (Raspberry Pi OS) ou `chromium-browser --version` (Ubuntu) e `chromedriver --version`. No Ubuntu, confirme `snap list chromium`.
 - No Ubuntu minimal ou contêiner, `snapd` exige serviços do sistema ativos; instalações sem `systemd` não são suportadas.
-- Se `python3 scripts/configurar_linux.py --configurar-login` mostrar `Não foi possível acessar um terminal interativo`, abra uma sessão com TTY (por exemplo, `ssh -t usuario@servidor`) ou utilize o terminal integrado do servidor. O script lê e-mail pelo terminal e senha com eco desativado; não passe a senha como argumento de linha de comando.
+- Se `.venv/bin/python scripts/configurar_linux.py --configurar-login` mostrar `Não foi possível acessar um terminal interativo`, abra uma sessão com TTY (por exemplo, `ssh -t usuario@servidor`) ou utilize o terminal integrado do servidor. O script lê e-mail pelo terminal e senha com eco desativado; não passe a senha como argumento de linha de comando.
 - Caso o ambiente não forneça terminal interativo (contêiner, cron ou SSH sem alocação de TTY), configure as credenciais editando `config/secrets.ini` com uma seção `[login]`, as chaves `username` e `password`; depois execute `chmod 600 config/secrets.ini` e `sudo systemctl restart am4bot@principal`. Preserve todas as outras seções existentes.
 - Não atribua permissões globais ao `config/secrets.ini` e não exponha a porta web na internet.
 - O instalador é validado com testes de configuração e sintaxe; a navegação real do Selenium precisa ser conferida no dispositivo de destino.

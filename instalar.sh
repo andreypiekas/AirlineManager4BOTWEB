@@ -3,11 +3,11 @@
 # Execute como usuário normal (com sudo), nunca como root.
 set -Eeuo pipefail
 
-REPOSITORIO="https://github.com/andreypiekas/ArlineManager4BOTWEB.git"
+REPOSITORIO="https://github.com/andreypiekas/AirlineManager4BOTWEB.git"
 PERFIL="principal"
 REDE_LOCAL=0
 INICIAR=1
-CONFIGURAR_LOGIN=0
+LOGIN="auto"
 DIRETORIO=""
 MODO_VERIFICAR=0
 UFW_REDE=""
@@ -20,7 +20,7 @@ trap 'on_error "$LINENO" "$?"' ERR
 
 ajuda() {
     cat <<'TEXTO'
-INSTALADOR - Airline Manager 4 Bot (Raspberry Pi OS e Ubuntu)
+INSTALADOR - Airline Manager 4 Bot (Raspberry Pi OS, Debian e Ubuntu)
 
 Uso: bash instalar.sh [opções]
 
@@ -28,14 +28,16 @@ Uso: bash instalar.sh [opções]
   --ufw-rede CIDR       Origem permitida no UFW (ex.: 192.168.101.0/24).
   --sem-ufw             Não altera o UFW (mesmo com --rede-local).
   --perfil NOME         Perfil da companhia (padrão: principal).
-  --configurar-login    Solicita e-mail e senha no terminal (senha oculta).
+  --configurar-login    Solicita e-mail e senha, mesmo se já estiverem gravados.
+  --sem-login           Pula a configuração de login.
   --sem-iniciar         Habilita serviço, mas não o inicia agora.
   --diretorio CAMINHO   Local personalizado do projeto.
   --verificar           Verifica sistema sem instalar nada.
   -h, --ajuda           Exibe esta ajuda.
 
-Exemplo: bash instalar.sh --rede-local --configurar-login
+Exemplo: bash instalar.sh --rede-local
 
+Em um terminal interativo, o instalador solicita o login se estiver pendente.
 Perfis novos começam em SIMULAÇÃO, sem despesas ou decolagens reais.
 Uma segunda execução preserva configurações, credenciais e dados.
 TEXTO
@@ -51,7 +53,8 @@ while (($#)); do
             UFW_REDE="$1"
             ;;
         --ufw-rede=*) UFW_REDE="${1#--ufw-rede=}" ;;
-        --configurar-login) CONFIGURAR_LOGIN=1 ;;
+        --configurar-login) LOGIN="configurar" ;;
+        --sem-login) LOGIN="pular" ;;
         --sem-iniciar) INICIAR=0 ;;
         --verificar) MODO_VERIFICAR=1 ;;
         --perfil|--diretorio)
@@ -89,7 +92,8 @@ fi
 
 (( EUID != 0 )) || erro "Execute sem sudo, com seu usuário normal: bash instalar.sh"
 command -v sudo >/dev/null || erro "Instale sudo e conceda permissão ao seu usuário."
-command -v systemctl >/dev/null || erro "Este instalador requer systemd."
+command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] ||
+    erro "O systemd precisa estar em execução. Use instalar.sh --verificar para inspecionar o ambiente."
 [[ "$PERFIL" =~ ^[a-z0-9][a-z0-9_-]{0,23}$ ]] || erro "Perfil inválido (a-z, 0-9, _ e -, até 24 caracteres)."
 if [[ "$SISTEMA" == "debian" && "$ARQUITETURA" != "aarch64" && "$ARQUITETURA" != "x86_64" ]]; then
     avisar "Aviso: prefira um sistema 64 bits para melhor suporte aos pacotes Python."
@@ -110,6 +114,18 @@ fi
 [[ "$APP_DIR" != *[[:space:]]* && "$APP_DIR" != *%* && "$APP_DIR" != *\"* ]] ||
     erro "Use um caminho sem espaços, '%' ou aspas: $APP_DIR"
 [[ "$APP_DIR" == /* && "$APP_DIR" != "/" ]] || erro "Diretório de instalação inválido."
+if [[ ! -f "$APP_DIR/config/defaults.ini" && -e "$APP_DIR" && -n "$(ls -A "$APP_DIR" 2>/dev/null)" ]]; then
+    erro "Diretório ocupado por outros arquivos: $APP_DIR (não será sobrescrito)."
+fi
+
+USUARIO="$(id -un)"
+SERVICO="am4bot@${PERFIL}.service"
+UNIDADE_INSTALADA="/etc/systemd/system/am4bot@.service"
+if [[ -e "$UNIDADE_INSTALADA" ]]; then
+    grep -Fxq "WorkingDirectory=$APP_DIR" "$UNIDADE_INSTALADA" &&
+        grep -Fxq "User=$USUARIO" "$UNIDADE_INSTALADA" ||
+        erro "Já existe um serviço AM4 em outro diretório ou usuário. Consulte: systemctl cat $SERVICO"
+fi
 
 avisar "Preparando ${PRETTY_NAME:-$ID} ($ARQUITETURA)."
 avisar "Aplicativo: $APP_DIR | Perfil: $PERFIL"
@@ -130,9 +146,6 @@ command -v chromedriver >/dev/null || erro "ChromeDriver não foi localizado ap�
 python3 -c 'import sys; assert sys.version_info >= (3, 10), "É necessário Python 3.10 ou superior."'
 
 if [[ ! -f "$APP_DIR/config/defaults.ini" ]]; then
-    if [[ -e "$APP_DIR" && -n "$(ls -A "$APP_DIR" 2>/dev/null)" ]]; then
-        erro "Diretório ocupado por outros arquivos: $APP_DIR (não será sobrescrito)."
-    fi
     avisar "Baixando o repositório..."
     git clone --depth 1 "$REPOSITORIO" "$APP_DIR"
 else
@@ -149,15 +162,18 @@ if [[ ! -x ".venv/bin/python" ]]; then python3 -m venv .venv; fi
 avisar "Configurando o painel e o perfil..."
 ARGUMENTOS=(--diretorio "$APP_DIR" --perfil "$PERFIL")
 if ((REDE_LOCAL)); then ARGUMENTOS+=(--rede-local); fi
-if ((CONFIGURAR_LOGIN)); then ARGUMENTOS+=(--configurar-login); fi
+if [[ "$LOGIN" == "configurar" ]]; then
+    ARGUMENTOS+=(--configurar-login)
+elif [[ "$LOGIN" == "auto" && -t 0 ]]; then
+    ARGUMENTOS+=(--login-se-pendente)
+fi
 .venv/bin/python scripts/configurar_linux.py "${ARGUMENTOS[@]}"
 
 avisar "Registrando serviço systemd..."
-USUARIO="$(id -un)"
-SERVICO="am4bot@${PERFIL}.service"
-ARQUIVO_UNIDADE="$(mktemp)"
-trap 'rm -f "$ARQUIVO_UNIDADE"' EXIT
-cat > "$ARQUIVO_UNIDADE" <<UNIDADE
+if [[ ! -e "$UNIDADE_INSTALADA" ]]; then
+    ARQUIVO_UNIDADE="$(mktemp)"
+    trap 'rm -f "$ARQUIVO_UNIDADE"' EXIT
+    cat > "$ARQUIVO_UNIDADE" <<UNIDADE
 [Unit]
 Description=Airline Manager 4 Bot (perfil %i)
 Wants=network-online.target
@@ -169,7 +185,6 @@ User=$USUARIO
 WorkingDirectory=$APP_DIR
 Environment=PYTHONUTF8=1
 Environment=PYTHONUNBUFFERED=1
-Environment=HOME=$HOME
 ExecStart=$APP_DIR/.venv/bin/python $APP_DIR/src/main.py --web --profile %i
 KillSignal=SIGINT
 TimeoutStopSec=65
@@ -180,16 +195,37 @@ UMask=0077
 [Install]
 WantedBy=multi-user.target
 UNIDADE
-sudo install -m 0644 "$ARQUIVO_UNIDADE" /etc/systemd/system/am4bot@.service
+    sudo install -m 0644 "$ARQUIVO_UNIDADE" "$UNIDADE_INSTALADA"
+fi
 sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICO"
 if ((INICIAR)); then
     sudo systemctl restart "$SERVICO"
+    PYTHONPATH=src .venv/bin/python - "$PERFIL" <<'PYTHON' ||
+import sys
+import time
+
+import paths
+from config import AppConfig
+from web import instance_answers
+
+paths.activate(sys.argv[1])
+cfg = AppConfig()
+host = cfg.get("web", "host") or "127.0.0.1"
+if host in ("0.0.0.0", "::") or not cfg.web_token:
+    host = "127.0.0.1"
+deadline = time.monotonic() + 15
+while not instance_answers(cfg.get_int("web", "port", 8744), cfg.web_token, host):
+    if time.monotonic() >= deadline:
+        sys.exit(1)
+    time.sleep(0.5)
+PYTHON
+        erro "Painel web não respondeu. Consulte: sudo journalctl -u $SERVICO -n 80 --no-pager"
     sudo systemctl is-active --quiet "$SERVICO" ||
         erro "Serviço não iniciou. Consulte: sudo journalctl -u $SERVICO -n 80 --no-pager"
 fi
 
-IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
 IP="${IP:-IP-DA-MAQUINA}"
 if ((REDE_LOCAL && ! SEM_UFW)); then
     avisar "Verificando o firewall UFW (sem abrir portas para toda a internet)..."
@@ -200,6 +236,7 @@ fi
 avisar "Instalação finalizada!"
 .venv/bin/python scripts/configurar_linux.py --diretorio "$APP_DIR" --perfil "$PERFIL" --mostrar-acesso --ip "$IP"
 printf 'Serviço: %s\n' "$SERVICO"
+printf 'Pasta:   %s\n' "$APP_DIR"
 printf 'Logs:    sudo journalctl -u %s -f\n' "$SERVICO"
 printf 'Status:  sudo systemctl status %s\n' "$SERVICO"
 if (( ! INICIAR )); then printf 'Iniciar: sudo systemctl start %s\n' "$SERVICO"; fi

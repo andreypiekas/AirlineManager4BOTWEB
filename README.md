@@ -6,6 +6,50 @@
 
 **Idioma padrão: Português (Brasil).** Inglês disponível como alternativa.
 
+## Instalação fácil no Raspberry Pi OS e Ubuntu
+
+No terminal do servidor, execute como usuário normal com acesso a `sudo`:
+
+~~~bash
+curl -fsSLo instalar-am4.sh https://raw.githubusercontent.com/andreypiekas/AirlineManager4BOTWEB/main/instalar.sh && bash instalar-am4.sh --rede-local
+~~~
+
+1. Informe o login do jogo quando solicitado. A senha fica oculta. Para pular, pressione **Enter** no campo de e-mail.
+2. Abra no navegador o endereço completo que aparece no terminal. Com `--rede-local`, o link inclui um token para acesso pela rede local.
+3. Revise **Parâmetros** no painel. Um perfil novo começa com **Simulação (sem gastos)** ativada. Se você pulou o login, o painel abre e o bot fica parado até configurar as credenciais.
+
+O instalador prepara Python, Chromium e o serviço `am4bot@principal`, que abre o painel após reiniciar o servidor. Se faltar o `curl`, instale com `sudo apt-get install curl`.
+
+Para atualizar, entre na pasta indicada pelo instalador (normalmente `~/AirlineManager4Bot`) e rode `git pull --ff-only && bash instalar.sh`.
+
+**[Guia Linux com opções, atualização e solução de problemas](docs/INSTALACAO_LINUX.md)**
+
+## Instalação no Windows
+
+1. Instale [Python 3.10 ou superior](https://www.python.org/downloads/windows/) e Google Chrome ou Chromium.
+2. [Baixe o ZIP](https://github.com/andreypiekas/AirlineManager4BOTWEB/archive/refs/heads/main.zip) e extraia todos os arquivos.
+3. Dê dois cliques em `instalar.bat` e, ao terminar, em `iniciar.bat`.
+4. Em **Conta**, informe o login do jogo. Ative **Simulação (sem gastos)** nas opções para testar e clique em **Iniciar bot**.
+
+Para usar o painel web, mantenha **Lembrar credenciais** marcado no primeiro acesso e use `scripts\web.bat`. O endereço padrão do painel local é `http://127.0.0.1:8744/`.
+
+<details>
+<summary>Instalação manual no Linux ou macOS</summary>
+
+Com Python 3.10+, Tkinter e Chrome ou Chromium instalados:
+
+~~~bash
+git clone https://github.com/andreypiekas/AirlineManager4BOTWEB.git
+cd AirlineManager4BOTWEB
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python src/main.py
+~~~
+
+Configure o login na interface desktop e ative **Simulação (sem gastos)** antes de iniciar os testes. Para usar somente o painel em uma instalação já configurada, execute `.venv/bin/python src/main.py --web`.
+
+</details>
+
 ## Novo centro de operações
 
 O painel web e o aplicativo desktop agora usam a identidade **AM/04 — Torre de Controle**: design técnico de alto contraste, telemetria com leitura rápida, console de eventos e comandos separados dos parâmetros. O painel web é responsivo e não depende de fontes, CSS ou serviços externos.
@@ -50,6 +94,11 @@ O controle é cumulativo e **não presume que já leu toda a frota**, já que o
 jogo pode exibir listas parciais por página. Permite corrigir manualmente um
 vínculo no cadastro, sem modificar a rota real. Consulte o
 [guia de controle e segurança das rotas](docs/CONTROLE_ROTAS.md).
+
+Na criação automática de rotas para aeronaves novas, o bot pode pesquisar
+um stopover para alcançar um destino além do alcance direto. A origem deve
+ser uma base própria, os dois trechos precisam caber na autonomia e o jogo
+precisa confirmar a escala.
 
 ## Interface — AM/04 Torre de Controle
 
@@ -102,57 +151,6 @@ xvfb-run -a -s "-screen 0 1920x1200x24" python scripts/screenshots.py
 No Windows com ambiente gráfico, execute \`python scripts/screenshots.py\`. Para reproduzir automaticamente em uma branch no GitHub, consulte o workflow [Atualizar capturas AM/04](.github/workflows/screenshots.yml).
 
 
-
-## Instalação fácil no Raspberry Pi OS e Ubuntu
-
-Execute:
-
-~~~bash
-git clone https://github.com/andreypiekas/ArlineManager4BOTWEB.git
-cd ArlineManager4BOTWEB
-bash instalar.sh --rede-local
-~~~
-
-O instalador configura dependências, Chromium, Python, painel web e serviço systemd para inicialização automática. Use a opção **--configurar-login** para informar credenciais. Novos perfis começam em **modo simulação**.
-
-**[Guia completo para Raspberry Pi OS e Ubuntu](docs/INSTALACAO_LINUX.md)**
-
-## Instalação manual no Windows, Linux e macOS
-
-Requisitos: Python 3.10 ou superior e Google Chrome ou Chromium compatível.
-
-~~~bash
-git clone https://github.com/andreypiekas/ArlineManager4BOTWEB.git
-cd ArlineManager4BOTWEB
-python -m venv .venv
-~~~
-
-Ative o ambiente virtual: no Windows use **.venv\Scripts\activate**; no Linux/macOS use **source .venv/bin/activate**. Depois execute:
-
-~~~bash
-pip install -r requirements.txt
-python src/main.py
-~~~
-
-Informe o login do jogo, revise as opções e clique em **INICIAR BOT**. Para testar decisões sem gastos, ative **Simulação** antes de iniciar.
-
-## Painel web e execução em segundo plano
-
-Para executar sem a interface desktop:
-
-~~~bash
-python src/main.py --web
-~~~
-
-O painel fica disponível em **http://127.0.0.1:8744/** por padrão. Para acesso pela rede local, altere a opção de host do painel web e configure um token secreto de autenticação. Nunca exponha diretamente a porta web na internet.
-
-Em instalações Linux, gerencie o serviço com:
-
-~~~bash
-sudo systemctl status am4bot@principal
-sudo systemctl restart am4bot@principal
-sudo journalctl -u am4bot@principal -f
-~~~
 
 ## Perfis de diferentes companhias
 

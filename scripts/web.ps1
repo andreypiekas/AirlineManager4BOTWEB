@@ -32,7 +32,7 @@ if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyCon
     exit 0
 }
 if (-not (Test-Path '.venv\Scripts\python.exe')) {
-    Write-Host 'O ambiente .venv não existe. Crie o ambiente antes (veja README: python -m venv .venv e pip install -r requirements.txt).'
+    Write-Host 'Ambiente .venv ausente ou incompleto. Execute instalar.bat primeiro.'
     Read-Host 'Pressione Enter para fechar'
     exit 1
 }
@@ -44,4 +44,8 @@ if ($Perfil) {
 } else {
     & '.venv\Scripts\python.exe' 'src\main.py' '--web'
 }
-if ($LASTEXITCODE -ne 0) { Read-Host 'O bot foi encerrado com erro. Pressione Enter para fechar' }
+$botExitCode = $LASTEXITCODE
+if ($botExitCode -ne 0) {
+    $null = Read-Host "O bot foi encerrado com erro (codigo $botExitCode). Pressione Enter para fechar"
+}
+exit $botExitCode

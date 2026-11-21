@@ -37,17 +37,18 @@ def test_nova_instalacao_eh_simulacao_e_privada(projeto: Path):
     cfg = ler_cfg(projeto / "config/settings.ini")
     assert (porta, novo, login) == (8744, True, False)
     assert cfg.getboolean("options", "headless")
-    assert cfg.getboolean("options", "start_on_launch")
+    assert not cfg.getboolean("options", "start_on_launch", fallback=False)
     assert cfg.getboolean("options", "dry_run")
     assert cfg.get("web", "enabled") == "on"
     assert not (projeto / "config/secrets.ini").exists()
     assert (os.stat(projeto / "config/settings.ini").st_mode & 0o777) == 0o600
 
 
-def test_reinstalacao_preserva_credenciais_e_simulacao_desligada(projeto: Path):
+def test_reinstalacao_preserva_credenciais_e_preferencias(projeto: Path, monkeypatch):
     modulo.configurar(projeto, "principal", False, False)
     cfg = ler_cfg(projeto / "config/settings.ini")
     cfg.set("options", "dry_run", "off")
+    cfg.set("options", "start_on_launch", "off")
     cfg.add_section("settings")
     cfg.set("settings", "cash_reserve", "987654")
     modulo.salvar_privado(projeto / "config/settings.ini", cfg)
@@ -58,13 +59,38 @@ def test_reinstalacao_preserva_credenciais_e_simulacao_desligada(projeto: Path):
     segredos.set("login", "password", "segredo-exemplo")
     modulo.salvar_privado(projeto / "config/secrets.ini", segredos)
 
-    porta, novo, login = modulo.configurar(projeto, "principal", False, False)
+    def login_inesperado(_):
+        pytest.fail("O instalador pediu as credenciais de um perfil já configurado")
+
+    monkeypatch.setattr(modulo, "configurar_login", login_inesperado)
+    porta, novo, login = modulo.configurar(projeto, "principal", False, False, login_se_pendente=True)
     cfg2 = ler_cfg(projeto / "config/settings.ini")
     sec2 = ler_cfg(projeto / "config/secrets.ini")
     assert (porta, novo, login) == (8744, False, True)
     assert cfg2.get("settings", "cash_reserve") == "987654"
     assert not cfg2.getboolean("options", "dry_run")
+    assert not cfg2.getboolean("options", "start_on_launch")
     assert sec2.get("login", "password") == "segredo-exemplo"
+
+
+def test_login_pendente_pode_ser_pulado_e_configurado_depois(projeto: Path, monkeypatch):
+    def informar_login(segredos):
+        modulo.definir(segredos, "login", "username", "piloto@example.com")
+        modulo.definir(segredos, "login", "password", "senha-teste")
+        return True
+
+    segredos_path = projeto / "config/secrets.ini"
+    segredos_path.write_text("[login]\nusername = piloto@example.com\n", encoding="utf-8")
+    monkeypatch.setattr(modulo, "configurar_login", lambda _: False)
+    assert modulo.configurar(projeto, "principal", False, False, login_se_pendente=True) == (8744, True, False)
+    assert not ler_cfg(projeto / "config/settings.ini").getboolean("options", "start_on_launch", fallback=False)
+
+    monkeypatch.setattr(modulo, "configurar_login", informar_login)
+    assert modulo.configurar(projeto, "principal", False, False, login_se_pendente=True) == (8744, False, True)
+    cfg = ler_cfg(projeto / "config/settings.ini")
+    assert cfg.getboolean("options", "start_on_launch")
+    assert cfg.getboolean("options", "dry_run")
+    assert ler_cfg(segredos_path).get("login", "password") == "senha-teste"
 
 
 def test_rede_local_gera_token_e_reinstalacao_nao_troca(projeto: Path, capsys):
@@ -99,6 +125,7 @@ def test_bash_sintaxe_e_ajuda_sem_efeitos_colaterais():
     assert subprocess.run(["bash", "-n", str(script)], check=False).returncode == 0
     ajuda = subprocess.run(["bash", str(script), "--ajuda"], check=True, capture_output=True, text=True)
     assert "--rede-local" in ajuda.stdout
+    assert "--sem-login" in ajuda.stdout
     assert "--sem-iniciar" in ajuda.stdout
     assert "SIMULAÇÃO" in ajuda.stdout
 

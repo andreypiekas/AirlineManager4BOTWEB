@@ -125,7 +125,9 @@ def configurar_login(secrets_cfg: ConfigParser) -> bool:
     return True
 
 
-def configurar(root: Path, perfil: str, rede_local: bool, login: bool) -> tuple[int, bool, bool]:
+def configurar(
+    root: Path, perfil: str, rede_local: bool, login: bool, *, login_se_pendente: bool = False,
+) -> tuple[int, bool, bool]:
     if not (root / "config" / "defaults.ini").is_file():
         raise FileNotFoundError("Não encontrei config/defaults.ini no repositório.")
     settings_path, secrets_path = arquivos(root, perfil)
@@ -134,8 +136,17 @@ def configurar(root: Path, perfil: str, rede_local: bool, login: bool) -> tuple[
     segredos = carregar(secrets_path)
     porta = porta_perfil(root, perfil, settings)
 
+    def login_definido() -> bool:
+        return all(segredos.get("login", chave, fallback="").strip() for chave in ("username", "password"))
+
+    segredos_alterados = False
+    if login or (login_se_pendente and not login_definido()):
+        segredos_alterados = configurar_login(segredos)
+    tem_login = login_definido()
+
     definir(settings, "options", "headless", "on")
-    definir(settings, "options", "start_on_launch", "on")
+    if tem_login and not settings.has_option("options", "start_on_launch"):
+        definir(settings, "options", "start_on_launch", "on")
     # Um perfil novo começa em modo seguro: sem compras/decolagens reais.
     if nova_instalacao:
         definir(settings, "options", "dry_run", "on")
@@ -148,14 +159,14 @@ def configurar(root: Path, perfil: str, rede_local: bool, login: bool) -> tuple[
         if not token or token == "change-me-to-a-long-random-string":
             # Impede expor na LAN o token público de config/secrets.example.ini.
             definir(segredos, "web", "token", secrets.token_urlsafe(32))
-
-    if login:
-        configurar_login(segredos)
+            segredos_alterados = True
 
     salvar_privado(settings_path, settings)
-    if rede_local or login or secrets_path.exists():
+    if segredos_alterados:
         salvar_privado(secrets_path, segredos)
-    return porta, nova_instalacao, bool(segredos.get("login", "username", fallback="").strip())
+    elif secrets_path.is_file():
+        secrets_path.chmod(0o600)
+    return porta, nova_instalacao, tem_login
 
 
 def mostrar_acesso(root: Path, perfil: str, ip: str) -> None:
@@ -180,7 +191,9 @@ def main() -> int:
     parser.add_argument("--diretorio", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--perfil", default="principal")
     parser.add_argument("--rede-local", action="store_true")
-    parser.add_argument("--configurar-login", action="store_true")
+    login = parser.add_mutually_exclusive_group()
+    login.add_argument("--configurar-login", action="store_true", help="solicita as credenciais do jogo")
+    login.add_argument("--login-se-pendente", action="store_true", help="solicita apenas se o perfil estiver sem login")
     parser.add_argument("--mostrar-acesso", action="store_true")
     parser.add_argument("--ip", default="IP-DA-MAQUINA")
     args = parser.parse_args()
@@ -191,12 +204,15 @@ def main() -> int:
         if args.mostrar_acesso:
             mostrar_acesso(root, perfil, args.ip)
             return 0
-        porta, novo, login_definido = configurar(root, perfil, args.rede_local, args.configurar_login)
+        porta, novo, login_definido = configurar(
+            root, perfil, args.rede_local, args.configurar_login, login_se_pendente=args.login_se_pendente,
+        )
         print(f"Perfil '{perfil}' configurado; porta {porta}.")
         if novo:
             print("Segurança: modo SIMULAÇÃO ativado para este perfil novo.")
         if not login_definido:
-            print("Login pendente: configure config/secrets.ini ou execute com --configurar-login.")
+            print(f"Login pendente. Para configurar: .venv/bin/python scripts/configurar_linux.py"
+                  f" --perfil {perfil} --configurar-login")
         return 0
     except (ValueError, OSError, RuntimeError) as exc:
         print(f"Erro: {exc}", file=sys.stderr)

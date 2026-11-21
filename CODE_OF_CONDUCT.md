@@ -32,7 +32,7 @@ Este Código de Conduta se aplica aos espaços do projeto e a situações públi
 
 ## Aplicação
 
-Comportamentos abusivos ou inadequados podem ser relatados aos responsáveis por meio dos [issues deste repositório](https://github.com/andreypiekas/ArlineManager4BOTWEB/issues/new). **Issues são públicos:** não publique senhas, dados pessoais ou informações confidenciais. Para casos sensíveis, solicite um canal privado antes de compartilhar detalhes.
+Comportamentos abusivos ou inadequados podem ser relatados aos responsáveis por meio dos [issues deste repositório](https://github.com/andreypiekas/AirlineManager4BOTWEB/issues/new). **Issues são públicos:** não publique senhas, dados pessoais ou informações confidenciais. Para casos sensíveis, solicite um canal privado antes de compartilhar detalhes.
 
 As denúncias serão avaliadas e investigadas, e medidas proporcionais poderão ser aplicadas. A equipe de manutenção deve preservar a confidencialidade das informações recebidas em canais privados.
 

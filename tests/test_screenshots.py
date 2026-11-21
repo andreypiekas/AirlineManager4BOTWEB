@@ -76,4 +76,4 @@ def test_readme_utiliza_imagens_locais():
     refs = re.findall(r"screenshots/([a-z0-9-]+\.png)", docs)
     assert len(refs) >= 12
     assert all(name in generated_names() for name in refs)
-    assert "github.com/andreypiekas/ArlineManager4BOTWEB" in docs
+    assert "github.com/andreypiekas/AirlineManager4BOTWEB" in docs
