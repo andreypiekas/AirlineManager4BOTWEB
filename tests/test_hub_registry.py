@@ -57,6 +57,41 @@ def test_only_explicit_game_home_hub_counts_and_route_change_invalidates_profit(
     assert hub["estimated_routes"] == 0
 
 
+def test_undated_expired_and_invalid_route_profits_are_excluded(tmp_path):
+    hubs = HubRegistry(tmp_path / "hubs.json")
+    hubs.record_options([{"id": "123", "text": "Base A"}])
+    now = 2_000_000_000
+    relations = []
+    for index, value, stamp in (
+        (1, 1000, now - 60),
+        (2, 2000, now - 4 * 86400),
+        (3, 3000, None),
+        (4, float("inf"), now),
+        (5, 5000, now + 60),
+    ):
+        relations.append({"aircraft_id": str(index), "home_hub_id": "123",
+                          "home_hub_source": "game", "route_key": "id:1 ↔ id:2",
+                          "profit_route_key": "id:1 ↔ id:2",
+                          "profit_per_day": value, "profit_estimated_at": stamp})
+    report = hubs.snapshot({"relations": relations}, now=now)
+    hub = report["hubs"][0]
+    assert hub["aircraft_count"] == 5
+    assert hub["estimated_routes"] == 1
+    assert hub["estimates_pending"] == 4
+    assert hub["estimated_profit_per_day"] == 1000
+
+
+def test_fleet_scan_is_reported_as_partial_evidence(tmp_path):
+    hubs = HubRegistry(tmp_path / "hubs.json")
+    hubs.record_options([{"id": "123", "text": "Base A"}])
+    scan = {"at": 1234567, "visible": 20, "identified": 17, "missing_airports": 3}
+    report = hubs.snapshot({"relations": [{"aircraft_id": "1"}], "last_scan": scan})
+    assert report["partial_fleet"] is True
+    assert report["known_aircraft"] == 1
+    assert report["last_fleet_scan"] == scan
+    assert len(report["unconfirmed_aircraft"]) == 1
+
+
 def test_hubs_web_workspace_is_read_only():
     from conftest import ROOT
 

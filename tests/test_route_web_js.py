@@ -46,11 +46,13 @@ def test_route_dashboard_has_complete_controls():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not available")
-def test_browser_javascript_parses_on_node():
+def test_browser_javascript_parses_on_node(tmp_path):
     page = PageScripts()
     page.feed((ROOT / "assets/web/index.html").read_text(encoding="utf-8"))
+    script = tmp_path / "dashboard.js"
+    script.write_text("\n".join(page.code), encoding="utf-8")
     result = subprocess.run(
-        ["node", "--check", "-"],
-        input="\n".join(page.code), text=True, capture_output=True, check=False,
+        ["node", "--check", str(script)],
+        text=True, capture_output=True, check=False, timeout=15,
     )
     assert result.returncode == 0, result.stderr

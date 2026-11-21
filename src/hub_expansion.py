@@ -80,18 +80,25 @@ class HubExpansionRegistry:
             return False
         with _LOCK:
             current = self._load()
+            observed_at = int(time.time())
             previous = {c["id"]: c for c in current.get("candidates", [])
                         if isinstance(c, dict) and _ID.fullmatch(str(c.get("id") or ""))}
             if not complete:
+                # Legacy records inherited the catalog timestamp. Capture it
+                # before the partial refresh advances the catalog timestamp.
+                for item in previous.values():
+                    item.setdefault("observed_at", current.get("observed_at"))
                 for airport_id, item in incoming.items():
                     # New price evidence takes precedence. Previous route research
                     # survives a catalog refresh for the same airport.
-                    previous[airport_id] = {**previous.get(airport_id, {}), **item}
+                    previous[airport_id] = {**previous.get(airport_id, {}), **item,
+                                            "observed_at": observed_at}
                 incoming = previous
             else:
-                incoming = {airport_id: {**previous.get(airport_id, {}), **item}
+                incoming = {airport_id: {**previous.get(airport_id, {}), **item,
+                                         "observed_at": observed_at}
                             for airport_id, item in incoming.items()}
-            current.update({"source": "game_purchase_catalog", "observed_at": int(time.time()),
+            current.update({"source": "game_purchase_catalog", "observed_at": observed_at,
                             "catalog_complete": bool(complete),
                             "candidates": sorted(incoming.values(), key=lambda row: (row.get("code") or "", row["id"]))})
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
@@ -134,14 +141,15 @@ class HubExpansionRegistry:
         reserve_value = _amount(reserve)
         available = max(0, cash_value - reserve_value) if cash_value is not None and reserve_value is not None else None
         catalog_time = saved.get("observed_at")
-        catalog_fresh = (isinstance(catalog_time, int) and 0 <= now - catalog_time <= MAX_AGE_SECONDS)
         candidates = []
         for raw in saved.get("candidates", []):
             if not isinstance(raw, dict) or raw.get("id") in (owned_hub_ids or set()):
                 continue
             row = {k: raw.get(k) for k in ("id", "name", "code", "hub_price")}
             scenario = raw.get("scenario") if isinstance(raw.get("scenario"), dict) else {}
-            row.update({"scenario": scenario, "observed_at": catalog_time})
+            row_time = raw.get("observed_at", catalog_time)
+            catalog_fresh = (type(row_time) is int and 0 <= now - row_time <= MAX_AGE_SECONDS)
+            row.update({"scenario": scenario, "observed_at": row_time})
             costs = [raw.get("hub_price"), scenario.get("aircraft_price"),
                      scenario.get("route_fee"), scenario.get("hangar_price")]
             valid_costs = [_amount(v) for v in costs]

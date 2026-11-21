@@ -1,5 +1,9 @@
 """Read-only financial scenarios require verified complete data."""
-from hub_expansion import HubExpansionRegistry
+import json
+
+import pytest
+
+from hub_expansion import MAX_AGE_SECONDS, HubExpansionRegistry
 
 
 def _candidate(airport_id="123", price=5000):
@@ -61,6 +65,97 @@ def test_loss_and_partial_catalog_merge(tmp_path):
     assert len(registry.snapshot(cash=50000)["candidates"]) == 3
     registry.record_catalog([_candidate("789", 3000)], complete=True)
     assert len(registry.snapshot(cash=50000)["candidates"]) == 1
+
+
+def test_partial_refresh_ages_each_candidate_independently(tmp_path, monkeypatch):
+    clock = [1800000000]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research())
+
+    clock[0] += MAX_AGE_SECONDS + 1
+    assert registry.record_catalog([_candidate("456", 3000)], complete=False)
+    assert registry.record_research("123", _research())
+    assert registry.record_research("456", _research())
+
+    snapshot = registry.snapshot(cash=50000, now=clock[0])
+    rows = {row["id"]: row for row in snapshot["candidates"]}
+    assert snapshot["observed_at"] == clock[0]
+    assert snapshot["catalog_complete"] is False
+    assert rows["123"]["observed_at"] == clock[0] - MAX_AGE_SECONDS - 1
+    assert rows["123"]["status"] == "dados_a_confirmar"
+    assert rows["456"]["observed_at"] == clock[0]
+    assert rows["456"]["status"] == "viavel"
+
+    assert registry.record_catalog([_candidate("123", 6000)], complete=False)
+    refreshed = {row["id"]: row for row in registry.snapshot(cash=50000, now=clock[0])["candidates"]}
+    assert refreshed["123"]["observed_at"] == clock[0]
+    assert refreshed["123"]["investment"] == 17000
+    assert refreshed["123"]["status"] == "viavel"
+    assert refreshed["456"]["observed_at"] == clock[0]
+
+
+def test_legacy_catalog_timestamp_survives_partial_merge(tmp_path, monkeypatch):
+    clock = [1800000000]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research())
+
+    legacy = json.loads(registry.path.read_text(encoding="utf-8"))
+    del legacy["candidates"][0]["observed_at"]
+    registry.path.write_text(json.dumps(legacy), encoding="utf-8")
+    assert registry.snapshot(cash=50000, now=clock[0])["candidates"][0]["status"] == "viavel"
+    assert registry.snapshot(cash=50000, now=clock[0])["candidates"][0]["observed_at"] == clock[0]
+
+    clock[0] += MAX_AGE_SECONDS + 1
+    assert registry.record_catalog([_candidate("456")], complete=False)
+    assert registry.record_research("123", _research())
+    rows = {row["id"]: row for row in registry.snapshot(cash=50000, now=clock[0])["candidates"]}
+    assert rows["123"]["observed_at"] == legacy["observed_at"]
+    assert rows["123"]["status"] == "dados_a_confirmar"
+    assert rows["456"]["observed_at"] == clock[0]
+    persisted = json.loads(registry.path.read_text(encoding="utf-8"))
+    assert {row["id"]: row["observed_at"] for row in persisted["candidates"]} == {
+        "123": legacy["observed_at"], "456": clock[0]}
+
+
+def test_complete_refresh_discards_unseen_and_updates_seen_candidate(tmp_path, monkeypatch):
+    clock = [1800000000]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate(), _candidate("456")])
+    assert registry.record_research("456", _research())
+
+    clock[0] += MAX_AGE_SECONDS + 1
+    assert registry.record_catalog([_candidate("456", 7000)], complete=True)
+    snapshot = registry.snapshot(cash=50000, now=clock[0])
+    assert snapshot["catalog_complete"] is True
+    assert len(snapshot["candidates"]) == 1
+    row = snapshot["candidates"][0]
+    assert row["id"] == "456"
+    assert row["observed_at"] == clock[0]
+    assert row["hub_price"] == 7000
+    assert row["scenario"]["observed_at"] == clock[0] - MAX_AGE_SECONDS - 1
+    assert row["status"] == "dados_a_confirmar"
+
+    assert registry.record_research("456", _research())
+    assert registry.snapshot(cash=50000, now=clock[0])["candidates"][0]["status"] == "viavel"
+
+
+@pytest.mark.parametrize("invalid_timestamp", [None, True, "1800000000", 1800000001])
+def test_invalid_or_future_candidate_timestamp_is_not_fresh(tmp_path, monkeypatch, invalid_timestamp):
+    monkeypatch.setattr("hub_expansion.time.time", lambda: 1800000000)
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research())
+    saved = json.loads(registry.path.read_text(encoding="utf-8"))
+    saved["candidates"][0]["observed_at"] = invalid_timestamp
+    registry.path.write_text(json.dumps(saved), encoding="utf-8")
+    row = registry.snapshot(cash=50000, now=1800000000)["candidates"][0]
+    assert row["observed_at"] == invalid_timestamp
+    assert row["status"] == "dados_a_confirmar"
 
 
 def test_expansion_dashboard_is_only_a_get_endpoint():

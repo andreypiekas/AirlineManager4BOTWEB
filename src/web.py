@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
 import paths
-from dashboard import snapshot, last_money
+from dashboard import snapshot, recent_verified_money
 from economy import AUTO_GOAL_LABEL, is_auto_goal, load_market, load_state
 from i18n import language, t, tip
 from route_registry import RouteRegistry, endpoint
@@ -172,13 +172,16 @@ class WebDashboard:
         return HubRegistry().snapshot(self.routes())
 
     def hub_expansion(self) -> dict:
-        """Compare observed candidate hubs against the last-known balance."""
+        """Compare candidate hubs against a recently verified balance."""
         owned = {hub["id"] for hub in self.hubs()["hubs"]}
-        return HubExpansionRegistry().snapshot(
-            cash=last_money(self.bot, load_state()),
+        cash, observed_at = recent_verified_money(self.bot, load_state())
+        report = HubExpansionRegistry().snapshot(
+            cash=cash,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
             owned_hub_ids=owned,
         )
+        report["cash_observed_at"] = observed_at
+        return report
 
     def update_routes(self, payload: dict) -> tuple[bool, str]:
         """Manual registry corrections are auditable and never change routes in-game."""

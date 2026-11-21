@@ -5,6 +5,7 @@ An aircraft's current route or at-base flag never proves its home hub.
 from __future__ import annotations
 
 import json
+import math
 import re
 import threading
 import time
@@ -18,6 +19,20 @@ from route_registry import RouteRegistry, endpoint
 
 _LOCK = threading.RLock()
 _AIRPORT_ID = re.compile(r"^[0-9]{1,12}$")
+_MAX_ESTIMATE_AGE = 3 * 86400
+
+
+def _current_route_profit(row: dict, now: int) -> Optional[float]:
+    """Only aggregate a finite, dated estimate for the aircraft's current route."""
+    value = row.get("profit_per_day")
+    stamp = row.get("profit_estimated_at")
+    if (not row.get("route_key") or row.get("profit_route_key") != row.get("route_key")
+            or isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value) or isinstance(stamp, bool)
+            or not isinstance(stamp, (int, float))
+            or not 0 <= now - stamp <= _MAX_ESTIMATE_AGE):
+        return None
+    return float(value)
 
 
 class HubRegistry:
@@ -57,11 +72,13 @@ class HubRegistry:
         except (OSError, ValueError):
             return {}
 
-    def snapshot(self, routes: Optional[dict] = None) -> dict:
+    def snapshot(self, routes: Optional[dict] = None, *, now: Optional[int] = None) -> dict:
         with _LOCK:
             saved = deepcopy(self._load())
+        now = int(time.time() if now is None else now)
         hubs = saved.get("hubs", [])
-        relations = (routes if routes is not None else RouteRegistry().snapshot()).get("relations", [])
+        route_report = routes if routes is not None else RouteRegistry().snapshot()
+        relations = route_report.get("relations", [])
         confirmed = {hub["id"]: [] for hub in hubs}
         unknown = []
         for row in relations:
@@ -75,13 +92,13 @@ class HubRegistry:
         result = []
         for hub in hubs:
             aircraft = confirmed[hub["id"]]
-            estimates = [r["profit_per_day"] for r in aircraft
-                         if r.get("route_key") and r.get("profit_route_key") == r.get("route_key")
-                         and isinstance(r.get("profit_per_day"), (int, float))
-                         and not isinstance(r.get("profit_per_day"), bool)]
+            estimates = [_current_route_profit(row, now) for row in aircraft]
+            current_estimates = [amount for amount in estimates if amount is not None]
             result.append({**hub, "aircraft_count": len(aircraft), "aircraft": aircraft,
-                           "estimated_profit_per_day": round(sum(estimates), 2) if estimates else None,
-                           "estimated_routes": len(estimates)})
+                           "estimated_profit_per_day": round(sum(current_estimates), 2) if current_estimates else None,
+                           "estimated_routes": len(current_estimates),
+                           "estimates_pending": len(aircraft) - len(current_estimates)})
         return {"hubs": result, "unconfirmed_aircraft": unknown,
                 "observed_at": saved.get("observed_at"), "source": saved.get("source"),
-                "partial_fleet": True}
+                "partial_fleet": True, "known_aircraft": len(relations),
+                "last_fleet_scan": route_report.get("last_scan")}
