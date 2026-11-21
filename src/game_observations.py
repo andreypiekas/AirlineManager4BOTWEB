@@ -20,7 +20,6 @@ const details = document.querySelector('#airportInfo');
 const cost = document.querySelector('#hubCostInfo');
 if (!option || !details || !cost || option.disabled ||
     !/^[1-9][0-9]{0,11}$/.test(option.value)) return null;
-if (typeof window !== 'undefined' && window.jQuery && window.jQuery.active > 0) return null;
 if ([details, cost].some(el => el.querySelector &&
     (el.querySelector('img[src*="loader"]') || el.querySelector('[aria-busy="true"]')))) return null;
 const id = option.value;
@@ -33,19 +32,31 @@ const normalize = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g, ''
 const detailId = details.getAttribute('data-airport-id');
 const costId = typeof cost.getAttribute === 'function' ? cost.getAttribute('data-airport-id') : null;
 if ((detailId && detailId !== id) || (costId && costId !== id)) return null;
+// The live airport_info.php response embeds the selected airport's arrId.
+// It is stronger evidence than the text label while AJAX replaces the panel.
+const scriptIds = Array.from(details.querySelectorAll ? details.querySelectorAll('script') : [])
+  .flatMap(el => Array.from(String(el.textContent || '').matchAll(/\barrId\s*=\s*([1-9][0-9]{0,11})\s*;/g),
+    match => match[1]));
+if (scriptIds.some(value => value !== id)) return null;
 const airportName = label.replace(/\s*\([A-Z]{3,4}\)\s*$/, '').trim();
-const confirmed = detailId === id || (code.length >= 3 &&
+const confirmed = detailId === id || scriptIds.includes(id) || (code.length >= 3 &&
   new RegExp('\\b' + code + '\\b', 'i').test(detailText)) ||
   (airportName.length >= 4 && normalize(detailText).includes(normalize(airportName)));
 if (!confirmed) return null;
-const priceMatch = String(cost.textContent || '').match(/(?:US\s*\$|USD\s*|\$)\s*([1-9][0-9.,]*)/i);
+// The Hub cost row has a <br> between dollars and points. textContent
+// joins them into e.g. "$ 11,520,00020 Points" and corrupts both figures.
+const priceCell = (cost.querySelector && cost.querySelector('td:nth-child(2)')) || cost;
+const fragments = Array.from(priceCell.childNodes || [])
+  .map(node => String(node.textContent || '').trim()).filter(Boolean);
+if (!fragments.length) fragments.push(String(priceCell.textContent || '').trim());
+const priceMatch = fragments[0].match(/(?:US\s*\$|USD\s*|\$)\s*([1-9][0-9.,]*)/i);
 if (!priceMatch) return null;
 const amount = priceMatch[1];
 if (!(/^\d+$/.test(amount) || /^[1-9]\d{0,2}(?:,\d{3})+$/.test(amount) ||
       /^[1-9]\d{0,2}(?:\.\d{3})+$/.test(amount))) return null;
 const price = Number(amount.replace(/[.,]/g, ''));
 if (!Number.isSafeInteger(price) || price <= 0) return null;
-const costText = String(cost.textContent || '');
+const costText = fragments.join(' ');
 const pointsMatch = costText.match(/(?:^|\D)([0-9][0-9,]*)\s*(?:points?|pontos?)\b/i);
 if (/\b(?:points?|pontos?)\b/i.test(costText) && !pointsMatch) return null;
 const points = pointsMatch ? Number(pointsMatch[1].replace(/,/g, '')) : 0;
@@ -69,11 +80,19 @@ const normalize = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g, ''
 const airportId = option && option.value;
 const detailId = details && details.getAttribute('data-airport-id');
 const costId = cost && cost.getAttribute('data-airport-id');
-const costText = String(cost && cost.textContent || '');
-const amount = (costText.match(/(?:US\s*\$|USD\s*|\$)\s*([1-9][0-9.,]*)/i) || [])[1] || '';
+const scriptIds = Array.from(details?.querySelectorAll?.('script') || [])
+  .flatMap(el => Array.from(String(el.textContent || '').matchAll(/\barrId\s*=\s*([1-9][0-9]{0,11})\s*;/g),
+    match => match[1]));
+const priceCell = (cost?.querySelector && cost.querySelector('td:nth-child(2)')) || cost;
+const fragments = Array.from(priceCell?.childNodes || [])
+  .map(node => String(node.textContent || '').trim()).filter(Boolean);
+if (!fragments.length) fragments.push(String(priceCell?.textContent || '').trim());
+const costText = fragments.join(' ');
+const amount = (fragments[0].match(/(?:US\s*\$|USD\s*|\$)\s*([1-9][0-9.,]*)/i) || [])[1] || '';
 const amountValid = /^\d+$/.test(amount) || /^[1-9]\d{0,2}(?:,\d{3})+$/.test(amount) ||
   /^[1-9]\d{0,2}(?:\.\d{3})+$/.test(amount);
 const identity = !!airportId && (detailId === airportId ||
+  (scriptIds.includes(airportId) && scriptIds.every(id => id === airportId)) ||
   (/^[A-Z]{3,4}$/.test(code) && new RegExp('\\b' + code + '\\b', 'i').test(text)) ||
   (name.length >= 4 && normalize(text).includes(normalize(name))));
 const pointsMatch = costText.match(/(?:^|\D)([0-9][0-9,]*)\s*(?:points?|pontos?)\b/i);
@@ -83,7 +102,8 @@ return {
   cost_present: !!cost,
   ajax_active: !!(window.jQuery && window.jQuery.active > 0),
   identity_matched: identity,
-  id_conflict: !!((detailId && detailId !== airportId) || (costId && costId !== airportId)),
+  id_conflict: !!((detailId && detailId !== airportId) || (costId && costId !== airportId) ||
+    scriptIds.some(id => id !== airportId)),
   amount_valid: !!amountValid,
   points_valid: !/\b(?:points?|pontos?)\b/i.test(costText) || !!pointsMatch,
   details_loading: !!(details && details.querySelector &&

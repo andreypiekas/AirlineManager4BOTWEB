@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-21 — Correção da coleta de preços na página autenticada de hubs
+
+**Diagnóstico real:** o jogo abre `hubs_new.php`, preenche `#hubAirportSelector` após carregar o país e substitui `#airportInfo` via `airport_info.php?mode=hub&id=<aeroporto>`. Dentro dessa resposta há uma linha `<tr id="hubCostInfo">` cujo segundo `<td>` separa o valor em dólares dos pontos por `<br>`. O `textContent` dessa linha une os valores, por exemplo `$ 11,520,00020 Points`, inviabilizando a análise numérica anterior. A resposta também contém a atribuição `arrId = <id>` no script do aeroporto selecionado.
+
+### Correção aplicada
+
+- `src/game_observations.py` coleta o preço e os pontos separadamente a partir dos nós de texto da célula do custo. Exige valor monetário inteiro e pontos válidos, preservando o bloqueio para números fracionários ou ambíguos.
+- Valida o ID da resposta AJAX (`arrId`) contra o ID selecionado, rejeitando dados da seleção anterior. A coleta continua exigindo duas leituras DOM idênticas e detecta elementos em carregamento. Requisições AJAX em outras partes da página deixam de impedir uma leitura já correlacionada e estável.
+- Diagnósticos de preços passam a inspecionar a mesma estrutura de célula e o ID da resposta. Um novo teste reproduz o HTML observado com dólar e pontos separados, a seleção anterior e atividade AJAX simultânea.
+
+### Homologação
+
+- Em consulta autenticada e somente de leitura, foram confirmados os seletores, o endpoint e o formato de custo para aeroportos brasileiros, inclusive IDs `2914`, `2933`, `2927` e `2966`. O exemplo `2966` trouxe custo em dólares e pontos e `arrId` correspondente.
+- Testes direcionados `test_game_observations.py` e `test_dashboard_fleet_total.py`, compilação e Ruff concluídos com sucesso no Windows.
+- A persistência de preços precisa ser confirmada no próximo ciclo do serviço com a versão atualizada. Nenhuma compra foi realizada pelo diagnóstico.
+
 ## 2026-11-21 — Contagem real da frota e diagnóstico da coleta de hubs
 
 **Motivo:** divergência entre o total do painel, a quantidade efetiva do jogo e os vínculos cadastrados no inventário de bases.

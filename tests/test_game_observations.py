@@ -160,6 +160,48 @@ console.log(JSON.stringify({valid, mismatchedDetail, mismatchedCost,
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="Node.js indisponível")
+def test_live_hub_cost_row_keeps_dollars_and_points_separate():
+    """The authenticated game puts cost and points in adjacent text nodes."""
+    js = r"""
+const option = {value: '2966', disabled: false, textContent: 'Almeirim', dataset: {}};
+const select = {selectedOptions: [option]};
+let currentId = '2966';
+const details = {
+  textContent: 'Almeirim Brazil MEU - SBMD Airport information Hub cost',
+  getAttribute: () => null,
+  querySelector: () => null,
+  querySelectorAll: () => [{get textContent() {return 'arrId = ' + currentId + ';';}}],
+};
+const priceCell = {childNodes: [
+  {textContent: '$ 11,520,000'},
+  {textContent: ''},
+  {textContent: '20 Points'}
+]};
+const cost = {
+  textContent: '$ 11,520,00020 Points',
+  querySelector: selector => selector === 'td:nth-child(2)' ? priceCell : null,
+  getAttribute: () => null,
+};
+globalThis.document = {querySelector: selector => ({
+  '#hubAirportSelector': select, '#airportInfo': details, '#hubCostInfo': cost
+})[selector]};
+globalThis.window = {jQuery: {active: 2}};
+const read = new Function(process.argv[1]);
+const valid = read();
+currentId = '2914';
+const previousAirport = read();
+console.log(JSON.stringify({valid, previousAirport}));
+"""
+    result = subprocess.run(["node", "-e", js, game_observations._SELECTED_HUB_PRICE_JS],
+                            capture_output=True, text=True, check=True, timeout=8)
+    report = json.loads(result.stdout)
+    assert report["valid"]["id"] == "2966"
+    assert report["valid"]["hub_price"] == 11_520_000
+    assert report["valid"]["hub_points"] == 20
+    assert report["previousAirport"] is None
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="Node.js indisponível")
 def test_demand_script_keeps_missing_attributes_visible_to_validator():
     js = r"""
 const attrs = {onclick: 'route_research_route.php?dep=2926&arr=3139',
