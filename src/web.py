@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
 import paths
-from dashboard import snapshot, recent_verified_money
+from dashboard import snapshot, recent_verified_money, fleet_summary
 from economy import AUTO_GOAL_LABEL, is_auto_goal, load_market, load_state
 from i18n import language, t, tip
 from route_registry import RouteRegistry, endpoint
@@ -172,7 +172,9 @@ class WebDashboard:
 
     def hubs(self) -> dict:
         """Serve the last game-confirmed inventory without opening Selenium."""
-        return HubRegistry().snapshot(self.routes())
+        report = HubRegistry().snapshot(self.routes())
+        report["fleet_counts"] = fleet_summary(self.bot.stats())
+        return report
 
     def hub_expansion(self) -> dict:
         """Compare candidate hubs against a recently verified balance."""

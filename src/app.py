@@ -685,7 +685,8 @@ class App(ctk.CTk):
             show(kind, f"{tank['pct']:.0f} %" if tank["pct"] is not None else "-", " · ".join(p for p in parts if p),
                  (tank["pct"] or 0) / 100)
         fleet = snap["fleet"]
-        parts = [t("{n} em voo", n=fleet["inflight"]) if fleet["inflight"] else "",
+        parts = [t("{n} com rota", n=fleet["routes"]) if fleet["count_verified"] else t("Contagem parcial"),
+                 t("{n} em voo", n=fleet["inflight"]) if fleet["inflight"] else "",
                  t("{n} estacionadas", n=fleet["parked"]) if fleet["parked"] else "",
                  t("{n} pendentes", n=fleet["pending"]) if fleet["pending"] else ""]
         show("fleet", fmt(fleet["size"]) if fleet["size"] is not None else "-", " · ".join(p for p in parts if p))

@@ -1,5 +1,29 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-21 — Contagem real da frota e diagnóstico da coleta de hubs
+
+**Motivo:** divergência entre o total do painel, a quantidade efetiva do jogo e os vínculos cadastrados no inventário de bases.
+
+### Evidências operacionais antes do ajuste
+
+- No servidor `192.168.101.234`, o serviço `am4bot@principal` estava ativo no commit `3035aac3`. As configurações reais tinham `collect_market_observations=on` e `audit_route_pages=on`, com três aeroportos pesquisados para preço e três páginas de rotas auditadas por ciclo; a pesquisa de demanda processa uma base adquirida por ciclo. Os ciclos são agendados em intervalo configurado de cinco a dez minutos, podendo antecipar conforme os eventos monitorados.
+- O jogo exibia **204 rotas**, **0 aeronaves estacionadas sem rota** e **14 aeronaves pendentes de entrega**. O total representado por esses contadores é **218 aeronaves** no instante da leitura. A lista de manutenção do bot continha entre 204 e 205 aeronaves em leituras diferentes. Os indicadores têm instantes e coberturas distintos, logo a lista de manutenção não é a fonte do total da companhia.
+- Havia **30 hubs adquiridos** e **550 amostras de demanda** persistidas. A lista de rotas mantinha **254 IDs históricos**, embora o cabeçalho atual mostrasse 204 rotas. O catálogo de compra tinha **zero preços confirmados** e cursor de varredura avançando pelo Brasil. Os registros históricos não comprovam 254 aeronaves ativas.
+- A auditoria incremental tinha observações de 10 das 11 páginas de rotas, acumuladas em ciclos distintos, com 186 IDs únicos, dois IDs repetidos entre páginas observadas e `full_page_coverage_verified=False`. A frota pode mudar de posição entre leituras. Não existe prova de cobertura integral em uma única execução.
+
+### Correções do código
+
+- `src/fleet.py` faz uma leitura conjunta dos três contadores do próprio popup de rotas, exigindo números válidos. A captura salva `route_count`, `parked`, `pending` e horário. A leitura incompleta invalida a confirmação anterior, com aviso no log, para o painel não divulgar uma soma antiga como comprovada.
+- `src/dashboard.py` calcula a frota completa a partir de rotas, estacionadas e entregas pendentes quando os três números são confirmados. Mantém aviso de contagem parcial ou desatualizada quando apropriado. `src/bot.py` aplica a composição ao relatório do Telegram apenas com comprovação atual válida.
+- `src/web.py` expõe os contadores confirmados na API de hubs. A interface web e a desktop exibem a composição do total. A tela **Hubs e Aeronaves** diferencia o total lido do jogo dos **254 registros históricos de rotas**, e trata a lista sem base confirmada como registros sob investigação.
+- `src/game_observations.py` registra indicadores estruturais seguros quando a seleção de um aeroporto termina sem preço confirmado, incluindo presença dos elementos, correlação do aeroporto, carregamento AJAX e formato de preço/pontos. Nenhum conteúdo de credencial, cookie ou HTML é registrado. O diagnóstico deve permitir identificar o bloqueio efetivo em ciclo autenticado posterior.
+- Testes exercitam a captura conjunta dos contadores, mudanças de página, leitura inválida, expiração do dado e a diferença entre total atual e histórico do registro de rotas.
+
+### Critérios ainda abertos
+
+- Confirmar no servidor a nova contagem do painel durante um ciclo autenticado, observar os diagnósticos de preço e corrigir o seletor ou o formato conforme as evidências resultantes. O preço de compra ainda não foi persistido em execução real.
+- Localizar uma fonte do jogo que comprove o hub permanente por **ID individual de aeronave** e concluir uma auditoria de todas as páginas na mesma execução com contadores estáveis e IDs sem repetição.
+
 ## 2026-11-21 — Backup integral e implantação verificada no servidor Zentria
 
 **Solicitação:** após correção do IP pelo usuário, criar backup da instalação ativa e disponibilizar a nova versão para validação.

@@ -650,15 +650,48 @@ def measure_load(bot: "Bot") -> None:
         bot.record_load(loads[len(loads) // 2])
 
 
+_GAME_FLEET_COUNTS_JS = """
+// One consistent snapshot of the counters shown by the game's Routes popup.
+const root = document.querySelector('#popContent');
+if (!root) return null;
+const labels = Array.from(root.querySelectorAll('.row.font-weight-bold > .col-12.exo.text-center.p-2'));
+const routeLabel = labels.map(el => String(el.textContent || '').trim())
+  .map(value => value.match(/^([0-9]{1,5})\\s+(?:Routes?|Rotas?)$/i))
+  .find(match => match !== null);
+const numeric = selector => {
+  const el = root.querySelector(selector);
+  const match = el && String(el.textContent || '').trim().match(/^([0-9]{1,5})$/);
+  return match ? Number(match[1]) : null;
+};
+const parked = numeric('#hParked');
+const pending = numeric('#hPending');
+if (!routeLabel || parked === null || pending === null) return null;
+return {routes: Number(routeLabel[1]), parked, pending};
+"""
+
+
 def manage_fleet(bot: "Bot") -> None:
     cfg = bot.config
     registry = RouteRegistry()
     reroute_ready = recover_pending(bot, registry)
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
     measure_load(bot)
-    parked = to_int(bot.js("return $('#hParked').text();")) or 0
-    pending = to_int(bot.js("return $('#hPending').text();")) or 0
-    bot.update_stats(parked=parked, pending=pending)
+    counters = bot.js(_GAME_FLEET_COUNTS_JS)
+    if (isinstance(counters, dict) and all(
+            type(counters.get(key)) is int and 0 <= counters[key] <= 50000
+            for key in ("routes", "parked", "pending"))):
+        parked, pending = counters["parked"], counters["pending"]
+        bot.update_stats(route_count=counters["routes"], parked=parked, pending=pending,
+                         fleet_count_read_at=time.time())
+        log_fleet.info("Contagem do jogo: %d com rota + %d estacionadas + %d pendentes = %d aeronaves.",
+                       counters["routes"], parked, pending, counters["routes"] + parked + pending)
+    else:
+        parked = to_int(bot.js("return $('#hParked').text();")) or 0
+        pending = to_int(bot.js("return $('#hPending').text();")) or 0
+        # update_stats deliberately ignores None. Invalidate the previous
+        # complete read so new partial counters cannot look verified.
+        bot.update_stats(parked=parked, pending=pending, fleet_count_read_at=0)
+        log_fleet.warning("Contagem total da frota não confirmada no cabeçalho de rotas do jogo.")
     log_fleet.info("%d aeronaves estacionadas sem rota, %d pendentes de entrega.", parked, pending)
 
     audit_routes(bot, registry)

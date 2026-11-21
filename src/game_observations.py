@@ -53,6 +53,44 @@ if (!Number.isSafeInteger(points) || points < 0) return null;
 return {id, name: label, code, purchasable: true, hub_price: price, hub_points: points};
 """
 
+# Log bounded, non-sensitive evidence when a hub price cannot be correlated.
+# No HTML, airport labels, credentials, cookies or raw monetary text leave the DOM.
+_HUB_PRICE_DIAGNOSTIC_JS = r"""
+const select = document.querySelector('#hubAirportSelector');
+const option = select && select.selectedOptions && select.selectedOptions[0];
+const details = document.querySelector('#airportInfo');
+const cost = document.querySelector('#hubCostInfo');
+const label = String(option && option.textContent || '').trim();
+const code = String(option && (option.dataset.iata || option.dataset.icao) ||
+  (label.match(/\(([A-Z]{3,4})\)/) || [])[1] || '').trim().toUpperCase();
+const name = label.replace(/\s*\([A-Z]{3,4}\)\s*$/, '').trim();
+const text = String(details && details.textContent || '').trim();
+const normalize = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const airportId = option && option.value;
+const detailId = details && details.getAttribute('data-airport-id');
+const costId = cost && cost.getAttribute('data-airport-id');
+const costText = String(cost && cost.textContent || '');
+const amount = (costText.match(/(?:US\s*\$|USD\s*|\$)\s*([1-9][0-9.,]*)/i) || [])[1] || '';
+const amountValid = /^\d+$/.test(amount) || /^[1-9]\d{0,2}(?:,\d{3})+$/.test(amount) ||
+  /^[1-9]\d{0,2}(?:\.\d{3})+$/.test(amount);
+const identity = !!airportId && (detailId === airportId ||
+  (/^[A-Z]{3,4}$/.test(code) && new RegExp('\\b' + code + '\\b', 'i').test(text)) ||
+  (name.length >= 4 && normalize(text).includes(normalize(name))));
+const pointsMatch = costText.match(/(?:^|\D)([0-9][0-9,]*)\s*(?:points?|pontos?)\b/i);
+return {
+  selected: !!airportId && /^[1-9][0-9]{0,11}$/.test(airportId),
+  detail_present: !!details,
+  cost_present: !!cost,
+  ajax_active: !!(window.jQuery && window.jQuery.active > 0),
+  identity_matched: identity,
+  id_conflict: !!((detailId && detailId !== airportId) || (costId && costId !== airportId)),
+  amount_valid: !!amountValid,
+  points_valid: !/\b(?:points?|pontos?)\b/i.test(costText) || !!pointsMatch,
+  details_loading: !!(details && details.querySelector &&
+    (details.querySelector('img[src*="loader"]') || details.querySelector('[aria-busy="true"]'))),
+};
+"""
+
 # The game's New Hub form first loads the country list, then fetches the
 # airport options and finally the selected airport's price through AJAX.
 # Only selection events are sent. The Purchase hub action is never invoked.
@@ -230,6 +268,16 @@ def collect_hub_market_prices(bot: object, *, per_cycle: int = 3) -> int:
         registry.record_catalog_attempt(country, airport_id, success=recorded)
         if recorded:
             collected += 1
+        else:
+            try:
+                diagnostics = bot.js(_HUB_PRICE_DIAGNOSTIC_JS)
+            except Exception:
+                diagnostics = None
+            if isinstance(diagnostics, dict):
+                blockers = [key for key, value in diagnostics.items()
+                            if (value if key in ("ajax_active", "id_conflict", "details_loading") else not value)]
+                log.info("Catálogo de hubs: aeroporto %s sem preço confirmado (%s).",
+                         airport_id, ", ".join(blockers) or "leitura instável")
         return recorded
 
     bot.open_popup("hubs_new.php", "New Hub", "nav_new_hub")

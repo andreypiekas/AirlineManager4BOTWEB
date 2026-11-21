@@ -114,6 +114,8 @@ class Stats:
     fuel_buy_at: Optional[int] = None
     co2_buy_at: Optional[int] = None
     fleet_size: Optional[int] = None
+    route_count: Optional[int] = None
+    fleet_count_read_at: Optional[float] = None
     parked: Optional[int] = None
     pending: Optional[int] = None
     inflight: Optional[int] = None
@@ -487,6 +489,10 @@ class Bot:
             return
         stats = self.stats()
         counters = {key: int(self._state.get("counters", {}).get(key, 0)) for key in COUNTER_KEYS}
+        fleet_total = stats.fleet_size
+        if (stats.fleet_count_read_at and all(
+                type(value) is int for value in (stats.route_count, stats.parked, stats.pending))):
+            fleet_total = stats.route_count + stats.parked + stats.pending
         start = self._state.get("money_day_start")
         delta = ""
         if stats.money is not None and isinstance(start, int):
@@ -497,7 +503,7 @@ class Bot:
             f"💰 Saldo: ${fmt(stats.money)}{esc(delta)}",
             f"⛽ Combustível: {fmt(stats.fuel)} / {fmt(stats.fuel_capacity)} a ${fmt(stats.fuel_price)} | comprado {fmt(counters['fuel_bought'])} libras (${fmt(counters['fuel_spent'])})",
             f"🌿 CO₂: {fmt(stats.co2)} / {fmt(stats.co2_capacity)} a ${fmt(stats.co2_price)} | comprado {fmt(counters['co2_bought'])} cotas (${fmt(counters['co2_spent'])})",
-            f"✈️ Frota: {fmt(stats.fleet_size)} aeronaves, {fmt(stats.inflight)} em voo, {fmt(stats.parked)} estacionadas | decolagens: {counters['departures']}",
+            f"✈️ Frota: {fmt(fleet_total)} aeronaves, {fmt(stats.inflight)} em voo, {fmt(stats.parked)} estacionadas, {fmt(stats.pending)} pendentes | decolagens: {counters['departures']}",
             f"🛫 Rotas criadas: {counters['routes']} | 🛒 Aeronaves encomendadas: {counters['aircraft']} | 🔧 Reparos: {counters['repairs']}, A-checks: {counters['checks']}",
         ]
         if stats.reputation is not None or counters["campaigns"] or counters["seats"]:

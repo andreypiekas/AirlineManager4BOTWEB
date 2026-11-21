@@ -115,8 +115,7 @@ def snapshot(bot: "Bot", cfg: "AppConfig", state: dict, market: list[dict], rest
         "campaign_left": campaign_left,
         "fuel": _tank(stats.fuel, stats.fuel_capacity, stats.fuel_price, stats.fuel_buy_at, records.get("fuel")),
         "co2": _tank(stats.co2, stats.co2_capacity, stats.co2_price, stats.co2_buy_at, records.get("co2")),
-        "fleet": {"size": stats.fleet_size, "inflight": stats.inflight, "parked": stats.parked, "pending": stats.pending,
-                  "hangar_free": stats.hangar_free, "hangar_capacity": stats.hangar_capacity},
+        "fleet": fleet_summary(stats, now=now),
         "goal": {
             "name": goal["name"],
             "price": goal["price"],
@@ -126,6 +125,33 @@ def snapshot(bot: "Bot", cfg: "AppConfig", state: dict, market: list[dict], rest
             "eta_text": fmt_days(progress["eta_days"]) if progress else None,
             "reached": bool(progress and progress["reached"]),
         },
+    }
+
+
+def fleet_summary(stats: object, *, now: Optional[float] = None) -> dict:
+    """Separate the game's complete fleet count from the maintenance list."""
+    observed_at = getattr(stats, "fleet_count_read_at", None)
+    routes = getattr(stats, "route_count", None)
+    parked = stats.parked
+    pending = stats.pending
+    complete = (all(type(value) is int and 0 <= value <= 50000
+                    for value in (routes, parked, pending))
+                and isinstance(observed_at, (int, float)) and observed_at > 0)
+    count = routes + parked + pending if complete else stats.fleet_size
+    if not complete and type(count) is int and type(pending) is int and pending >= 0:
+        count += pending
+    return {
+        "size": count,
+        "routes": routes if complete else None,
+        "active": stats.fleet_size,
+        "count_verified": complete,
+        "count_observed_at": observed_at if complete else None,
+        "count_stale": complete and (time.time() if now is None else now) - observed_at > 900,
+        "inflight": stats.inflight,
+        "parked": parked,
+        "pending": pending,
+        "hangar_free": stats.hangar_free,
+        "hangar_capacity": stats.hangar_capacity,
     }
 
 

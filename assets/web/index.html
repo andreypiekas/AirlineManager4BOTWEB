@@ -826,6 +826,10 @@ const EN = {
   "Verificando…": "Checking…", "+{x}/dia": "+{x}/day", "{x} pontos": "{x} points", "campanha {x}": "campaign {x}",
   "sem campanha ativa": "no campaign running", "compra ≤ {x}": "buy ≤ {x}", "menor preço {x}": "lowest seen {x}",
   "{x} em voo": "{x} flying", "{x} estacionadas": "{x} parked", "{x} pendentes": "{x} pending",
+  "{x} com rota": "{x} with routes", "contagem parcial": "partial count",
+  "última contagem desatualizada": "last count is stale",
+  "Frota total no jogo": "Total fleet in game", "registros históricos de rotas": "historical route records",
+  "Registros sem base individual confirmada": "Records without confirmed home hub",
   "hangar {x} vagas": "hangar {x} free", "previsão {x}": "arrives {x}", "Atualizado {x}": "Updated {x}",
   "Meta": "Goal", "Valores": "Values", "Salvar": "Save", "vazio = mais rentável": "empty = most profitable",
   "Compra de aeronaves": "Aircraft purchases",
@@ -933,9 +937,13 @@ function renderStatus(s) {
     setBar("b" + id, t.pct);
   }
   const f = s.fleet;
-  $("kFleet").textContent = f.size != null ? f.size : "-";
-  setText("kFleetSub", [f.inflight ? tr("{x} em voo", f.inflight) : null, f.parked ? tr("{x} estacionadas", f.parked) : null,
-    f.pending ? tr("{x} pendentes", f.pending) : null, f.hangar_free != null ? tr("hangar {x} vagas", f.hangar_free + "/" + f.hangar_capacity) : null]
+  $("kFleet").textContent = f.size != null ? nf.format(f.size) : "-";
+  setText("kFleetSub", [f.count_verified ? tr("{x} com rota", f.routes) : tr("contagem parcial"),
+    f.parked != null ? tr("{x} estacionadas", f.parked) : null,
+    f.pending != null ? tr("{x} pendentes", f.pending) : null,
+    f.inflight != null ? tr("{x} em voo", f.inflight) : null,
+    f.count_stale ? tr("última contagem desatualizada") : null,
+    f.hangar_free != null ? tr("hangar {x} vagas", f.hangar_free + "/" + f.hangar_capacity) : null]
     .filter(Boolean).join(" · "));
   const g = s.goal;
   $("kGoal").textContent = g.pct != null ? pct(g.pct) : "-";
@@ -1427,8 +1435,16 @@ function renderHubs(report) {
     : tr("Aguardando leitura de bases no jogo.");
   const coverage = report.partial_fleet === true
     ? [tr("Inventário parcial: apenas vínculos individuais confirmados entram na contagem.")] : [];
+  const liveFleet = report.fleet_counts;
+  if (liveFleet && liveFleet.count_verified && Number.isFinite(liveFleet.size)) {
+    coverage.push(tr("Frota total no jogo") + ": " + nf.format(liveFleet.size) +
+      " (" + tr("{x} com rota", liveFleet.routes) + ", " +
+      tr("{x} estacionadas", liveFleet.parked) + ", " +
+      tr("{x} pendentes", liveFleet.pending) + ")." +
+      (liveFleet.count_stale ? " " + tr("última contagem desatualizada") + "." : ""));
+  }
   if (Number.isFinite(report.known_aircraft)) {
-    coverage.push(tr("Aeronaves conhecidas no cadastro") + ": " + report.known_aircraft + ".");
+    coverage.push(nf.format(report.known_aircraft) + " " + tr("registros históricos de rotas") + ".");
   }
   const scan = report.last_fleet_scan;
   if (scan && Number.isFinite(scan.visible) && Number.isFinite(scan.identified)) {
@@ -1497,7 +1513,7 @@ function renderHubs(report) {
   const visibleUnknown = report.unconfirmed_aircraft.filter(row =>
     [row.registration, row.aircraft_id, row.model].some(value => hubSearchText(value).includes(search)));
   $("hubsUnconfirmed").textContent = report.unconfirmed_aircraft.length + " " +
-    tr("aeronaves sem vínculo individual de base confirmado.") +
+    tr("Registros sem base individual confirmada") + "." +
     (search ? " " + tr("Aeronaves exibidas") + ": " + visibleUnknown.length + "." : "");
   const pending = $("hubsUnconfirmedList"); pending.replaceChildren();
   if (visibleUnknown.length) {
