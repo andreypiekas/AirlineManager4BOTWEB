@@ -76,8 +76,11 @@ class HubInventory:
             return False
         data = {"version": 1, "source": "game_research_hub_select",
                 "read_at": stamp, "hubs": hubs}
-        with _LOCK:
-            paths.write_atomic(self.path, json.dumps(data, ensure_ascii=False, indent=2))
+        try:
+            with _LOCK:
+                paths.write_atomic(self.path, json.dumps(data, ensure_ascii=False, indent=2))
+        except OSError:
+            return False  # Never break the automation because a read-only cache is unwritable.
         return True
 
     def snapshot(self, route_report: Optional[dict] = None, *, now: Optional[int] = None) -> dict:
