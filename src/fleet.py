@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
@@ -189,6 +189,19 @@ def daily_profit(model: AircraftModel, distance: int, load: float, fuel_price: f
 # Only explicit DOM attributes or a dedicated route label count as game route
 # evidence; never infer airports from general row text or the aircraft's model.
 _ROUTE_AUDIT_JS = """
+// Capture pagination from the same DOM snapshot as the route rows. A numeric
+// active page is evidence of a page index; absence means page unknown.
+const popup = typeof document.querySelector === "function" ? document.querySelector("#popContent") : null;
+const pagination = popup && popup.querySelector ? popup.querySelector(".pagination") : null;
+const active = pagination && pagination.querySelector ?
+  pagination.querySelector(".active, [aria-current='page']") : null;
+const pageNumber = value => /^[1-9][0-9]{0,2}$/.test(String(value || "").trim()) ?
+  Number(String(value).trim()) : null;
+const scanPage = pageNumber(active && active.textContent) ||
+  pageNumber(popup && popup.getAttribute && popup.getAttribute("data-current-page"));
+const scanTotalPages = pageNumber(pagination && pagination.getAttribute &&
+  pagination.getAttribute("data-total-pages")) ||
+  pageNumber(popup && popup.getAttribute && popup.getAttribute("data-total-pages"));
 return Array.from(document.querySelectorAll("#popContent [id^='routeMainList']")).map(row => {
   // The existing seats module identifies routes by this real game link.
   const detailLink = row.querySelector("a[onclick*='fleet_details.php']");
@@ -223,6 +236,8 @@ return Array.from(document.querySelectorAll("#popContent [id^='routeMainList']")
     status.getAttribute("data-at-hub") || status.getAttribute("data-grounded")) : "";
   return {
     aircraft_id: aircraftId,
+    scan_page: scanPage,
+    scan_total_pages: scanTotalPages,
     registration: label.split(" - ")[0] || aircraftId,
     model: label.includes(" - ") ? label.split(" - ").slice(1).join(" - ") : "",
     origin_id: getAttr("data-dep", "data-origin-id") || depFromHook,
@@ -238,9 +253,34 @@ return Array.from(document.querySelectorAll("#popContent [id^='routeMainList']")
 """
 
 
-def audit_routes(bot: "Bot", registry: RouteRegistry) -> None:
-    """Accumulate verified relationships visible on the current page, never guess hidden pages."""
+def audit_routes(bot: "Bot", registry: RouteRegistry, *,
+                 page: Optional[int] = None, total_pages: Optional[int] = None) -> bool:
+    """Accumulate one visible page, keeping route assignments from other pages."""
     rows = bot.js(_ROUTE_AUDIT_JS) or []
+    if not isinstance(rows, list):
+        rows = []
+    if page is not None and not rows:
+        log.warning("Controle de rotas: página %s sem linhas carregadas; cobertura não registrada.", page)
+        return False
+    metadata = rows[0] if rows and isinstance(rows[0], dict) else {}
+    actual_page = RouteRegistry._valid_page(metadata.get("scan_page"))
+    actual_total = RouteRegistry._valid_page(metadata.get("scan_total_pages"))
+    if any(isinstance(row, dict) and (
+            RouteRegistry._valid_page(row.get("scan_page")) != actual_page or
+            RouteRegistry._valid_page(row.get("scan_total_pages")) != actual_total)
+           for row in rows):
+        log.warning("Controle de rotas: paginação inconsistente entre linhas; leitura ignorada.")
+        return False
+    if page is not None and actual_page is not None and page != actual_page:
+        log.warning("Controle de rotas: página solicitada %s, página exibida %s; leitura ignorada.",
+                    page, actual_page)
+        return False
+    if total_pages is not None and actual_total is not None and total_pages != actual_total:
+        log.warning("Controle de rotas: paginação mudou de %s para %s; leitura ignorada.",
+                    total_pages, actual_total)
+        return False
+    page = actual_page if actual_page is not None else page
+    total_pages = actual_total if actual_total is not None else total_pages
     # Maintenance was read earlier in this cycle. Unlike the routes list,
     # it exposes an explicit, per-aircraft at-base flag. Reuse it as read-only
     # ground evidence without revisiting paginated aircraft lists.
@@ -252,10 +292,14 @@ def audit_routes(bot: "Bot", registry: RouteRegistry) -> None:
     maintenance_at_base = 0
     maintenance_away = 0
     detected = 0
+    seen_aircraft: set[str] = set()
     for row in rows:
-        identity = str(row.get("aircraft_id") or "")
-        if not identity:
+        if not isinstance(row, dict):
             continue
+        identity = str(row.get("aircraft_id") or "")
+        if not identity or identity in seen_aircraft:
+            continue
+        seen_aircraft.add(identity)
         registration = row.get("registration") or identity
         model = row.get("model") or ""
         base = row.get("at_base")
@@ -276,9 +320,10 @@ def audit_routes(bot: "Bot", registry: RouteRegistry) -> None:
         else:
             registry.observe(identity, registration, model, at_base=base)
     missing = sum(1 for row in rows
-                  if not ((row.get("origin_id") or row.get("origin_code"))
+                  if isinstance(row, dict) and not ((row.get("origin_id") or row.get("origin_code"))
                           and (row.get("destination_id") or row.get("destination_code"))))
-    registry.record_scan(len(rows), detected, missing)
+    registry.record_scan(len(rows), detected, missing,
+                         aircraft_ids=list(seen_aircraft), page=page, total_pages=total_pages)
     if rows:
         log.info(
             "Controle de rotas: %d aeronaves visíveis, %d rotas identificadas, "
@@ -298,6 +343,25 @@ def audit_routes(bot: "Bot", registry: RouteRegistry) -> None:
             "Confirme que o jogo carregou a lista de rotas; não é necessário "
             "desativar o modo simulação para auditar."
         )
+    return True
+
+
+def audit_routes_rolling(bot: "Bot", registry: RouteRegistry, *, total_pages: int,
+                         load_page: Callable[[int], bool], pages_per_cycle: int = 2) -> list[int]:
+    """Bounded opt-in scan using a caller-provided, game-verified page loader.
+
+    load_page(page_number) must return True only after the native game finished
+    displaying that exact page. It owns navigation and restoring the prior page.
+    Unknown or moving pagination cannot be certified as a complete fleet scan.
+    """
+    visited = []
+    for page in registry.next_scan_pages(total_pages, limit=pages_per_cycle):
+        if not load_page(page):
+            break
+        if not audit_routes(bot, registry, page=page, total_pages=total_pages):
+            break
+        visited.append(page)
+    return visited
 
 
 _ONBOARD_JS = """

@@ -66,6 +66,16 @@ bases adquiríveis, a tela mostra **Disponibilidade de compra a verificar**.
 
 ## Entregas em ordem
 
+**Situação em 21/11/2026.** Inventário e API de hubs, catálogo persistente
+de candidatos, avaliação da próxima aeronave, consultas web e capturas
+desktop/móvel de demonstração estão implementados com testes locais. A
+auditoria de rotas acumula páginas observadas e expõe a cobertura parcial.
+A etapa 1 ainda requer homologar o HTML e a navegação no jogo autenticado,
+identificar o vínculo individual de base e obter preços e demanda reais.
+A etapa 4 ainda requer comparação dos registros com a companhia em operação,
+incluindo instalação Linux. Detalhes por entrega estão em
+[`ENTREGAS_ROADMAP.md`](ENTREGAS_ROADMAP.md).
+
 1. **Confirmar as fontes no jogo.** Em uma sessão autenticada e de leitura,
    identificar as bases adquiridas, o vínculo de base por aeronave, a lista
    de aeroportos compráveis e os respectivos preços. Verificar se o jogo

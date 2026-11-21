@@ -20,6 +20,11 @@ from airport_catalog import same_airport_identity
 
 _LOCK = threading.RLock()
 _MAX_HISTORY = 1500
+_SCAN_WINDOW_SECONDS = 3600
+_MAX_SCAN_PAGES = 250
+_MAX_PAGE_AIRCRAFT = 40
+_MAX_PAGES_PER_CYCLE = 5
+_GAME_AIRCRAFT_ID_RE = re.compile(r"^[0-9]{1,14}$")
 _AIRPORT_ID_RE = re.compile(r"^\d{1,12}$")
 _IATA_RE = re.compile(r"^[A-Z]{3,4}$")
 
@@ -311,21 +316,115 @@ class RouteRegistry:
             self._save(data)
             return True
 
-    def record_scan(self, visible: int, identified: int, missing_airports: int) -> None:
+    def record_scan(self, visible: int, identified: int, missing_airports: int, *,
+                    aircraft_ids: Optional[list[str]] = None,
+                    page: Optional[int] = None,
+                    total_pages: Optional[int] = None) -> None:
         """Persist the audit outcome even if no aircraft route was identified.
 
         Does not change any existing assignment; the panel can explain why
-        the last attempt produced no new route relations.
+        the last attempt produced no new route relations. Page coverage is a
+        rolling observation, never proof that the changing fleet was fully read.
         """
         with _LOCK:
             data = _state(self.path)
+            now = int(time.time())
             data["last_scan"] = {
-                "at": int(time.time()),
+                "at": now,
                 "visible": max(0, int(visible)),
                 "identified": max(0, int(identified)),
                 "missing_airports": max(0, int(missing_airports)),
             }
+            if aircraft_ids is not None:
+                page = self._valid_page(page)
+                total_pages = self._valid_page(total_pages)
+                if total_pages and page and page > total_pages:
+                    page = None
+                coverage = data.get("scan_coverage")
+                updated_at = coverage.get("updated_at") if isinstance(coverage, dict) else None
+                if not isinstance(updated_at, (int, float)) or now < updated_at or \
+                        now - updated_at >= _SCAN_WINDOW_SECONDS or \
+                        (total_pages and coverage.get("total_pages") not in (None, total_pages)):
+                    coverage = {"pages": {}, "sequence": 0, "total_pages": total_pages}
+                pages = coverage.get("pages")
+                if not isinstance(pages, dict):
+                    pages = {}
+                pages = {
+                    number: entry for number, entry in pages.items()
+                    if isinstance(entry, dict) and isinstance(entry.get("at"), (int, float))
+                    and 0 <= now - entry["at"] < _SCAN_WINDOW_SECONDS
+                    and number.isdigit() and 1 <= int(number) <= _MAX_SCAN_PAGES
+                }
+                if total_pages:
+                    coverage["total_pages"] = total_pages
+                recorded_ids = list(dict.fromkeys(
+                    str(aircraft_id).strip() for aircraft_id in aircraft_ids
+                    if _GAME_AIRCRAFT_ID_RE.fullmatch(str(aircraft_id).strip())
+                ))[:_MAX_PAGE_AIRCRAFT]
+                observation = {
+                    **data["last_scan"], "aircraft_ids": recorded_ids,
+                }
+                if page:
+                    coverage["sequence"] = max(0, int(coverage.get("sequence") or 0)) + 1
+                    observation["sequence"] = coverage["sequence"]
+                    pages[str(page)] = observation
+                else:
+                    coverage["unknown_page"] = observation
+                coverage["pages"] = pages
+                all_ids = {
+                    aircraft_id for entry in pages.values()
+                    for aircraft_id in entry.get("aircraft_ids", [])
+                }
+                unknown = coverage.get("unknown_page")
+                unknown_at = unknown.get("at") if isinstance(unknown, dict) else None
+                if isinstance(unknown_at, (int, float)) and \
+                        0 <= now - unknown_at < _SCAN_WINDOW_SECONDS:
+                    all_ids.update(unknown.get("aircraft_ids", []))
+                else:
+                    coverage.pop("unknown_page", None)
+                coverage.update({
+                    "updated_at": now,
+                    "window_seconds": _SCAN_WINDOW_SECONDS,
+                    "observed_pages": len(pages),
+                    "unique_aircraft": len(all_ids),
+                    "partial": True,
+                })
+                data["scan_coverage"] = coverage
             self._save(data)
+
+    @staticmethod
+    def _valid_page(raw: object) -> Optional[int]:
+        if isinstance(raw, bool) or not re.fullmatch(r"[1-9][0-9]{0,2}", str(raw or "")):
+            return None
+        number = int(raw)
+        return number if number <= _MAX_SCAN_PAGES else None
+
+    def next_scan_pages(self, total_pages: int, *, limit: int = 2) -> list[int]:
+        """Choose the least recently observed pages without clearing the roster.
+
+        A page number is only a position in a changing list. Callers must
+        verify which page actually loaded before recording its observations.
+        """
+        total = self._valid_page(total_pages)
+        if total is None or limit <= 0:
+            return []
+        count = min(int(limit), _MAX_PAGES_PER_CYCLE, total)
+        with _LOCK:
+            coverage = _state(self.path).get("scan_coverage") or {}
+        pages = coverage.get("pages", {}) if coverage.get("total_pages") == total else {}
+        if not isinstance(pages, dict):
+            pages = {}
+        now = int(time.time())
+
+        def freshness(page: int) -> tuple[int, int]:
+            entry = pages.get(str(page)) or {}
+            observed_at = entry.get("at") if isinstance(entry, dict) else None
+            if not isinstance(observed_at, (int, float)) or \
+                    now < observed_at or now - observed_at >= _SCAN_WINDOW_SECONDS:
+                return 0, page
+            return max(0, int(entry.get("sequence") or 0)), page
+
+        return sorted(range(1, total + 1), key=freshness)[:count]
 
     def claim_experimental_departure(self, aircraft_id: str) -> bool:
         """One-shot pilot interlock across cycles/restarts, never auto-reset.
@@ -418,6 +517,7 @@ class RouteRegistry:
             "affected_aircraft": len(duplicate_ids),
             "allow_duplicates": bool(allow_duplicates),
             "last_scan": data.get("last_scan"),
+            "scan_coverage": data.get("scan_coverage"),
             "last_dispatch": data.get("last_dispatch"),
             "experimental_departure_pilot": data.get("experimental_departure_pilot"),
             "partial": True,  # the game may expose only a page of the fleet at a time

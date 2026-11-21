@@ -373,7 +373,9 @@ footer strong { font-weight: 600; color: var(--aqua); }
 .hubs-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin: 0 0 14px; }
 .hubs-field { display:grid; gap:5px; flex:1 1 230px; min-width:0; color:var(--muted); font:11px/1.5 "Cascadia Mono", Consolas, monospace; }
 .hubs-field input, .hubs-field select { width:100%; max-width:none; min-height:42px; background:var(--panel-hi); color:var(--ink); }
+.hubs-field :is(input,select):focus-visible { outline:2px solid var(--aqua); outline-offset:2px; }
 .hub-section-note { color:var(--muted); font-size:12px; line-height:1.6; margin:8px 0 14px; }
+.hub-coverage { padding:10px 12px; background:var(--panel-hi); border-left:2px solid var(--aqua); }
 .hub-subsection { margin-top:18px; }
 .hub-subsection > h2 { margin:0; font-size:16px; text-transform:uppercase; letter-spacing:.05em; }
 .hub-card h3 { margin:0 0 12px; font-size:19px; overflow-wrap:anywhere; }
@@ -382,6 +384,11 @@ footer strong { font-weight: 600; color: var(--aqua); }
 .hub-metrics dt { color:var(--muted); font-size:11px; line-height:1.5; }
 .hub-metrics dd { margin:4px 0 0; font-size:15px; font-weight:700; overflow-wrap:anywhere; }
 .hub-card .hub-context { margin:10px 0 0; overflow-wrap:anywhere; }
+.hub-progress { display:grid; gap:6px; margin:10px 0; color:var(--muted); font-size:11px; }
+.hub-progress progress { width:100%; height:6px; appearance:none; border:0; background:var(--border); }
+.hub-progress progress::-webkit-progress-bar { background:var(--border); }
+.hub-progress progress::-webkit-progress-value { background:var(--signal); }
+.hub-progress progress::-moz-progress-bar { background:var(--signal); }
 .hub-card .hub-aircraft-list { list-style:none; padding:0; margin:8px 0 0; }
 .hub-aircraft-list li { padding:9px 0; border-top:1px solid var(--border); font-size:12px; overflow-wrap:anywhere; }
 .hub-card summary { padding:10px 4px; color:var(--aqua); font-weight:700; }
@@ -567,10 +574,24 @@ footer strong { font-weight: 600; color: var(--aqua); }
       <div class="hubs-controls">
         <label class="hubs-field"><span data-t="Buscar base ou aeronave">Buscar base ou aeronave</span>
           <input id="hubsSearch" type="search" autocomplete="off" data-t-placeholder="Código, nome, matrícula ou modelo" placeholder="Código, nome, matrícula ou modelo" aria-controls="hubsGrid hubsUnconfirmedList"></label>
+        <label class="hubs-field"><span data-t="Ordenar bases">Ordenar bases</span>
+          <select id="hubsSort" aria-controls="hubsGrid">
+            <option value="name" data-t="Nome da base (A–Z)">Nome da base (A–Z)</option>
+            <option value="profit" data-t="Maior lucro estimado/dia">Maior lucro estimado/dia</option>
+            <option value="average" data-t="Maior média por rota estimada/dia">Maior média por rota estimada/dia</option>
+            <option value="aircraft" data-t="Mais aeronaves confirmadas">Mais aeronaves confirmadas</option>
+          </select></label>
       </div>
+      <p id="hubsCoverage" class="hub-section-note hub-coverage"></p>
       <p id="hubsCount" class="hub-section-note" role="status" aria-live="polite"></p>
       <div class="hubs-grid" id="hubsGrid" aria-label="Bases identificadas" data-t-aria-label="Bases identificadas"></div>
       <div class="hub-card hub-subsection"><h2 data-t="Base a confirmar">Base a confirmar</h2><p id="hubsUnconfirmed"></p><div id="hubsUnconfirmedList"></div></div>
+      <div class="hub-card hub-subsection">
+        <h2 data-t="Próxima aeronave por base">Próxima aeronave por base</h2>
+        <p id="hubRecommendationsStatus" role="status" aria-live="polite"></p>
+        <p id="hubRecommendationsScope" class="hub-section-note"></p>
+        <div class="hubs-grid" id="hubRecommendationsGrid" aria-label="Recomendações por base" data-t-aria-label="Recomendações por base"></div>
+      </div>
       <div class="hub-card hub-subsection">
         <h2 data-t="Novos hubs">Novos hubs</h2>
         <p id="hubExpansionStatus" role="status" aria-live="polite"></p>
@@ -586,7 +607,16 @@ footer strong { font-weight: 600; color: var(--aqua); }
               <option value="sem_lucro" data-t="Sem lucro">Sem lucro</option>
               <option value="dados_a_confirmar" data-t="Dados a confirmar">Dados a confirmar</option>
             </select></label>
+          <label class="hubs-field"><span data-t="Ordenar candidatos">Ordenar candidatos</span>
+            <select id="hubExpansionSort" aria-controls="hubExpansionGrid">
+              <option value="recommended" data-t="Prioridade da análise">Prioridade da análise</option>
+              <option value="payback" data-t="Menor prazo de retorno">Menor prazo de retorno</option>
+              <option value="profit" data-t="Maior lucro estimado/dia">Maior lucro estimado/dia</option>
+              <option value="investment" data-t="Menor investimento">Menor investimento</option>
+              <option value="name" data-t="Nome da base (A–Z)">Nome da base (A–Z)</option>
+            </select></label>
         </div>
+        <p id="hubExpansionCoverage" class="hub-section-note hub-coverage"></p>
         <p id="hubExpansionCount" class="hub-section-note" role="status" aria-live="polite"></p>
         <div class="hubs-grid" id="hubExpansionGrid" aria-label="Candidatos a novos hubs" data-t-aria-label="Candidatos a novos hubs"></div>
       </div>
@@ -649,6 +679,17 @@ const EN = {
   "Código, nome, matrícula ou modelo": "Code, name, registration or model",
   "Buscar novo hub": "Search new hub", "Código ou nome do aeroporto": "Airport code or name",
   "Filtrar por situação": "Filter by status", "Todas as situações": "All statuses",
+  "Ordenar bases": "Sort hubs", "Ordenar candidatos": "Sort candidates",
+  "Nome da base (A–Z)": "Hub name (A–Z)", "Maior lucro estimado/dia": "Highest estimated daily profit",
+  "Maior média por rota estimada/dia": "Highest mean daily profit per estimated route",
+  "Mais aeronaves confirmadas": "Most confirmed aircraft", "Prioridade da análise": "Analysis priority",
+  "Menor prazo de retorno": "Shortest payback", "Menor investimento": "Lowest investment",
+  "Média por rota estimada/dia": "Mean daily profit per estimated route",
+  "Cobertura das estimativas": "Estimate coverage",
+  "aeronaves com base confirmada possuem estimativas válidas.":
+    "aircraft with confirmed home hubs have valid estimates.",
+  "Cenários verificados": "Verified scenarios", "candidatos analisados.": "candidates reviewed.",
+  "estimativas válidas": "valid estimates",
   "Inventário parcial: apenas vínculos individuais confirmados entram na contagem.":
     "Partial inventory: only individually verified assignments are counted.",
   "Bases exibidas": "Hubs shown", "Nenhuma base corresponde à busca.": "No hubs match the search.",
@@ -671,6 +712,16 @@ const EN = {
   "Última página de rotas": "Last routes page", "visíveis": "visible",
   "identificadas": "identified", "Estimativas pendentes": "Pending estimates",
   "Consulta do hub": "Hub checked", "Saldo conferido em": "Balance checked at",
+  "Próxima aeronave por base": "Next aircraft by hub", "Recomendações por base": "Recommendations by hub",
+  "Cenários aprovados": "Approved scenarios", "Bases analisadas": "Hubs analysed",
+  "Nenhuma base adquirida identificada.": "No owned hubs identified.",
+  "Aguardando pesquisa de demanda, custos e rotas no jogo.": "Awaiting game research for demand, costs and routes.",
+  "Recomendação disponível": "Recommendation available", "Rota ocupada": "Route occupied",
+  "Rota indisponível": "Route unavailable", "Rota inviável": "Infeasible route",
+  "Lucro adicional estimado/dia": "Estimated added profit/day", "Rota sugerida": "Suggested route",
+  "Verificações pendentes": "Pending verifications", "Verificado em": "Verified at",
+  "Nenhum cenário pesquisado para esta base.": "No researched scenario for this hub.",
+  "Não foi possível consultar recomendações.": "Could not load recommendations.",
   "Aeronaves exibidas": "Aircraft shown",
   "Aeronaves registradas": "Registered aircraft", "Rotas duplicadas": "Duplicate routes", "Aeronaves envolvidas": "Affected aircraft",
   "Política de duplicidade": "Duplicate policy", "Permitidas": "Allowed", "Bloqueadas": "Blocked",
@@ -1185,6 +1236,7 @@ let lastHubsFetch = 0;
 let hubsLoading = false;
 let hubInventoryReport = null;
 let hubExpansionReport = null;
+let hubRecommendationsReport = null;
 window.addEventListener("hashchange", activateWorkspaceFromHash);
 activateWorkspaceFromHash();
 
@@ -1195,6 +1247,32 @@ const hubDate = seconds => Number.isFinite(seconds) && seconds > 0
 const hubMoney = value => Number.isFinite(value) ? money(value) : tr("Sem dados");
 const hubName = hub => (hub.code ? hub.code + " · " : "") + (hub.name || (hub.id ? "#" + hub.id : tr("Sem dados")));
 const hubSearchText = value => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
+const hubMeanProfit = hub => Number.isFinite(hub.estimated_profit_per_day) &&
+  Number.isFinite(hub.estimated_routes) && hub.estimated_routes > 0
+    ? hub.estimated_profit_per_day / hub.estimated_routes : null;
+const hubCompareName = (a, b) => hubName(a).localeCompare(hubName(b), LANG === "en" ? "en" : "pt-BR");
+function hubSortNumeric(rows, metric, ascending = false) {
+  return [...rows].sort((a, b) => {
+    const first = metric(a), second = metric(b);
+    const firstKnown = Number.isFinite(first), secondKnown = Number.isFinite(second);
+    if (firstKnown !== secondKnown) { return firstKnown ? -1 : 1; }
+    if (firstKnown && first !== second) { return ascending ? first - second : second - first; }
+    return hubCompareName(a, b);
+  });
+}
+function sortHubs(rows, order) {
+  if (order === "profit") { return hubSortNumeric(rows, hub => hub.estimated_profit_per_day); }
+  if (order === "average") { return hubSortNumeric(rows, hubMeanProfit); }
+  if (order === "aircraft") { return hubSortNumeric(rows, hub => hub.aircraft_count); }
+  return [...rows].sort(hubCompareName);
+}
+function sortHubCandidates(rows, order) {
+  if (order === "payback") { return hubSortNumeric(rows, hub => hub.payback_days, true); }
+  if (order === "profit") { return hubSortNumeric(rows, hub => hub.profit_per_day); }
+  if (order === "investment") { return hubSortNumeric(rows, hub => hub.investment, true); }
+  if (order === "name") { return [...rows].sort(hubCompareName); }
+  return [...rows];
+}
 function addHubMetric(list, label, value) {
   const item = document.createElement("div");
   const term = document.createElement("dt"); term.textContent = tr(label);
@@ -1220,13 +1298,17 @@ function renderHubs(report) {
       ", " + scan.identified + " " + tr("identificadas") + ".");
   }
   $("hubsScope").textContent = coverage.join(" ");
+  const confirmedCount = report.hubs.reduce((total, hub) => total + (Number.isFinite(hub.aircraft_count) ? hub.aircraft_count : 0), 0);
+  const estimatedCount = report.hubs.reduce((total, hub) => total + (Number.isFinite(hub.estimated_routes) ? hub.estimated_routes : 0), 0);
+  $("hubsCoverage").textContent = tr("Cobertura das estimativas") + ": " + estimatedCount + " / " +
+    confirmedCount + " " + tr("aeronaves com base confirmada possuem estimativas válidas.");
 
-  const hubs = report.hubs.filter(hub => {
+  const hubs = sortHubs(report.hubs.filter(hub => {
     const aircraft = Array.isArray(hub.aircraft) ? hub.aircraft : [];
     const terms = [hub.id, hub.code, hub.name, ...aircraft.flatMap(row =>
       [row.registration, row.aircraft_id, row.model, airportLabel(row.origin), airportLabel(row.destination)])];
     return terms.some(value => hubSearchText(value).includes(search));
-  });
+  }), $("hubsSort").value);
   $("hubsCount").textContent = tr("Bases exibidas") + ": " + hubs.length + " / " + report.hubs.length;
   for (const hub of hubs) {
     const card = document.createElement("article"); card.className = "hub-card";
@@ -1236,7 +1318,19 @@ function renderHubs(report) {
     addHubMetric(metrics, "Rotas com estimativa", hub.estimated_routes ?? tr("Sem dados"));
     addHubMetric(metrics, "Estimativas pendentes", hub.estimates_pending ?? tr("Sem dados"));
     addHubMetric(metrics, "Lucro estimado do hub/dia", hubMoney(hub.estimated_profit_per_day));
+    addHubMetric(metrics, "Média por rota estimada/dia", hubMoney(hubMeanProfit(hub)));
     card.append(heading, metrics);
+    if (Number.isFinite(hub.aircraft_count) && hub.aircraft_count > 0 && Number.isFinite(hub.estimated_routes)) {
+      const coverage = document.createElement("div"); coverage.className = "hub-progress";
+      const label = document.createElement("span");
+      label.textContent = hub.estimated_routes + " / " + hub.aircraft_count + " " + tr("estimativas válidas");
+      const progress = document.createElement("progress");
+      progress.max = hub.aircraft_count;
+      progress.value = Math.max(0, Math.min(hub.aircraft_count, hub.estimated_routes));
+      progress.setAttribute("aria-label", tr("Cobertura das estimativas") + " · " + hubName(hub));
+      coverage.append(label, progress);
+      card.append(coverage);
+    }
     const aircraft = Array.isArray(hub.aircraft) ? hub.aircraft : [];
     if (aircraft.length) {
       const details = document.createElement("details");
@@ -1296,11 +1390,16 @@ function renderHubExpansion(report) {
     (report.availability_pending ? "" : " " + tr("Saldo conhecido") + ": " + hubMoney(report.cash) +
       " · " + tr("Reserva configurada") + ": " + hubMoney(report.reserve) + ".") +
     (report.cash_observed_at ? " " + tr("Saldo conferido em") + ": " + hubDate(report.cash_observed_at) + "." : "");
+  const verified = report.candidates.filter(hub =>
+    ["viavel", "saldo_insuficiente", "sem_lucro"].includes(hub.status)).length;
+  $("hubExpansionCoverage").textContent = tr("Cenários verificados") + ": " + verified + " / " +
+    report.candidates.length + " " + tr("candidatos analisados.");
   const search = hubSearchText($("hubExpansionSearch").value.trim());
   const selected = $("hubExpansionFilter").value;
-  const candidates = report.candidates.filter(hub =>
+  const candidates = sortHubCandidates(report.candidates.filter(hub =>
     (!selected || hub.status === selected) &&
-    [hub.id, hub.code, hub.name].some(value => hubSearchText(value).includes(search)));
+    [hub.id, hub.code, hub.name].some(value => hubSearchText(value).includes(search))),
+    $("hubExpansionSort").value);
   $("hubExpansionCount").textContent = tr("Candidatos exibidos") + ": " + candidates.length + " / " + report.candidates.length;
   const labels = {viavel: "Viável", saldo_insuficiente: "Saldo insuficiente",
                   sem_lucro: "Sem lucro", dados_a_confirmar: "Dados a confirmar"};
@@ -1332,6 +1431,11 @@ function renderHubExpansion(report) {
       tr("Pesquisa de rota pendente.");
     details.append(title, evidence, note);
     card.append(heading, state, metrics, details);
+    if (hub.status === "dados_a_confirmar") {
+      const pending = document.createElement("p"); pending.className = "hub-context";
+      pending.textContent = tr("Custos e demanda ainda não confirmados no jogo.");
+      card.append(pending);
+    }
     grid.append(card);
   }
   if (!candidates.length) {
@@ -1339,6 +1443,58 @@ function renderHubExpansion(report) {
     empty.textContent = search || selected ? tr("Nenhum candidato corresponde aos filtros.") :
       tr("Nenhum candidato disponível no catálogo.");
     grid.append(empty);
+  }
+}
+function renderHubRecommendations(report) {
+  const grid = $("hubRecommendationsGrid"); grid.replaceChildren();
+  const hubs = Array.isArray(report.hubs) ? report.hubs : [];
+  const approved = Array.isArray(report.recommendations) ? report.recommendations.length : 0;
+  $("hubRecommendationsStatus").textContent = tr("Cenários aprovados") + ": " + approved +
+    " · " + tr("Bases analisadas") + ": " + hubs.length;
+  $("hubRecommendationsScope").textContent = tr("Aguardando pesquisa de demanda, custos e rotas no jogo.") +
+    " " + tr("Saldo conferido em") + ": " + hubDate(report.cash_observed_at) + ".";
+  const labels = {viavel: "Recomendação disponível", saldo_insuficiente: "Saldo insuficiente",
+    sem_lucro: "Sem lucro", rota_ocupada: "Rota ocupada", rota_indisponivel: "Rota indisponível",
+    rota_inviavel: "Rota inviável", dados_a_confirmar: "Dados a confirmar"};
+  for (const hub of hubs) {
+    const card = document.createElement("article"); card.className = "hub-card";
+    const heading = document.createElement("h3"); heading.textContent = hubName(hub);
+    const state = document.createElement("span"); state.className = "hub-state";
+    state.dataset.state = hub.status === "viavel" ? "viavel" : "dados_a_confirmar";
+    state.textContent = tr(labels[hub.status] || "Dados a confirmar");
+    const candidate = hub.recommendation || (Array.isArray(report.candidates)
+      ? report.candidates.find(row => row.hub_id === hub.id) : null);
+    const metrics = document.createElement("dl"); metrics.className = "hub-metrics";
+    if (candidate) {
+      const route = airportLabel(candidate.origin) + " ↔ " + airportLabel(candidate.destination);
+      addHubMetric(metrics, "Modelo pesquisado", candidate.model || tr("Sem dados"));
+      addHubMetric(metrics, "Rota sugerida", route);
+      addHubMetric(metrics, "Lucro adicional estimado/dia", hubMoney(candidate.profit_per_day));
+      addHubMetric(metrics, "Investimento inicial", hubMoney(candidate.investment));
+      addHubMetric(metrics, "Retorno estimado", Number.isFinite(candidate.payback_days)
+        ? nf.format(candidate.payback_days) + " " + tr("dia") : tr("Sem dados"));
+      addHubMetric(metrics, "Verificado em", hubDate(candidate.observed_at));
+    }
+    card.append(heading, state, metrics);
+    if (!candidate) {
+      const note = document.createElement("p"); note.className = "hub-context";
+      note.textContent = tr("Nenhum cenário pesquisado para esta base."); card.append(note);
+    } else if (Array.isArray(candidate.pending) && candidate.pending.length) {
+      const details = document.createElement("details");
+      const title = document.createElement("summary");
+      title.textContent = tr("Verificações pendentes") + " (" + candidate.pending.length + ")";
+      const list = document.createElement("ul"); list.className = "hub-aircraft-list";
+      for (const reason of candidate.pending) {
+        const item = document.createElement("li");
+        item.textContent = String(reason).replaceAll("_", " "); list.append(item);
+      }
+      details.append(title, list); card.append(details);
+    }
+    grid.append(card);
+  }
+  if (!hubs.length) {
+    const empty = document.createElement("p"); empty.className = "hub-empty";
+    empty.textContent = tr("Nenhuma base adquirida identificada."); grid.append(empty);
   }
 }
 async function loadHubs() {
@@ -1360,17 +1516,36 @@ async function loadHubs() {
     $("hubsGrid").replaceChildren();
     $("hubsCount").textContent = "";
     $("hubsScope").textContent = "";
+    $("hubsCoverage").textContent = "";
     $("hubsUnconfirmed").textContent = "";
     $("hubsUnconfirmedList").replaceChildren();
   } finally {
     await loadHubExpansion();
+    await loadHubRecommendations();
     hubsLoading = false;
     $("hubsRefresh").disabled = false;
   }
 }
-$("hubsSearch").addEventListener("input", () => {
-  if (hubInventoryReport) { renderHubs(hubInventoryReport); }
-});
+async function loadHubRecommendations() {
+  try {
+    const report = await api("/api/hubs/recommendations");
+    if (!report || !Array.isArray(report.hubs) || !Array.isArray(report.candidates)) {
+      throw new Error("Invalid recommendations response");
+    }
+    hubRecommendationsReport = report;
+    renderHubRecommendations(report);
+  } catch (_) {
+    hubRecommendationsReport = null;
+    $("hubRecommendationsStatus").textContent = tr("Não foi possível consultar recomendações.");
+    $("hubRecommendationsScope").textContent = "";
+    $("hubRecommendationsGrid").replaceChildren();
+  }
+}
+for (const id of ["hubsSearch", "hubsSort"]) {
+  $(id).addEventListener(id === "hubsSearch" ? "input" : "change", () => {
+    if (hubInventoryReport) { renderHubs(hubInventoryReport); }
+  });
+}
 $("hubsRefresh").addEventListener("click", loadHubs);
 async function loadHubExpansion() {
   try {
@@ -1382,11 +1557,12 @@ async function loadHubExpansion() {
     hubExpansionReport = null;
     $("hubExpansionStatus").textContent = tr("Não foi possível consultar novos hubs.");
     $("hubExpansionScope").textContent = "";
+    $("hubExpansionCoverage").textContent = "";
     $("hubExpansionCount").textContent = "";
     $("hubExpansionGrid").replaceChildren();
   }
 }
-for (const id of ["hubExpansionSearch", "hubExpansionFilter"]) {
+for (const id of ["hubExpansionSearch", "hubExpansionFilter", "hubExpansionSort"]) {
   $(id).addEventListener(id === "hubExpansionSearch" ? "input" : "change", () => {
     if (hubExpansionReport) { renderHubExpansion(hubExpansionReport); }
   });

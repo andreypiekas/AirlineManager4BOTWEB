@@ -119,12 +119,17 @@ retidas e as partidas confirmadas.
 
 [Guia de controle de rotas e decolagens](docs/CONTROLE_ROTAS.md)
 
-## Próxima implementação
+## Hubs e Aeronaves — implementação em andamento
 
 [Roadmap de Hubs e Aeronaves](docs/ROADMAP_HUBS_AERONAVES.md). O painel
-vai reunir as bases adquiridas, a frota e o lucro estimado por aeroporto.
-Também vai indicar onde alocar a próxima aeronave e comparar aeroportos
-para aquisição de novos hubs.
+apresenta o inventário local de bases adquiridas e a rentabilidade estimada,
+com indicação da cobertura da frota. As consultas autenticadas
+`GET /api/hubs`, `GET /api/hubs/expansion` e
+`GET /api/hubs/recommendations` apresentam, respectivamente, as bases,
+as possibilidades de expansão e os cenários da próxima aeronave por base.
+As classificações exigem pesquisa e custos atuais confirmados no jogo.
+A navegação real entre páginas e a coleta dos dados de compra e pesquisa
+continuam em homologação.
 
 ## Interface — AM/04 Torre de Controle
 
@@ -141,6 +146,17 @@ tema claro.
 ### Rotas e aeronaves
 
 ![Relatório de rotas no painel web com uma duplicidade e uma proposta de troca](screenshots/web-rotas.png)
+
+### Hubs e expansão
+
+O painel reúne bases adquiridas, aeronaves com vínculo comprovado, cobertura
+do inventário e projeções financeiras. As figuras usam somente aeroportos,
+valores e resultados **fictícios de demonstração**. A análise real depende
+das observações autenticadas do perfil ativo.
+
+![Inventário de hubs adquiridos com aeronaves, lucros e dados pendentes de demonstração](screenshots/web-hubs.png)
+
+![Candidatos a novos hubs com custos, lucro e retorno simulados para demonstração](screenshots/web-novos-hubs.png)
 
 ### Configurações em tela dedicada
 
@@ -161,6 +177,8 @@ em edição permanecem disponíveis ao trocar de categoria na sessão atual.
 | Visão geral | Configurações |
 | --- | --- |
 | <img src="screenshots/web-mobile.png" width="280" alt="Painel AM/04 adaptado para celular"> | <img src="screenshots/web-mobile-config.png" width="280" alt="Configurações AM/04 adaptadas para celular"> |
+
+![Inventário de hubs adaptado ao celular, com dados de demonstração](screenshots/web-hubs-mobile.png)
 
 <details>
 <summary><b>Aplicativo desktop — abrir capturas</b></summary>
@@ -190,6 +208,7 @@ xvfb-run -a -s "-screen 0 1920x1200x24" .venv/bin/python scripts/screenshots.py
 ~~~
 
 No Windows com ambiente gráfico, execute `.venv\Scripts\python.exe scripts\screenshots.py`.
+Para regenerar apenas as telas web, use `python scripts/screenshots.py --web-only`.
 No GitHub, execute o workflow [Atualizar capturas AM/04](.github/workflows/screenshots.yml)
 em uma branch de documentação.
 

@@ -2,6 +2,7 @@
 
 Uso em Linux (X11/Xvfb) ou Windows:
     python scripts/screenshots.py
+    python scripts/screenshots.py --web-only
 
 Na automação:
     xvfb-run -a -s "-screen 0 1920x1200x24" python scripts/screenshots.py
@@ -12,7 +13,9 @@ A execução não inicia os ciclos do bot nem salva configurações.
 """
 from __future__ import annotations
 
+import argparse
 import logging
+import json
 import os
 import shutil
 import sys
@@ -116,6 +119,71 @@ def fill_routes() -> None:
         "calculated_at": int(time.time()),
     })
     registry.record_scan(3, 3, 0)
+
+
+def fill_hubs(bot) -> None:
+    """Build isolated, synthetic hub observations for reproducible UI captures."""
+    from hub_registry import HubRegistry
+    from hub_expansion import HubExpansionRegistry
+    from hub_aircraft_research import HubAircraftResearchRegistry
+    from route_registry import RouteRegistry
+
+    HubRegistry().record_options([
+        {"id": "111", "text": "Chapecó", "code": "XAP"},
+        {"id": "222", "text": "Guarulhos", "code": "GRU"},
+        {"id": "333", "text": "Detroit", "code": "DTW"},
+    ])
+    route_registry = RouteRegistry()
+    state = json.loads(route_registry.path.read_text(encoding="utf-8"))
+    for aircraft_id, hub_id in {"101": "111", "102": "111", "103": "222"}.items():
+        state["aircraft"][aircraft_id].update({
+            "home_hub_id": hub_id,
+            "home_hub_source": "game",
+        })
+    route_registry.path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+    expansion = HubExpansionRegistry()
+    expansion.record_catalog([
+        {"id": "444", "name": "Curitiba", "code": "CWB", "hub_price": 1_400_000, "purchasable": True},
+        {"id": "555", "name": "Florianópolis", "code": "FLN", "hub_price": 2_100_000, "purchasable": True},
+        {"id": "666", "name": "Porto Alegre", "code": "POA", "hub_price": 3_500_000, "purchasable": True},
+    ], complete=True)
+    for hub_id, route, profit in (("444", "CWB ↔ GRU", 185_000),
+                                  ("555", "FLN ↔ XAP", 125_000),
+                                  ("666", "POA ↔ DTW", -5_000)):
+        expansion.record_research(hub_id, {
+            "source": "game_research", "model": "B737-800", "route": route,
+            "route_feasible": True, "demand_verified": True,
+            "aircraft_price": 8_000_000, "route_fee": 65_000,
+            "hangar_price": 200_000, "profit_per_day": profit,
+        })
+    # Next-aircraft comparisons are also invented solely for this ephemeral
+    # screenshot profile. No data or status comes from the real game here.
+    observed_at = int(time.time())
+    research = HubAircraftResearchRegistry()
+    for hub_id, destination_id, destination_code, profit in (
+        ("111", "777", "BSB", 310_000),
+        ("222", "888", "GIG", 405_000),
+    ):
+        research.record({
+            "hub_id": hub_id, "model": "B737-800", "source": "game_research",
+            "observed_at": observed_at,
+            "origin": {"id": hub_id},
+            "destination": {"id": destination_id, "code": destination_code},
+            "distance_km": 950, "range_km": 5700,
+            "runway_m": 3200, "required_runway_m": 2400,
+            "demand_remaining": 450, "demand_verified": True,
+            "range_verified": True, "runway_verified": True,
+            "route_feasible": True, "route_available": True,
+            "financial": {"source": "route_optimizer", "observed_at": observed_at,
+                          "profit_per_day": profit},
+            "costs": {"source": "game_market", "observed_at": observed_at,
+                      "aircraft_price": 8_000_000, "route_fee": 65_000,
+                      "hangar_price": 200_000},
+        })
+    # The demo balance is synthetic too, and must be considered fresh only
+    # inside this isolated screenshot process.
+    bot.update_stats(money_read_at=time.time())
 
 
 def capture_window(app, dest: Path) -> None:
@@ -226,8 +294,8 @@ def web_shots(output: Path) -> None:
         driver = webdriver.Chrome(options=options)
         wait = WebDriverWait(driver, 25)
 
-        def navigate(*, mobile=False, tab=None, routes=False):
-            width, height = (430, 1120) if mobile else (1536, 1280 if tab is not None or routes else 940)
+        def navigate(*, mobile=False, tab=None, routes=False, hubs=False, new_hubs=False):
+            width, height = (430, 1120) if mobile else (1536, 1280 if tab is not None or routes or hubs or new_hubs else 940)
             driver.set_window_size(width, height)
             driver.get(url)
             wait.until(lambda d: d.find_element(By.ID, "kMoney").text not in ("", "—"))
@@ -239,25 +307,35 @@ def web_shots(output: Path) -> None:
             if routes:
                 driver.find_element(By.CSS_SELECTOR, 'a[href="#routes"]').click()
                 wait.until(lambda d: "DEMO-02" in d.find_element(By.ID, "routeDuplicates").text)
+            if hubs or new_hubs:
+                driver.find_element(By.CSS_SELECTOR, 'a[href="#hubs"]').click()
+                wait.until(lambda d: "Chapecó" in d.find_element(By.ID, "hubsGrid").text)
+                if new_hubs:
+                    wait.until(lambda d: "Curitiba" in d.find_element(By.ID, "hubExpansionGrid").text)
+                    driver.execute_script('document.getElementById("hubExpansionStatus").closest(".hub-card").scrollIntoView({block:"start"})')
             if mobile and tab is not None:
                 driver.execute_script("document.getElementById('settingsView').scrollIntoView()")
-            else:
+            elif not new_hubs:
                 driver.execute_script("window.scrollTo(0, 0)")
             time.sleep(0.6)
 
-        def shot(name, *, mobile=False, tab=None, routes=False):
-            navigate(mobile=mobile, tab=tab, routes=routes)
+        def shot(name, *, mobile=False, tab=None, routes=False, hubs=False, new_hubs=False):
+            navigate(mobile=mobile, tab=tab, routes=routes, hubs=hubs, new_hubs=new_hubs)
             dest = output / name
             if not driver.save_screenshot(str(dest)):
                 raise RuntimeError(f"Falha ao salvar captura: {name}")
             print(f"Capturada: {dest.name}", flush=True)
 
+        fill_hubs(bot)
         shot("web-visao-geral.png")
         for index, tab in enumerate(("mercado", "frota", "aeronaves", "opcoes", "telegram")):
             shot(f"web-config-{tab}.png", tab=index)
         shot("web-rotas.png", routes=True)
+        shot("web-hubs.png", hubs=True)
+        shot("web-novos-hubs.png", new_hubs=True)
         shot("web-mobile.png", mobile=True)
         shot("web-mobile-config.png", mobile=True, tab=0)
+        shot("web-hubs-mobile.png", mobile=True, hubs=True)
     finally:
         if driver is not None:
             driver.quit()
@@ -270,11 +348,17 @@ GENERATED = (
     "web-visao-geral.png", "web-config-mercado.png", "web-config-frota.png",
     "web-config-aeronaves.png", "web-config-opcoes.png", "web-config-telegram.png",
     "web-rotas.png",
+    "web-hubs.png", "web-novos-hubs.png", "web-hubs-mobile.png",
     "web-mobile.png", "web-mobile-config.png",
 )
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Atualiza capturas de demonstração do AM/04.")
+    parser.add_argument("--web-only", action="store_true",
+                        help="Gera apenas as telas web, sem dependências gráficas do desktop.")
+    args = parser.parse_args()
+    generated = tuple(name for name in GENERATED if not args.web_only or name.startswith("web-"))
     original_dir = Path.cwd()
     with tempfile.TemporaryDirectory(prefix="am4-capturas-") as directory:
         demo = Path(directory)
@@ -285,25 +369,27 @@ def main() -> None:
         shutil.copytree(ROOT / "assets", demo / "assets")
         os.chdir(demo)
         try:
-            desktop_shots(output)
+            if not args.web_only:
+                desktop_shots(output)
             web_shots(output)
         finally:
             logging.shutdown()
             os.chdir(original_dir)
 
-        faltando = [name for name in GENERATED if not (output / name).is_file()]
+        faltando = [name for name in generated if not (output / name).is_file()]
         if faltando:
             raise RuntimeError("Capturas ausentes: " + ", ".join(faltando))
         OUT.mkdir(exist_ok=True)
-        for name in GENERATED:
+        for name in generated:
             shutil.copyfile(output / name, OUT / name)
 
     # Limpa capturas obsoletas apenas após gerar a nova série completa.
-    for caminho in OUT.glob("*.png"):
-        if caminho.name not in GENERATED:
-            caminho.unlink()
-            print(f"Removida captura antiga: {caminho.relative_to(ROOT)}", flush=True)
-    print(f"Capturas AM/04 atualizadas: {len(GENERATED)} arquivos.", flush=True)
+    if not args.web_only:
+        for caminho in OUT.glob("*.png"):
+            if caminho.name not in GENERATED:
+                caminho.unlink()
+                print(f"Removida captura antiga: {caminho.relative_to(ROOT)}", flush=True)
+    print(f"Capturas AM/04 atualizadas: {len(generated)} arquivos.", flush=True)
 
 
 if __name__ == "__main__":
