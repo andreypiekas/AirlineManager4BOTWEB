@@ -1,5 +1,16 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-21 — Backup integral e implantação verificada no servidor Zentria
+
+**Solicitação:** após correção do IP pelo usuário, criar backup da instalação ativa e disponibilizar a nova versão para validação.
+
+- Servidor: `192.168.101.234`, hostname `zentria`, Ubuntu; serviço `am4bot@principal` em `/home/piekas/AirlineManager4Bot`. A instalação anterior estava no commit `3a53f78667ac2607c3d61182f3f4b154d596609c`, com arquivos versionados limpos e serviço ativo.
+- Antes da troca de código, o serviço foi parado e a instalação inteira foi arquivada, incluindo `.git`, `.venv`, `config`, `data` e demais arquivos, em `/home/piekas/am4bot-backups/20261121T211036Z-pre-3035aac/AirlineManager4Bot.tar.gz`. O backup possui **252.499.369 bytes**, permissão **0600**, arquivo `sha256` validado com sucesso e listagem do TAR íntegra. Uma cópia da unidade systemd e um manifesto dos commits também estão nessa pasta, fora do checkout.
+- A branch `feat/hubs-inventory-readonly` foi buscada diretamente do GitHub e o servidor passou ao commit `3035aac3c8a2160687abed40a0eb8dd9c28ea56e` (funcionalidades da entrega `d246d15`, acrescidas do histórico de implantação). Não houve mudança no conteúdo versionado de `requirements.txt`; o Python da instalação compilou `src` e `scripts` sem erro. Configurações individuais, credenciais, dados e arquivos não versionados foram preservados.
+- O serviço foi iniciado e conferido no `systemd` como **active/running**, com PID **393993**, `NRestarts=0` no pós-teste. A sessão Selenium do jogo foi restaurada e o painel respondeu na porta **8744** da rede local.
+- **Primeira homologação operacional observada:** o log confirmou três páginas da frota no ciclo novo, cobertura acumulada **4/11**, **zero IDs repetidos** e `full_page_coverage_verified=False`. Foram persistidos **50 registros de demanda** por pesquisa de rotas, e o arquivo `data/hub_expansion.json` passou a existir com cursor de varredura. Após esse ciclo, havia **zero preços de hubs confirmados**, que exigem investigação adicional do DOM e novo teste. A base permanente por aeronave e a auditoria das 11 páginas em um único ciclo também seguem pendentes de comprovação real.
+- O serviço continuou ativo na segunda inspeção, sem reinicializações automáticas registradas. O painel pode ser validado em `http://192.168.101.234:8744/`, com o acesso já configurado no servidor.
+
 ## 2026-11-21 — Tentativa de backup e implantação no servidor indicado
 
 **Solicitação:** realizar backup no servidor e disponibilizar para validação a versão `d246d15` da branch `feat/hubs-inventory-readonly`.
