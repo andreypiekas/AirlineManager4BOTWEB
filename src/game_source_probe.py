@@ -49,6 +49,7 @@ _PAGINATION_EVIDENCE = (
     "current_page_attribute_numeric",
     "active_page_numeric",
     "total_pages_attribute_numeric",
+    "total_pages_route_count_numeric",
     "loading_indicator_present",
 )
 
@@ -60,11 +61,25 @@ _SOURCES = (
     {"key": "owned_hub_options", "selector": "#hubSelect option",
      "attrs": ["value", "data-iata", "data-icao", "data-code", "title", "selected"],
      "id_source": "option"},
-    {"key": "purchase_hub_selector", "selector": "#hubSelection",
+    {"key": "purchase_hub_country_selector", "selector": "#hubcountrySelector",
      "attrs": ["id", "name", "disabled"], "id_source": "none"},
-    {"key": "purchase_hub_options", "selector": "#hubSelection option",
+    {"key": "purchase_hub_countries", "selector": "#hubcountrySelector option",
+     "attrs": ["value", "selected", "disabled"], "id_source": "none"},
+    {"key": "purchase_hub_selector", "selector": "#hubAirportSelector",
+     "attrs": ["id", "name", "disabled"], "id_source": "none"},
+    {"key": "purchase_hub_options", "selector": "#hubAirportSelector option",
      "attrs": ["value", "data-iata", "data-icao", "data-code", "selected"],
      "id_source": "option"},
+    {"key": "purchase_hub_cost", "selector": "#hubCostInfo",
+     "attrs": ["id"], "id_source": "none"},
+    {"key": "purchase_hub_airport_info", "selector": "#airportInfo",
+     "attrs": ["id"], "id_source": "none"},
+    {"key": "acquired_hub_rows", "selector": "#hubList > .row[onclick]",
+     "attrs": ["onclick"], "id_source": "none"},
+    {"key": "aircraft_order_hub_selector", "selector": "#hubSelection",
+     "attrs": ["id", "name", "disabled"], "id_source": "none"},
+    {"key": "aircraft_order_hub_options", "selector": "#hubSelection option",
+     "attrs": ["value", "selected"], "id_source": "option"},
     {"key": "aircraft_catalog", "selector": "#acListItems .acListItem",
      "attrs": ["onclick", "data-id", "data-range", "data-speed", "data-capacity",
                "data-fuel", "data-price"], "id_source": "model"},
@@ -88,12 +103,16 @@ _SOURCES = (
      "id_source": "data", "id_attribute": "data-aircraft-id"},
     {"key": "research_results", "selector": "#resResult #list .sorter",
      "attrs": ["onclick", "data-distance", "data-yclass", "data-jclass",
-               "data-fclass", "data-rwy"], "id_source": "arrival"},
+               "data-fclass", "data-large", "data-heavy", "data-rwy"],
+     "id_source": "arrival"},
     {"key": "routes_pagination", "selector": "#popContent .pagination",
      "attrs": ["data-current-page", "data-total-pages"], "id_source": "none"},
     {"key": "routes_active_page",
-     "selector": "#popContent .pagination .active, #popContent .pagination [aria-current='page']",
+     "selector": "#popContent .pagination .active, #popContent .pagination [aria-current='page'], #popContent .pagination .page-item.not-active > .page-link",
      "attrs": ["aria-current", "data-page"], "id_source": "page"},
+    {"key": "routes_count_label",
+     "selector": "#popContent .row.font-weight-bold > .col-12.exo.text-center.p-2",
+     "attrs": ["class"], "id_source": "none"},
     {"key": "route_details", "selector": "#rDetails",
      "attrs": ["id", "data-dep", "data-arr"], "id_source": "none"},
 )
@@ -202,9 +221,10 @@ const observe = (set, value) => {
 const popupNodes = document.querySelectorAll('#popContent');
 const paginationNodes = document.querySelectorAll('#popContent .pagination');
 const activeNodes = document.querySelectorAll(
-  "#popContent .pagination .active, #popContent .pagination [aria-current='page']");
+  "#popContent .pagination .active, #popContent .pagination [aria-current='page'], #popContent .pagination .page-item.not-active > .page-link");
 let currentAttributeNumeric = false;
 let totalAttributeNumeric = false;
+let routeCountNumeric = false;
 let activePageNumeric = false;
 for (const node of popupNodes) {
   currentAttributeNumeric = observe(pageValues, safeAttribute(node, 'data-current-page')) ||
@@ -223,6 +243,17 @@ for (const node of activeNodes) {
     activePageNumeric;
   activePageNumeric = observe(pageValues, node.textContent) || activePageNumeric;
 }
+// AM4 shows "205 Routes" and uses offsets 0, 20, 40 ... even when
+// fewer than 20 rows are rendered because aircraft statuses change.
+const routeCountNodes = document.querySelectorAll(
+  '#popContent .row.font-weight-bold > .col-12.exo.text-center.p-2');
+for (const node of routeCountNodes) {
+  const match = String(node.textContent || '').trim().match(/^([1-9][0-9]{0,4})\s+Routes$/i);
+  if (match) {
+    routeCountNumeric = observe(totalValues, Math.ceil(Number(match[1]) / 20)) ||
+      routeCountNumeric;
+  }
+}
 const currentPage = pageValues.size === 1 ? Array.from(pageValues)[0] : null;
 const totalPages = totalValues.size === 1 ? Array.from(totalValues)[0] : null;
 result.pagination = {
@@ -237,6 +268,7 @@ result.pagination = {
     current_page_attribute_numeric: currentAttributeNumeric,
     active_page_numeric: activePageNumeric,
     total_pages_attribute_numeric: totalAttributeNumeric,
+    total_pages_route_count_numeric: routeCountNumeric,
     // Equivalent to the existing Bot.open_popup() loader check.
     loading_indicator_present:
       document.querySelectorAll("#popContent img[src*='loader']").length > 0

@@ -247,6 +247,52 @@ globalThis.document = {
     assert rows[0]["scan_total_pages"] == 4
 
 
+def test_am4_auth_pagination_uses_not_active_and_route_count(tmp_path):
+    if not shutil.which("node"):
+        pytest.skip("Node.js is required to validate real AM4 pagination")
+
+    game_dom = """
+const detailLink = {
+  textContent: 'PP-0103-22 - A380-800',
+  getAttribute: name => name === 'onclick' ?
+    "Ajax('fleet_details.php?id=23350122', 'detailsAction')" : null,
+};
+const routeLabel = {textContent: 'TXL - RUN', getAttribute: () => null};
+const row = {
+  querySelector: selector => selector.includes('fleet_details.php') || selector === 'a' ?
+    detailLink : selector === '.col-10 .s-text' ? routeLabel : null,
+  querySelectorAll: () => [],
+  getAttribute: () => null,
+};
+const pagination = {
+  getAttribute: () => null,
+  querySelector: selector => selector.includes('.page-item.not-active > .page-link') ?
+    {textContent: '2'} : null,
+};
+const popup = {
+  querySelector: selector => selector === '.pagination' ? pagination : null,
+  getAttribute: () => null,
+};
+globalThis.document = {
+  querySelector: selector => selector === '#popContent' ? popup : null,
+  querySelectorAll: selector => selector.includes('routeMainList') ? [row] :
+    selector.includes('.row.font-weight-bold') ? [{textContent: '205 Routes'}] : [],
+};
+"""
+    path = tmp_path / "real_am4_fleet_pager.js"
+    path.write_text(game_dom + "\nconsole.log(JSON.stringify((new Function(" +
+                    json.dumps(_ROUTE_AUDIT_JS) + "))()));\n", encoding="utf-8")
+    result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    rows = json.loads(result.stdout)
+    assert len(rows) == 1
+    assert rows[0]["scan_page"] == 2
+    assert rows[0]["scan_total_pages"] == 11
+    assert rows[0]["aircraft_id"] == "23350122"
+    assert rows[0]["origin_code"] == "TXL"
+    assert rows[0]["destination_code"] == "RUN"
+
+
 def test_stale_pages_and_changed_pagination_reset_coverage(tmp_path, monkeypatch):
     registry = RouteRegistry(tmp_path / "routes.json")
     clock = {"at": 100}

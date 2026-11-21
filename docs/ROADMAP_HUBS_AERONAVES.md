@@ -78,10 +78,14 @@ recolhível da tela e por uma API administrativa autenticada. Essa consulta é
 enfileirada para o thread do próprio bot durante uma espera entre ciclos. O catálogo
 de expansão agora trata duplicatas conflitantes, registros legados inválidos
 e leituras incompletas, com desempate por menor investimento.
-A etapa 1 ainda requer homologar o HTML e a navegação no jogo autenticado,
-identificar o vínculo individual de base e obter preços e demanda reais.
-A etapa 4 ainda requer comparação dos registros com a companhia em operação,
-incluindo instalação Linux. Detalhes por entrega estão em
+A inspeção manual autenticada de 21/11 confirmou seletores e amostras reais
+de paginação, preços de compra, demanda e bases adquiridas. O jogo exibiu
+205 rotas e paginação por deslocamentos de 20, com 11 páginas estimadas.
+Ainda falta integrar essas fontes ao catálogo persistente por perfil,
+homologar um ciclo real de leitura paginada e provar o vínculo individual de
+base para cada aeronave. A etapa 4 também requer comparar os registros e a
+interface com a companhia em operação, incluindo instalação Linux. Os dados
+da inspeção e os limites de homologação estão registrados em
 [`ENTREGAS_ROADMAP.md`](ENTREGAS_ROADMAP.md).
 
 1. **Confirmar as fontes no jogo.** Em uma sessão autenticada e de leitura,

@@ -196,6 +196,13 @@ const sourceNodes = {
     node({value: '123', 'data-iata': 'XAP', title: 'SECRET_TOKEN'}),
     node({value: '456', 'data-code': 'GRU'}),
   ],
+  '#hubcountrySelector': [node({id: 'hubcountrySelector'})],
+  '#hubcountrySelector option': [node({value: 'BR'}), node({value: 'US'})],
+  '#hubAirportSelector': [node({id: 'hubAirportSelector'})],
+  '#hubAirportSelector option': [node({value: '0'}), node({value: '2941'}), node({value: '2957'})],
+  '#hubCostInfo': [node({id: 'hubCostInfo'}, {text: 'SECRET_TOKEN'})],
+  '#airportInfo': [node({id: 'airportInfo'}, {text: 'SECRET_PASSWORD'})],
+  '#hubList > .row[onclick]': [node({onclick: 'hub_details.php?id=2941&token=SECRET_TOKEN'})],
   '#hubSelection option': [node({value: '456', selected: 'selected'})],
   '#acListItems .acListItem': [
     node({'data-price': '1900', 'data-range': '4700',
@@ -218,7 +225,7 @@ const sourceNodes = {
           'data-distance': '3000'}),
   ],
   '#popContent .pagination': [node({'data-total-pages': '4'})],
-  "#popContent .pagination .active, #popContent .pagination [aria-current='page']": [
+  "#popContent .pagination .active, #popContent .pagination [aria-current='page'], #popContent .pagination .page-item.not-active > .page-link": [
     node({'aria-current': 'page'}, {text: '2'}),
   ],
 };
@@ -242,6 +249,12 @@ globalThis.window = Object.freeze({
     assert raw["sources"]["owned_hub_options"]["count"] == 3
     assert raw["sources"]["owned_hub_options"]["id_parseable_nodes"] == 2
     assert raw["sources"]["owned_hub_options"]["attribute_presence"]["data-iata"] is True
+    assert raw["sources"]["purchase_hub_options"]["numeric_ids"] == ["2941", "2957"]
+    assert raw["sources"]["purchase_hub_countries"]["count"] == 2
+    assert raw["sources"]["purchase_hub_cost"]["count"] == 1
+    assert raw["sources"]["purchase_hub_airport_info"]["count"] == 1
+    assert raw["sources"]["acquired_hub_rows"]["count"] == 1
+    assert raw["sources"]["aircraft_order_hub_options"]["numeric_ids"] == ["456"]
     assert raw["sources"]["aircraft_catalog"]["numeric_ids"] == ["785", "786"]
     assert raw["sources"]["fleet_routes"]["numeric_ids"] == ["36562620"]
     assert raw["sources"]["fleet_routes"]["linked_aircraft_ids"] == ["24133209"]
@@ -260,6 +273,7 @@ globalThis.window = Object.freeze({
         "current_page_attribute_numeric": True,
         "active_page_numeric": True,
         "total_pages_attribute_numeric": True,
+        "total_pages_route_count_numeric": False,
         "loading_indicator_present": False,
     }
     assert raw["status_data"]["count"] == 4
@@ -283,6 +297,41 @@ def test_dom_probe_caps_numeric_id_samples(tmp_path):
     assert status["ids_truncated"] is True
 
 
+def test_real_am4_pager_derives_total_from_route_count(tmp_path):
+    if not shutil.which("node"):
+        pytest.skip("Node.js is required to validate the real AM4 pager shape")
+
+    mock = r"""
+function node(attrs = {}, text = '') {
+  return {
+    textContent: text,
+    getAttribute: name => Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null,
+    hasAttribute: name => Object.prototype.hasOwnProperty.call(attrs, name),
+    querySelector: () => null,
+  };
+}
+const elements = {
+  '#popContent': [node()],
+  '#popContent .pagination': [node()],
+  "#popContent .pagination .active, #popContent .pagination [aria-current='page'], #popContent .pagination .page-item.not-active > .page-link": [node({}, '2')],
+  '#popContent .row.font-weight-bold > .col-12.exo.text-center.p-2': [node({}, '205 Routes')],
+};
+globalThis.document = {querySelectorAll: selector => elements[selector] || []};
+globalThis.window = {statusData: null};
+"""
+    path = tmp_path / "real_pager.js"
+    path.write_text(mock + "\nconsole.log(JSON.stringify((new Function(" +
+                    json.dumps(PROBE_JS) + "))()));\n", encoding="utf-8")
+    result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    pagination = json.loads(result.stdout)["pagination"]
+    assert pagination["current_page"] == 2
+    assert pagination["total_pages"] == 11
+    assert pagination["evidence_conflict"] is False
+    assert pagination["evidence"]["active_page_numeric"] is True
+    assert pagination["evidence"]["total_pages_route_count_numeric"] is True
+
+
 def test_dom_probe_identifies_conflicting_pagination_without_leaking_text(tmp_path):
     if not shutil.which("node"):
         pytest.skip("Node.js is required to run the embedded DOM probe")
@@ -298,7 +347,7 @@ function node(attrs = {}, text = '') {
 const elements = {
   '#popContent': [node({'data-current-page': '4', 'data-total-pages': '4'})],
   '#popContent .pagination': [node({'data-total-pages': '3'})],
-  "#popContent .pagination .active, #popContent .pagination [aria-current='page']": [
+  "#popContent .pagination .active, #popContent .pagination [aria-current='page'], #popContent .pagination .page-item.not-active > .page-link": [
     node({'data-page': '2'}, 'secret_password_abc'),
   ],
 };
@@ -393,7 +442,7 @@ def test_static_game_html_fixture_requires_explicit_hub_ids_and_reports_loader(t
     nodes = {
         "#popContent": [{"attrs": fixture.popup}],
         "#popContent .pagination": [{"attrs": fixture.pagination}],
-        "#popContent .pagination .active, #popContent .pagination [aria-current='page']": [
+        "#popContent .pagination .active, #popContent .pagination [aria-current='page'], #popContent .pagination .page-item.not-active > .page-link": [
             fixture.active],
         "#popContent [id^='routeMainList']": [
             {"attrs": fixture.row, "link": fixture.link}],
@@ -431,4 +480,6 @@ globalThis.window = {statusData: null};
     assert report["pagination"]["current_page"] == 2
     assert report["pagination"]["total_pages"] == 4
     assert report["pagination"]["evidence_conflict"] is False
-    assert all(report["pagination"]["evidence"].values())
+    assert all(value for key, value in report["pagination"]["evidence"].items()
+               if key != "total_pages_route_count_numeric")
+    assert report["pagination"]["evidence"]["total_pages_route_count_numeric"] is False

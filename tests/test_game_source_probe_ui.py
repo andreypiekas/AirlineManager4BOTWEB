@@ -160,7 +160,7 @@ const allText = element => [element.textContent,
   assert.equal($('gameSourceProbeResults').hidden, false);
   assert.equal($('gameSourceProbeStatus').dataset.state, 'success');
   assert.equal($('gameSourceProbePanel').attributes['aria-busy'], undefined);
-  assert.equal($('gameSourceProbeSummary').textContent, 'Fontes visíveis: 2 / 8');
+  assert.equal($('gameSourceProbeSummary').textContent, 'Fontes visíveis: 2 / 13');
   assert.equal($('gameSourceProbePagination').textContent,
     'Página 2 de 5 · Paginação sem conflito identificado');
   assert.match(allText($('gameSourceProbeSources')), /Com ID: 3 \/ 4/);
@@ -170,7 +170,7 @@ const allText = element => [element.textContent,
 
   lang = 'en';
   renderGameSourceProbe(report);
-  assert.equal($('gameSourceProbeSummary').textContent, 'Visible sources: 2 / 8');
+  assert.equal($('gameSourceProbeSummary').textContent, 'Visible sources: 2 / 13');
   assert.equal($('gameSourceProbePagination').textContent,
     'Page 2 of 5 · Paginação sem conflito identificado');
   assert.match(allText($('gameSourceProbeSources')), /Owned hubs in selector/);

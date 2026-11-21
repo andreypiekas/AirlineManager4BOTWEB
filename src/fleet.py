@@ -194,14 +194,21 @@ _ROUTE_AUDIT_JS = """
 const popup = typeof document.querySelector === "function" ? document.querySelector("#popContent") : null;
 const pagination = popup && popup.querySelector ? popup.querySelector(".pagination") : null;
 const active = pagination && pagination.querySelector ?
-  pagination.querySelector(".active, [aria-current='page']") : null;
+  pagination.querySelector(".active, [aria-current='page'], .page-item.not-active > .page-link") : null;
 const pageNumber = value => /^[1-9][0-9]{0,2}$/.test(String(value || "").trim()) ?
   Number(String(value).trim()) : null;
 const scanPage = pageNumber(active && active.textContent) ||
   pageNumber(popup && popup.getAttribute && popup.getAttribute("data-current-page"));
+const routeCount = Array.from(document.querySelectorAll(
+  '#popContent .row.font-weight-bold > .col-12.exo.text-center.p-2'))
+  .map(node => String(node.textContent || '').trim())
+  .map(label => label.match(/^([1-9][0-9]{0,4})\\s+Routes$/i))
+  .find(match => match !== null);
+const totalFromRouteCount = routeCount ? Math.ceil(Number(routeCount[1]) / 20) : null;
 const scanTotalPages = pageNumber(pagination && pagination.getAttribute &&
   pagination.getAttribute("data-total-pages")) ||
-  pageNumber(popup && popup.getAttribute && popup.getAttribute("data-total-pages"));
+  pageNumber(popup && popup.getAttribute && popup.getAttribute("data-total-pages")) ||
+  pageNumber(totalFromRouteCount);
 return Array.from(document.querySelectorAll("#popContent [id^='routeMainList']")).map(row => {
   // The existing seats module identifies routes by this real game link.
   const detailLink = row.querySelector("a[onclick*='fleet_details.php']");
