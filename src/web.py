@@ -33,11 +33,12 @@ from typing import TYPE_CHECKING, Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
 import paths
-from dashboard import snapshot
+from dashboard import snapshot, last_money
 from economy import AUTO_GOAL_LABEL, is_auto_goal, load_market, load_state
 from i18n import language, t, tip
 from route_registry import RouteRegistry, endpoint
 from hub_registry import HubRegistry
+from hub_expansion import HubExpansionRegistry
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
 if TYPE_CHECKING:
@@ -169,6 +170,15 @@ class WebDashboard:
     def hubs(self) -> dict:
         """Serve the last game-confirmed inventory without opening Selenium."""
         return HubRegistry().snapshot(self.routes())
+
+    def hub_expansion(self) -> dict:
+        """Compare observed candidate hubs against the last-known balance."""
+        owned = {hub["id"] for hub in self.hubs()["hubs"]}
+        return HubExpansionRegistry().snapshot(
+            cash=last_money(self.bot, load_state()),
+            reserve=self.cfg.get_int("settings", "cash_reserve", 0),
+            owned_hub_ids=owned,
+        )
 
     def update_routes(self, payload: dict) -> tuple[bool, str]:
         """Manual registry corrections are auditable and never change routes in-game."""
@@ -349,6 +359,8 @@ class WebDashboard:
                     return self._json(dashboard.routes())
                 if url.path == "/api/hubs":
                     return self._json(dashboard.hubs())
+                if url.path == "/api/hubs/expansion":
+                    return self._json(dashboard.hub_expansion())
                 self._send(HTTPStatus.NOT_FOUND, b"Not found", "text/plain")
 
             def do_POST(self) -> None:  # noqa: N802 - http.server API

@@ -530,6 +530,11 @@ footer strong { font-weight: 600; color: var(--aqua); }
       </div>
       <div class="hubs-grid" id="hubsGrid"></div>
       <div class="hub-card"><h2 data-t="Base a confirmar">Base a confirmar</h2><p id="hubsUnconfirmed"></p><div id="hubsUnconfirmedList"></div></div>
+      <div class="hub-card" style="margin-top:16px">
+        <h2 data-t="Novos hubs">Novos hubs</h2>
+        <p id="hubExpansionStatus" role="status" aria-live="polite"></p>
+        <div class="hubs-grid" id="hubExpansionGrid"></div>
+      </div>
     </section>
   </main>
 </div>
@@ -579,6 +584,11 @@ const EN = {
   "Nenhuma base confirmada até o momento.": "No confirmed hubs yet.",
   "aeronaves sem vínculo individual de base confirmado.": "aircraft without a verified home hub.",
   "Não foi possível consultar as bases.": "Could not load hubs.",
+  "Novos hubs": "New hubs", "Disponibilidade de compra a verificar": "Purchase availability to verify",
+  "Dados a confirmar": "Data to confirm", "Viável": "Feasible", "Saldo insuficiente": "Insufficient balance",
+  "Sem lucro": "No profit", "Investimento inicial": "Initial investment", "Retorno estimado": "Estimated payback",
+  "Caixa disponível acima da reserva": "Cash above reserve", "Custos e demanda ainda não confirmados no jogo.": "Costs and demand not yet verified in game.",
+  "Reparos e A-check fora da projeção.": "Repairs and A-check excluded from projection.",
   "Aeronaves registradas": "Registered aircraft", "Rotas duplicadas": "Duplicate routes", "Aeronaves envolvidas": "Affected aircraft",
   "Política de duplicidade": "Duplicate policy", "Permitidas": "Allowed", "Bloqueadas": "Blocked",
   "Alternativa": "Alternative", "dia": "day", "Nenhuma relação encontrada.": "No route relations found.",
@@ -1136,9 +1146,47 @@ async function loadHubs() {
       details.append(line);
     }
     if (report.unconfirmed_aircraft.length) { pending.append(details); }
+    await loadHubExpansion();
   } catch (_) { $("hubsStatus").textContent = tr("Não foi possível consultar as bases."); }
 }
 $("hubsRefresh").addEventListener("click", loadHubs);
+async function loadHubExpansion() {
+  const grid = $("hubExpansionGrid"); grid.replaceChildren();
+  const status = $("hubExpansionStatus");
+  try {
+    const report = await api("/api/hubs/expansion");
+    if (!report || !Array.isArray(report.candidates)) { throw new Error("Invalid expansion response"); }
+    if (report.availability_pending) {
+      status.textContent = tr("Disponibilidade de compra a verificar");
+      return;
+    }
+    status.textContent = tr("Caixa disponível acima da reserva") + ": " +
+      (report.available_cash == null ? tr("Sem dados") : money(report.available_cash));
+    const labels = {viavel: "Viável", saldo_insuficiente: "Saldo insuficiente",
+                    sem_lucro: "Sem lucro", dados_a_confirmar: "Dados a confirmar"};
+    for (const hub of report.candidates) {
+      const card = document.createElement("article"); card.className = "hub-card";
+      const name = document.createElement("h2");
+      name.textContent = (hub.code ? hub.code + " · " : "") + (hub.name || "#" + hub.id);
+      const label = document.createElement("strong");
+      label.textContent = tr(labels[hub.status] || "Dados a confirmar");
+      const costs = document.createElement("p");
+      costs.textContent = tr("Investimento inicial") + ": " +
+        (hub.investment == null ? tr("Sem dados") : money(hub.investment));
+      const result = document.createElement("p");
+      result.textContent = tr("Lucro estimado/dia") + ": " +
+        (hub.profit_per_day == null ? tr("Sem dados") : money(hub.profit_per_day)) +
+        " · " + tr("Retorno estimado") + ": " +
+        (hub.payback_days == null ? tr("Sem dados") : hub.payback_days + " " + tr("dia"));
+      const evidence = document.createElement("p");
+      evidence.textContent = (hub.scenario?.model || tr("Dados a confirmar")) +
+        " · " + (hub.scenario?.route || tr("Custos e demanda ainda não confirmados no jogo."));
+      const caveat = document.createElement("p"); caveat.textContent = tr("Reparos e A-check fora da projeção.");
+      card.append(name, label, costs, result, evidence, caveat);
+      grid.append(card);
+    }
+  } catch (_) { status.textContent = tr("Dados a confirmar"); }
+}
 let routeReport = null;
 let lastRouteFetch = 0;
 const airportLabel = value => {
