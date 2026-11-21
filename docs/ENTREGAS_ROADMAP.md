@@ -1,5 +1,28 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-21 — Frota real, rotas atuais e resultado dos voos
+
+### Diagnóstico autenticado
+
+- A sessão real de Airline Manager 4 confirmou **218 aeronaves únicas** em `window.statusData`. O registro acumulado do bot continha **255 IDs históricos**, incluindo aeronaves que já não constam da frota. Os contadores previamente verificados eram 205 com rota, 0 estacionadas e 13 pendentes. A leitura da sessão atual confirmou novamente os 218 IDs.
+- A propriedade `statusData[id].routeId` vincula uma aeronave ao ID da sua rota. No HTML de uma página real de rotas, `routeMainList36893058` foi observado como identificador de rota, e o link `fleet_details.php?id=24523917` identifica a aeronave correspondente. O rótulo `DEL - BTT` é exposto em `.col-10 .s-text`. Essa distinção impede associar rotas a aeronaves erradas.
+- A página autenticada `fleet_details.php?id=21758643` exibiu histórico individual com pares de aeroportos, consumo em libras, cotas de CO₂, valor monetário e horário relativo. Foram observados registros `TAS-GRU`, `589,009 Quotas`, `248,356 Lbs` e `$1,277,380`. O significado contábil exato do valor monetário ainda depende de homologação.
+
+### Implementação
+
+- `src/fleet.py` captura a lista completa de aeronaves de `statusData` apenas quando sua cardinalidade corresponde aos contadores confirmados pelo jogo. Associa a matrícula ao ID da aeronave e seu `routeId`, conservando o cadastro histórico separadamente. A auditoria de páginas grava o `routeId` observado em cada cartão para comprovar origem e destino.
+- `src/route_registry.py` mantém a última frota validada, com idade máxima de 15 minutos para a confirmação atual. A visão **Frota do jogo** lista exclusivamente esses IDs. Origem, destino e lucro da rota são exibidos apenas após correspondência entre ID de rota observado no cartão e ID atual da aeronave. Mudanças de rota ocultam dados anteriores até a próxima auditoria. A cobertura de páginas continua incremental.
+- A coleta financeira consulta em modo leitura o histórico individual de até **oito aeronaves por ciclo**, em rotação por última leitura. Persiste valor monetário do último voo, uso de combustível, cotas de CO₂ e **margem operacional estimada** pela diferença entre valor informado e custos aos preços atuais do estoque. Soma também as margens de voos datados nas **últimas 24 horas**, com quantidade de voos, sem imputar dias ou registros ausentes.
+- A tela **Rotas e Aeronaves** permite alternar entre **Frota do jogo** e **Cadastro histórico**. Apresenta total atual, cadastro histórico, situação da auditoria, duplicidades atuais, rota, resultado estimado de 24h quando disponível e margem do último voo. O painel distingue valores efetivamente lidos de cálculos aproximados. A área de duplicidades respeita o filtro escolhido.
+- `src/hub_registry.py` usa a frota real quando sua lista está disponível. `src/web.py` incorpora os contadores verificados no relatório `/api/routes` sem acessar o navegador do jogo.
+
+### Validação e limites conhecidos
+
+- Testes para reconciliação de frota, IDs duplicados/inválidos, mudança de rota, histórico preservado, valores monetários, total das últimas 24 horas, JavaScript do histórico e duplicidades por escopo. Suíte Windows completa excluindo o teste específico de permissões POSIX, Ruff, compilação e validação de diffs executados.
+- O **lucro operacional estimado** considera o valor exibido no histórico, combustível e CO₂ aos preços de consulta. Não inclui manutenção, A-check ou outras despesas. A coluna de resultado diário informa quando usa a soma histórica dos voos nas últimas 24 horas, sem a confundir com uma projeção de rota.
+- Novas rotas podem permanecer **a confirmar** até a auditoria da página correspondente. O registro histórico de 255 IDs permanece acessível para diagnóstico. A identificação da base individual de todas as aeronaves segue pendente de prova explícita no jogo.
+- A confirmação visual e a persistência em produção devem ser verificadas após implantação e novos ciclos do serviço. Uma execução real pode apresentar contagem diferente de 218 se a frota mudar.
+
 ## 2026-11-21 — Confirmação operacional da coleta e acompanhamento no painel
 
 ### Evidências de execução autenticada

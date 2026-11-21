@@ -155,7 +155,9 @@ class HubRegistry:
         # even if another profile becomes active after this instance is made.
         route_report = (routes if routes is not None else
                         RouteRegistry(self.path.with_name("routes_registry.json")).snapshot())
-        relations = route_report.get("relations", [])
+        relations = (route_report.get("current_relations", [])
+                     if route_report.get("current_roster_available")
+                     else route_report.get("relations", []))
         confirmed = {hub["id"]: [] for hub in hubs}
         owned_hub_ids = set(confirmed)
         unknown = []

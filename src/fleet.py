@@ -73,6 +73,65 @@ return Object.entries(window.statusData || {})
   .map(([id]) => id);
 """
 
+_GAME_ROSTER_JS = """
+const status = window.statusData;
+if (!status || typeof status !== 'object' || Array.isArray(status)) return null;
+return Object.entries(status).map(([id, row]) => ({
+  aircraft_id: id,
+  registration: typeof row?.reg === 'string' ? row.reg : '',
+  route_id: Number.isSafeInteger(Number(row?.routeId)) && Number(row.routeId) >= 0
+    ? Number(row.routeId) : null
+}));
+"""
+
+_FLIGHT_HISTORY_JS = """
+const ids = arguments[0];
+const done = arguments[arguments.length - 1];
+const numeric = text => {
+  const match = String(text || '').match(/[0-9][0-9,]*/);
+  return match ? Number(match[0].replaceAll(',', '')) : null;
+};
+const recentHours = text => {
+  const match = String(text || '').trim().match(/^(\\d+)\\s*(min(?:ute|uto)?s?|h(?:our|ora)?s?|d(?:ay|ia)?s?)/i);
+  if (!match) return null;
+  const unit = match[2].toLowerCase();
+  if (unit.startsWith('min')) return Number(match[1]) / 60;
+  if (unit.startsWith('h')) return Number(match[1]);
+  return Number(match[1]) * 24;
+};
+Promise.all(ids.map(async aircraft_id => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch('fleet_details.php?id=' + encodeURIComponent(aircraft_id), {
+      credentials: 'same-origin', signal: controller.signal
+    });
+    if (!response.ok) return {aircraft_id};
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const flights = [...doc.querySelectorAll('#flight-history > .row')].slice(0, 20)
+      .map(flight => {
+        const cells = [...flight.querySelectorAll(':scope > .col-3')];
+        if (cells.length !== 4) return null;
+        return {
+          flight_route: cells[0].querySelector('.s-text')?.textContent?.trim() || '',
+          co2_quotas: numeric(cells[1].querySelector('.s-text')?.textContent),
+          fuel_lbs: numeric(cells[2].querySelector('.s-text')?.textContent),
+          flight_value: numeric(cells[3].textContent),
+          age_hours: recentHours(cells[0].childNodes[0]?.textContent)
+        };
+      }).filter(Boolean);
+    if (!flights.length) return {aircraft_id};
+    return {aircraft_id, ...flights[0],
+      recent_flights: flights.filter(f => f.age_hours !== null && f.age_hours < 24)};
+  } catch (_) {
+    return {aircraft_id};
+  } finally {
+    clearTimeout(timeout);
+  }
+})).then(done, () => done([]));
+"""
+
 # Everything below reads the game by structure (ids, classes, data attributes, onclick handlers),
 # never by visible text, so the bot works with the game in English, Spanish or any other language.
 
@@ -219,6 +278,8 @@ return Array.from(document.querySelectorAll("#popContent #routeAction #routesCon
   const idFromLink = ((detailLink ? detailLink.getAttribute("onclick") : "") || "")
     .match(/fleet_details\\.php\\?id=(\\d+)/);
   const aircraftId = (idFromLink && idFromLink[1]) || "";
+  // Route card IDs are route IDs, distinct from the aircraft IDs in detail links.
+  const routeIdMatch = String(row.id || "").match(/^routeMainList([0-9]{1,14})$/);
   const label = link ? link.textContent.trim() : "";
   const tableData = Array.from(row.querySelectorAll("[data-dep], [data-arr], [data-origin], [data-destination], [data-route]"));
   const attrs = [row, ...tableData];
@@ -246,6 +307,7 @@ return Array.from(document.querySelectorAll("#popContent #routeAction #routesCon
     status.getAttribute("data-at-hub") || status.getAttribute("data-grounded")) : "";
   return {
     aircraft_id: aircraftId,
+    route_id: routeIdMatch ? Number(routeIdMatch[1]) : null,
     scan_page: scanPage,
     scan_total_pages: scanTotalPages,
     scan_route_count: routeCount ? Number(routeCount[1]) : null,
@@ -345,6 +407,7 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
         observations.append({
             "aircraft_id": identity, "registration": registration, "model": model,
             "origin": origin, "destination": destination, "at_base": base,
+            "observed_route_id": row.get("route_id"),
             "home_hub_id": home_hub_id,
             **home_hub_evidence,
         })
@@ -685,6 +748,9 @@ def manage_fleet(bot: "Bot") -> None:
                          fleet_count_read_at=time.time())
         log_fleet.info("Contagem do jogo: %d com rota + %d estacionadas + %d pendentes = %d aeronaves.",
                        counters["routes"], parked, pending, counters["routes"] + parked + pending)
+        roster = bot.js(_GAME_ROSTER_JS)
+        if not registry.record_game_roster(roster, counters["routes"] + parked + pending):
+            log_fleet.warning("Lista completa de IDs do jogo não comprovada; mantendo última coleta válida.")
     else:
         parked = to_int(bot.js("return $('#hParked').text();")) or 0
         pending = to_int(bot.js("return $('#hPending').text();")) or 0
@@ -720,6 +786,17 @@ def manage_fleet(bot: "Bot") -> None:
             log_market.info("Não comprarei aeronaves enquanto houver %d estacionadas sem rota.", parked)
         else:
             buy_aircraft(bot)
+    flight_reader = getattr(registry, "next_flight_read_ids", None)
+    read_ids = flight_reader(limit=8) if callable(flight_reader) else []
+    if read_ids and not bot.stopping:
+        try:
+            financial = bot.driver.execute_async_script(_FLIGHT_HISTORY_JS, read_ids)
+            found = registry.record_flight_readings(
+                financial, fuel_price=bot.stock_price("fuel"),
+                co2_price=bot.stock_price("co2"))
+            log_fleet.info("Histórico financeiro: %d/%d aeronaves com leitura válida.", found, len(read_ids))
+        except Exception as exc:  # noqa: BLE001 - read-only financial enrichment must not halt operations
+            log_fleet.warning("Histórico financeiro indisponível neste ciclo (%s).", type(exc).__name__)
     bot.close_popup()
 
 

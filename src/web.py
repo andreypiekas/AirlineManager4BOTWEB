@@ -166,9 +166,13 @@ class WebDashboard:
 
     def routes(self) -> dict:
         """Thread-safe report; this endpoint never operates the Selenium driver."""
-        return RouteRegistry().snapshot(
+        report = RouteRegistry().snapshot(
             allow_duplicates=self.cfg.get_bool("options", "allow_duplicate_routes", False),
         )
+        stats_reader = getattr(self.bot, "stats", None)
+        if callable(stats_reader):
+            report["fleet_counts"] = fleet_summary(stats_reader())
+        return report
 
     def hubs(self) -> dict:
         """Serve the last game-confirmed inventory without opening Selenium."""

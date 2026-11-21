@@ -25,6 +25,7 @@ _MAX_SCAN_PAGES = 250
 _MAX_PAGE_AIRCRAFT = 40
 _MAX_PAGES_PER_CYCLE = 5
 _MAX_LIVE_AUDIT_PAGES = 25
+_LIVE_ROSTER_MAX_AGE = 900
 _GAME_AIRCRAFT_ID_RE = re.compile(r"^[0-9]{1,14}$")
 _AIRPORT_ID_RE = re.compile(r"^\d{1,12}$")
 _IATA_RE = re.compile(r"^[A-Z]{3,4}$")
@@ -146,6 +147,125 @@ class RouteRegistry:
 
     def _save(self, data: dict) -> None:
         paths.write_atomic(self.path, json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
+
+    def record_game_roster(self, rows: object, expected_total: int) -> bool:
+        """Store IDs from the complete game status map, only if its count agrees with the header."""
+        if (type(expected_total) is not int or not 0 <= expected_total <= 50000
+                or not isinstance(rows, list) or len(rows) != expected_total):
+            return False
+        aircraft = {}
+        for item in rows:
+            if not isinstance(item, dict):
+                return False
+            identity = str(item.get("aircraft_id") or "")
+            if not _GAME_AIRCRAFT_ID_RE.fullmatch(identity) or identity in aircraft:
+                return False
+            reg = item.get("registration")
+            route_id = item.get("route_id")
+            if route_id is not None and (type(route_id) is not int or route_id < 0):
+                return False
+            aircraft[identity] = {
+                "registration": reg[:80] if isinstance(reg, str) else "",
+                "route_id": route_id,
+            }
+        with _LOCK:
+            data = _state(self.path)
+            data["game_roster"] = {"observed_at": int(time.time()), "aircraft": aircraft}
+            self._save(data)
+        return True
+
+    def next_flight_read_ids(self, *, limit: int = 4) -> list[str]:
+        """Rotate through current routed aircraft without rereading the same details each cycle."""
+        with _LOCK:
+            data = _state(self.path)
+        roster = data.get("game_roster") or {}
+        stamp = roster.get("observed_at") if isinstance(roster, dict) else None
+        if not isinstance(stamp, (int, float)) or not 0 <= time.time() - stamp <= _LIVE_ROSTER_MAX_AGE:
+            return []
+        entries = roster.get("aircraft") or {}
+        routes = data.get("aircraft") or {}
+        if not isinstance(entries, dict):
+            return []
+        candidates = [identity for identity, row in entries.items()
+                      if isinstance(row, dict) and isinstance(row.get("route_id"), int)
+                      and row["route_id"] > 0]
+        candidates.sort(key=lambda identity: (
+            (routes.get(identity) or {}).get("flight_finance_checked_at") or 0, identity))
+        return candidates[:max(0, min(limit, 8))]
+
+    def record_flight_readings(self, rows: object, *, fuel_price: float,
+                               co2_price: float) -> int:
+        """Record the displayed flight value and an explicitly approximate operating margin."""
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            return 0
+        if not all(isinstance(price, (int, float)) and 0 < price < 100000
+                   for price in (fuel_price, co2_price)):
+            return 0
+        now = int(time.time())
+        saved = 0
+        with _LOCK:
+            data = _state(self.path)
+            roster = (data.get("game_roster") or {}).get("aircraft") or {}
+            for row in rows[:8]:
+                identity = str(row.get("aircraft_id") or "")
+                if (not _GAME_AIRCRAFT_ID_RE.fullmatch(identity) or identity not in roster
+                        or not isinstance(roster[identity].get("route_id"), int)
+                        or roster[identity]["route_id"] <= 0):
+                    continue
+                entry = dict(data["aircraft"].get(identity) or {"aircraft_id": identity})
+                entry["flight_finance_checked_at"] = now
+                amount, fuel, co2 = (row.get(key) for key in ("flight_value", "fuel_lbs", "co2_quotas"))
+                if not all(type(value) is int and 0 <= value <= 100000000000
+                           for value in (amount, fuel, co2)):
+                    data["aircraft"][identity] = entry
+                    continue
+                label = row.get("flight_route")
+                if not isinstance(label, str) or not re.fullmatch(
+                        r"[A-Z]{3,4}\s*[-–]\s*[A-Z]{3,4}", label.strip()):
+                    data["aircraft"][identity] = entry
+                    continue
+                cost = fuel * float(fuel_price) / 1000 + co2 * float(co2_price) / 1000
+                entry["last_flight"] = {
+                    "observed_at": now, "route": label.strip(), "value": amount,
+                    "game_route_id": roster[identity]["route_id"],
+                    "fuel_lbs": fuel, "co2_quotas": co2,
+                    "estimated_operating_margin": round(amount - cost, 2),
+                    "fuel_price_per_1000": round(float(fuel_price), 2),
+                    "co2_price_per_1000": round(float(co2_price), 2),
+                    "source": "game_flight_history",
+                }
+                recent_flights = row.get("recent_flights")
+                if isinstance(recent_flights, list) and len(recent_flights) <= 20:
+                    recent_total = 0.0
+                    valid = 0
+                    for flight in recent_flights:
+                        if not isinstance(flight, dict):
+                            continue
+                        age = flight.get("age_hours")
+                        values = [flight.get(key) for key in
+                                  ("flight_value", "fuel_lbs", "co2_quotas")]
+                        if (not isinstance(age, (int, float)) or not 0 <= age < 24
+                                or not all(type(value) is int and 0 <= value <= 100000000000
+                                           for value in values)):
+                            continue
+                        revenue, used_fuel, used_co2 = values
+                        recent_total += (revenue - used_fuel * float(fuel_price) / 1000
+                                         - used_co2 * float(co2_price) / 1000)
+                        valid += 1
+                    if valid:
+                        entry["last_24h"] = {
+                            "observed_at": now, "game_route_id": roster[identity]["route_id"],
+                            "flight_count": valid,
+                            "estimated_operating_margin": round(recent_total, 2),
+                            "source": "game_flight_history",
+                        }
+                    else:
+                        entry.pop("last_24h", None)
+                data["aircraft"][identity] = entry
+                saved += 1
+            if rows:
+                self._save(data)
+        return saved
 
     @staticmethod
     def _record_in(data: dict, aircraft_id: str, registration: str, model: str,
@@ -373,6 +493,12 @@ class RouteRegistry:
                         identified += 1
                     else:
                         self._observe_in(data, identity, registration, model, at_base, now)
+                    observed_route_id = row.get("observed_route_id")
+                    if (type(observed_route_id) is int and
+                            0 < observed_route_id <= 99999999999999):
+                        data["aircraft"][identity]["observed_route_id"] = observed_route_id
+                    else:
+                        data["aircraft"][identity].pop("observed_route_id", None)
                     home = str(row.get("home_hub_id") or "").strip()
                     if re.fullmatch(r"[1-9][0-9]{0,11}", home):
                         entry = data["aircraft"][identity]
@@ -593,6 +719,44 @@ class RouteRegistry:
             data = deepcopy(_state(self.path))
         rows = list(data["aircraft"].values())
         rows.sort(key=lambda r: (r.get("registration", ""), r.get("aircraft_id", "")))
+        roster = data.get("game_roster") or {}
+        roster_at = roster.get("observed_at") if isinstance(roster, dict) else None
+        roster_entries = roster.get("aircraft") if isinstance(roster, dict) else None
+        roster_available = (isinstance(roster_at, (int, float))
+                            and roster_at <= time.time() and isinstance(roster_entries, dict))
+        roster_verified = (roster_available and
+                           time.time() - roster_at <= _LIVE_ROSTER_MAX_AGE)
+        indexed = {str(row.get("aircraft_id")): row for row in rows}
+        current_rows = []
+        if roster_available:
+            for identity, observed in roster_entries.items():
+                if not isinstance(observed, dict):
+                    continue
+                item = deepcopy(indexed.get(identity, {"aircraft_id": identity}))
+                item["registration"] = observed.get("registration") or item.get("registration") or identity
+                item["game_route_id"] = observed.get("route_id")
+                item["route_data_stale"] = (
+                    not roster_verified
+                    or not isinstance(item.get("last_seen"), (int, float))
+                    or not 0 <= time.time() - item["last_seen"] <= 3600
+                    or item.get("observed_route_id") != observed.get("route_id")
+                )
+                if observed.get("route_id") == 0:
+                    item["status"] = "sem_rota_ou_pendente"
+                elif item["route_data_stale"] or not item.get("route_key"):
+                    item["status"] = "rota_a_identificar"
+                if item["route_data_stale"] or observed.get("route_id") == 0:
+                    item.pop("origin", None)
+                    item.pop("destination", None)
+                    item.pop("route_key", None)
+                    item.pop("profit_per_day", None)
+                for financial_key in ("last_flight", "last_24h"):
+                    financial = item.get(financial_key)
+                    if (not roster_verified or not isinstance(financial, dict)
+                            or financial.get("game_route_id") != observed.get("route_id")):
+                        item.pop(financial_key, None)
+                current_rows.append(item)
+            current_rows.sort(key=lambda r: (r.get("registration", ""), r["aircraft_id"]))
         duplicates: list[list[dict]] = []
         visited: set[str] = set()
         for row in rows:
@@ -606,8 +770,36 @@ class RouteRegistry:
         duplicate_ids = {entry["aircraft_id"] for group in duplicates for entry in group}
         for row in rows:
             row["duplicate"] = row.get("aircraft_id") in duplicate_ids
+        current_duplicates = []
+        current_visited = set()
+        for row in current_rows:
+            identity = row["aircraft_id"]
+            if (identity in current_visited or row["route_data_stale"]
+                    or not isinstance(row.get("game_route_id"), int)
+                    or row["game_route_id"] <= 0
+                    or not route_key(row.get("origin") or {}, row.get("destination") or {})):
+                continue
+            group = [other for other in current_rows
+                     if not other["route_data_stale"] and isinstance(other.get("game_route_id"), int)
+                     and other["game_route_id"] > 0 and same_route(row, other)]
+            if len(group) > 1:
+                current_duplicates.append(group)
+                current_visited.update(other["aircraft_id"] for other in group)
+        current_duplicate_ids = {row["aircraft_id"] for group in current_duplicates for row in group}
+        for row in current_rows:
+            row["duplicate"] = row["aircraft_id"] in current_duplicate_ids
         return {
             "relations": rows,
+            "current_relations": current_rows,
+            "current_roster_available": roster_available,
+            "current_roster_verified": roster_verified,
+            "current_roster_observed_at": roster_at,
+            "current_roster_total": len(current_rows) if roster_available else None,
+            "current_duplicate_routes": len(current_duplicates),
+            "current_affected_aircraft": len(current_duplicate_ids),
+            "current_duplicates": [{"route": group[0].get("route_key"), "aircraft": [
+                {"id": r.get("aircraft_id"), "registration": r.get("registration")} for r in group
+            ]} for group in current_duplicates],
             "duplicates": [{"route": group[0].get("route_key"), "aircraft": [
                 {"id": r.get("aircraft_id"), "registration": r.get("registration")} for r in group
             ]} for group in duplicates],

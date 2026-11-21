@@ -536,6 +536,10 @@ footer strong { font-weight: 600; color: var(--aqua); }
       <div class="routes-header">
         <div><strong data-t="REGISTRO DA FROTA">REGISTRO DA FROTA</strong><p data-t="Relatório acumulado por perfil. Dados não identificados ou páginas não consultadas não são presumidos.">Relatório acumulado por perfil. Dados não identificados ou páginas não consultadas não são presumidos.</p><p id="routeAuditStatus" role="status" aria-live="polite"></p><p id="routeDispatchStatus" role="status" aria-live="polite"></p></div>
         <div class="routes-controls">
+          <select id="routeScope" aria-label="Escolher lista de aeronaves">
+            <option value="current">Frota do jogo</option>
+            <option value="history">Cadastro histórico</option>
+          </select>
           <input id="routeSearch" type="search" aria-label="Buscar aeronave ou aeroporto" placeholder="Buscar aeronave ou aeroporto">
           <button id="routeRefresh" type="button" data-t="Atualizar relatório">Atualizar relatório</button>
         </div>
@@ -545,10 +549,10 @@ footer strong { font-weight: 600; color: var(--aqua); }
           <thead><tr>
             <th data-t="Aeronave">Aeronave</th><th data-t="Modelo">Modelo</th>
             <th data-t="Origem">Origem</th><th data-t="Destino">Destino</th>
-            <th data-t="Lucro estimado/dia">Lucro estimado/dia</th><th data-t="Situação">Situação</th>
+            <th title="Estimativa diária da rota, quando disponível. Caso contrário, soma das margens dos voos observados nas últimas 24 horas. Valores sem manutenção e A-check.">Resultado estimado / dia</th><th title="Valor informado no histórico do jogo, descontando combustível e CO₂ aos preços atuais. Não inclui manutenção e A-check.">Margem estimada do último voo</th><th data-t="Situação">Situação</th>
             <th data-t="Última leitura">Última leitura</th>
           </tr></thead>
-          <tbody id="routesTable"><tr><td colspan="7">—</td></tr></tbody>
+          <tbody id="routesTable"><tr><td colspan="8">—</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -1906,6 +1910,10 @@ const airportLabel = value => {
 };
 function renderRoutes(report) {
   routeReport = report;
+  const verified = report.current_roster_verified === true;
+  const scope = $("routeScope").value;
+  const current = scope === "current";
+  const fleet = report.fleet_counts || {};
   const scan = report.last_scan;
   if (!scan) {
     $("routeAuditStatus").textContent = tr("Aguardando a primeira auditoria do jogo. A simulação pode permanecer ligada.");
@@ -1921,6 +1929,15 @@ function renderRoutes(report) {
       explanation += " " + tr("Nenhuma aeronave encontrada na página atual; confira o carregamento do jogo.");
     }
     $("routeAuditStatus").textContent = explanation;
+  }
+  if (current && !report.current_roster_available) {
+    $("routeAuditStatus").textContent += " Lista completa de IDs aguardando confirmação no jogo.";
+  } else if (current && !verified) {
+    $("routeAuditStatus").textContent += " Última lista de aeronaves está desatualizada. Aguardando nova conferência no jogo.";
+  } else if (current) {
+    $("routeAuditStatus").textContent += " Frota atual conferida no jogo em " +
+      new Date(report.current_roster_observed_at * 1000).toLocaleString("pt-BR") +
+      ". Origem e destino dependem da auditoria de cada página.";
   }
   const dispatch = report.last_dispatch;
   if (!dispatch) {
@@ -1950,9 +1967,14 @@ function renderRoutes(report) {
   const metrics = $("routeSummary");
   metrics.textContent = "";
   for (const [count, label] of [
-    [report.total || 0, tr("Aeronaves registradas")],
-    [report.duplicate_routes || 0, tr("Rotas duplicadas")],
-    [report.affected_aircraft || 0, tr("Aeronaves envolvidas")],
+    [fleet.count_verified && !fleet.count_stale ? fleet.size : "—", "Aeronaves no jogo"],
+    [fleet.count_verified && !fleet.count_stale ? fleet.routes : "—", "Com rota no jogo"],
+    [fleet.count_verified && !fleet.count_stale ? fleet.pending : "—", "Aguardando entrega"],
+    [report.total || 0, "Registros históricos"],
+    [current ? report.current_duplicate_routes || 0 : report.duplicate_routes || 0,
+      current ? "Duplicidades recentes" : "Duplicidades no histórico"],
+    [current ? report.current_affected_aircraft || 0 : report.affected_aircraft || 0,
+      tr("Aeronaves envolvidas")],
     [report.allow_duplicates ? tr("Permitidas") : tr("Bloqueadas"), tr("Política de duplicidade")]
   ]) {
     const item = document.createElement("span");
@@ -1962,7 +1984,7 @@ function renderRoutes(report) {
   const query = $("routeSearch").value.toLocaleLowerCase();
   const tbody = $("routesTable"); tbody.textContent = "";
   let count = 0;
-  for (const row of report.relations || []) {
+  for (const row of (current ? report.current_relations : report.relations) || []) {
     const origin = airportLabel(row.origin), destination = airportLabel(row.destination);
     const proposal = row.proposal ? " · " + tr("Alternativa") + ": " +
       (row.proposal.destination || row.proposal.destination_id || "") +
@@ -1978,16 +2000,33 @@ function renderRoutes(report) {
     if (query && !searchText.includes(query)) { continue; }
     count++;
     const trEl = document.createElement("tr");
+    const flight = row.last_flight;
+    const recentFlight = flight && flight.source === "game_flight_history" &&
+      flight.observed_at && Date.now() / 1000 - flight.observed_at <= 86400;
+    const flightValue = recentFlight && flight.estimated_operating_margin != null ?
+      "~" + money(Math.round(flight.estimated_operating_margin)) +
+      " · " + flight.route : "—";
+    const day = row.last_24h;
+    const recentDay = day && day.source === "game_flight_history" &&
+      day.observed_at && Date.now() / 1000 - day.observed_at <= 86400;
+    const dayValue = row.profit_per_day != null ? money(Math.round(row.profit_per_day)) :
+      recentDay && day.estimated_operating_margin != null ?
+        "~" + money(Math.round(day.estimated_operating_margin)) +
+        " (24h · " + day.flight_count + " voos)" : "—";
+    const routeFresh = !row.route_data_stale;
+    const currentStatus = current && row.game_route_id === 0 ? "Sem rota / pendente" :
+      current && !routeFresh ? "Rota a confirmar" : (row.status || "—").replaceAll("_", " ");
     const cols = [
       (row.registration || row.aircraft_id || "—") + " #" + (row.aircraft_id || "?"),
       row.model || "—", origin, destination,
-      row.profit_per_day == null ? "—" : money(Math.round(row.profit_per_day)),
-      (row.status || "—").replaceAll("_", " ") + proposal,
+      dayValue,
+      flightValue,
+      currentStatus + proposal,
       row.last_seen ? new Date(row.last_seen * 1000).toLocaleString(LANG === "en" ? "en-GB" : "pt-BR") : "—"
     ];
     for (let i = 0; i < cols.length; i++) {
       const td = document.createElement("td");
-      if (i === 5) {
+      if (i === 6) {
         const status = document.createElement("span");
         status.className = "route-pill" + (row.duplicate ? " duplicate" : "");
         status.textContent = cols[i]; td.appendChild(status);
@@ -1998,12 +2037,18 @@ function renderRoutes(report) {
   }
   if (!count) {
     const line = document.createElement("tr"), cell = document.createElement("td");
-    cell.colSpan = 7; cell.textContent = tr("Nenhuma relação encontrada.");
+    cell.colSpan = 8; cell.textContent = tr("Nenhuma relação encontrada.");
     line.appendChild(cell); tbody.appendChild(line);
   }
   const duplicates = $("routeDuplicates"); duplicates.textContent = "";
-  if (!report.duplicates || !report.duplicates.length) { duplicates.textContent = tr("Nenhuma duplicidade identificada no histórico disponível."); }
-  for (const group of report.duplicates || []) {
+  const shownDuplicates = current ? report.current_duplicates : report.duplicates;
+  if (!shownDuplicates || !shownDuplicates.length) {
+    duplicates.textContent = current && !verified
+      ? "Duplicidades atuais aguardando auditoria do jogo."
+      : current ? "Nenhuma duplicidade comprovada na frota atual."
+        : tr("Nenhuma duplicidade identificada no histórico disponível.");
+  }
+  for (const group of shownDuplicates || []) {
     const line = document.createElement("p");
     line.textContent = (group.route || "?") + " · " +
       group.aircraft.map(a => a.registration || a.id).join(" / ");
@@ -2031,6 +2076,7 @@ async function loadRoutes() {
   }
 }
 $("routeSearch").addEventListener("input", () => { if (routeReport) { renderRoutes(routeReport); } });
+$("routeScope").addEventListener("change", () => { if (routeReport) { renderRoutes(routeReport); } });
 $("routeRefresh").addEventListener("click", loadRoutes);
 $("routeManual").addEventListener("submit", async event => {
   event.preventDefault();
