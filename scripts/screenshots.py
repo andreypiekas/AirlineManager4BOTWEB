@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -21,8 +22,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "screenshots"
-WEB_PORT = 8799
-os.chdir(ROOT)
 sys.path.insert(0, str(ROOT / "src"))
 
 import config  # noqa: E402
@@ -30,13 +29,10 @@ import config  # noqa: E402
 _get = config.AppConfig.get
 _get_bool = config.AppConfig.get_bool
 _get_int = config.AppConfig.get_int
-LOG_FILE = Path(tempfile.gettempdir()) / "am4bot-screenshots.log"
 APPEARANCE = {"mode": "Dark"}
 
 
 def _patched_get(self, section, key, fallback=""):
-    if (section, key) == ("app", "log_file"):
-        return str(LOG_FILE)
     if (section, key) == ("app", "appearance_mode"):
         return APPEARANCE["mode"]
     if (section, key) == ("settings", "goal_model"):
@@ -49,6 +45,8 @@ def _patched_get_bool(self, section, key, fallback=False):
         return False  # A janela desktop não inicia seu próprio painel.
     if (section, key) == ("options", "start_on_launch"):
         return False
+    if (section, key) == ("options", "dry_run"):
+        return True
     return _get_bool(self, section, key, fallback)
 
 
@@ -56,7 +54,7 @@ config.AppConfig.get = _patched_get
 config.AppConfig.get_bool = _patched_get_bool
 config.AppConfig.get_int = (
     lambda self, section, key, fallback=0:
-    WEB_PORT if (section, key) == ("web", "port") else _get_int(self, section, key, fallback)
+    0 if (section, key) == ("web", "port") else _get_int(self, section, key, fallback)
 )
 config.AppConfig.save = lambda self: None
 config.AppConfig.credentials = property(lambda self: ("demo@example.invalid", "senha-de-exemplo"))
@@ -103,6 +101,23 @@ def fill(bot) -> None:
         logging.getLogger(f"am4bot.{category}").info(message)
 
 
+def fill_routes() -> None:
+    from route_registry import RouteRegistry, endpoint
+
+    registry = RouteRegistry()
+    gru, gig, ssa, rec, bsb = [endpoint(code=code) for code in ("GRU", "GIG", "SSA", "REC", "BSB")]
+    registry.record("101", "DEMO-01", "B737-800", gru, rec, profit_per_day=476_000)
+    registry.record("102", "DEMO-02", "B737-800", rec, gru, profit_per_day=428_000)
+    registry.record("103", "DEMO-03", "A320-200", gru, gig, profit_per_day=380_000)
+    registry.record("103", "DEMO-03", "A320-200", gru, ssa, profit_per_day=510_000,
+                    source="redirecionamento")
+    registry.note("102", "proposta_de_troca", proposal={
+        "destination": "BSB", "profit_per_day": 552_000, "estimated_gain_per_day": 124_000,
+        "calculated_at": int(time.time()),
+    })
+    registry.record_scan(3, 3, 0)
+
+
 def capture_window(app, dest: Path) -> None:
     """Fotografa a interface desktop real, com Win32 ou X11/Xvfb."""
     from PIL import ImageGrab
@@ -130,10 +145,10 @@ def capture_window(app, dest: Path) -> None:
         bbox = (x, y, x + app.winfo_width(), y + app.winfo_height())
         image = ImageGrab.grab(bbox=bbox, xdisplay=os.environ["DISPLAY"])
     image.save(dest, format="PNG", optimize=True)
-    print(f"Capturada: {dest.relative_to(ROOT)} ({image.width}x{image.height})", flush=True)
+    print(f"Capturada: {dest.name} ({image.width}x{image.height})", flush=True)
 
 
-def desktop_shots() -> None:
+def desktop_shots(output: Path) -> None:
     if os.name != "nt" and not os.environ.get("DISPLAY"):
         raise RuntimeError("Sem DISPLAY. Execute sob xvfb-run para capturar o desktop no Linux.")
 
@@ -168,12 +183,12 @@ def desktop_shots() -> None:
                 app.update()
                 time.sleep(0.2)
                 suffix = "-light" if mode == "Light" else ""
-                capture_window(app, OUT / f"desktop-{stem}{suffix}.png")
+                capture_window(app, output / f"desktop-{stem}{suffix}.png")
         finally:
             app.destroy()
 
 
-def web_shots() -> None:
+def web_shots(output: Path) -> None:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
@@ -193,6 +208,7 @@ def web_shots() -> None:
     web = WebDashboard(bot, cfg, buffer)
     if not web.start():
         raise RuntimeError("Servidor de demonstração não pôde iniciar; nenhuma imagem foi publicada.")
+    url = f"http://127.0.0.1:{web.server.server_address[1]}/"
 
     options = webdriver.ChromeOptions()
     options.add_argument("--headless=new")
@@ -206,32 +222,37 @@ def web_shots() -> None:
         web.buffer = LogBuffer()
         setup_logging(cfg, web.buffer)
         fill(bot)
+        fill_routes()
         driver = webdriver.Chrome(options=options)
         wait = WebDriverWait(driver, 25)
 
-        def navigate(*, mobile=False, tab=None):
+        def navigate(*, mobile=False, tab=None, routes=False):
             width, height = (430, 1120) if mobile else (1536, 940)
             driver.set_window_size(width, height)
-            driver.get(f"http://127.0.0.1:{WEB_PORT}/")
+            driver.get(url)
             wait.until(lambda d: d.find_element(By.ID, "kMoney").text not in ("", "—"))
             if tab is not None:
                 driver.execute_script("window.location.hash = '#parameters'")
                 wait.until(lambda d: d.find_element(By.ID, "settingsView").is_displayed())
-                wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#tabs button")) >= 4)
+                wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#tabs button")) > tab)
                 driver.find_elements(By.CSS_SELECTOR, "#tabs button")[tab].click()
+            if routes:
+                driver.find_element(By.CSS_SELECTOR, 'a[href="#routes"]').click()
+                wait.until(lambda d: "DEMO-02" in d.find_element(By.ID, "routeDuplicates").text)
             driver.execute_script("window.scrollTo(0, 0)")
             time.sleep(0.6)
 
-        def shot(name, *, mobile=False, tab=None):
-            navigate(mobile=mobile, tab=tab)
-            dest = OUT / name
+        def shot(name, *, mobile=False, tab=None, routes=False):
+            navigate(mobile=mobile, tab=tab, routes=routes)
+            dest = output / name
             if not driver.save_screenshot(str(dest)):
                 raise RuntimeError(f"Falha ao salvar captura: {name}")
-            print(f"Capturada: {dest.relative_to(ROOT)}", flush=True)
+            print(f"Capturada: {dest.name}", flush=True)
 
         shot("web-visao-geral.png")
-        for index, tab in enumerate(("mercado", "frota", "aeronaves", "opcoes")):
+        for index, tab in enumerate(("mercado", "frota", "aeronaves", "opcoes", "telegram")):
             shot(f"web-config-{tab}.png", tab=index)
+        shot("web-rotas.png", routes=True)
         shot("web-mobile.png", mobile=True)
         shot("web-mobile-config.png", mobile=True, tab=0)
     finally:
@@ -244,19 +265,35 @@ GENERATED = (
     "desktop-mercado.png", "desktop-frota.png", "desktop-aeronaves.png",
     "desktop-opcoes.png", "desktop-mercado-light.png",
     "web-visao-geral.png", "web-config-mercado.png", "web-config-frota.png",
-    "web-config-aeronaves.png", "web-config-opcoes.png",
+    "web-config-aeronaves.png", "web-config-opcoes.png", "web-config-telegram.png",
+    "web-rotas.png",
     "web-mobile.png", "web-mobile-config.png",
 )
 
 
 def main() -> None:
-    OUT.mkdir(exist_ok=True)
-    desktop_shots()
-    web_shots()
+    original_dir = Path.cwd()
+    with tempfile.TemporaryDirectory(prefix="am4-capturas-") as directory:
+        demo = Path(directory)
+        output = demo / "screenshots"
+        output.mkdir()
+        (demo / "config").mkdir()
+        shutil.copyfile(ROOT / "config/defaults.ini", demo / "config/defaults.ini")
+        shutil.copytree(ROOT / "assets", demo / "assets")
+        os.chdir(demo)
+        try:
+            desktop_shots(output)
+            web_shots(output)
+        finally:
+            logging.shutdown()
+            os.chdir(original_dir)
 
-    faltando = [name for name in GENERATED if not (OUT / name).is_file()]
-    if faltando:
-        raise RuntimeError("Capturas ausentes: " + ", ".join(faltando))
+        faltando = [name for name in GENERATED if not (output / name).is_file()]
+        if faltando:
+            raise RuntimeError("Capturas ausentes: " + ", ".join(faltando))
+        OUT.mkdir(exist_ok=True)
+        for name in GENERATED:
+            shutil.copyfile(output / name, OUT / name)
 
     # Limpa capturas obsoletas apenas após gerar a nova série completa.
     for caminho in OUT.glob("*.png"):
