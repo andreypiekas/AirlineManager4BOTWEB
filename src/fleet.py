@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Optional
 
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 
 from economy import (find_model, fmt_days, fmt_money, goal_progress, is_auto_goal, load_market, pick_ladder,
@@ -30,13 +31,15 @@ from economy import (find_model, fmt_days, fmt_money, goal_progress, is_auto_goa
 from gamemode import EASY, GameMode
 from helpers import clean_response, fmt, to_int
 from notify import esc
-from route_optimizer import rank_candidates
+from route_optimizer import estimate_route, rank_candidates
 from route_strategy import best_reroute, profitable_candidates
 from route_airports import HubMatch, match_hub_options, code_from_candidate, explain_hub_options
 from airport_catalog import by_code, game_code
 from route_registry import RouteRegistry, reroute_block_reason, endpoint, route_key
-from reroute import aircraft_details_missing, has_pending_reroute, landed_departure, recover_pending, replace_route
+from reroute import (aircraft_details_missing, confirm_stopover, has_pending_reroute,
+                     landed_departure, recover_pending, replace_route)
 from reroute_preflight import check_existing_route
+from route_stopover import Stopover, find_stopover, parked_specs, read_form, research_details
 
 if TYPE_CHECKING:
     from bot import Bot
@@ -786,6 +789,30 @@ def _route_demand(candidate: RouteCandidate, premium: bool) -> int:
     return candidate.y + 2 * candidate.j + 3 * candidate.f if premium else candidate.y
 
 
+def _try_stopover(bot, aircraft, origin, reach, limit, runway, economics, available, allow_duplicates):
+    hub_id = origin["id"]
+    candidates = [
+        candidate for candidate in search_routes(bot, hub_id, limit, runway)
+        if candidate.runway >= runway and reach < candidate.distance <= limit and available(candidate)
+    ]
+    log.info("%s: buscando rota com escala a partir de %s.", aircraft.reg, game_code(hub_id) or hub_id)
+    for candidate, _ in rank_candidates(candidates, **economics)[:4]:
+        if bot.stopping:
+            break
+        if not allow_duplicates:
+            details = research_details(bot, hub_id, candidate.arr_id) or {}
+            if to_int(details.get("occupied")) != 0:
+                continue
+        stopover = find_stopover(bot, origin, candidate.arr_id, reach, limit, runway)
+        if not stopover:
+            continue
+        outcome = create_route(bot, aircraft, candidate, origin_id=hub_id, stopover=stopover,
+                               stopover_economics=economics, allow_duplicates=allow_duplicates)
+        if outcome != "none":
+            return outcome, candidate
+    return "none", None
+
+
 def create_routes(bot: "Bot", max_routes: int) -> int:
     cfg = bot.config
     parked = read_parked(bot)
@@ -801,12 +828,14 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
     used_pairs: set[str] = set()
     registry = RouteRegistry()
     allow_duplicates = cfg.get_bool("options", "allow_duplicate_routes", True)
+    allow_stopover = cfg.get_bool("options", "route_stopover")
 
     for aircraft in parked:
         if created >= max_routes or bot.stopping:
             break
         # Big aircraft (150+ seats) earn most on long routes; never search beyond what the model can fly.
-        limit = max_distance_big if aircraft.seats >= BIG_SEATS else max_distance
+        configured_limit = max_distance_big if aircraft.seats >= BIG_SEATS else max_distance
+        limit = configured_limit
         known = find_model(market, aircraft.model)
         if known and known.get("range"):
             limit = min(limit, int(known["range"]))
@@ -814,33 +843,48 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
         bot.open_popup("routes_main.php", "Routes", "nav_routes")
         bot.ajax("research_main.php", "routeAction")
         hub_id = bot.js("return $('#hubSelect').val() || (typeof depId !== 'undefined' ? String(depId) : null);")
+        origin = parked_specs(bot, aircraft.id) if allow_stopover else None
+        if origin:
+            owned_hubs = {hub["id"] for hub in (bot.js(_HUB_OPTIONS_JS) or [])}
+            if origin["id"] not in owned_hubs:
+                log.warning("%s: o aeroporto atual não aparece entre as bases próprias.", aircraft.reg)
+                continue
+            hub_id = origin["id"]
+            bot.js("$('#hubSelect').val(arguments[0]);", hub_id)
+            limit = min(limit, to_int(origin["range"]) or limit)
         if not hub_id:
             log.warning("Não encontrei a base de origem na busca de rotas.")
             break
+        def available(candidate):
+            return candidate.arr_id != str(hub_id) and (allow_duplicates or (
+                route_key(endpoint(hub_id), endpoint(candidate.arr_id)) not in used_pairs
+                and not registry.is_occupied(endpoint(hub_id), endpoint(candidate.arr_id), aircraft.id)
+            ))
+
+        economics = dict(
+            seats=aircraft.seats, model=known, mode=bot.mode, load_factor=bot.load_factor(),
+            fuel_price=bot.fuel_cost_basis(), co2_price=bot.co2_cost_basis(), premium=premium,
+        )
         outcome = "none"
-        # If nothing suitable comes up (range, runway), retry with shorter searches.
+        if origin and known and limit < configured_limit and not bot.stopping:
+            runway = max(min_runway, to_int(origin["runway"]) or 0) if bot.mode.key == "realism" else min_runway
+            outcome, candidate = _try_stopover(
+                bot, aircraft, origin, limit, configured_limit, runway, economics, available, allow_duplicates,
+            )
+        elif allow_stopover and not origin:
+            log.info("%s: o jogo não confirmou o aeroporto atual e o alcance para planejar uma escala.", aircraft.reg)
+        # Try direct routes when no suitable stopover was found.
         for distance in (limit, limit // 2, limit // 4):
-            if distance < 500 or bot.stopping:
+            if outcome != "none" or distance < 500 or bot.stopping:
                 break
             candidates = [
                 c for c in search_routes(bot, hub_id, distance, min_runway)
-                if c.arr_id != str(hub_id) and
-                (allow_duplicates or (
-                    route_key(endpoint(hub_id), endpoint(c.arr_id)) not in used_pairs
-                    and not registry.is_occupied(
-                        endpoint(hub_id), endpoint(c.arr_id), aircraft.id
-                    )
-                ))
+                if available(c)
             ]
             # Use the game's known demand and the latest cached aircraft model to
             # estimate daily revenue minus fuel/CO2; missing model data keeps the
             # original demand-based ordering (no fabricated fuel/speed values).
-            ranked = rank_candidates(
-                candidates, seats=aircraft.seats, model=known, mode=bot.mode,
-                load_factor=bot.load_factor(),
-                fuel_price=bot.fuel_cost_basis(), co2_price=bot.co2_cost_basis(),
-                premium=premium,
-            )
+            ranked = rank_candidates(candidates, **economics)
             estimates = {c.arr_id: estimate for c, estimate in ranked}
             profitable = profitable_candidates(ranked)
             has_estimates = any(estimate is not None for _, estimate in ranked)
@@ -894,10 +938,6 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
                     profit_per_day=estimated.profit_per_day if estimated is not None else None,
                 )
                 break
-            # An occupied route is not a valid outcome: continue with a shorter
-            # search instead of giving up on this parked aircraft prematurely.
-            if outcome != "none":
-                break
         if outcome in ("created", "dry"):
             created += 1
             if not allow_duplicates:
@@ -911,14 +951,34 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
 
 def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate,
                  *, origin_id: str = "", reroute: bool = False,
-                 profit_per_day: Optional[float] = None) -> str:
-    """Returns 'created', 'dry' (dry run) or 'stop' (money or page problem)."""
+                 profit_per_day: Optional[float] = None, stopover: Optional[Stopover] = None,
+                 stopover_economics: Optional[dict] = None, allow_duplicates: bool = True) -> str:
+    """Return the outcome, including 'none' when a stopover candidate is rejected before submission."""
     bot.js("if (typeof hideFlightInfo === 'function') { hideFlightInfo(); } arrId = arguments[0];", int(candidate.arr_id))
-    panel = bot.ajax(f"new_route_info.php?id={aircraft.id}&airportId={candidate.arr_id}&mode=res", "newRouteInfo")
-    fee = to_int(bot.js(_ROUTE_FEE_JS))
+    url = f"new_route_info.php?id={aircraft.id}&airportId={candidate.arr_id}"
+    if stopover:
+        try:
+            panel = bot.ajax(f"{url}&stopoverId={stopover.id}&ferry=0", "newRouteInfo", timeout=8)
+        except TimeoutException:
+            log.warning("%s: o jogo não abriu o formulário de rota com escala.", aircraft.reg)
+            return "none"
+    else:
+        panel = bot.ajax(f"{url}&mode=res", "newRouteInfo")
+    stop = endpoint(stopover.id, code=game_code(stopover.id)) if stopover else None
+    name = f"{candidate.name} via {stop['code'] or stop['id']}" if stop else candidate.name
+    if stopover:
+        verified = read_form(bot, aircraft.id, origin_id, candidate.arr_id, stopover)
+        if not verified or not stopover_economics or (not allow_duplicates and verified[3]):
+            log.info("%s: formulário da rota com escala não confirmou %s como disponível.", aircraft.reg, name)
+            bot.js("$('#newRouteInfo').hide();")
+            return "none"
+        distance, (y, j, f), fee, _ = verified
+        candidate = replace(candidate, distance=distance, y=y, j=j, f=f)
+    else:
+        fee = to_int(bot.js(_ROUTE_FEE_JS))
     if not bot.can_spend(fee, f"a rota {candidate.name}", essential=not reroute):  # reroutes must preserve cash reserve
         bot.js("$('#newRouteInfo').hide();")
-        return "stop"
+        return "none" if stop else "stop"
 
     autoprice = panel.find_elements(By.XPATH, ".//*[@id='introAuto']")
     if autoprice:
@@ -930,10 +990,18 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
     if not prices[0]:
         log.warning("O preço automático não preencheu as passagens de %s; a rota não será criada.", candidate.name)
         bot.js("$('#newRouteInfo').hide();")
-        return "stop"
+        return "none" if stop else "stop"
+    if stop:
+        fares = tuple(to_int(price) or 0 for price in prices)
+        estimate = estimate_route(candidate, **stopover_economics, prices=fares, extra_stops=1)
+        if not estimate or estimate.profit_per_day <= 0:
+            log.info("%s: rota %s sem lucro estimado positivo com os preços do jogo.", aircraft.reg, name)
+            bot.js("$('#newRouteInfo').hide();")
+            return "none"
+        profit_per_day = estimate.profit_per_day
     reg = bot.js("return $('#routeReg').val();") or ""
     summary = (
-        f"{candidate.name} ({candidate.distance:,.0f} km, demanda Y {candidate.y} / J {candidate.j} / F {candidate.f}) "
+        f"{name} ({candidate.distance:,.0f} km, demanda Y {candidate.y} / J {candidate.j} / F {candidate.f}) "
         f"para {aircraft.reg} ({aircraft.model}), passagens ${prices[0]} / ${prices[1]} / ${prices[2]}, "
         f"matrícula {reg}, taxa da rota ${fmt(fee)}"
     )
@@ -943,27 +1011,38 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         bot.js("$('#newRouteInfo').hide();")
         return "dry"
 
-    before = bot.read_money()
+    if bot.stopping:
+        bot.js("$('#newRouteInfo').hide();")
+        return "stop"
+    origin = endpoint(origin_id, code=game_code(origin_id))
+    destination_code = game_code(candidate.arr_id, "" if stop else candidate.code)
+    destination = endpoint(candidate.arr_id, code=destination_code, name=candidate.name)
+    before = bot.read_money() if not stop else None
     bot.click_element(panel.find_element(By.XPATH, ".//*[@id='btnCreateNewRoute']"))
     response = bot.wait_text("//*[@id='routeNewAction']", timeout=15)
-    if not bot.confirm_purchase(before, fee, f"a rota {candidate.name}", "routeNewAction"):
+    if stop:
+        confirmed = confirm_stopover(bot, aircraft.id, origin, destination, stop)
+        if not confirmed:
+            log.warning("%s: o jogo ainda não confirmou a rota %s. Será conferida na próxima leitura da frota.",
+                        aircraft.reg, name)
+    else:
+        confirmed = bot.confirm_purchase(before, fee, f"a rota {candidate.name}", "routeNewAction")
+    if not confirmed:
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
     bot.spent(fee, invest=True)
     bot.count("routes")
     if origin_id:
+        origin["name"] = bot.js(
+            "var e=document.getElementById('hubSelect');"
+            "return e && e.selectedIndex>=0 ? e.options[e.selectedIndex].text : '';"
+        ) or ""
         RouteRegistry().record(
-            aircraft.id, aircraft.reg, aircraft.model,
-            endpoint(origin_id, code=game_code(origin_id), name=bot.js(
-                "var e=document.getElementById('hubSelect');"
-                "return e && e.selectedIndex>=0 ? e.options[e.selectedIndex].text : '';"
-            ) or ""), endpoint(
-                candidate.arr_id, code=game_code(candidate.arr_id, candidate.code),
-                name=candidate.name,
-            ),
+            aircraft.id, aircraft.reg, aircraft.model, origin, destination,
             source="redirecionamento" if reroute else "criacao_confirmada",
             profit_per_day=profit_per_day,
             at_base=True,
+            stopover=stop,
         )
     log.info("%s: %s. %s", "Rota alterada" if reroute else "Rota criada", summary, clean_response(response))
     bot.notify(f"🛫 <b>Rota criada</b>: {esc(summary)}.\n{esc(clean_response(response, 200))}".rstrip(), category="routes")

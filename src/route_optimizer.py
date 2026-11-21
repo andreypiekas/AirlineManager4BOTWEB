@@ -60,7 +60,8 @@ def _suggest_layout(capacity: int, demands: tuple[int, int, int],
 def estimate_route(candidate, *, seats: int, model: Optional[dict],
                    mode: GameMode, load_factor: float,
                    fuel_price: float, co2_price: float,
-                   premium: bool) -> Optional[RouteEconomics]:
+                   premium: bool, prices: Optional[tuple[int, int, int]] = None,
+                   extra_stops: int = 0) -> Optional[RouteEconomics]:
     """Rank routes with demand-limited Y/J/F sales minus fuel and CO2 costs.
 
     Return None when model data is missing, allowing the original demand sorter
@@ -85,13 +86,14 @@ def estimate_route(candidate, *, seats: int, model: Optional[dict],
     if distance < 100 or speed <= 0 or fuel_rate <= 0 or capacity <= 0 or price_fuel < 0 or price_co2 < 0:
         return None
 
-    legs = 24 / (distance / (speed * mode.speed) + TURNAROUND_H)
+    legs = 24 / (distance / (speed * mode.speed) + TURNAROUND_H * (1 + extra_stops))
     demand = (max(0, int(candidate.y)), max(0, int(candidate.j)), max(0, int(candidate.f)))
     layout = _suggest_layout(capacity, demand, legs, load, premium)
     sold = tuple(min(demand[i], layout[i] * load * legs) for i in range(3))
     # The current game UI uses its own autoprice (not the higher optimal-price
     # multipliers). Estimating higher prices before setting them would misrank.
-    revenue = sum(sold[i] * mode.fare(i, distance) for i in range(3))
+    fares = prices if prices is not None else tuple(mode.fare(i, distance) for i in range(3))
+    revenue = sum(sold[i] * fares[i] for i in range(3))
     fuel = legs * fuel_rate * ENGINE_FUEL * distance * price_fuel / 1000
     co2 = sum(sold[i] * CLASS_WEIGHTS[i] for i in range(3)) * CO2_PER_PAX_KM * distance * price_co2 / 1000
     return RouteEconomics(revenue - fuel - co2, revenue, fuel, co2, legs, layout, sold)

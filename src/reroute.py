@@ -52,9 +52,10 @@ fetch(url, {cache:'no-store', signal:controller.signal, redirect:'error'})
     if (paused === restore.classList.contains('hidden')) return null;
     const codes = Array.from(page.querySelectorAll('.col-5.bg-light span.l-text.exo'),
       e => e.textContent.trim().toUpperCase());
+    const via = page.querySelector('.col-2.bg-light .glyphicons-plane + .xs-text')?.lastChild?.textContent.trim().toUpperCase();
     const timer = page.getElementById('timer');
     const label = timer?.parentElement.textContent.trim() || '';
-    return {id, paused, codes, landed: !timer || /^(Departs in|Sale en|Parte em)\b/i.test(label)};
+    return {id, paused, codes, via, landed: !timer || /^(Departs in|Sale en|Parte em)\b/i.test(label)};
   }).then(done, () => done(null)).finally(() => clearTimeout(timer));
 """
 
@@ -112,6 +113,7 @@ class LiveRoute:
     paused: bool
     codes: tuple[str, str]
     landed: bool
+    stopover: str = ""
 
     def matches(self, relation: dict) -> bool:
         return same_route(relation, {
@@ -124,7 +126,17 @@ def _live_route(bot, aircraft_id: str) -> LiveRoute | None:
     data = bot.driver.execute_async_script(_GET, f"fleet_details.php?id={aircraft_id}", "details")
     if not data or len(data["codes"]) != 2 or not all(endpoint(code=c)["code"] for c in data["codes"]):
         return None
-    return LiveRoute(data["id"], data["paused"], tuple(data["codes"]), data["landed"])
+    return LiveRoute(data["id"], data["paused"], tuple(data["codes"]), data["landed"],
+                     data.get("via") or "")
+
+
+def confirm_stopover(bot, aircraft_id, origin, destination, stopover) -> bool:
+    relation = {"origin": origin, "destination": destination}
+    live = _check_route(
+        bot, aircraft_id,
+        lambda route: route.matches(relation) and endpoint_matches(stopover, endpoint(code=route.stopover)),
+    )
+    return bool(live and live.matches(relation) and endpoint_matches(stopover, endpoint(code=live.stopover)))
 
 
 def landed_departure(bot, row) -> str:
@@ -348,6 +360,8 @@ def replace_route(bot, registry, row, origin, destination, *, keeper_id, expecte
     first = _live_route(bot, aircraft_id)
     if not first or first.id != expected_id or not first.matches(row) or not first.landed or first.paused:
         return "troca_rota_ou_pouso_nao_confirmado"
+    if first.stopover:
+        return "troca_rota_com_escala"
     keeper = _live_route(bot, keeper_id)
     if not keeper or keeper.id == first.id or not keeper.matches(row):
         return "troca_duplicidade_nao_confirmada"

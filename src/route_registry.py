@@ -140,7 +140,8 @@ class RouteRegistry:
 
     def record(self, aircraft_id: str, registration: str, model: str,
                origin: dict, destination: dict, *, source: str = "game",
-               profit_per_day: Optional[float] = None, at_base: Optional[bool] = None) -> bool:
+               profit_per_day: Optional[float] = None, at_base: Optional[bool] = None,
+               stopover: Optional[dict] = None) -> bool:
         """Record a verified route; never overwrite another aircraft's identity."""
         aircraft_id = str(aircraft_id or "").strip()
         if not aircraft_id or route_key(origin, destination) is None:
@@ -162,6 +163,8 @@ class RouteRegistry:
             })
             if profit_per_day is not None:
                 entry["profit_per_day"] = round(float(profit_per_day), 2)
+            if stopover is not None:
+                entry["stopover"] = stopover
             if at_base is not None:
                 entry["at_base"] = bool(at_base)
                 if at_base and source == "game":
@@ -173,6 +176,8 @@ class RouteRegistry:
             if not previous or previous.get("route_key") != entry["route_key"]:
                 entry["assigned_at"] = int(time.time())
                 entry.pop("proposal", None)
+                if stopover is None:
+                    entry.pop("stopover", None)
                 data["history"].append({
                     "at": int(time.time()), "aircraft_id": aircraft_id,
                     "registration": entry["registration"], "action": "rota_registrada" if not previous else "rota_alterada",
@@ -227,7 +232,7 @@ class RouteRegistry:
                     "action": "rota_removida_no_jogo", "previous": row["route_key"],
                 })
                 data["history"] = data["history"][-_MAX_HISTORY:]
-            for field in ("origin", "destination", "route_key", "proposal", "profit_per_day",
+            for field in ("origin", "destination", "stopover", "route_key", "proposal", "profit_per_day",
                           "game_verified_at"):
                 row.pop(field, None)
             row.update({
