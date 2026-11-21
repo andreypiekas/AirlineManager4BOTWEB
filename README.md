@@ -119,6 +119,13 @@ retidas e as partidas confirmadas.
 
 [Guia de controle de rotas e decolagens](docs/CONTROLE_ROTAS.md)
 
+## Próxima implementação
+
+[Roadmap de Hubs e Aeronaves](docs/ROADMAP_HUBS_AERONAVES.md). O painel
+vai reunir as bases adquiridas, a frota e o lucro estimado por aeroporto.
+Também vai indicar onde alocar a próxima aeronave e comparar aeroportos
+para aquisição de novos hubs.
+
 ## Interface — AM/04 Torre de Controle
 
 As capturas foram geradas pelo aplicativo com uma companhia de demonstração.
