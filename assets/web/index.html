@@ -440,6 +440,8 @@ footer strong { font-weight: 600; color: var(--aqua); }
 .hub-research-reasons { margin:6px 0 0; padding-left:20px; font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
 .hub-research-reasons li { margin:4px 0; }
 #hubResearchQueueList .hub-research-reasons li { padding:2px 0; border:0; }
+.hub-research-coverage { display:flex; flex-wrap:wrap; gap:8px; padding:0; list-style:none; }
+.hub-research-coverage li { border:1px solid var(--border); padding:8px 10px; font-size:12px; overflow-wrap:anywhere; }
 .hub-policy-reasons { margin:0 0 14px; }
 .hub-state { display:inline-flex; padding:4px 9px; border:1px solid var(--border-strong); color:var(--muted);
   font:700 11px/1.5 "Cascadia Mono", Consolas, monospace; }
@@ -725,6 +727,7 @@ footer strong { font-weight: 600; color: var(--aqua); }
           <p id="hubResearchQueueStatus" class="hub-section-note" role="status" aria-live="polite"></p>
           <p id="hubResearchPolicyStatus" class="hub-section-note" role="status" aria-live="polite"></p>
           <ul id="hubResearchPolicyReasons" class="hub-research-reasons hub-policy-reasons" aria-label="Bloqueios da política de investimento" data-t-aria-label="Bloqueios da política de investimento"></ul>
+          <ul id="hubResearchCoverageList" class="hub-research-coverage" aria-label="Cobertura das pesquisas por hub" data-t-aria-label="Cobertura das pesquisas por hub"></ul>
           <ul id="hubResearchQueueList" class="hub-aircraft-list" aria-label="Cenários aguardando pesquisa" data-t-aria-label="Cenários aguardando pesquisa"></ul>
         </details>
       </div>
@@ -917,6 +920,10 @@ const EN = {
   "Próximas pesquisas de aeronaves e rotas": "Next aircraft and route research",
   "Pesquisas sugeridas": "Suggested research tasks",
   "Hubs com amostras": "Hubs with samples",
+  "Cobertura das pesquisas por hub": "Research coverage by hub",
+  "Sem pesquisa de rota": "No route research",
+  "Pesquisa de rota iniciada": "Route research started",
+  "Amostras de rotas": "Route samples",
   "Rotas observadas": "Observed routes",
   "Cobertura parcial": "Partial coverage",
   "Pesquisa ainda pendente": "Research pending",
@@ -2065,6 +2072,18 @@ function renderHubRecommendations(report) {
     const item = document.createElement("li");
     item.textContent = hubResearchBlocker(reason);
     policyReasons.append(item);
+  }
+  const coverageList = $("hubResearchCoverageList"); coverageList.replaceChildren();
+  for (const hub of Array.isArray(researchQueue.hub_coverage) ? researchQueue.hub_coverage : []) {
+    const item = document.createElement("li");
+    const label = String(hub.hub_code || hub.hub_id || tr("Sem dados"));
+    const samples = Number.isSafeInteger(hub.sampled_routes) && hub.sampled_routes >= 0
+      ? hub.sampled_routes : 0;
+    item.textContent = label + " · " +
+      (hub.status === "pesquisa_iniciada" ? tr("Pesquisa de rota iniciada") : tr("Sem pesquisa de rota")) +
+      " · " + tr("Amostras de rotas") + ": " + nf.format(samples) +
+      " · " + tr("Cobertura parcial");
+    coverageList.append(item);
   }
   const researchList = $("hubResearchQueueList"); researchList.replaceChildren();
   if (!researchItems.length && !researchBlockers.length) {

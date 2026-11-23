@@ -8,9 +8,17 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
+
+from expansion_economics import (
+    _SOURCES as A3_PROVENANCE_SOURCES,
+    _SUBJECTS as A3_PROVENANCE_SUBJECTS,
+    rank_expansion_economics,
+)
+from opportunity_models import DEFAULT_MAX_AGE_SECONDS
 
 
 DEFAULT_PROFIT_WEIGHT = 0.6
@@ -297,6 +305,413 @@ def compare_portfolio(
             "confidence_weight": confidence_weight,
             "diversification_weight": diversification_weight,
         },
+        "read_only": True,
+        "execution_available": False,
+    }
+
+
+# A4 consumes completed A3 evaluations. The separate entry point leaves the
+# legacy dashboard comparison, including its input and output contract, intact.
+_A4_CONTROL_SOURCES = {
+    "pending_orders_incremental": "investment_journal",
+    "future_commitments_incremental": "investment_journal",
+    "unrouted_aircraft_count": "game_fleet_scan",
+    "operational_reserve": "investment_policy",
+    "cycle_spent": "investment_journal",
+    "cycle_limit": "investment_policy",
+    "period_spent": "investment_journal",
+    "period_limit": "investment_policy",
+}
+
+
+def _audited_value(
+    proof: object, *, source: str, profile_id: str, snapshot_id: str,
+    now: float, hub_id: str | None = None, economics_id: str | None = None,
+) -> float | None:
+    """Accept only a current, identity-bound numeric observation."""
+    if not isinstance(proof, Mapping):
+        return None
+    stamp = _number(proof.get("observed_at"), positive=True)
+    value = _number(proof.get("value"))
+    if (proof.get("verified") is not True or proof.get("source") != source
+            or proof.get("profile_id") != profile_id
+            or proof.get("snapshot_id") != snapshot_id
+            or stamp is None or value is None
+            or not 0 <= now - stamp <= DEFAULT_MAX_AGE_SECONDS):
+        return None
+    if hub_id is not None and proof.get("hub_id") != hub_id:
+        return None
+    if economics_id is not None and proof.get("economics_id") != economics_id:
+        return None
+    return value
+
+
+def _audited_a3_cash(
+    row: Mapping[str, Any], *, profile_id: str, snapshot_id: str, now: float,
+) -> tuple[float, float, float] | None:
+    """Reconcile the same A3 cash snapshot across competing alternatives."""
+    provenance = row.get("provenance")
+    identity = row.get("identity")
+    if (not isinstance(provenance, Mapping)
+            or set(provenance) != set(A3_PROVENANCE_SOURCES)
+            or not isinstance(identity, Mapping)):
+        return None
+    # A3 has not exported a public provenance validator. Verify its v1 field,
+    # source, subject, time and isolation contracts at this read-only boundary.
+    for name, source in A3_PROVENANCE_SOURCES.items():
+        proof = provenance.get(name)
+        if not isinstance(proof, Mapping):
+            return None
+        stamp = _number(proof.get("observed_at"), positive=True)
+        if (proof.get("verified") is not True or proof.get("source") != source
+                or proof.get("profile_id") != profile_id
+                or proof.get("snapshot_id") != snapshot_id
+                or stamp is None or not 0 <= now - stamp <= DEFAULT_MAX_AGE_SECONDS
+                or any(proof.get(field) != identity.get(field)
+                       for field in A3_PROVENANCE_SUBJECTS[name])):
+            return None
+    cash = provenance.get("cash")
+    if not isinstance(cash, Mapping) or not isinstance(cash.get("value"), Mapping):
+        return None
+    if (cash.get("source") != "game_snapshot" or cash.get("verified") is not True
+            or cash.get("profile_id") != profile_id
+            or cash.get("snapshot_id") != snapshot_id):
+        return None
+    stamp = _number(cash.get("observed_at"), positive=True)
+    values = cash["value"]
+    amounts = tuple(_number(values.get(key)) for key in ("available", "committed", "reserve"))
+    capital_costs = row.get("capital_costs")
+    if not isinstance(capital_costs, Mapping):
+        return None
+    investment = _number(capital_costs.get("total_investment"), positive=True)
+    after = _number(row.get("cash_after_purchase"))
+    required = _number(row.get("cash_required_reserve"))
+    oldest = _number(row.get("observed_at_oldest"), positive=True)
+    oldest_proof = min(proof["observed_at"] for proof in provenance.values())
+    if (stamp is None or not 0 <= now - stamp <= DEFAULT_MAX_AGE_SECONDS
+            or oldest is None or not 0 <= now - oldest <= DEFAULT_MAX_AGE_SECONDS
+            or abs(oldest - oldest_proof) > 0.001
+            or any(amount is None for amount in amounts)
+            or investment is None or after is None or required is None):
+        return None
+    available, committed, reserve = amounts
+    if (abs(after - (available - committed - investment)) > 0.011
+            or abs(required - reserve) > 0.011):
+        return None
+    return available, committed, reserve
+
+
+def _a4_risk_index(row: Mapping[str, Any], profit: float) -> float | None:
+    """Downside protection from A3's explicit stress scenarios, not a game risk quote."""
+    stress = row.get("sensitivity")
+    if not isinstance(stress, Mapping):
+        return None
+    downside = []
+    for name in ("fuel_price", "co2_price", "occupancy", "demand"):
+        scenario = stress.get(name)
+        if not isinstance(scenario, Mapping):
+            return None
+        value = scenario.get("daily_net_profit_estimate")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        try:
+            value = float(value)
+        except (OverflowError, ValueError):
+            return None
+        if not math.isfinite(value):
+            return None
+        downside.append(value)
+    return min(1.0, max(0.0, min(downside) / profit))
+
+
+def compare_audited_portfolio(
+    evaluations: Sequence[Mapping[str, Any]], *, profile_id: str, snapshot_id: str,
+    controls: Mapping[str, Any] | None = None,
+    hub_capacity: Mapping[str, Any] | None = None,
+    diversification_evidence: Mapping[str, Any] | None = None,
+    confidence_evidence: Mapping[str, Any] | None = None,
+    fleet_coverage_verified: bool = False,
+    research_coverage_verified: bool = False,
+    commitments_verified: bool = False,
+    max_single_investment: object = None,
+    min_daily_profit: object = 0,
+    max_payback_days: object = None,
+    profit_weight: float = DEFAULT_PROFIT_WEIGHT,
+    efficiency_weight: float = DEFAULT_EFFICIENCY_WEIGHT,
+    return_weight: float = 0.0,
+    risk_weight: float = DEFAULT_RISK_WEIGHT,
+    confidence_weight: float = DEFAULT_CONFIDENCE_WEIGHT,
+    diversification_weight: float = DEFAULT_DIVERSIFICATION_WEIGHT,
+    policy_valid: bool = True,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Rank audited A3 economics across hubs without authorizing purchases.
+
+    ``controls`` contains independent verified, snapshot-bound envelopes for
+    the names in ``_A4_CONTROL_SOURCES``. Pending orders and future commitments
+    are *additional amounts not yet included* in A3 ``cash.committed``. They
+    must be reconciled by the ledger before setting ``commitments_verified``.
+    ``hub_capacity`` contains one ``game_hub_select`` envelope per hub with
+    available hangar slots. Unknown controls or slots exclude a purchase.
+
+    Risk, when weighted, uses the worst evidenced A3 stress scenario relative
+    to the base profit. Optional confidence and diversification require their
+    own normalized [0, 1] verified observations keyed by ``economics_id``.
+    No unstated numerical proxy is constructed from hub size or model name.
+    """
+    now = time.time() if now is None else now
+    blockers: list[str] = []
+    excluded: Counter[str] = Counter()
+    if _number(now, positive=True) is None or not profile_id or not snapshot_id:
+        blockers.append("identidade_ou_relogio_invalido")
+        now = 0
+    if policy_valid is not True:
+        blockers.append("politica_invalida")
+    for verified, reason in (
+        (fleet_coverage_verified, "cobertura_frota_a_confirmar"),
+        (research_coverage_verified, "cobertura_pesquisa_a_confirmar"),
+        (commitments_verified, "compromissos_a_conciliar"),
+    ):
+        if verified is not True:
+            blockers.append(reason)
+
+    weights = {
+        "profit": _number(profit_weight),
+        "capital_efficiency": _number(efficiency_weight),
+        "return": _number(return_weight),
+        "risk": _number(risk_weight),
+        "confidence": _number(confidence_weight),
+        "diversification": _number(diversification_weight),
+    }
+    total_weight = (math.fsum(weights.values())
+                    if all(value is not None for value in weights.values()) else None)
+    minimum_profit = _number(min_daily_profit)
+    maximum_payback = (_number(max_payback_days, positive=True)
+                       if max_payback_days is not None else None)
+    single_limit = _number(max_single_investment, positive=True)
+    if (total_weight is None or not math.isfinite(total_weight) or total_weight <= 0
+            or minimum_profit is None or single_limit is None
+            or (max_payback_days is not None and maximum_payback is None)):
+        blockers.append("criterios_planejamento_invalidos")
+
+    controls = controls if isinstance(controls, Mapping) else {}
+    observed = {
+        name: _audited_value(controls.get(name), source=source, profile_id=profile_id,
+                             snapshot_id=snapshot_id, now=now)
+        for name, source in _A4_CONTROL_SOURCES.items()
+    }
+    for name, value in observed.items():
+        if value is None:
+            blockers.append(f"evidencia_{name}_a_confirmar")
+    for name in ("unrouted_aircraft_count",):
+        if observed[name] is not None and not observed[name].is_integer():
+            blockers.append(f"evidencia_{name}_invalida")
+    if observed["unrouted_aircraft_count"] is not None and observed["unrouted_aircraft_count"] > 0:
+        blockers.append("aeronaves_sem_rota_a_resolver")
+
+    valid_evaluations = (isinstance(evaluations, Sequence)
+                         and not isinstance(evaluations, (str, bytes)))
+    if not valid_evaluations:
+        blockers.append("formato_avaliacoes_a3_invalido")
+    raw_rows = list(evaluations) if valid_evaluations else []
+    # A3's ranking expects capital_costs to be a mapping. Reject malformed
+    # payloads before handing them to that validator, including truthy scalars.
+    safe_rows = [row for row in raw_rows if not isinstance(row, Mapping)
+                 or isinstance(row.get("capital_costs"), Mapping)]
+    excluded_a3 = len(raw_rows) - len(safe_rows)
+    validated = rank_expansion_economics(safe_rows)
+    excluded_a3 += validated["excluded_count"]
+    if excluded_a3:
+        blockers.append("avaliacoes_a3_invalidas_ou_conflitantes")
+        excluded["avaliacao_a3_invalida_ou_conflitante"] += excluded_a3
+
+    prepared = []
+    cash_baselines = set()
+    for row in validated["alternatives"]:
+        if (type(row.get("schema_version")) is not int or row["schema_version"] != 1
+                or row.get("profile_id") != profile_id
+                or row.get("snapshot_id") != snapshot_id or row.get("excluded_costs") != []
+                or not isinstance(row.get("plan_id"), str) or not row["plan_id"]
+                or not isinstance(row.get("economics_id"), str) or not row["economics_id"]
+                or row["identity"]["hub_id"] != row["identity"]["origin_id"]):
+            excluded["identidade_snapshot_ou_custos_a_confirmar"] += 1
+            blockers.append("avaliacoes_a3_incompativeis")
+            continue
+        cash = _audited_a3_cash(row, profile_id=profile_id, snapshot_id=snapshot_id, now=now)
+        if cash is None:
+            excluded["saldo_a3_sem_prova_atual"] += 1
+            blockers.append("saldo_a3_a_confirmar")
+            continue
+        cash_baselines.add(cash)
+        prepared.append(row)
+    if len(cash_baselines) > 1:
+        blockers.append("saldos_a3_contraditorios")
+    baseline = next(iter(cash_baselines)) if len(cash_baselines) == 1 else None
+    budget = None
+    if baseline is not None and all(value is not None for value in observed.values()):
+        available, committed, reserve = baseline
+        remaining_cash = (available - committed - observed["pending_orders_incremental"]
+                          - observed["future_commitments_incremental"]
+                          - max(reserve, observed["operational_reserve"]))
+        budget = max(0.0, min(remaining_cash,
+                              observed["cycle_limit"] - observed["cycle_spent"],
+                              observed["period_limit"] - observed["period_spent"]))
+        if remaining_cash <= 0:
+            blockers.append("saldo_apos_compromissos_insuficiente")
+        if observed["cycle_spent"] >= observed["cycle_limit"]:
+            blockers.append("limite_ciclo_esgotado")
+        if observed["period_spent"] >= observed["period_limit"]:
+            blockers.append("limite_periodo_esgotado")
+
+    hub_capacity = hub_capacity if isinstance(hub_capacity, Mapping) else {}
+    confidence_evidence = confidence_evidence if isinstance(confidence_evidence, Mapping) else {}
+    diversification_evidence = (diversification_evidence
+                                if isinstance(diversification_evidence, Mapping) else {})
+    candidates = []
+    for row in prepared:
+        identity = row["identity"]
+        hub_id = identity["hub_id"]
+        economics_id = row["economics_id"]
+        components = row["components"]
+        investment = _number(row["capital_costs"]["total_investment"], positive=True)
+        profit = _number(components["daily_net_profit_estimate"], positive=True)
+        payback = _number(components["payback_days"], positive=True)
+        roi = _number(components.get("roi_365d_percent"), positive=True)
+        if any(value is None for value in (investment, profit, payback, roi)):
+            excluded["economia_a3_invalida"] += 1
+            blockers.append("economia_a3_a_confirmar")
+            continue
+        if abs(roi - profit * 36500 / investment) > 0.011:
+            excluded["roi_a3_contraditorio"] += 1
+            blockers.append("roi_a3_a_confirmar")
+            continue
+        if minimum_profit is None or profit < minimum_profit:
+            excluded["lucro_abaixo_do_minimo"] += 1
+            continue
+        if maximum_payback is not None and payback > maximum_payback:
+            excluded["retorno_acima_do_limite"] += 1
+            continue
+        if single_limit is None or investment > single_limit:
+            excluded["limite_por_aquisicao"] += 1
+            continue
+        if budget is None or investment > budget:
+            excluded["orcamento_global_insuficiente_ou_desconhecido"] += 1
+            continue
+        slots = _audited_value(hub_capacity.get(hub_id), source="game_hub_select",
+                               profile_id=profile_id, snapshot_id=snapshot_id, now=now,
+                               hub_id=hub_id)
+        if slots is None or not slots.is_integer():
+            blockers.append("vagas_hangar_a_confirmar")
+            excluded["vagas_hangar_a_confirmar"] += 1
+            continue
+        if slots < 1:
+            excluded["hangar_sem_vaga"] += 1
+            continue
+
+        indexes = {}
+        if weights["risk"] is not None and weights["risk"] > 0:
+            indexes["risk"] = _a4_risk_index(row, profit)
+        for dimension, source, evidence in (
+            ("confidence", "game_research", confidence_evidence),
+            ("diversification", "game_fleet_scan", diversification_evidence),
+        ):
+            if weights[dimension] is not None and weights[dimension] > 0:
+                value = _audited_value(evidence.get(economics_id), source=source,
+                                       profile_id=profile_id, snapshot_id=snapshot_id,
+                                       now=now, hub_id=hub_id, economics_id=economics_id)
+                indexes[dimension] = value if value is not None and value <= 1 else None
+        if any(index is None for index in indexes.values()):
+            for name, index in indexes.items():
+                if index is None:
+                    blockers.append(f"evidencia_{name}_a_confirmar")
+            excluded["evidencia_ranking_incompleta"] += 1
+            continue
+        candidates.append({
+            "economics_id": economics_id,
+            "plan_id": row["plan_id"],
+            "profile_id": profile_id,
+            "snapshot_id": snapshot_id,
+            "identity": dict(identity),
+            "configuration_yjf": dict(row["configuration_yjf"]),
+            "hub_id": hub_id,
+            "investment": investment,
+            "profit_per_day": profit,
+            "payback_days": payback,
+            "roi_365d_percent": roi,
+            "capital_efficiency_per_day": profit / investment,
+            **{f"{key}_index": value for key, value in indexes.items()},
+        })
+
+    if candidates and "criterios_planejamento_invalidos" not in blockers:
+        maxima = {
+            "profit": max(item["profit_per_day"] for item in candidates),
+            "capital_efficiency": max(item["capital_efficiency_per_day"] for item in candidates),
+            "return": max(item["roi_365d_percent"] for item in candidates),
+        }
+        for item in candidates:
+            indexes = {
+                "profit": item["profit_per_day"] / maxima["profit"],
+                "capital_efficiency": item["capital_efficiency_per_day"] / maxima["capital_efficiency"],
+                "return": item["roi_365d_percent"] / maxima["return"],
+                **{key: item[f"{key}_index"] for key in
+                   ("risk", "confidence", "diversification") if f"{key}_index" in item},
+            }
+            components = {name: round(value * weights[name] / total_weight, 8)
+                          for name, value in indexes.items() if weights[name] > 0}
+            item["score_components"] = components
+            item["score"] = round(math.fsum(components.values()), 8)
+        candidates.sort(key=lambda item: (
+            -item["score"], -item["profit_per_day"], item["payback_days"],
+            item["investment"],
+            tuple(item["identity"][key] for key in
+                  ("hub_id", "origin_id", "destination_id", "model_id", "engine_id")),
+            tuple(item["configuration_yjf"][key] for key in ("y", "j", "f")),
+            item["economics_id"],
+        ))
+    else:
+        candidates = []
+
+    by_hub: dict[str, list[dict[str, Any]]] = {}
+    for item in candidates:
+        by_hub.setdefault(item["hub_id"], []).append(item)
+    best_by_hub = [
+        {"hub_id": hub, "best": items[0], "alternatives": items}
+        for hub, items in by_hub.items()
+    ]
+    runner = candidates[1] if len(candidates) > 1 else None
+    explanation = None
+    if candidates:
+        winner = candidates[0]
+        explanation = {
+            "winner_economics_id": winner["economics_id"],
+            "runner_up_economics_id": runner["economics_id"] if runner else None,
+            "score_difference": round(winner["score"] - runner["score"], 8) if runner else None,
+            "profit_difference_per_day": (round(winner["profit_per_day"] - runner["profit_per_day"], 2)
+                                          if runner else None),
+            "investment_difference": (round(winner["investment"] - runner["investment"], 2)
+                                      if runner else None),
+            "ordering": "weighted_normalized_profit_efficiency_return_and_evidenced_risk",
+            "tie_break": "profit_desc_payback_asc_investment_asc_identity",
+        }
+    blockers = list(dict.fromkeys(blockers))
+    return {
+        "status": "inconclusivo" if blockers else "comparacao_concluida",
+        "decision": "nao_comprar" if blockers or not candidates else "sugestao_para_analise",
+        "blocking_reasons": blockers,
+        "best": candidates[0] if candidates else None,
+        "best_by_hub": best_by_hub,
+        "alternatives": candidates,
+        "evaluated_count": len(raw_rows),
+        "eligible_count": len(candidates),
+        "excluded": dict(sorted(excluded.items())),
+        "budget_after_reservations_and_limits": budget,
+        "criteria": {
+            "max_single_investment": single_limit,
+            "minimum_daily_profit": minimum_profit,
+            "maximum_payback_days": maximum_payback,
+            **{f"{name}_weight": value for name, value in weights.items()},
+        },
+        "why_best": explanation,
         "read_only": True,
         "execution_available": False,
     }

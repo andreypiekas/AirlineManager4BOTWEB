@@ -1,6 +1,7 @@
 """Cached hub and aircraft observations only schedule research, never spending."""
 
 import json
+from copy import deepcopy
 
 import pytest
 
@@ -96,6 +97,7 @@ def _engines(*, observed_at=NOW, model="A320", engine_id="1"):
         "source": "game_aircraft_order_detail", "model_id": "11", "model": model,
         "observed_at": observed_at, "engine_prices_verified": False,
         "model_detail_identity_verified": False,
+        "selected_engine_id": engine_id,
         "variants": [
             {"engine_id": engine_id, "label": "Trent <prova>", "available": True,
              "selected": True, "speed": 905, "fuel": 12.1},
@@ -124,6 +126,50 @@ def test_research_queue_schedules_distinct_engine_variants_across_owned_hubs():
         assert "identidade_modelo_detalhe_a_confirmar" in row["pending"]
         if row["engine_id"] == "2":
             assert "motor_indisponivel" in row["pending"]
+
+
+def test_engine_selection_and_confirmed_model_identity_must_match_observation():
+    verified = _engines()
+    verified["models"]["11"].update(
+        observed_model_id="11", model_detail_identity_verified=True,
+    )
+    result = build_owned_hub_research_queue(
+        _inventory(), [_sample()], _market(), engines=verified, now=NOW,
+    )
+    assert result["items"][0]["engine_id"] == "1"
+    assert result["items"][0]["evidence"]["engine"]["observed_model_id"] == "11"
+    assert result["items"][0]["evidence"]["engine"]["selected_engine_id"] == "1"
+    assert result["items"][0]["evidence"]["engine"]["model_detail_identity_verified"] is True
+
+    for changes in (
+        {"observed_model_id": None},
+        {"observed_model_id": "22"},
+        {"selected_engine_id": "2"},
+        {"selected_engine_id": None},
+        {"model_detail_identity_verified": "true"},
+    ):
+        corrupted = deepcopy(verified)
+        corrupted["models"]["11"].update(changes)
+        report = build_owned_hub_research_queue(
+            _inventory(), [_sample()], _market(), engines=corrupted, now=NOW,
+        )
+        assert report["items"][0]["engine_id"] is None
+        assert "motor_a_pesquisar" in report["items"][0]["pending"]
+
+
+def test_hub_coverage_lists_owned_hubs_even_without_route_samples():
+    result = build_owned_hub_research_queue(
+        _inventory(), [_sample()], _market(), now=NOW,
+    )
+    assert result["hub_coverage"] == [
+        {"hub_id": "2926", "hub_code": "XAP", "sampled_routes": 1,
+         "last_route_observed_at": NOW, "coverage": "partial",
+         "status": "pesquisa_iniciada"},
+        {"hub_id": "2941", "hub_code": "GRU", "sampled_routes": 0,
+         "last_route_observed_at": None, "coverage": "partial",
+         "status": "nao_pesquisado"},
+    ]
+    assert result["purchase_eligible"] is False
 
 
 @pytest.mark.parametrize("engines", [

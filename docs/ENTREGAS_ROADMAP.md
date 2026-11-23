@@ -1,5 +1,36 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A8, aquisição simulada de hub em duas etapas (G0)
+
+**Objetivo:** demonstrar, sem acessar o jogo, a reserva durável de uma intenção de compra de hub e a reconciliação independente de propriedade antes do planejamento de uma aeronave para a nova base.
+
+### Implementação e fontes
+
+- **`src/hub_purchase.py`:** `SimulatedHubExecutor` usa o diário persistente `InvestmentJournal` no ambiente de simulação, lock por perfil, limites por compra/dia, aprovação explícita ou flag separada de hub, pré-validação imediata do hub selecionado, custo final, caixa, reserva e pontos. `SimulatedHubGateway` mantém um registro local de resultados simulados em SQLite para provar retomada sem reenviar a compra. Resultado incerto fica `UNKNOWN`/`SUBMITTED` até conciliação, sem novo envio. `validate_aircraft_after_hub()` só libera a **etapa de análise** da aeronave após `CONFIRMED`, novo snapshot, identidade de perfil/hub e inventário de hubs próprio com cobertura completa e timestamp posterior à confirmação.
+- **`tests/test_hub_purchase.py`:** sete cenários de testes exercitam aprovação, seleção, preço, saldo, pontos, isolamento, recusa, timeout, queda de processo, retomada sem compra duplicada, propriedade verificada e bloqueio de planejamento com inventário parcial/antigo.
+
+### Gates e limitações
+
+- **G0 — contrato simulado, testado localmente.** O gateway é fictício e não possui Selenium, integração HTTP, acesso ao jogo ou execução de compra real. A etapa dois produz somente o resultado `ready` para pesquisa e validação futura. Ainda faltam coleta real de preços/seleção do hub, confirmação de posse pós-compra no jogo, recálculo da demanda, rotas, motor e caixa, e autorização individual para o estágio G5.
+- **Reversão:** remover `src/hub_purchase.py` e `tests/test_hub_purchase.py` ou reverter o commit desta entrega. Os defaults de investimento, o código legado de compras e as opções de produção permanecem inalterados. Nenhuma compra, implantação ou envio Telegram foi executado.
+
+## 2026-11-23 — Autonomia Total, rastreio por hub, auditoria global A4 e relatórios A6 (G0)
+
+**Objetivo:** conectar os contratos de evidência de A1/A2 com um planejador de portfólio global baseado nos resultados auditados de A3 e tornar o relatório de expansão A6 verificável e seguro para publicação futura.
+
+### Implementação e fontes
+
+- **A1/A2 — `src/owned_hub_research_feed.py`:** a fila rejeita catálogos com divergência entre `model_id` e `observed_model_id`, indicação inválida de identidade verificada ou `selected_engine_id` incompatível com a variante selecionada. A evidência do motor expõe os IDs observados sem transformar preço desconhecido em aprovação. O mapa `hub_coverage` relaciona todos os hubs próprios, inclusive aqueles sem amostra, com contagem, última observação e situação individual. Todas as coberturas seguem `partial`.
+- **A2/A7 — `assets/web/index.html`:** a fila de pesquisas apresenta cobertura por hub e quantidade de rotas observadas, com estados distintos para pesquisa iniciada e ausente. Os nomes provenientes das observações são inseridos com `textContent`, e a interface inclui os textos PT-BR/inglês.
+- **A4 — `src/portfolio_planner.py`:** `compare_audited_portfolio()` classifica alternativas globais de A3 por hub, rota, modelo, variante de motor e configuração Y/J/F, apresenta melhor proposta por base e motivo da classificação. O orçamento é limitado por caixa comprovado, compromissos incrementais reconciliados, reserva, limite por compra, gasto de ciclo/período e vagas verificadas. Exige procedência vinculada a perfil/snapshot, validade temporal, varredura e pesquisa comprovadas. Combina lucro, eficiência do capital, retorno e dimensões opcionais de risco, confiança e diversificação com pesos explícitos. Ausência ou contradição de provas resulta em comparação inconclusiva e decisão `nao_comprar`.
+- **A6 — `src/expansion_reporting.py`:** relatório somente leitura separa varredura conclusiva de hubs próprios, catálogo externo insuficiente e recomendações externas comprovadas. Até três alternativas exibem hub, modelo, motor, rota, custos, retorno, fontes e horário UTC das observações. Evidência aninhada de outro perfil ou snapshot não pode entrar no ranking. Um catálogo externo incompleto gera `pesquisa_externa_pendente`, sem aviso de recomendação. A deduplicação de mensagens ignora simples atualização do horário e percebe alteração relevante de fonte.
+
+### Testes, gates e limites
+
+- Regressões acrescentadas em `tests/test_owned_hub_research_feed.py`, `tests/test_hubs_dashboard_ui.py`, `tests/test_portfolio_planner.py` e `tests/test_expansion_reporting.py`. A suíte Windows completa com exclusão do instalador POSIX, Ruff, compilação Python e `git diff --check` finalizaram com código de saída zero em 23/11/2026.
+- **G0 — implementação testada localmente.** A4 ainda requer produtores de observações reais para caixa, compromissos futuros, vagas, demanda residual e custos. A6 requer inventário externo verificável e varredura própria conclusiva. A identidade do modelo/motor, o preço após seleção, a associação permanente de base, `#hubSelection` e a pesquisa de rotas ainda dependem de verificação em sessão autenticada. Nenhuma homologação no jogo, compra, mensagem Telegram, implantação, promoção à `main` ou alteração da PR #44 foi realizada nesta entrega.
+- **Compatibilidade e reversão:** o comparador existente `compare_portfolio()` permanece disponível aos chamadores atuais e o comparador auditado é uma entrada adicional. Novas decisões continuam somente leitura com `execution_available=false`. A política `[investment]` permanece desligada por padrão. Reverter pelo commit da branch `codex/autonomia-a0-a1-20261122`, verificando dependências posteriores. Arquivos envolvidos são os quatro módulos e quatro testes descritos acima, além deste histórico.
+
 ## 2026-11-23 — Autonomia Total, economia auditável, conciliação segura, painel e calibração A3/A5/A7/A9 (G0)
 
 **Escopo:** aprofundar os módulos independentes do planejador global, ampliar a resistência do executor simulado a concorrência e reinício e deixar evidentes os impedimentos na interface.

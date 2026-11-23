@@ -86,6 +86,12 @@ def _engine_variants(engines: dict, model: dict, now: int) -> tuple[list[dict], 
             or not _fresh(row.get("observed_at"), now)
             or row.get("engine_prices_verified") is not False):
         return [], None
+    observed_model_id = row.get("observed_model_id")
+    identity_verified = row.get("model_detail_identity_verified", False)
+    if (observed_model_id is not None and observed_model_id != model["id"]
+            or type(identity_verified) is not bool
+            or identity_verified and observed_model_id != model["id"]):
+        return [], None
     variants = row.get("variants")
     if not isinstance(variants, list) or not 0 < len(variants) <= 100:
         return [], None
@@ -108,10 +114,15 @@ def _engine_variants(engines: dict, model: dict, now: int) -> tuple[list[dict], 
                        "engine_fuel": _positive_number(item.get("fuel"))})
     if (sum(item["engine_selected"] for item in result) > 1
             or (len(result) > 1 and not any(item["engine_selected"] for item in result))
-            or any(item["engine_selected"] and not item["engine_available"] for item in result)):
+            or any(item["engine_selected"] and not item["engine_available"] for item in result)
+            or row.get("selected_engine_id") != next(
+                (item["engine_id"] for item in result if item["engine_selected"]), None
+            )):
         return [], None
     return result, {"source": row["source"], "observed_at": row["observed_at"],
-                    "model_detail_identity_verified": row.get("model_detail_identity_verified") is True,
+                    "observed_model_id": observed_model_id,
+                    "selected_engine_id": row.get("selected_engine_id"),
+                    "model_detail_identity_verified": identity_verified,
                     "engine_prices_verified": False}
 
 
@@ -234,11 +245,22 @@ def build_owned_hub_research_queue(
             })
 
     has_more = len(queue) > max_items
+    hub_coverage = [
+        {"hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
+         "sampled_routes": len(samples_by_hub[hub_id]),
+         "last_route_observed_at": max(
+             (item["observed_at"] for item in samples_by_hub[hub_id]), default=None
+         ),
+         "coverage": "partial",
+         "status": "pesquisa_iniciada" if samples_by_hub[hub_id] else "nao_pesquisado"}
+        for hub_id in sorted(hubs, key=int)
+    ]
     return {
         "source": "derived_research_queue", "read_only": True,
         "coverage": "partial", "purchase_eligible": False,
         "owned_hubs": len(hubs), "sampled_hubs": len(samples_by_hub),
         "sampled_routes": sum(len(rows) for rows in samples_by_hub.values()),
+        "hub_coverage": hub_coverage,
         "market_models": len(models), "market_observed_at": market.get("observed_at"),
         "items": queue[:max_items], "has_more": has_more,
         "blocking_reasons": blockers,

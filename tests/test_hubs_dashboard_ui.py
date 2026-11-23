@@ -260,6 +260,9 @@ const translations = {
   'Saldo a confirmar.': 'Cash balance pending verification.',
   'Pesquisas sugeridas': 'Suggested research tasks',
   'Hubs com amostras': 'Hubs with samples',
+  'Pesquisa de rota iniciada': 'Route research started',
+  'Sem pesquisa de rota': 'No route research',
+  'Amostras de rotas': 'Route samples',
   'Rotas observadas': 'Observed routes',
   'Cobertura parcial': 'Partial coverage',
   'Pesquisa ainda pendente': 'Research pending',
@@ -327,6 +330,10 @@ const report = {
   recommendations: [{hub_id:'1'}], cash_observed_at:null,
   research_queue: {read_only:true, purchase_eligible:false, coverage:'partial',
     sampled_hubs:1, sampled_routes:2, has_more:true,
+    hub_coverage:[{hub_id:'1', hub_code:'AAA', sampled_routes:2,
+      status:'pesquisa_iniciada', coverage:'partial'},
+      {hub_id:'2', hub_code:'<img src=x>', sampled_routes:0,
+      status:'nao_pesquisado', coverage:'partial'}],
     items:[{hub_code:'AAA', hub_id:'1', destination_id:'2',
       model:'<script>unsafe</script>', pending:['motor_a_pesquisar']}],
     blocking_reasons:[]},
@@ -344,6 +351,10 @@ assert.equal($('hubResearchPolicyStatus').textContent,
   'Read-only analysis. No purchase authorized. · Investment execution blocked');
 assert.deepEqual($('hubResearchPolicyReasons').children.map(reason => reason.textContent),
   ['Analysis-only mode', 'Executor awaiting validation']);
+assert.deepEqual($('hubResearchCoverageList').children.map(item => item.textContent), [
+  'AAA · Route research started · Route samples: 2 · Partial coverage',
+  '<img src=x> · No route research · Route samples: 0 · Partial coverage'
+]);
 assert.equal($('hubResearchQueueList').children.length, 2);
 const withoutEngine = $('hubResearchQueueList').children[0];
 assert.equal(withoutEngine.children[0].textContent, 'AAA ↔ 2');
@@ -438,6 +449,7 @@ assert.equal($('hubRecommendationModel').value, 'A380');
 
 $('hubRecommendationModel').value = '';
 renderHubRecommendations({hubs:[], candidates:[], recommendations:[], cash_observed_at:null});
+assert.equal($('hubResearchCoverageList').children.length, 0);
 assert.equal($('hubResearchQueueList').children[0].textContent, 'Research pending');
 renderHubRecommendations({hubs:[], candidates:[], recommendations:[],
   research_queue: {items: [], blocking_reasons: ['inventario_hubs_desatualizado']}});

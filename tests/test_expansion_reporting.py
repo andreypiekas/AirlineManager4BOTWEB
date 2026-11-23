@@ -129,6 +129,39 @@ def test_full_breakdown_and_proof_gate_yield_top_three():
     assert source == original
 
 
+def test_ranked_candidate_displays_independent_sources_and_observation_dates():
+    report = build()
+    candidate = report["candidates"][0]
+    assert candidate["sources"] == {
+        "catalog": "game_purchase_catalog", "research": "game_research",
+        "prices": "game_market", "forecast": "route_optimizer",
+    }
+    assert candidate["observed_at"]["research"] == NOW
+    assert candidate["observed_at"]["forecast"] == NOW
+    assert "Fontes verificadas:" in report["html"]
+    assert "game_purchase_catalog" in report["html"]
+    assert "game_research" in report["html"]
+    assert "route_optimizer" in report["html"]
+    assert "UTC" in report["html"]
+    assert "Critério do ranking: lucro diário por capital investido" in report["html"]
+
+
+@pytest.mark.parametrize("invalidate", [
+    lambda report: report.update(source="manual_guess"),
+    lambda report: report["candidates"][0]["scenario"].update(source="manual_guess"),
+    lambda report: report["candidates"][0]["scenario"]["costs"].update(source="manual_guess"),
+    lambda report: report["candidates"][0]["scenario"]["financial"].update(source="manual_guess"),
+])
+def test_untrusted_provenance_cannot_generate_a_recommendation(invalidate, tmp_path):
+    source = external(hub())
+    invalidate(source)
+    report = build(external_data=source)
+    assert report["status"] == "pesquisa_externa_pendente"
+    assert report["candidates"] == []
+    assert report["alertable"] is False
+    assert ExpansionAlertDeduplicator(tmp_path / "alerts.sqlite3").claim(report, now=NOW) is None
+
+
 def test_ranking_uses_verified_return_per_capital_and_deduplicates_hubs():
     rows = [hub("789", profit=500), hub("888", profit=900), hub("777", profit=700),
             hub("666", profit=100)]
@@ -136,6 +169,24 @@ def test_ranking_uses_verified_return_per_capital_and_deduplicates_hubs():
     assert [row["hub_id"] for row in report["candidates"]] == ["888", "777", "789"]
     assert "H666" not in report["html"]
     assert report["html"].count("Custos: hub") == 3
+
+
+@pytest.mark.parametrize("section,field", [
+    ("scenario", "profile_id"),
+    ("costs", "profile_id"),
+    ("financial", "snapshot_id"),
+    ("cost_breakdown", "snapshot_id"),
+])
+def test_nested_foreign_evidence_is_filtered_before_top_three(section, field):
+    corrupted = hub("888", profit=900)
+    part = corrupted["scenario"].get(section) if section in ("costs", "financial") else corrupted[section]
+    part[field] = "other" if field == "profile_id" else "sha256:" + "b" * 64
+    report = build(external_data=external(
+        corrupted, hub("777", profit=700), hub("789", profit=500), hub("666", profit=100),
+    ))
+    assert [row["hub_id"] for row in report["candidates"]] == ["777", "789", "666"]
+    assert report["expansion_decision"]["external_pending_count"] == 1
+    assert "H888" not in report["html"]
 
 
 @pytest.mark.parametrize("change", [
@@ -187,6 +238,36 @@ def test_no_coverage_is_never_interpreted_as_no_owned_opportunities():
     assert "varredura_completa_hubs_proprios_nao_comprovada" in report["expansion_decision"]["blocking_reasons"]
 
 
+def test_finished_owned_scan_and_incomplete_external_catalog_have_distinct_statuses(tmp_path):
+    report = build(external_data=external(hub(), complete=False))
+    assert report["status"] == "pesquisa_externa_pendente"
+    assert "nenhuma proposta elegível na comparação concluída" in report["html"]
+    assert "catálogo externo incompleto" in report["html"].lower()
+    assert "cobertura inconclusiva" not in report["html"]
+    assert report["alertable"] is False
+    assert ExpansionAlertDeduplicator(tmp_path / "alerts.sqlite3").claim(report, now=NOW) is None
+
+    inventory, research, coverage = evidence()
+    inventory["partial_fleet"] = True
+    inconclusive = build(inventory=inventory, research=research, coverage=coverage,
+                         external_data=external(hub(), complete=False))
+    assert inconclusive["status"] == "inconclusivo"
+    assert "cobertura inconclusiva" in inconclusive["html"]
+    assert inconclusive["alertable"] is False
+
+
+def test_unverified_external_research_reports_obstacles_without_telegram_alert(tmp_path):
+    unverified = hub()
+    unverified["scenario"]["external_demand_verified"] = False
+    unverified["pending"] = ["demanda_pre_compra_a_confirmar"]
+    report = build(external_data=external(unverified))
+    assert report["status"] == "pesquisa_externa_pendente"
+    assert report["candidates"] == []
+    assert "demanda pre compra a confirmar" in report["html"]
+    assert report["alertable"] is False
+    assert ExpansionAlertDeduplicator(tmp_path / "alerts.sqlite3").claim(report, now=NOW) is None
+
+
 def test_eligible_owned_hub_suppresses_alert_even_when_external_profit_is_higher():
     report = build(owned(eligible=1), compare_even_if_owned=True)
     assert report["status"] == "expansao_nao_indicada"
@@ -196,7 +277,7 @@ def test_eligible_owned_hub_suppresses_alert_even_when_external_profit_is_higher
 
 
 def test_partial_catalog_or_missing_cash_prohibits_verified_ranking():
-    assert build(external_data=external(hub(), complete=False))["status"] == "inconclusivo"
+    assert build(external_data=external(hub(), complete=False))["status"] == "pesquisa_externa_pendente"
     report = build(external_data=external(hub(), cash=None))
     assert report["status"] == "pesquisa_externa_pendente"
     assert report["candidates"] == []
@@ -269,6 +350,21 @@ def test_significant_material_change_bypasses_cooldown_but_small_profit_change_d
     assert update and update["reason"] == "mudanca_material"
     assert "Atualização relevante na expansão" in update["html"]
     assert store.acknowledge(update, delivered=True, now=NOW + 62)
+
+
+def test_updated_provenance_is_material_but_refreshed_timestamps_are_not(tmp_path):
+    store = ExpansionAlertDeduplicator(tmp_path / "alerts.sqlite3")
+    first = store.claim(build(), now=NOW)
+    assert store.acknowledge(first, delivered=True, now=NOW)
+    renewed = hub()
+    renewed["scenario"]["observed_at"] += 10
+    renewed["scenario"]["costs"]["observed_at"] += 10
+    renewed["scenario"]["financial"]["observed_at"] += 10
+    assert store.claim(build(external_data=external(renewed)), now=NOW + 60) is None
+    replaced = hub()
+    replaced["scenario"]["financial"]["source"] = "game_research"
+    alert = store.claim(build(external_data=external(replaced)), now=NOW + 61)
+    assert alert and alert["reason"] == "mudanca_material"
 
 
 def test_significant_cost_change_alerts_and_missing_proof_withholds_recommendation(tmp_path):

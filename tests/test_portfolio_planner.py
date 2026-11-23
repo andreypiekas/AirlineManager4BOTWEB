@@ -5,7 +5,11 @@ from copy import deepcopy
 
 import pytest
 
-from portfolio_planner import compare_portfolio
+from expansion_economics import (
+    _SOURCES as A3_PROVENANCE_SOURCES,
+    _SUBJECTS as A3_PROVENANCE_SUBJECTS,
+)
+from portfolio_planner import _audited_a3_cash, compare_audited_portfolio, compare_portfolio
 
 
 NOW = 1_800_000_000
@@ -365,3 +369,386 @@ def test_zero_weight_does_not_require_or_invent_optional_evidence():
     assert ranked["best"]["score"] == 1.0
     assert "risk_index" not in ranked["best"]
     assert ranked["missing_ranking_evidence"] == {}
+
+
+# A4 fixtures are synthetic A3 output contracts. They never claim to describe
+# a real game observation or imply that the acquisition gates were homologated.
+PROFILE = "synthetic-profile"
+SNAPSHOT = "synthetic-snapshot"
+
+
+def a4_proof(value, source, *, hub_id=None, economics_id=None, **changes):
+    proof = {"value": value, "source": source, "verified": True,
+             "profile_id": PROFILE, "snapshot_id": SNAPSHOT,
+             "observed_at": NOW}
+    if hub_id is not None:
+        proof["hub_id"] = hub_id
+    if economics_id is not None:
+        proof["economics_id"] = economics_id
+    proof.update(changes)
+    return proof
+
+
+def a4_evaluation(hub="123", destination="456", engine="engine-1", *,
+                  profit=100, cost=1000, layout=None, cash=None):
+    seats = layout or {"y": 100, "j": 10, "f": 0}
+    money = cash or {"available": 25000, "committed": 1500, "reserve": 2000}
+    economics_id = f"economics-v1-synthetic-{hub}-{destination}-{engine}-{seats['y']}"
+    identity = {"hub_id": hub, "origin_id": hub, "destination_id": destination,
+                "model_id": "model-a", "engine_id": engine}
+    provenance = {
+        name: a4_proof(money if name == "cash" else 1, source,
+                       **{key: identity[key] for key in A3_PROVENANCE_SUBJECTS[name]})
+        for name, source in A3_PROVENANCE_SOURCES.items()
+    }
+    return {
+        "schema_version": 1,
+        "economics_id": economics_id,
+        "plan_id": f"plan-{hub}-{destination}-{engine}",
+        "profile_id": PROFILE,
+        "snapshot_id": SNAPSHOT,
+        "status": "evaluated", "blocking_reasons": [],
+        "evidence_confidence": "provenance_complete", "excluded_costs": [],
+        "read_only": True, "execution_available": False,
+        "identity": identity,
+        "configuration_yjf": seats,
+        "components": {"daily_net_profit_estimate": profit,
+                       "payback_days": round(cost / profit, 2),
+                       "roi_365d_percent": round(profit * 36500 / cost, 2)},
+        "capital_costs": {"total_investment": cost},
+        "cash_after_purchase": money["available"] - money["committed"] - cost,
+        "cash_required_reserve": money["reserve"],
+        "observed_at_oldest": NOW,
+        "provenance": provenance,
+        "sensitivity": {
+            name: {"daily_net_profit_estimate": profit * fraction}
+            for name, fraction in (("fuel_price", .8), ("co2_price", .9),
+                                   ("occupancy", .7), ("demand", .6))
+        },
+    }
+
+
+def a4_controls(**changes):
+    values = {
+        "pending_orders_incremental": (0, "investment_journal"),
+        "future_commitments_incremental": (0, "investment_journal"),
+        "unrouted_aircraft_count": (0, "game_fleet_scan"),
+        "operational_reserve": (3000, "investment_policy"),
+        "cycle_spent": (0, "investment_journal"),
+        "cycle_limit": (10000, "investment_policy"),
+        "period_spent": (0, "investment_journal"),
+        "period_limit": (20000, "investment_policy"),
+    }
+    return {key: a4_proof(changes.get(key, value), source)
+            for key, (value, source) in values.items()}
+
+
+def a4_compare(*evaluations, controls=None, capacities=None, **changes):
+    hub_ids = {row["identity"]["hub_id"] for row in evaluations}
+    default_capacities = {hub: a4_proof(2, "game_hub_select", hub_id=hub)
+                          for hub in hub_ids}
+    settings = {"profile_id": PROFILE, "snapshot_id": SNAPSHOT,
+                "controls": a4_controls() if controls is None else controls,
+                "hub_capacity": default_capacities if capacities is None else capacities,
+                "fleet_coverage_verified": True, "research_coverage_verified": True,
+                "commitments_verified": True, "max_single_investment": 9000,
+                "now": NOW}
+    settings.update(changes)
+    return compare_audited_portfolio(list(evaluations), **settings)
+
+
+def test_a4_global_ranking_best_per_hub_and_explanation_is_deterministic():
+    cheap = a4_evaluation("123", "456", "engine-economical", profit=200, cost=1000)
+    fast = a4_evaluation("123", "456", "engine-fast", profit=300, cost=6000)
+    outside = a4_evaluation("789", "999", "engine-2", profit=250, cost=5000)
+    original = deepcopy([cheap, fast, outside])
+
+    ranked = a4_compare(cheap, fast, outside)
+    reversed_ranked = a4_compare(outside, fast, cheap)
+
+    assert ranked == reversed_ranked
+    assert ranked["status"] == "comparacao_concluida"
+    assert ranked["best"]["economics_id"] == cheap["economics_id"]
+    assert ranked["best"]["score"] > ranked["alternatives"][1]["score"]
+    assert len(ranked["alternatives"]) == 3
+    assert [group["hub_id"] for group in ranked["best_by_hub"]] == ["123", "789"]
+    assert len(ranked["best_by_hub"][0]["alternatives"]) == 2
+    assert ranked["why_best"]["runner_up_economics_id"] == fast["economics_id"]
+    assert ranked["why_best"]["score_difference"] > 0
+    assert set(ranked["best"]["score_components"]) == {"profit", "capital_efficiency"}
+    assert ranked["decision"] == "sugestao_para_analise"
+    assert ranked["execution_available"] is False and ranked["read_only"] is True
+    assert [cheap, fast, outside] == original
+
+
+def test_a4_preserves_multiple_yjf_layouts_for_same_hub_route_and_engine():
+    first = a4_evaluation(layout={"y": 90, "j": 10, "f": 0})
+    second = a4_evaluation(layout={"y": 100, "j": 10, "f": 0}, profit=110)
+    ranked = a4_compare(first, second)
+    assert ranked["eligible_count"] == 2
+    assert len(ranked["best_by_hub"][0]["alternatives"]) == 2
+
+
+def test_a4_missing_financial_evidence_and_coverage_are_no_buy():
+    evaluated = a4_evaluation()
+    no_controls = a4_compare(evaluated, controls={})
+    assert no_controls["decision"] == "nao_comprar"
+    assert no_controls["best"] is None
+    assert no_controls["budget_after_reservations_and_limits"] is None
+    assert "evidencia_pending_orders_incremental_a_confirmar" in no_controls["blocking_reasons"]
+
+    partial = a4_compare(evaluated, commitments_verified=False)
+    assert partial["status"] == "inconclusivo"
+    assert partial["decision"] == "nao_comprar"
+    assert partial["best"] is not None  # informational ranking only
+    assert "compromissos_a_conciliar" in partial["blocking_reasons"]
+
+
+@pytest.mark.parametrize("capital_costs", [None, [], "invalid", 123, {},
+                                            {"total_investment": -1000}])
+def test_a4_malformed_capital_costs_fail_closed(capital_costs):
+    evaluated = a4_evaluation()
+    evaluated["capital_costs"] = capital_costs
+
+    assert _audited_a3_cash(evaluated, profile_id=PROFILE,
+                            snapshot_id=SNAPSHOT, now=NOW) is None
+
+    result = a4_compare(evaluated)
+
+    assert result["status"] == "inconclusivo"
+    assert result["decision"] == "nao_comprar"
+    assert result["best"] is None
+    assert result["eligible_count"] == 0
+    assert result["excluded"]["avaliacao_a3_invalida_ou_conflitante"] == 1
+    assert result["execution_available"] is False
+
+
+def test_a4_missing_capital_costs_fail_closed():
+    evaluated = a4_evaluation()
+    del evaluated["capital_costs"]
+
+    result = a4_compare(evaluated)
+
+    assert result["decision"] == "nao_comprar"
+    assert result["best"] is None
+    assert "avaliacoes_a3_invalidas_ou_conflitantes" in result["blocking_reasons"]
+
+
+def test_a4_reconciles_cash_and_spend_caps_before_ranking():
+    low = a4_evaluation(cost=2000)
+    high = a4_evaluation("789", "999", cost=7000, profit=350)
+    controls = a4_controls(pending_orders_incremental=2000,
+                           future_commitments_incremental=3000,
+                           cycle_spent=6000, cycle_limit=10000,
+                           period_spent=15000, period_limit=20000)
+    ranked = a4_compare(low, high, controls=controls)
+    assert ranked["budget_after_reservations_and_limits"] == 4000
+    assert ranked["best"]["economics_id"] == low["economics_id"]
+    assert ranked["excluded"]["orcamento_global_insuficiente_ou_desconhecido"] == 1
+
+    exhausted = a4_controls(cycle_spent=10000)
+    blocked = a4_compare(low, controls=exhausted)
+    assert blocked["best"] is None
+    assert blocked["decision"] == "nao_comprar"
+    assert "limite_ciclo_esgotado" in blocked["blocking_reasons"]
+
+    period_exhausted = a4_compare(low, controls=a4_controls(period_spent=20000))
+    assert period_exhausted["best"] is None
+    assert "limite_periodo_esgotado" in period_exhausted["blocking_reasons"]
+
+    committed_excess = a4_compare(low, controls=a4_controls(future_commitments_incremental=24000))
+    assert committed_excess["best"] is None
+    assert "saldo_apos_compromissos_insuficiente" in committed_excess["blocking_reasons"]
+
+
+def test_a4_hangar_unrouted_aircraft_and_per_purchase_limit_fail_closed():
+    evaluated = a4_evaluation()
+    missing = a4_compare(evaluated, capacities={})
+    assert missing["best"] is None
+    assert "vagas_hangar_a_confirmar" in missing["blocking_reasons"]
+    assert missing["excluded"]["vagas_hangar_a_confirmar"] == 1
+
+    no_space = a4_compare(evaluated, capacities={"123": a4_proof(0, "game_hub_select", hub_id="123")})
+    assert no_space["best"] is None
+    assert no_space["excluded"]["hangar_sem_vaga"] == 1
+    assert no_space["decision"] == "nao_comprar"
+
+    parked = a4_compare(evaluated, controls=a4_controls(unrouted_aircraft_count=2))
+    assert parked["status"] == "inconclusivo"
+    assert parked["decision"] == "nao_comprar"
+    assert "aeronaves_sem_rota_a_resolver" in parked["blocking_reasons"]
+
+    capped = a4_compare(evaluated, max_single_investment=500)
+    assert capped["best"] is None
+    assert capped["excluded"]["limite_por_aquisicao"] == 1
+
+
+def test_a4_a3_blocked_stale_conflicting_and_foreign_evaluations_are_excluded():
+    evaluated = a4_evaluation()
+    blocked = deepcopy(evaluated)
+    blocked.update(status="blocked", blocking_reasons=[{"code": "EVIDENCE_MISSING"}])
+    foreign = a4_evaluation("789", "999")
+    foreign["profile_id"] = "other-profile"
+    stale = a4_evaluation("111", "222")
+    stale["observed_at_oldest"] = NOW - 86400
+    response = a4_compare(evaluated, blocked, foreign, stale)
+    assert response["decision"] == "nao_comprar"
+    assert response["eligible_count"] == 1
+    assert "avaliacoes_a3_invalidas_ou_conflitantes" in response["blocking_reasons"]
+    assert "avaliacoes_a3_incompativeis" in response["blocking_reasons"]
+    assert "saldo_a3_a_confirmar" in response["blocking_reasons"]
+
+    conflicting = deepcopy(evaluated)
+    conflicting["components"]["daily_net_profit_estimate"] = 300
+    conflicting["components"]["payback_days"] = round(1000 / 300, 2)
+    conflict = a4_compare(evaluated, conflicting)
+    assert conflict["best"] is None
+    assert conflict["excluded"]["avaliacao_a3_invalida_ou_conflitante"] == 2
+
+
+def test_a4_contradictory_game_cash_from_same_snapshot_blocks_decision():
+    normal = a4_evaluation()
+    mismatch = a4_evaluation("789", "999", cash={"available": 27000,
+                                                "committed": 1500, "reserve": 2000})
+    ranked = a4_compare(normal, mismatch)
+    assert ranked["status"] == "inconclusivo"
+    assert "saldos_a3_contraditorios" in ranked["blocking_reasons"]
+    assert ranked["decision"] == "nao_comprar"
+    assert ranked["budget_after_reservations_and_limits"] is None
+
+
+def test_a4_risk_uses_a3_stress_and_optional_dimensions_require_fresh_evidence():
+    fragile = a4_evaluation("123", "456", profit=200, cost=2000)
+    robust = a4_evaluation("789", "999", profit=150, cost=2000)
+    fragile["sensitivity"]["demand"]["daily_net_profit_estimate"] = 10
+    robust["sensitivity"]["demand"]["daily_net_profit_estimate"] = 130
+    other_weights = {"profit_weight": 0, "efficiency_weight": 0,
+                     "risk_weight": 1}
+    risk_ranked = a4_compare(fragile, robust, **other_weights)
+    assert risk_ranked["best"]["hub_id"] == "789"
+    assert risk_ranked["best"]["risk_index"] == pytest.approx(.7)
+
+    missing = a4_compare(fragile, robust, profit_weight=0, efficiency_weight=0,
+                         diversification_weight=1)
+    assert missing["best"] is None
+    assert missing["decision"] == "nao_comprar"
+    assert "evidencia_diversification_a_confirmar" in missing["blocking_reasons"]
+
+    diversification = {
+        fragile["economics_id"]: a4_proof(.95, "game_fleet_scan", hub_id="123",
+                                           economics_id=fragile["economics_id"]),
+        robust["economics_id"]: a4_proof(.05, "game_fleet_scan", hub_id="789",
+                                          economics_id=robust["economics_id"]),
+    }
+    ranked = a4_compare(fragile, robust, profit_weight=0, efficiency_weight=0,
+                        diversification_weight=1, diversification_evidence=diversification)
+    assert ranked["best"]["hub_id"] == "123"
+    assert ranked["best"]["score_components"] == {"diversification": .95}
+
+    diversification[fragile["economics_id"]]["snapshot_id"] = "different-snapshot"
+    invalid = a4_compare(fragile, robust, profit_weight=0, efficiency_weight=0,
+                         diversification_weight=1, diversification_evidence=diversification)
+    assert invalid["status"] == "inconclusivo"
+    assert invalid["best"]["hub_id"] == "789"
+    assert invalid["decision"] == "nao_comprar"
+
+
+def test_a4_audits_full_provenance_sources_subjects_and_clock():
+    evaluated = a4_evaluation()
+    missing = deepcopy(evaluated)
+    del missing["provenance"]["fares"]
+    result = a4_compare(missing)
+    assert result["best"] is None
+    assert "saldo_a3_a_confirmar" in result["blocking_reasons"]
+
+    wrong_subject = deepcopy(evaluated)
+    wrong_subject["provenance"]["daily_demand"]["destination_id"] = "999"
+    result = a4_compare(wrong_subject)
+    assert result["best"] is None
+
+    too_old = deepcopy(evaluated)
+    too_old["provenance"]["fuel_units_per_day"]["observed_at"] = NOW - 999999
+    too_old["observed_at_oldest"] = NOW - 999999
+    result = a4_compare(too_old)
+    assert result["best"] is None
+
+
+def test_a4_control_evidence_must_match_profile_snapshot_and_source():
+    evaluated = a4_evaluation()
+    invalid = a4_controls()
+    invalid["cycle_spent"]["snapshot_id"] = "another-snapshot"
+    result = a4_compare(evaluated, controls=invalid)
+    assert result["best"] is None
+    assert result["decision"] == "nao_comprar"
+    assert "evidencia_cycle_spent_a_confirmar" in result["blocking_reasons"]
+
+    invalid = a4_controls()
+    invalid["pending_orders_incremental"]["source"] = "unverified-estimate"
+    result = a4_compare(evaluated, controls=invalid)
+    assert "evidencia_pending_orders_incremental_a_confirmar" in result["blocking_reasons"]
+
+    wrong_hub = {"123": a4_proof(2, "game_hub_select", hub_id="789")}
+    result = a4_compare(evaluated, capacities=wrong_hub)
+    assert "vagas_hangar_a_confirmar" in result["blocking_reasons"]
+
+
+def test_a4_policy_and_profitability_thresholds_cannot_allow_purchase():
+    evaluated = a4_evaluation()
+    low_profit = a4_compare(evaluated, min_daily_profit=200)
+    assert low_profit["best"] is None
+    assert low_profit["excluded"]["lucro_abaixo_do_minimo"] == 1
+
+    long_payback = a4_compare(evaluated, max_payback_days=5)
+    assert long_payback["best"] is None
+    assert long_payback["excluded"]["retorno_acima_do_limite"] == 1
+
+    invalid_policy = a4_compare(evaluated, policy_valid=False)
+    assert invalid_policy["decision"] == "nao_comprar"
+    assert "politica_invalida" in invalid_policy["blocking_reasons"]
+    assert invalid_policy["execution_available"] is False
+
+    missing_single_limit = a4_compare(evaluated, max_single_investment=None)
+    assert missing_single_limit["best"] is None
+    assert missing_single_limit["decision"] == "nao_comprar"
+
+
+def test_a4_missing_roi_or_invalid_evaluations_format_never_concludes():
+    invalid_roi = a4_evaluation()
+    invalid_roi["components"]["roi_365d_percent"] = None
+    result = a4_compare(invalid_roi)
+    assert "economia_a3_a_confirmar" in result["blocking_reasons"]
+
+    invalid = compare_audited_portfolio(
+        {"not": "a sequence"}, profile_id=PROFILE, snapshot_id=SNAPSHOT,
+        now=NOW,
+    )
+    assert invalid["status"] == "inconclusivo"
+    assert invalid["decision"] == "nao_comprar"
+    assert "formato_avaliacoes_a3_invalido" in invalid["blocking_reasons"]
+
+
+def test_a4_return_and_confidence_weights_require_real_a3_or_snapshot_proof():
+    profitable = a4_evaluation("123", "456", profit=250, cost=10000)
+    efficient = a4_evaluation("789", "999", profit=100, cost=1000)
+    with_roi = a4_compare(profitable, efficient, profit_weight=0,
+                          efficiency_weight=0, return_weight=1,
+                          max_single_investment=12000)
+    assert with_roi["best"]["hub_id"] == "789"
+    assert with_roi["best"]["score_components"] == {"return": 1.0}
+
+    missing_confidence = a4_compare(profitable, efficient, profit_weight=0,
+                                    efficiency_weight=0, confidence_weight=1)
+    assert missing_confidence["best"] is None
+    assert "evidencia_confidence_a_confirmar" in missing_confidence["blocking_reasons"]
+
+    evidence = {
+        profitable["economics_id"]: a4_proof(
+            .9, "game_research", hub_id="123", economics_id=profitable["economics_id"]),
+        efficient["economics_id"]: a4_proof(
+            .1, "game_research", hub_id="789", economics_id=efficient["economics_id"]),
+    }
+    confidence = a4_compare(profitable, efficient, profit_weight=0, efficiency_weight=0,
+                            confidence_weight=1, confidence_evidence=evidence,
+                            max_single_investment=12000)
+    assert confidence["best"]["hub_id"] == "123"
+    assert confidence["execution_available"] is False

@@ -36,7 +36,7 @@ CLAIM_LEASE_SECONDS = 300
 _PROFILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _SNAPSHOT = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HUB_ID = re.compile(r"^[1-9][0-9]{0,11}$")
-_MATERIAL_FIELDS = ("hub", "aircraft", "engine_id", "motor", "route", "status", "pending", "excluded", "points")
+_MATERIAL_FIELDS = ("hub", "aircraft", "engine_id", "motor", "route", "status", "pending", "excluded", "points", "sources")
 _NUMERIC_FIELDS = ("hub_price", "aircraft_price", "engine_cost", "route_fee", "hangar_cost",
                    "other_fees", "reserve", "investment", "cash_required", "profit", "payback")
 
@@ -118,6 +118,36 @@ def _reasons(owned: Mapping[str, Any], portfolio: Mapping[str, Any]) -> list[str
     if isinstance(blockers, list):
         details.extend(item.replace("_", " ") for item in blockers if isinstance(item, str))
     return list(dict.fromkeys(details))
+
+
+def _external_with_scoped_evidence(external: Mapping[str, Any], profile_id: str,
+                                   snapshot_id: str) -> Mapping[str, Any]:
+    """Exclude mismatched nested proofs before the feasibility gate ranks rows.
+
+    The input may be backed by a registry snapshot and must remain immutable.
+    Missing optional scope metadata stays compatible with historical records.
+    """
+    rows = external.get("candidates")
+    if not isinstance(rows, list):
+        return external
+    scoped = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            scoped.append(row)
+            continue
+        scenario = row.get("scenario")
+        costs = scenario.get("costs") if isinstance(scenario, Mapping) else None
+        financial = scenario.get("financial") if isinstance(scenario, Mapping) else None
+        proofs = (row, scenario, costs, financial, row.get("cost_breakdown"))
+        mismatch = any(
+            isinstance(proof, Mapping) and (
+                proof.get("profile_id") not in (None, profile_id)
+                or proof.get("snapshot_id") not in (None, snapshot_id)
+            )
+            for proof in proofs
+        )
+        scoped.append({**row, "ranking_conclusive": False} if mismatch else row)
+    return {**external, "candidates": scoped}
 
 
 def _candidate(raw: Mapping[str, Any], external: Mapping[str, Any], now: float,
@@ -248,6 +278,13 @@ def _candidate_html(row: Mapping[str, Any], rank: int) -> str:
     excluded_summary = ", ".join(_label(value) for value in excluded) or "nenhum declarado"
     if len(row["excluded"]) > len(excluded):
         excluded_summary += f" (+{len(row['excluded']) - len(excluded)} outros)"
+    sources = row["sources"]
+    observed = row["observed_at"]
+    evidence_dates = ", ".join(
+        f"{label} {time.strftime('%d/%m %H:%M', time.gmtime(observed[key]))}"
+        for key, label in (("catalog", "catálogo"), ("research", "pesquisa"),
+                           ("prices", "custos"), ("forecast", "projeção"))
+    )
     return "\n".join([
         f"<b>{rank}. {_text(row['hub'], max_length=80)}</b> — {_label(row['status'])}",
         f"Aeronave <b>{_label(row['aircraft'])}</b> · Motor <b>{_label(row['motor'])}</b>",
@@ -259,10 +296,15 @@ def _candidate_html(row: Mapping[str, Any], rank: int) -> str:
         f"Lucro/dia projetado {_money(row['profit'])} · retorno estimado {_label(row['payback'])} dias",
         f"Excluídos: {excluded_summary}",
         f"Pendências: {pending_summary}",
+        "Fontes verificadas: catálogo {} · pesquisa {} · custos {} · previsão {}".format(
+            *(_label(sources[key]) for key in ("catalog", "research", "prices", "forecast"))
+        ),
+        f"Datas da evidência (UTC): {evidence_dates}",
     ])
 
 
-def _verified_candidate(raw: Mapping[str, Any], profile_id: str, snapshot_id: str) -> dict | None:
+def _verified_candidate(raw: Mapping[str, Any], external: Mapping[str, Any],
+                        profile_id: str, snapshot_id: str) -> dict | None:
     """Format only candidates already independently admitted by the A6 gate."""
     if any(raw.get(key) is not None and raw[key] != expected for key, expected in (
         ("profile_id", profile_id), ("snapshot_id", snapshot_id)
@@ -275,6 +317,10 @@ def _verified_candidate(raw: Mapping[str, Any], profile_id: str, snapshot_id: st
     costs = scenario.get("costs")
     financial = scenario.get("financial")
     if not isinstance(costs, Mapping) or not isinstance(financial, Mapping):
+        return None
+    if any(proof.get("profile_id") not in (None, profile_id)
+           or proof.get("snapshot_id") not in (None, snapshot_id)
+           for proof in (scenario, costs, financial, breakdown)):
         return None
     hub_id = str(raw.get("id") or "")
     if (not _HUB_ID.fullmatch(hub_id) or raw.get("ranking_conclusive") is not True
@@ -308,6 +354,16 @@ def _verified_candidate(raw: Mapping[str, Any], profile_id: str, snapshot_id: st
         "excluded": sorted(set(excluded)),
         "status": "análise consistente" if not pending else "projeção com ressalvas",
         "engine_included": includes_engine,
+        "sources": {
+            "catalog": external.get("source"), "research": scenario.get("source"),
+            "prices": costs.get("source"), "forecast": financial.get("source"),
+        },
+        "observed_at": {
+            "catalog": external.get("observed_at"),
+            "research": scenario.get("observed_at"),
+            "prices": costs.get("observed_at"),
+            "forecast": financial.get("observed_at"),
+        },
     }
 
 
@@ -354,15 +410,20 @@ def build_expansion_report(
             raise ValueError("dados de outro snapshot")
 
     decision = assess_expansion(
-        owned_inventory, owned_research, portfolio, external,
+        owned_inventory, owned_research, portfolio,
+        _external_with_scoped_evidence(external, profile_id, snapshot_id),
         coverage=opportunity_coverage, now=int(now),
         max_age_seconds=max_age_seconds, profile_id=profile_id,
         snapshot_id=snapshot_id,
     )
-    complete = decision["status"] in ("avaliacao_expansao", "priorizar_hubs_proprios")
-    none_owned = decision["status"] == "avaliacao_expansao"
-    alertable = none_owned
-    reasons = list(dict.fromkeys([*_reasons(owned, portfolio), *decision["blocking_reasons"]]))
+    # Incomplete external catalog evidence cannot invalidate an otherwise
+    # conclusive owned-hub sweep. Keep its independent outcome visible.
+    external_only_blocker = decision["blocking_reasons"] == ["catalogo_expansao_incompleto_ou_vencido"]
+    complete = (decision["status"] in ("avaliacao_expansao", "priorizar_hubs_proprios")
+                or external_only_blocker)
+    none_owned = (decision["status"] == "avaliacao_expansao"
+                  or external_only_blocker and decision["owned_eligible_count"] == 0)
+    reasons = list(dict.fromkeys([*decision["blocking_reasons"], *_reasons(owned, portfolio)]))
     if none_owned:
         owned_summary = "Hubs próprios: nenhuma proposta elegível na comparação concluída."
     elif complete:
@@ -374,16 +435,20 @@ def build_expansion_report(
 
     candidates = []
     invalid_count = 0
-    if alertable:
+    if decision["status"] == "avaliacao_expansao":
         for raw in decision["top_three"]:
-            item = _verified_candidate(raw, profile_id, snapshot_id)
+            item = _verified_candidate(raw, external, profile_id, snapshot_id)
             if item is None:
                 invalid_count += 1
             else:
                 candidates.append(item)
 
-    if not alertable:
-        status = "inconclusivo" if not complete else "expansao_nao_indicada"
+    alertable = none_owned and bool(candidates)
+
+    if not complete:
+        status = "inconclusivo"
+    elif not none_owned:
+        status = "expansao_nao_indicada"
     elif not candidates:
         status = "pesquisa_externa_pendente"
     elif any(candidate["pending"] for candidate in candidates):
@@ -397,17 +462,31 @@ def build_expansion_report(
         lines[-1] += f" (+{len(reasons) - 4} outros)"
     if compare_even_if_owned and not none_owned:
         lines.append("Comparação externa aguardando política de cobertura independente.")
-    if not alertable:
+    if not none_owned:
         lines.append("Ranking externo suspenso até conclusão da análise dos hubs próprios ou comparação explícita.")
+    elif external_only_blocker:
+        lines.append("Catálogo externo incompleto ou vencido. Pesquisa de expansão pendente.")
     elif not candidates:
-        lines.append("Nenhum candidato externo identificável com a pesquisa recebida.")
+        lines.append("Nenhuma recomendação externa verificável com a pesquisa recebida.")
     else:
         lines.append("<b>Top 3 hubs externos em estudo</b>")
+        lines.append("Critério do ranking: lucro diário por capital investido, com desempate por lucro e custo.")
         lines.extend(_candidate_html(candidate, rank) for rank, candidate in enumerate(candidates, 1))
     if invalid_count:
         lines.append(f"Registros externos sem identificação válida: {invalid_count}.")
     if decision["external_pending_count"]:
         lines.append(f"Cenários externos com evidência pendente: {decision['external_pending_count']}.")
+        obstacles = []
+        rows = external.get("candidates")
+        for raw in rows if isinstance(rows, list) else []:
+            pending = raw.get("pending") if isinstance(raw, Mapping) else None
+            if isinstance(pending, list):
+                obstacles.extend(item.replace("_", " ") for item in pending if isinstance(item, str))
+        obstacles = list(dict.fromkeys(obstacles))
+        if obstacles:
+            lines.append("Impedimentos externos declarados: " + ", ".join(
+                _text(item, max_length=65) for item in obstacles[:3]
+            ))
     lines.append("<i>Somente análise. Nenhuma compra aprovada ou executada.</i>")
     message = "\n\n".join(lines)
     if len(message) > MAX_HTML_LENGTH:
