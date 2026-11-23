@@ -22,6 +22,16 @@ _MODEL_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _ENGINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_AGE_SECONDS = 3 * 86400
 SOURCE = "game_aircraft_order_detail"
+_MAX_EPOCH = 253402300799  # End of year 9999 (UTC).
+_UNSET = object()
+
+
+def _timestamp(value: object) -> int | float | None:
+    """Keep fractional read times while excluding invalid/unbounded epochs."""
+    if type(value) not in (int, float) or not 0 < value <= _MAX_EPOCH:
+        return None
+    return value
+
 
 
 def _model_identity(model_id: object, model_name: object) -> tuple[str, str] | None:
@@ -42,12 +52,13 @@ def _variant_number(value: object) -> float | None:
     return number
 
 
-def _validated_record(row: object, *, now: int) -> dict | None:
-    if not isinstance(row, dict) or row.get("source") != SOURCE:
+def _validated_record(row: object, *, now: int | float) -> dict | None:
+    if (not isinstance(row, dict) or row.get("source") != SOURCE
+            or _timestamp(now) is None):
         return None
     identity = _model_identity(row.get("model_id"), row.get("model"))
-    observed_at = row.get("observed_at")
-    if (identity is None or type(observed_at) is not int
+    observed_at = _timestamp(row.get("observed_at"))
+    if (identity is None or observed_at is None
             or not 0 <= now - observed_at <= MAX_AGE_SECONDS):
         return None
     if (row.get("selector_type") not in ("select", "radio")
@@ -165,11 +176,14 @@ class EngineCatalogRegistry:
         return True
 
     def record(self, model_id: str, model_name: str, catalog: EngineCatalog, *,
-               observed_model_id: str | None = None) -> bool:
-        """Accept a strictly parsed DOM catalog and retain prior good snapshots on failure."""
+               observed_model_id: str | None = None,
+               observed_at: object = _UNSET) -> bool:
+        """Keep the latest valid DOM observation per model, including after restart."""
         if not isinstance(catalog, EngineCatalog):
             return False
-        observed_at = int(time.time())
+        now = time.time()
+        if observed_at is _UNSET:
+            observed_at = now  # Legacy callers do not pass the read timestamp.
         candidate = {
             "source": SOURCE, "model_id": model_id, "model": model_name,
             "observed_at": observed_at, "selector_type": catalog.selector_type,
@@ -178,21 +192,32 @@ class EngineCatalogRegistry:
             "variants": [vars(variant) for variant in catalog.variants],
             "observed_model_id": observed_model_id,
         }
-        clean = _validated_record(candidate, now=observed_at)
+        clean = _validated_record(candidate, now=now)
         if clean is None:
             return False
         with _LOCK:
             state = self._load()
             catalogs = state.get("catalogs")
             catalogs = catalogs if isinstance(catalogs, dict) else {}
+            previous = _validated_record(catalogs.get(model_id), now=now)
+            if previous is not None:
+                if clean["observed_at"] < previous["observed_at"]:
+                    return False
+                if clean["observed_at"] == previous["observed_at"]:
+                    prior_verified = previous["model_detail_identity_verified"]
+                    current_verified = clean["model_detail_identity_verified"]
+                    if prior_verified and not current_verified:
+                        return False
+                    if prior_verified == current_verified and clean != previous:
+                        return False  # Contradictory, equally dated evidence.
             catalogs[model_id] = clean
             state["catalogs"] = catalogs
             self._write(state)
         self.record_attempt(model_id, model_name, success=True)
         return True
 
-    def snapshot(self, *, now: Optional[int] = None) -> dict:
-        now = int(time.time() if now is None else now)
+    def snapshot(self, *, now: Optional[int | float] = None) -> dict:
+        now = time.time() if now is None else now
         with _LOCK:
             state = self._load()
         rows = state.get("catalogs")

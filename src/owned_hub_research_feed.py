@@ -47,6 +47,12 @@ def _fresh(raw: object, now: int) -> bool:
             and 0 <= now - raw <= MAX_EVIDENCE_AGE)
 
 
+def _fresh_engine_read(raw: object, now: int) -> bool:
+    """Engine catalogs preserve the precise time of the stable DOM read."""
+    return (type(raw) in (int, float) and 0 < raw <= now
+            and now - raw <= MAX_EVIDENCE_AGE)
+
+
 def _models(raw: object) -> list[dict]:
     """Keep only uniquely identified, noncontradictory catalog entries."""
     if not isinstance(raw, list):
@@ -83,7 +89,7 @@ def _engine_variants(engines: dict, model: dict, now: int) -> tuple[list[dict], 
             or row.get("model_id") != model["id"]
             or not isinstance(row.get("model"), str)
             or row["model"].strip().casefold() != model["name"].casefold()
-            or not _fresh(row.get("observed_at"), now)
+            or not _fresh_engine_read(row.get("observed_at"), now)
             or row.get("engine_prices_verified") is not False):
         return [], None
     observed_model_id = row.get("observed_model_id")
@@ -221,10 +227,14 @@ def build_owned_hub_research_queue(
             except StopIteration:
                 continue
             streams.append((hub_id, stream))
-            if model["range_km"] is not None and model["range_km"] < sample["distance_km"]:
-                continue
             pending = [item for item in _RESEARCH_PENDING
                        if item != "motor_a_pesquisar" or variant is None]
+            # Direct range does not rule out a route with a legal stopover.
+            # Keep the combination in the research queue until both legs,
+            # stopover runway and the game's actual rules are verified.
+            if (model["range_km"] is not None
+                    and model["range_km"] < sample["distance_km"]):
+                pending.append("escala_e_trechos_a_confirmar")
             if variant is not None:
                 if not variant["engine_available"]:
                     pending.append("motor_indisponivel")
@@ -238,6 +248,8 @@ def build_owned_hub_research_queue(
                 "hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
                 "destination_id": sample["destination_id"],
                 "distance_km": sample["distance_km"],
+                "direct_range_sufficient": (model["range_km"] >= sample["distance_km"]
+                                            if model["range_km"] is not None else None),
                 "observed_demand": sample["demand"],
                 "model_id": model["id"], "model": model["name"],
                 "range_km": model["range_km"], "capacity": model["capacity"],

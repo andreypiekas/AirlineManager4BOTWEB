@@ -99,6 +99,103 @@ def test_registry_requires_explicit_correlated_detail_for_identity(tmp_path, mon
     assert registry.snapshot(now=NOW)["models"] == {}
 
 
+def test_registry_rejects_delayed_catalogs_per_model_across_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    path = tmp_path / "engines.json"
+    registry = engine_catalog.EngineCatalogRegistry(path)
+    a320 = engine_selection.parse_engine_catalog(_groups())
+
+    a380_groups = _groups()
+    a380_groups[0]["options"].append({
+        "value": "3", "label": "Engine X", "speed": 932, "fuel": 13.2,
+        "selected": False, "disabled": False,
+    })
+    a380 = engine_selection.parse_engine_catalog(a380_groups)
+
+    assert registry.record("11", "A320", a320, observed_at=NOW - 50.75,
+                           observed_model_id="11")
+    assert registry.record("22", "A380", a380, observed_at=NOW - 20.5,
+                           observed_model_id="22")
+    updated = _groups()
+    updated[0]["options"][1]["label"] = "Upgraded engine"
+    latest = engine_selection.parse_engine_catalog(updated)
+    assert registry.record("11", "A320", latest, observed_at=NOW - 5.25,
+                           observed_model_id="11")
+
+    restarted = engine_catalog.EngineCatalogRegistry(path)
+    before = restarted.snapshot(now=NOW)["models"]
+    assert [v["engine_id"] for v in before["22"]["variants"]] == ["1", "2", "3"]
+    assert before["11"]["variants"][1]["label"] == "Upgraded engine"
+    assert before["11"]["observed_at"] == NOW - 5.25
+    assert not restarted.record("11", "A320", a320, observed_at=NOW - 12.5,
+                                observed_model_id="11")
+    assert not restarted.record("22", "A380", a320, observed_at=NOW - 25,
+                                observed_model_id="22")
+    assert restarted.snapshot(now=NOW)["models"] == before
+
+
+def test_registry_same_time_identity_priority_and_conflicting_variants(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    path = tmp_path / "engines.json"
+    registry = engine_catalog.EngineCatalogRegistry(path)
+    a320 = engine_selection.parse_engine_catalog(_groups())
+    observed_at = NOW - 0.25
+
+    assert registry.record("11", "A320", a320, observed_at=observed_at)
+    assert registry.record("11", "A320", a320, observed_at=observed_at,
+                           observed_model_id="11")
+    restarted = engine_catalog.EngineCatalogRegistry(path)
+    verified = restarted.snapshot(now=NOW)["models"]["11"]
+    assert verified["model_detail_identity_verified"] is True
+
+    # Both the identity downgrade and a contradictory equally dated snapshot
+    # lack enough chronology to replace the already verified engine variants.
+    assert not restarted.record("11", "A320", a320, observed_at=observed_at)
+    changed = _groups()
+    changed[0]["options"][1]["label"] = "Other variant"
+    assert not restarted.record("11", "A320",
+                                engine_selection.parse_engine_catalog(changed),
+                                observed_at=observed_at, observed_model_id="11")
+    assert restarted.snapshot(now=NOW)["models"]["11"] == verified
+
+    assert restarted.record("11", "A320",
+                            engine_selection.parse_engine_catalog(changed),
+                            observed_at=observed_at + 0.1, observed_model_id="11")
+    assert restarted.snapshot(now=NOW)["models"]["11"]["variants"][1]["label"] == (
+        "Other variant")
+
+
+@pytest.mark.parametrize("invalid", [
+    None, True, False, "1900000000", -1, 0,
+    float("nan"), float("inf"), float("-inf"),
+    NOW + 0.001, NOW - engine_catalog.MAX_AGE_SECONDS - 1,
+    10 ** 500,
+])
+def test_registry_rejects_bad_and_out_of_window_observation_timestamps(
+        tmp_path, monkeypatch, invalid):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    catalog = engine_selection.parse_engine_catalog(_groups())
+    assert registry.record("11", "A320", catalog, observed_at=NOW - 5,
+                           observed_model_id="11")
+    baseline = registry.path.read_bytes()
+    assert registry.record("11", "A320", catalog, observed_at=invalid,
+                           observed_model_id="11") is False
+    assert registry.path.read_bytes() == baseline
+    assert registry.snapshot(now=NOW)["models"]["11"]["observed_at"] == NOW - 5
+
+
+@pytest.mark.parametrize("invalid_now", [False, "now", float("nan"),
+                                          float("inf"), 10 ** 500])
+def test_registry_snapshot_rejects_invalid_query_times_without_errors(
+        tmp_path, monkeypatch, invalid_now):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    assert registry.record("11", "A320",
+                           engine_selection.parse_engine_catalog(_groups()))
+    assert registry.snapshot(now=invalid_now)["models"] == {}
+
+
 def test_round_robin_records_failures_and_keeps_prior_success(tmp_path, monkeypatch):
     monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
     registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
@@ -183,6 +280,46 @@ def test_collector_reads_order_details_only_and_rotates_after_failure(tmp_path, 
         "ac_orders.php?mode=detail&id=33&charter=0")
     assert registry.snapshot(now=NOW)["model_count"] == 2
     assert json.loads(registry.path.read_text(encoding="utf-8"))["attempts"]["22"]["status"] == "inconclusive"
+
+
+def test_collector_preserves_second_dom_read_time_when_processing_is_delayed(
+        tmp_path, monkeypatch):
+    clock = [NOW - 40.375]
+    monkeypatch.setattr(game_observations.time, "time", lambda: clock[0])
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    monkeypatch.setattr(game_observations, "EngineCatalogRegistry", lambda: registry)
+    real_parser = engine_selection.parse_engine_catalog
+
+    def parse_after_delay(groups):
+        clock[0] = NOW
+        return real_parser(groups)
+
+    monkeypatch.setattr(game_observations, "parse_engine_catalog", parse_after_delay)
+
+    class Bot:
+        stopping = False
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            pass
+
+        def ajax(self, *_args):
+            pass
+
+        def js(self, script):
+            if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
+                return {"detail": {"attribute_present": True, "model_id": "11"},
+                        "groups": _groups()}
+            from fleet import _MODELS_JS
+            assert script == _MODELS_JS
+            return [{"id": "11", "name": "A320"}]
+
+    assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == 1
+    saved = engine_catalog.EngineCatalogRegistry(registry.path).snapshot(now=NOW)
+    assert saved["models"]["11"]["observed_at"] == NOW - 40.375
+    assert saved["models"]["11"]["model_detail_identity_verified"] is True
 
 
 def test_collector_rejects_unstable_game_reads_without_overwriting_cache(tmp_path, monkeypatch):

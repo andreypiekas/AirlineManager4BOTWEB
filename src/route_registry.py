@@ -530,16 +530,25 @@ class RouteRegistry:
                 "missing_airports": max(0, int(missing_airports)),
             }
             if aircraft_ids is not None:
+                raw_page, raw_total_pages = page, total_pages
                 page = self._valid_page(page)
                 total_pages = self._valid_page(total_pages)
                 if type(expected_routes) is not int or not 0 < expected_routes <= 50000:
                     expected_routes = None
                 if not isinstance(audit_run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", audit_run_id):
                     audit_run_id = None
+                pagination_verified = (
+                    type(raw_page) is int and type(raw_total_pages) is int
+                    and page is not None and total_pages is not None
+                    and page <= total_pages and expected_routes is not None
+                    and total_pages == (expected_routes + 19) // 20
+                )
                 if total_pages and page and page > total_pages:
                     page = None
-                coverage = data.get("scan_coverage")
-                updated_at = coverage.get("updated_at") if isinstance(coverage, dict) else None
+                previous_coverage = data.get("scan_coverage")
+                coverage = previous_coverage if isinstance(previous_coverage, dict) else {}
+                prior_run = coverage.get("audit_run")
+                updated_at = coverage.get("updated_at")
                 if not isinstance(updated_at, (int, float)) or now < updated_at or \
                         now - updated_at >= _SCAN_WINDOW_SECONDS or \
                         (total_pages and coverage.get("total_pages") not in (None, total_pages)) or \
@@ -557,26 +566,82 @@ class RouteRegistry:
                 }
                 if total_pages:
                     coverage["total_pages"] = total_pages
-                raw_ids = [str(aircraft_id).strip() for aircraft_id in aircraft_ids]
+                raw_ids = ([str(aircraft_id).strip() for aircraft_id in aircraft_ids]
+                           if isinstance(aircraft_ids, list) else [])
                 recorded_ids = list(dict.fromkeys(
                     identity for identity in raw_ids
                     if _GAME_AIRCRAFT_ID_RE.fullmatch(identity)
                 ))[:_MAX_PAGE_AIRCRAFT]
-                # The page must account for every raw row before it can prove
-                # completeness. Filtering or deduplicating malformed captures
-                # must never turn a partial read into a certified full audit.
+                # If raw DOM pagination fields are provided with route observations,
+                # every row must confirm the same loaded page and header count.
+                metadata_keys = ("scan_page", "scan_total_pages", "scan_route_count")
+                has_row_metadata = isinstance(route_observations, list) and any(
+                    isinstance(row, dict) and any(key in row for key in metadata_keys)
+                    for row in route_observations
+                )
+                row_metadata_verified = not has_row_metadata or all(
+                    isinstance(row, dict)
+                    and type(row.get("scan_page")) is int and row["scan_page"] == page
+                    and type(row.get("scan_total_pages")) is int
+                    and row["scan_total_pages"] == total_pages
+                    and type(row.get("scan_route_count")) is int
+                    and row["scan_route_count"] == expected_routes
+                    for row in route_observations
+                )
+                # Filtering or deduplicating malformed captures must never turn
+                # a partial read into a certified full audit.
                 page_ids_verified = (
                     type(visible) is int and 0 < visible <= 20
                     and len(raw_ids) == visible
                     and len(recorded_ids) == len(raw_ids)
+                    and row_metadata_verified
                     and (route_observations is None or (
-                        len(route_observations) == visible
+                        isinstance(route_observations, list)
+                        and len(route_observations) == visible
                         and observed_ids == set(recorded_ids)
                     ))
                 )
+                previous_pages = (previous_coverage.get("pages")
+                                  if isinstance(previous_coverage, dict) else {})
+                previous_page = (previous_pages.get(str(page))
+                                 if isinstance(previous_pages, dict) and page else None)
+                if audit_run_id:
+                    same_run = (isinstance(prior_run, dict)
+                                and prior_run.get("id") == audit_run_id)
+                    audit_run = dict(prior_run) if same_run else {
+                        "id": audit_run_id, "started_at": now,
+                        "total_pages": total_pages, "expected_routes": expected_routes,
+                        "invalidated": False,
+                    }
+                    changed_page = (
+                        isinstance(previous_page, dict)
+                        and previous_page.get("audit_run_id") == audit_run_id
+                        and (set(previous_page.get("aircraft_ids") or []) != set(recorded_ids)
+                             or previous_page.get("visible") != visible
+                             or previous_page.get("page_ids_verified") is not True)
+                    )
+                    audit_run["invalidated"] = bool(
+                        audit_run.get("invalidated") or not pagination_verified
+                        or not page_ids_verified or changed_page
+                        or (same_run and (
+                            audit_run.get("total_pages") != total_pages
+                            or audit_run.get("expected_routes") != expected_routes
+                            or not isinstance(audit_run.get("started_at"), (int, float))
+                            or not 0 <= now - audit_run["started_at"] < _SCAN_WINDOW_SECONDS
+                        ))
+                    )
+                elif isinstance(prior_run, dict):
+                    # An interleaved untagged read cannot later complete this run.
+                    audit_run = {**prior_run, "invalidated": True}
+                else:
+                    audit_run = None
+                if audit_run is not None:
+                    coverage["audit_run"] = audit_run
                 observation = {
                     **data["last_scan"], "aircraft_ids": recorded_ids,
                     "page_ids_verified": page_ids_verified,
+                    "page": page, "total_pages": total_pages,
+                    "expected_routes": expected_routes,
                 }
                 if audit_run_id:
                     observation["audit_run_id"] = audit_run_id
@@ -595,23 +660,35 @@ class RouteRegistry:
                 combined_ids = [aircraft_id for entry in pages.values()
                                 for aircraft_id in entry.get("aircraft_ids", [])]
                 repeated_ids = len(combined_ids) - len(set(combined_ids))
-                complete = (audit_run_id is not None and expected_routes is not None
-                            and total_pages is not None
-                            and len(pages) == total_pages and repeated_ids == 0
-                            and len(combined_ids) == expected_routes
-                            and total_pages == (expected_routes + 19) // 20
-                            and all(isinstance(entry, dict)
-                                    and entry.get("audit_run_id") == audit_run_id
-                                    and 0 < entry.get("visible", 0) <= 20
-                                    and len(entry.get("aircraft_ids", [])) == entry["visible"]
-                                    and entry.get("page_ids_verified") is True
-                                    for entry in page_rows))
+                complete = (
+                    audit_run_id is not None and pagination_verified
+                    and audit_run is not None and not audit_run["invalidated"]
+                    and len(pages) == total_pages and repeated_ids == 0
+                    and len(combined_ids) == expected_routes
+                    and all(
+                        isinstance(entry, dict)
+                        and entry.get("audit_run_id") == audit_run_id
+                        and entry.get("page") == number
+                        and entry.get("total_pages") == total_pages
+                        and entry.get("expected_routes") == expected_routes
+                        and type(entry.get("visible")) is int and 0 < entry["visible"] <= 20
+                        and len(entry.get("aircraft_ids", [])) == entry["visible"]
+                        and entry.get("page_ids_verified") is True
+                        for number, entry in enumerate(page_rows, 1)
+                    )
+                )
                 if complete:
                     data["last_verified_full_audit"] = {
                         "at": now, "audit_run_id": audit_run_id,
                         "expected_routes": expected_routes,
                         "total_pages": total_pages, "unique_aircraft": len(combined_ids),
                     }
+                elif audit_run_id and audit_run and audit_run["invalidated"]:
+                    # A later contradictory sample revokes a certification made
+                    # earlier using the very same audit-run identity.
+                    last_full = data.get("last_verified_full_audit")
+                    if isinstance(last_full, dict) and last_full.get("audit_run_id") == audit_run_id:
+                        data.pop("last_verified_full_audit", None)
                 unknown = coverage.get("unknown_page")
                 unknown_at = unknown.get("at") if isinstance(unknown, dict) else None
                 if isinstance(unknown_at, (int, float)) and \

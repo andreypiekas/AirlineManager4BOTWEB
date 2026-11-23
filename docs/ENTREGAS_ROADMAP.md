@@ -1,5 +1,51 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2, invalidação de auditoria dinâmica da frota (G0)
+
+**Objetivo:** impedir que paginação móvel e alterações simultâneas da frota produzam uma certificação falsa de cobertura completa.
+
+### Implementação e evidência
+
+- **`src/route_registry.py`:** exige coerência entre página atual, total de páginas, contagem anunciada e limite de 20 aeronaves. Um identificador de execução de auditoria é invalidado permanentemente se os totais, IDs, tamanho de página ou metadados de linhas mudam durante a mesma varredura. Um novo identificador inicia uma auditoria independente.
+- Certificações históricas comprovadas permanecem disponíveis para consultas posteriores. Se for constatada contradição posterior na mesma execução anteriormente certificada, essa certificação é revogada. `partial` continua explicitamente verdadeiro para o snapshot corrente, sem inferência de hub-base por aeronave.
+- **`tests/test_route_registry.py`:** cobre página incompleta, variação de número de páginas, mudança de quantidade de aeronaves sem mudança de total de páginas, linhas com metadados divergentes, reobservação alterada da mesma página, retomada segura e novo ciclo íntegro.
+
+### Validação, pendências e reversão
+
+- Validação local com fixtures simuladas e testes de regressão no Windows. A confirmação de cobertura na sessão real, com aeronaves chegando durante a paginação, continua pendente.
+- **Gate G0.** A2 exige ainda prova real de paginação dinâmica e inventário das bases. G1–G5 seguem pendentes. Nenhuma ação no jogo, Telegram, implantação ou merge em `main` foi efetuada. Reversão pelo commit de integração na branch de autonomia, conferindo dependências posteriores.
+
+## 2026-11-23 — Autonomia Total A1/A2, fidelidade temporal do catálogo de motores (G0)
+
+**Objetivo:** preservar a observação autenticável da variante exata durante processamento tardio, sem perder motores válidos da fila de pesquisa quando a leitura do DOM tem precisão subsegundo.
+
+### Implementação e evidência
+
+- **`src/game_observations.py`:** a segunda leitura estável do DOM agora captura e encaminha o horário real da leitura, inclusive se o processamento posterior for atrasado. O registro continua sendo uma leitura de catálogo, sem submissão de compra.
+- **`src/engine_catalog.py`:** aceita timestamps numéricos finitos e precisos, rejeita épocas inválidas, futuras ou expiradas, impede que observações antigas substituam uma leitura mais nova após reinício e prioriza identidade do modelo explicitamente verificada em conflitos de mesmo instante. Contradições equivalentes não substituem o catálogo anterior, mantendo as variantes por modelo.
+- **`src/owned_hub_research_feed.py`:** reconhece horário fracionário recente de catálogo de motores, preservando a validação inteira já aplicada às outras fontes de observação. Variante, preço final e demanda seguem pendentes até comprovação específica.
+- **`tests/test_engine_catalog.py` e `tests/test_owned_hub_research_feed.py`:** testes cobrem atrasos, reinício, conflitos no mesmo instante, motor com três opções, timestamps inválidos e conexão do catálogo fracionário ao feed.
+
+### Validação, pendências e reversão
+
+- Testes dirigidos de motor, observações e fila concluídos com código zero; Ruff (`src`, `tests`) e `compileall src` passaram. A homologação de leitura real, preços finais e correspondência com o seletor do jogo segue pendente.
+- **Gate G0.** Apenas fixtures e testes locais. G1–G5 permanecem pendentes. Nenhuma compra, mensagem Telegram, implantação ou merge em `main` foi realizada.
+- **Reversão:** reverter o commit desta entrega na branch de autonomia após avaliar dependências. A PR #44 permanece independente.
+
+## 2026-11-23 — Autonomia Total A2/A3, pesquisa de rotas com escala potencial (G0)
+
+**Objetivo:** não descartar precocemente combinações hub × rota × modelo que excedem o alcance direto, mas podem ser viáveis após pesquisa de escala intermediária.
+
+### Implementação e evidência
+
+- **`src/owned_hub_research_feed.py`:** combinações fora do alcance direto permanecem na fila com `direct_range_sufficient=false` e pendência `escala_e_trechos_a_confirmar`. Alcance desconhecido é `null`, preservando a pendência existente. Alcance suficiente é `true`.
+- **`tests/test_owned_hub_research_feed.py`:** valida a preservação de modelos com alcance insuficiente, a exclusão de IDs contraditórios e a ausência de autorização de compra para todas essas linhas.
+
+### Validação, pendências e reversão
+
+- Testes dirigidos da fila concluídos com código zero. Ainda precisam ser pesquisados escala permitida, comprimento de pista, alcance por trecho e viabilidade econômica. A fila segue somente leitura e `purchase_eligible=false`.
+- **Gate G0.** A evidência é simulada, sem pesquisa real de escala. G1–G5 seguem pendentes, sem alteração de comportamento de compra. Reversão pelo commit desta entrega na branch de autonomia.
+
 ## 2026-11-23 — Autonomia Total A2/A3, persistência temporal e quarentena de cenários (G0)
 
 **Objetivo:** impedir que pesquisas assíncronas ou páginas do jogo entregues fora de ordem substituam evidências mais recentes e que duas leituras contraditórias com o mesmo horário produzam uma recomendação de compra.

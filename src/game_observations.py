@@ -5,6 +5,7 @@ import logging
 import math
 import re
 import threading
+import time
 
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
@@ -203,8 +204,8 @@ _COUNT = re.compile(r"^[0-9]{1,9}$")
 _DISTANCE = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
 
 
-def _stable_read(bot: object, script: str) -> object:
-    """Return only an identical pair of DOM reads while the worker is active."""
+def _stable_read(bot: object, script: str, *, with_timestamp: bool = False) -> object:
+    """Return an identical DOM pair, optionally with its second-read timestamp."""
     try:
         first = bot.js(script)
         if first is None or getattr(bot, "stopping", False):
@@ -214,7 +215,10 @@ def _stable_read(bot: object, script: str) -> object:
         if interrupted or getattr(bot, "stopping", False):
             return None
         second = bot.js(script)
-        return second if first == second else None
+        read_at = time.time() if with_timestamp else None
+        if first != second:
+            return None
+        return (second, read_at) if with_timestamp else second
     except Exception:  # Selenium errors can expose session details in their repr.
         log.debug("A leitura da página do jogo não foi concluída.")
         return None
@@ -449,7 +453,10 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
             registry.record_attempt(model_id, name)
             try:
                 bot.ajax(f"ac_orders.php?mode=detail&id={model_id}&charter=0", "acModel")
-                snapshot = _stable_read(bot, _ENGINE_DETAIL_SNAPSHOT_JS)
+                read = _stable_read(bot, _ENGINE_DETAIL_SNAPSHOT_JS, with_timestamp=True)
+                if not isinstance(read, tuple):
+                    continue
+                snapshot, observed_at = read
                 if not isinstance(snapshot, dict):
                     continue
                 detail = snapshot.get("detail")
@@ -471,7 +478,8 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
                 log.warning("Motor de %s (%s): ID de modelo divergente no detalhe.", name, model_id)
                 continue
             if registry.record(model_id, name, catalog,
-                               observed_model_id=observed_id if explicit else None):
+                               observed_model_id=observed_id if explicit else None,
+                               observed_at=observed_at):
                 collected += 1
             else:
                 log.info("Motor de %s (%s): dados do formulário inconsistentes.", name, model_id)

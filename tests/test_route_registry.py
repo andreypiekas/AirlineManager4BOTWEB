@@ -169,3 +169,187 @@ def test_game_roster_rejects_duplicate_numeric_aliases(tmp_path):
         {"aircraft_id": "0123", "route_id": 100},
     ], expected_total=2)
     assert registry.snapshot()["current_roster_available"] is False
+
+
+def _scan_audit_page(registry, run_id, page, total_pages, expected_routes, *,
+                     ids=None, metadata=None):
+    if ids is None:
+        first = (page - 1) * 20 + 1
+        ids = [str(identity) for identity in
+               range(first, min(page * 20, expected_routes) + 1)]
+    rows = [{"aircraft_id": identity, **(metadata or {})} for identity in ids]
+    registry.record_scan(
+        len(ids), 0, len(ids), aircraft_ids=ids,
+        page=page, total_pages=total_pages, expected_routes=expected_routes,
+        audit_run_id=run_id, route_observations=rows,
+    )
+
+
+def test_complete_stable_audit_keeps_current_snapshot_partial(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "c" * 32
+
+    for page in (1, 2, 3):
+        _scan_audit_page(registry, run_id, page, 3, 41)
+
+    report = RouteRegistry(registry.path).snapshot()
+    assert report["scan_coverage"]["full_page_coverage_verified"] is True
+    assert report["last_verified_full_audit"]["audit_run_id"] == run_id
+    assert report["last_verified_full_audit"]["unique_aircraft"] == 41
+    assert report["partial"] is True
+    assert not any("home_hub_id" in row for row in report["relations"])
+
+
+def test_same_run_page_count_changes_cannot_be_recertified(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "d" * 32
+    _scan_audit_page(registry, run_id, 1, 2, 40)
+    _scan_audit_page(registry, run_id, 2, 3, 60)
+
+    # Even after recollecting every page with matching metadata, the run
+    # observed a change in the fleet and cannot prove one coherent snapshot.
+    for page in (1, 2, 3):
+        _scan_audit_page(registry, run_id, page, 3, 60)
+    report = registry.snapshot()
+    assert report["scan_coverage"]["observed_pages"] == 3
+    assert report["scan_coverage"]["unique_aircraft"] == 60
+    assert report["scan_coverage"]["audit_run"]["invalidated"] is True
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+    assert report["last_verified_full_audit"] is None
+
+    # A completely new, consistent run can still establish a historical proof.
+    for page in (1, 2, 3):
+        _scan_audit_page(registry, "e" * 32, page, 3, 60)
+    assert registry.snapshot()["last_verified_full_audit"]["unique_aircraft"] == 60
+
+
+def test_same_run_route_count_change_with_fixed_page_count_blocks_audit(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "f" * 32
+    _scan_audit_page(registry, run_id, 1, 3, 45)
+    _scan_audit_page(registry, run_id, 2, 3, 50)
+    for page in (1, 2, 3):
+        _scan_audit_page(registry, run_id, page, 3, 50)
+
+    report = registry.snapshot()
+    assert report["scan_coverage"]["observed_pages"] == 3
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+    assert report["last_verified_full_audit"] is None
+
+
+def test_same_run_invalid_loaded_page_metadata_cannot_be_overwritten(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "1" * 32
+    _scan_audit_page(registry, run_id, 3, 2, 40)
+    for page in (1, 2):
+        _scan_audit_page(registry, run_id, page, 2, 40)
+
+    report = registry.snapshot()
+    assert report["scan_coverage"]["observed_pages"] == 2
+    assert report["scan_coverage"]["audit_run"]["invalidated"] is True
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+    assert report["last_verified_full_audit"] is None
+
+
+def test_raw_row_metadata_disagreement_blocks_repaired_same_run(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "2" * 32
+    _scan_audit_page(registry, run_id, 1, 2, 40, metadata={
+        "scan_page": 2, "scan_total_pages": 2, "scan_route_count": 40,
+    })
+    _scan_audit_page(registry, run_id, 1, 2, 40, metadata={
+        "scan_page": 1, "scan_total_pages": 2, "scan_route_count": 40,
+    })
+    _scan_audit_page(registry, run_id, 2, 2, 40, metadata={
+        "scan_page": 2, "scan_total_pages": 2, "scan_route_count": 40,
+    })
+
+    report = registry.snapshot()
+    assert report["scan_coverage"]["observed_pages"] == 2
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+    assert report["last_verified_full_audit"] is None
+
+
+def test_same_run_page_contents_changing_then_restored_cannot_certify(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "3" * 32
+    _scan_audit_page(registry, run_id, 1, 2, 40)
+    shifted_ids = [str(identity) for identity in range(101, 121)]
+    _scan_audit_page(registry, run_id, 1, 2, 40, ids=shifted_ids)
+    _scan_audit_page(registry, run_id, 1, 2, 40)
+    _scan_audit_page(registry, run_id, 2, 2, 40)
+
+    report = registry.snapshot()
+    assert report["scan_coverage"]["repeated_aircraft_across_pages"] == 0
+    assert report["scan_coverage"]["audit_run"]["invalidated"] is True
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+
+
+def test_page_count_must_match_declared_fleet_size(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "4" * 32
+    # Three pages can report 10 IDs each, but a 30-aircraft header requires
+    # two pages. A plausible unique-ID sum cannot certify contradictory paging.
+    for page in (1, 2, 3):
+        _scan_audit_page(registry, run_id, page, 3, 30,
+                         ids=[str(identity) for identity in
+                              range((page - 1) * 10 + 1, page * 10 + 1)])
+    report = registry.snapshot()
+    assert report["scan_coverage"]["unique_aircraft"] == 30
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+    assert report["last_verified_full_audit"] is None
+
+
+def test_conflict_after_proof_revokes_only_same_run_certification(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "5" * 32
+    for page in (1, 2):
+        _scan_audit_page(registry, run_id, page, 2, 40)
+    assert registry.snapshot()["last_verified_full_audit"]["audit_run_id"] == run_id
+
+    # The already certified run revealed an incompatible count later on.
+    _scan_audit_page(registry, run_id, 1, 3, 60)
+    assert registry.snapshot()["last_verified_full_audit"] is None
+
+    other_run = "6" * 32
+    for page in (1, 2):
+        _scan_audit_page(registry, other_run, page, 2, 40)
+    _scan_audit_page(registry, "7" * 32, 1, 2, 40)
+    report = registry.snapshot()
+    assert report["last_verified_full_audit"]["audit_run_id"] == other_run
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+    assert report["partial"] is True
+
+
+def test_string_page_metadata_cannot_be_full_audit_evidence(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "8" * 32
+    _scan_audit_page(registry, run_id, "1", 2, 40, ids=[str(i) for i in range(1, 21)])
+    _scan_audit_page(registry, run_id, 2, 2, 40)
+    assert registry.snapshot()["scan_coverage"]["observed_pages"] == 2
+    assert registry.snapshot()["scan_coverage"]["full_page_coverage_verified"] is False
+
+
+def test_same_page_reordered_ids_do_not_invalidate_verified_run(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "9" * 32
+    _scan_audit_page(registry, run_id, 1, 2, 40)
+    _scan_audit_page(registry, run_id, 1, 2, 40,
+                     ids=[str(identity) for identity in range(20, 0, -1)])
+    _scan_audit_page(registry, run_id, 2, 2, 40)
+    assert registry.snapshot()["scan_coverage"]["full_page_coverage_verified"] is True
+
+
+def test_interleaved_untagged_scan_cannot_reuse_original_audit_run(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "a" * 32
+    _scan_audit_page(registry, run_id, 1, 2, 40)
+    registry.record_scan(20, 0, 20, aircraft_ids=[str(i) for i in range(1, 21)],
+                         page=1, total_pages=2, expected_routes=40)
+    _scan_audit_page(registry, run_id, 2, 2, 40)
+    _scan_audit_page(registry, run_id, 1, 2, 40)
+
+    report = registry.snapshot()
+    assert report["scan_coverage"]["observed_pages"] == 2
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+    assert report["last_verified_full_audit"] is None

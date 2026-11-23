@@ -128,6 +128,18 @@ def test_research_queue_schedules_distinct_engine_variants_across_owned_hubs():
             assert "motor_indisponivel" in row["pending"]
 
 
+def test_fractional_engine_read_timestamp_is_accepted_without_promoting_purchase():
+    engines = _engines(observed_at=NOW - 0.375)
+    result = build_owned_hub_research_queue(
+        _inventory(), [_sample()], _market(), engines=engines, now=NOW,
+    )
+    assert [row["engine_id"] for row in result["items"][:2]] == ["1", "2"]
+    assert all(row["evidence"]["engine"]["observed_at"] == NOW - 0.375
+               for row in result["items"][:2])
+    assert result["purchase_eligible"] is False
+    assert all(row["purchase_eligible"] is False for row in result["items"])
+
+
 def test_engine_selection_and_confirmed_model_identity_must_match_observation():
     verified = _engines()
     verified["models"]["11"].update(
@@ -241,6 +253,11 @@ def test_newer_observation_resolves_previous_conflict_without_fallback():
 @pytest.mark.parametrize("engines", [
     _engines(observed_at=NOW - 4 * 86400),
     _engines(observed_at=NOW + 1),
+    _engines(observed_at=NOW + 0.5),
+    _engines(observed_at=float("nan")),
+    _engines(observed_at=float("inf")),
+    _engines(observed_at=10 ** 500),
+    _engines(observed_at=True),
     _engines(model="B737"),
     _engines(engine_id="../../bad"),
     {},
@@ -272,7 +289,7 @@ def test_incomplete_inputs_never_become_eligible(inventory, samples, market, blo
     assert report["purchase_eligible"] is False
 
 
-def test_out_of_range_models_and_conflicting_ids_are_excluded():
+def test_out_of_direct_range_models_need_stopover_research_and_conflicting_ids_are_excluded():
     models = [
         {"id": "11", "name": "A320", "range": 1000, "price": 1000},
         {"id": "22", "name": "B737", "range": 2500, "price": 1200},
@@ -281,9 +298,16 @@ def test_out_of_range_models_and_conflicting_ids_are_excluded():
     ]
     report = build_owned_hub_research_queue(
         _inventory(), [_sample()], _market(models=models), now=NOW)
-    assert [row["model_id"] for row in report["items"]] == ["33"]
-    assert report["items"][0]["catalog_price"] is None
-    assert report["items"][0]["final_aircraft_price"] is None
+    assert [row["model_id"] for row in report["items"]] == ["11", "33"]
+    short_range, direct = report["items"]
+    assert short_range["direct_range_sufficient"] is False
+    assert "escala_e_trechos_a_confirmar" in short_range["pending"]
+    assert short_range["purchase_eligible"] is False
+    assert short_range["final_aircraft_price"] is None
+    assert direct["direct_range_sufficient"] is True
+    assert "escala_e_trechos_a_confirmar" not in direct["pending"]
+    assert direct["catalog_price"] is None
+    assert direct["final_aircraft_price"] is None
 
 
 def test_missing_model_range_and_capacity_keep_pending():
@@ -292,6 +316,7 @@ def test_missing_model_range_and_capacity_keep_pending():
         _market(models=[{"id": "7", "name": "Unknown", "price": 999}]),
         now=NOW)
     item = report["items"][0]
+    assert item["direct_range_sufficient"] is None
     assert "alcance_modelo_a_confirmar" in item["pending"]
     assert "capacidade_modelo_a_confirmar" in item["pending"]
     assert item["purchase_eligible"] is False
