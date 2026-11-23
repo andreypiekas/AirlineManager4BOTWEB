@@ -537,6 +537,147 @@ assert.equal($('hubRecommendationsCount').textContent, 'Recommendations shown: 0
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not available")
+def test_audited_expansion_planner_renders_economics_and_blocks_invalid_data(tmp_path):
+    script = "\n".join(_page().scripts)
+    translations = script[script.index("const EN = {"):script.index("let LANG =")]
+    helpers = script[script.index("const hubDate ="):script.index("function renderHubs(")]
+    renderer = script[script.index("function renderAuditedExpansionPlanner(audited, hubs)"):
+                      script.index("async function loadHubs()")]
+    assert ".innerHTML" not in renderer
+    assertions = r"""
+const assert = require('node:assert/strict');
+const nf = new Intl.NumberFormat('en-GB');
+const money = value => '$' + String(value);
+""" + translations + r"""
+let LANG = 'en';
+const tr = value => EN[value] || value;
+class Element {
+  constructor(tag = 'div') {
+    this.tag = tag;
+    this.children = [];
+    this.dataset = {};
+    this.textContent = '';
+    this.className = '';
+  }
+  append(...items) { this.children.push(...items); }
+  replaceChildren(...items) { this.children = items; this.textContent = ''; }
+}
+const document = {createElement: tag => new Element(tag)};
+const nodes = new Map();
+const $ = id => {
+  if (!nodes.has(id)) { nodes.set(id, new Element()); }
+  return nodes.get(id);
+};
+""" + helpers + "\n" + renderer + r"""
+const identity = {hub_id:'1', origin_id:'AAA', destination_id:'BBB',
+  model_id:'<script>unsafe</script>', engine_id:'Trent <demo>'};
+const proof = {economics_id:'a3-01', identity, snapshot_id:'snap-1',
+  observed_at_oldest:1800000000, safety_margin_fraction:0.15,
+  cash_after_purchase:12500,
+  configuration_yjf:{y:120,j:20,f:2},
+  components:{daily_net_profit_estimate:700, revenue_per_day:1250,
+    fuel_cost_per_day:110, co2_cost_per_day:10, known_recurring_cost_per_day:20,
+    payback_days:15, roi_365d_percent:200},
+  capital_costs:{total_investment:10500, aircraft_cost:9000,
+    engine_delta_cost:200, route_fee:300, hangar_cost:400, hub_cost:0, other_fees:600},
+  sensitivity:{fuel_price:{multiplier:1.2,daily_net_profit_estimate:655}}};
+const a4 = {economics_id:'a3-01', identity, configuration_yjf:proof.configuration_yjf,
+  profit_per_day:700, investment:10500, payback_days:15,
+  roi_365d_percent:200, score:0.78,
+  score_components:{profit:0.4, capital_efficiency:0.38}};
+const report = {read_only:true, execution_available:false,
+  status:'registrado', profile_id:'principal', snapshot_id:'snap-1',
+  evaluation_count:1, evaluations:[proof], a3_ranking:{alternatives:[proof]},
+  portfolio:{read_only:true, execution_available:false,
+    status:'comparacao_concluida', decision:'sugestao_para_analise',
+    alternatives:[a4], best:a4, why_best:{score_difference:0.1},
+    budget_after_reservations_and_limits:30000,
+    blocking_reasons:[], excluded:{cenario_nao_validado:1}}};
+const hubs = [{id:'1', code:'AAA', name:'Alpha'}];
+assert.equal(EN['Planejador de Expansão'], 'Expansion Planner');
+renderAuditedExpansionPlanner(report, hubs);
+assert.match($('hubExpansionPlannerStatus').textContent,
+  /Profile principal · A3 evaluations: 1 · A4 alternatives: 1 · Analysis only/);
+assert.match($('hubExpansionPlannerExplanation').textContent,
+  /Best global alternative · 1 \/ <script>unsafe<\/script> \/ Trent <demo>/);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Excluded scenarios/);
+assert.match($('hubExpansionPlannerExplanation').textContent,
+  /Scenario awaiting validation \(1\)/);
+const card = $('hubExpansionPlannerGrid').children[0];
+assert.equal(card.children[0].textContent, 'AAA · Alpha');
+assert.equal(card.children[1].dataset.state, 'viavel');
+assert.equal(card.children[1].textContent, 'A4 global ranking');
+const details = card.children[3];
+const metrics = Object.fromEntries(details.children[1].children.map(item =>
+  [item.children[0].textContent, item.children[1].textContent]));
+assert.equal(metrics['Model'], '<script>unsafe</script>');
+assert.equal(metrics['Researched engine'], 'Trent <demo>');
+assert.equal(metrics['Y/J/F configuration'], '120 / 20 / 2');
+assert.equal(metrics['Incremental profit/day'], '$700');
+assert.equal(metrics['Total investment'], '$10500');
+assert.equal(metrics['Aircraft price'], '$9000');
+assert.equal(metrics['Additional engine cost'], '$200');
+assert.equal(metrics['Cash after purchase'], '$12500');
+assert.equal(metrics['Safety margin'], '15%');
+assert.equal(metrics['A4 score'], '0.78');
+assert.match(details.children[2].textContent, /Oldest evidence: /);
+assert.match(details.children[2].textContent, /Snapshot: snap-1/);
+assert.match(details.children[3].textContent, /Score breakdown: profit 0.4/);
+assert.match(details.children[4].textContent, /Stress scenarios: fuel price ×1.2 → \$655/);
+
+report.portfolio.status = 'inconclusivo';
+report.portfolio.decision = 'nao_comprar';
+report.portfolio.alternatives = [];
+report.portfolio.best = null;
+report.portfolio.blocking_reasons = ['demanda_residual_a_confirmar',
+  'evidencia_pending_orders_incremental_a_confirmar',
+  'cobertura_pesquisa_a_confirmar', 'compromissos_a_conciliar'];
+report.portfolio.excluded = {orcamento_global_insuficiente_ou_desconhecido:2};
+renderAuditedExpansionPlanner(report, hubs);
+assert.match($('hubExpansionPlannerStatus').textContent, /Purchase blocked/);
+assert.equal($('hubExpansionPlannerBlockers').children[0].textContent,
+  'Remaining route demand unverified');
+assert.deepEqual($('hubExpansionPlannerBlockers').children.slice(1)
+  .map(item => item.textContent), [
+    'Pending orders evidence unverified',
+    'Research coverage unverified',
+    'Cash commitments require reconciliation',
+  ]);
+assert.match($('hubExpansionPlannerExplanation').textContent,
+  /Insufficient or unknown global budget \(2\)/);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Verified A3 calculations/);
+assert.equal($('hubExpansionPlannerGrid').children[0].children[1].textContent,
+  'A3 economics analysis');
+
+report.status = 'registro_invalido';
+renderAuditedExpansionPlanner(report, hubs);
+assert.equal($('hubExpansionPlannerStatus').textContent,
+  'Audited analysis unavailable. Purchases blocked.');
+assert.deepEqual($('hubExpansionPlannerBlockers').children.map(item => item.textContent),
+  ['Invalid economics registry']);
+assert.equal($('hubExpansionPlannerGrid').children.length, 0);
+renderAuditedExpansionPlanner(null, hubs);
+assert.equal($('hubExpansionPlannerGrid').children.length, 0);
+
+report.status = 'registrado';
+report.portfolio.read_only = false;
+renderAuditedExpansionPlanner(report, hubs);
+assert.equal($('hubExpansionPlannerGrid').children.length, 0);
+report.portfolio.read_only = true;
+report.portfolio.alternatives = [null, {identity:{hub_id:'1'}, economics_id:'malformed'}];
+renderAuditedExpansionPlanner(report, hubs);
+assert.equal($('hubExpansionPlannerGrid').children.length, 1);
+assert.equal($('hubExpansionPlannerGrid').children[0].children[3].children[0].textContent,
+  '#1 · No data / No data · ? ↔ ?');
+"""
+    test_script = tmp_path / "audited_expansion_planner.js"
+    test_script.write_text(assertions, encoding="utf-8")
+    result = subprocess.run(["node", str(test_script)], capture_output=True,
+                            text=True, check=False, timeout=15)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not available")
 def test_research_pagination_disregards_out_of_order_http_responses(tmp_path):
     script = "\n".join(_page().scripts)
     loader = script[script.index("async function loadHubRecommendations()"):script.index(

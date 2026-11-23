@@ -715,6 +715,13 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <p id="hubRecommendationsStatus" role="status" aria-live="polite"></p>
         <p id="hubRecommendationsScope" class="hub-section-note"></p>
         <p id="hubAuditedExpansion" class="hub-section-note" role="status" aria-live="polite"></p>
+        <details id="hubExpansionPlannerPanel" class="hub-probe" open>
+          <summary data-t="Planejador de Expansão">Planejador de Expansão</summary>
+          <p id="hubExpansionPlannerStatus" class="hub-section-note" role="status" aria-live="polite"></p>
+          <p id="hubExpansionPlannerExplanation" class="hub-section-note"></p>
+          <ul id="hubExpansionPlannerBlockers" class="hub-research-reasons" aria-label="Impedimentos do planejamento" data-t-aria-label="Impedimentos do planejamento"></ul>
+          <div id="hubExpansionPlannerGrid" class="hubs-grid" aria-label="Comparação auditada de oportunidades" data-t-aria-label="Comparação auditada de oportunidades"></div>
+        </details>
         <div class="hubs-controls">
           <label class="hubs-field"><span data-t="Filtrar por modelo">Filtrar por modelo</span>
             <select id="hubRecommendationModel" aria-controls="hubRecommendationsGrid">
@@ -928,6 +935,81 @@ const EN = {
   "Exposição estimada no diário": "Estimated ledger exposure",
   "Teto de caixa após reservas locais": "Cash upper bound after local reservations",
   "Diário de investimentos indisponível.": "Investment ledger unavailable.",
+  "Planejador de Expansão": "Expansion Planner",
+  "Impedimentos do planejamento": "Planning blockers",
+  "Comparação auditada de oportunidades": "Audited comparison of opportunities",
+  "Análise auditada indisponível. Compras bloqueadas.": "Audited analysis unavailable. Purchases blocked.",
+  "Perfil": "Profile", "Avaliações A3": "A3 evaluations", "Alternativas A4": "A4 alternatives",
+  "Somente análise": "Analysis only", "Compra bloqueada": "Purchase blocked",
+  "Registro econômico inválido": "Invalid economics registry",
+  "Melhor opção global": "Best global alternative",
+  "Diferença de score para a segunda opção": "Score gap to runner-up",
+  "Caixa para investimentos após compromissos": "Cash for investments after commitments",
+  "Cálculos A3 comprovados. Planejamento global A4 pendente de validação.":
+    "Verified A3 calculations. Global A4 planning awaits validation.",
+  "Aguardando provas completas de rota, motor, demanda e custos.":
+    "Awaiting complete evidence for route, engine, demand and costs.",
+  "Cenários excluídos": "Excluded scenarios", "Hub": "Hub",
+  "Ranking global A4": "A4 global ranking", "Análise econômica A3": "A3 economics analysis",
+  "Alternativas comparadas": "Compared alternatives", "Rota": "Route", "Modelo": "Model",
+  "Configuração Y/J/F": "Y/J/F configuration", "Lucro incremental/dia": "Incremental profit/day",
+  "Investimento total": "Total investment", "ROI anual": "Annual ROI",
+  "Preço da aeronave": "Aircraft price", "Receita estimada/dia": "Estimated revenue/day",
+  "Combustível/dia": "Fuel/day", "CO₂/dia": "CO₂/day",
+  "Custos recorrentes/dia": "Recurring costs/day", "Caixa após compra": "Cash after purchase",
+  "Margem de segurança": "Safety margin", "Score A4": "A4 score",
+  "Prova mais antiga": "Oldest evidence", "Snapshot": "Snapshot",
+  "Composição do score": "Score breakdown", "Cenários de stress": "Stress scenarios",
+  "Cobertura da pesquisa não confirmada": "Research coverage unverified",
+  "Pedidos pendentes a conciliar": "Pending orders require reconciliation",
+  "Compromissos de caixa a conciliar": "Cash commitments require reconciliation",
+  "Saldo disponível não confirmado": "Available cash balance unverified",
+  "Compromissos de caixa inválidos": "Invalid cash commitments",
+  "Reservas locais inválidas": "Invalid local reservations",
+  "Critérios do planejamento inválidos": "Invalid planning criteria",
+  "Identidade ou relógio inválido": "Invalid identity or clock",
+  "Prova de pedidos pendentes não confirmada": "Pending orders evidence unverified",
+  "Prova de compromissos futuros não confirmada": "Future commitments evidence unverified",
+  "Prova de aeronaves sem rota não confirmada": "Unrouted aircraft evidence unverified",
+  "Quantidade de aeronaves sem rota inválida": "Invalid unrouted aircraft count",
+  "Prova de reserva operacional não confirmada": "Operational reserve evidence unverified",
+  "Prova do gasto do ciclo não confirmada": "Cycle spending evidence unverified",
+  "Prova do limite do ciclo não confirmada": "Cycle limit evidence unverified",
+  "Prova do gasto do período não confirmada": "Period spending evidence unverified",
+  "Prova do limite do período não confirmada": "Period limit evidence unverified",
+  "Aeronaves sem rota precisam de solução": "Unrouted aircraft require resolution",
+  "Formato das avaliações A3 inválido": "Invalid A3 evaluation format",
+  "Avaliações A3 inválidas ou conflitantes": "Invalid or conflicting A3 evaluations",
+  "Avaliações A3 incompatíveis": "Incompatible A3 evaluations",
+  "Saldo A3 não confirmado": "A3 balance unverified",
+  "Saldos A3 contraditórios": "Conflicting A3 balances",
+  "Saldo após compromissos insuficiente": "Insufficient cash after commitments",
+  "Limite de gasto do ciclo esgotado": "Cycle spending limit reached",
+  "Limite de gasto do período esgotado": "Period spending limit reached",
+  "Economia A3 não confirmada": "A3 economics unverified",
+  "ROI A3 não confirmado": "A3 ROI unverified",
+  "Vagas de hangar não confirmadas": "Hangar capacity unverified",
+  "Prova de risco não confirmada": "Risk evidence unverified",
+  "Prova de confiança não confirmada": "Confidence evidence unverified",
+  "Prova de diversificação não confirmada": "Diversification evidence unverified",
+  "Cenário ainda não validado": "Scenario awaiting validation",
+  "Identidade ou custos não confirmados": "Identity or costs unverified",
+  "Identidade, snapshot ou custos não confirmados": "Identity, snapshot or costs unverified",
+  "Lucro abaixo do mínimo": "Profit below minimum",
+  "Economia fora do intervalo válido": "Economics outside valid range",
+  "Retorno acima do limite": "Payback above limit",
+  "Investimento excede limite por aquisição": "Investment exceeds per-purchase limit",
+  "Caixa insuficiente após reservas locais": "Insufficient cash after local reservations",
+  "Provas do ranking incompletas": "Incomplete ranking evidence",
+  "Pesquisas conflitantes": "Conflicting research observations",
+  "Avaliação A3 inválida ou conflitante": "Invalid or conflicting A3 evaluation",
+  "Saldo A3 sem prova atual": "A3 balance evidence expired or missing",
+  "Economia A3 inválida": "Invalid A3 economics",
+  "ROI A3 contraditório": "Conflicting A3 ROI",
+  "Orçamento global insuficiente ou desconhecido": "Insufficient or unknown global budget",
+  "Hangar sem vaga": "No hangar capacity",
+  "Sem alternativas auditadas para comparar entre hubs.":
+    "No audited alternatives available to compare across hubs.",
   "Métricas de autonomia": "Autonomy metrics",
   "Histórico local de intenções": "Local intent history",
   "Período": "Window",
@@ -1803,6 +1885,56 @@ const hubResearchBlockerLabels = {
   demanda_dos_hubs_a_pesquisar: "Demanda dos hubs ainda não pesquisada",
   planejamento_desativado: "Planejamento desativado",
   politica_invalida: "Política inválida",
+  cobertura_frota_a_confirmar: "Cobertura da frota não confirmada",
+  cobertura_pesquisa_a_confirmar: "Cobertura da pesquisa não confirmada",
+  pedidos_pendentes_a_conciliar: "Pedidos pendentes a conciliar",
+  compromissos_a_conciliar: "Compromissos de caixa a conciliar",
+  saldo_disponivel_a_confirmar: "Saldo disponível não confirmado",
+  compromissos_invalidos: "Compromissos de caixa inválidos",
+  reservas_locais_invalidas: "Reservas locais inválidas",
+  criterios_planejamento_invalidos: "Critérios do planejamento inválidos",
+  identidade_ou_relogio_invalido: "Identidade ou relógio inválido",
+  evidencia_pending_orders_incremental_a_confirmar: "Prova de pedidos pendentes não confirmada",
+  evidencia_future_commitments_incremental_a_confirmar: "Prova de compromissos futuros não confirmada",
+  evidencia_unrouted_aircraft_count_a_confirmar: "Prova de aeronaves sem rota não confirmada",
+  evidencia_unrouted_aircraft_count_invalida: "Quantidade de aeronaves sem rota inválida",
+  evidencia_operational_reserve_a_confirmar: "Prova de reserva operacional não confirmada",
+  evidencia_cycle_spent_a_confirmar: "Prova do gasto do ciclo não confirmada",
+  evidencia_cycle_limit_a_confirmar: "Prova do limite do ciclo não confirmada",
+  evidencia_period_spent_a_confirmar: "Prova do gasto do período não confirmada",
+  evidencia_period_limit_a_confirmar: "Prova do limite do período não confirmada",
+  aeronaves_sem_rota_a_resolver: "Aeronaves sem rota precisam de solução",
+  formato_avaliacoes_a3_invalido: "Formato das avaliações A3 inválido",
+  avaliacoes_a3_invalidas_ou_conflitantes: "Avaliações A3 inválidas ou conflitantes",
+  avaliacoes_a3_incompativeis: "Avaliações A3 incompatíveis",
+  saldo_a3_a_confirmar: "Saldo A3 não confirmado",
+  saldos_a3_contraditorios: "Saldos A3 contraditórios",
+  saldo_apos_compromissos_insuficiente: "Saldo após compromissos insuficiente",
+  limite_ciclo_esgotado: "Limite de gasto do ciclo esgotado",
+  limite_periodo_esgotado: "Limite de gasto do período esgotado",
+  economia_a3_a_confirmar: "Economia A3 não confirmada",
+  roi_a3_a_confirmar: "ROI A3 não confirmado",
+  vagas_hangar_a_confirmar: "Vagas de hangar não confirmadas",
+  evidencia_risk_a_confirmar: "Prova de risco não confirmada",
+  evidencia_confidence_a_confirmar: "Prova de confiança não confirmada",
+  evidencia_diversification_a_confirmar: "Prova de diversificação não confirmada",
+  cenario_nao_validado: "Cenário ainda não validado",
+  identidade_ou_custos_a_confirmar: "Identidade ou custos não confirmados",
+  identidade_snapshot_ou_custos_a_confirmar: "Identidade, snapshot ou custos não confirmados",
+  lucro_abaixo_do_minimo: "Lucro abaixo do mínimo",
+  economia_fora_do_intervalo: "Economia fora do intervalo válido",
+  retorno_acima_do_limite: "Retorno acima do limite",
+  limite_por_aquisicao: "Investimento excede limite por aquisição",
+  caixa_apos_compromissos_insuficiente: "Saldo após compromissos insuficiente",
+  caixa_apos_reservas_locais_insuficiente: "Caixa insuficiente após reservas locais",
+  evidencia_ranking_incompleta: "Provas do ranking incompletas",
+  pesquisas_conflitantes: "Pesquisas conflitantes",
+  avaliacao_a3_invalida_ou_conflitante: "Avaliação A3 inválida ou conflitante",
+  saldo_a3_sem_prova_atual: "Saldo A3 sem prova atual",
+  economia_a3_invalida: "Economia A3 inválida",
+  roi_a3_contraditorio: "ROI A3 contraditório",
+  orcamento_global_insuficiente_ou_desconhecido: "Orçamento global insuficiente ou desconhecido",
+  hangar_sem_vaga: "Hangar sem vaga",
   modo_somente_analise: "Modo somente análise",
   limites_de_gasto_a_configurar: "Limites de gasto a configurar",
   executor_aguarda_homologacao: "Executor aguarda homologação"
@@ -2112,11 +2244,14 @@ function renderHubExpansion(report) {
 function renderHubRecommendations(report) {
   const grid = $("hubRecommendationsGrid"); grid.replaceChildren();
   const audited = report.audited_expansion;
-  const auditedBest = audited?.portfolio?.best;
+  renderAuditedExpansionPlanner(audited, report.hubs);
+  const auditedBest = audited?.status !== "registro_invalido" &&
+    audited?.read_only === true && audited?.execution_available === false &&
+    audited?.portfolio?.best?.identity ? audited.portfolio.best : null;
   const auditCount = Number.isSafeInteger(audited?.evaluation_count) ? audited.evaluation_count : 0;
   $("hubAuditedExpansion").textContent = auditedBest
     ? tr("A3/A4 auditado") + " · " + auditCount + " " + tr("avaliações") + " · " +
-      tr("Melhor alternativa") + " " + auditedBest.hub_id + " / " +
+      tr("Melhor alternativa") + " " + auditedBest.identity.hub_id + " / " +
       auditedBest.identity.model_id + " / " + auditedBest.identity.engine_id + " · " +
       hubMoney(auditedBest.profit_per_day) + "/" + tr("dia") + " · " +
       (audited.portfolio.decision === "nao_comprar" ? tr("Compra bloqueada") : tr("Somente análise"))
@@ -2321,6 +2456,171 @@ function renderHubRecommendations(report) {
     const empty = document.createElement("p"); empty.className = "hub-empty";
     empty.textContent = modelControl.value ? tr("Nenhuma recomendação corresponde ao modelo selecionado.")
       : tr("Nenhuma base adquirida identificada.");
+    grid.append(empty);
+  }
+}
+function renderAuditedExpansionPlanner(audited, hubs) {
+  const grid = $("hubExpansionPlannerGrid"); grid.replaceChildren();
+  const blockersList = $("hubExpansionPlannerBlockers"); blockersList.replaceChildren();
+  const explanation = $("hubExpansionPlannerExplanation"); explanation.textContent = "";
+  const status = $("hubExpansionPlannerStatus");
+  const portfolio = audited?.portfolio;
+  if (audited?.status === "registro_invalido" || audited?.read_only !== true ||
+      audited.execution_available !== false || !portfolio ||
+      portfolio.read_only !== true || portfolio.execution_available !== false ||
+      !Array.isArray(portfolio.alternatives)) {
+    status.textContent = tr("Análise auditada indisponível. Compras bloqueadas.");
+    if (audited?.status === "registro_invalido") {
+      const invalid = document.createElement("li");
+      invalid.textContent = tr("Registro econômico inválido"); blockersList.append(invalid);
+    }
+    return;
+  }
+
+  const a4Rows = portfolio.alternatives;
+  const a3Rows = Array.isArray(audited.a3_ranking?.alternatives)
+    ? audited.a3_ranking.alternatives : [];
+  const usingA4 = a4Rows.length > 0;
+  const rows = usingA4 ? a4Rows : a3Rows;
+  const decision = portfolio.decision === "sugestao_para_analise" &&
+    portfolio.status === "comparacao_concluida";
+  status.textContent = tr("Perfil") + " " + String(audited.profile_id || tr("Sem dados")) +
+    " · " + tr("Avaliações A3") + ": " + nf.format(audited.evaluation_count || 0) +
+    " · " + tr("Alternativas A4") + ": " + nf.format(a4Rows.length) +
+    " · " + (decision ? tr("Somente análise") : tr("Compra bloqueada"));
+
+  const blockers = Array.isArray(portfolio.blocking_reasons) ? portfolio.blocking_reasons : [];
+  for (const reason of blockers) {
+    const item = document.createElement("li"); item.textContent = hubResearchBlocker(reason);
+    blockersList.append(item);
+  }
+  if (usingA4) {
+    const why = portfolio.why_best || {};
+    const top = portfolio.best?.identity || {};
+    explanation.textContent = tr("Melhor opção global") + " · " +
+      String(top.hub_id || tr("Sem dados")) + " / " +
+      String(top.model_id || tr("Sem dados")) + " / " +
+      String(top.engine_id || tr("Sem dados")) +
+      (Number.isFinite(why.score_difference)
+        ? " · " + tr("Diferença de score para a segunda opção") + ": " +
+          nf.format(why.score_difference) : "") +
+      (Number.isFinite(portfolio.budget_after_reservations_and_limits)
+        ? " · " + tr("Caixa para investimentos após compromissos") + ": " +
+          hubMoney(portfolio.budget_after_reservations_and_limits) : "");
+  } else {
+    explanation.textContent = a3Rows.length
+      ? tr("Cálculos A3 comprovados. Planejamento global A4 pendente de validação.")
+      : tr("Aguardando provas completas de rota, motor, demanda e custos.");
+  }
+  if (portfolio.excluded && typeof portfolio.excluded === "object") {
+    const exclusions = Object.entries(portfolio.excluded)
+      .filter(([, count]) => Number.isSafeInteger(count) && count > 0);
+    if (exclusions.length) {
+      explanation.textContent += " · " + tr("Cenários excluídos") + ": " + exclusions
+        .map(([reason, count]) => hubResearchBlocker(reason) + " (" + nf.format(count) + ")")
+        .join(", ");
+    }
+  }
+
+  const evidenceById = new Map((Array.isArray(audited.evaluations) ? audited.evaluations : [])
+    .filter(row => row && typeof row.economics_id === "string")
+    .map(row => [row.economics_id, row]));
+  const hubLabels = new Map((Array.isArray(hubs) ? hubs : [])
+    .filter(hub => hub && hub.id != null)
+    .map(hub => [String(hub.id), hubName(hub)]));
+  const byHub = new Map();
+  for (const row of rows) {
+    const hubId = row?.identity?.hub_id;
+    if (typeof hubId !== "string" || !hubId ||
+        typeof row.economics_id !== "string" || !row.economics_id) { continue; }
+    if (!byHub.has(hubId)) { byHub.set(hubId, []); }
+    byHub.get(hubId).push(row);
+  }
+
+  for (const [hubId, alternatives] of byHub) {
+    const card = document.createElement("article"); card.className = "hub-card";
+    const title = document.createElement("h3");
+    title.textContent = hubLabels.get(hubId) || tr("Hub") + " #" + hubId;
+    const badge = document.createElement("span"); badge.className = "hub-state";
+    badge.dataset.state = decision && usingA4 ? "viavel" : "dados_a_confirmar";
+    badge.textContent = usingA4 ? tr("Ranking global A4") : tr("Análise econômica A3");
+    const count = document.createElement("p"); count.className = "hub-context";
+    count.textContent = tr("Alternativas comparadas") + ": " + nf.format(alternatives.length);
+    card.append(title, badge, count);
+    for (const [position, row] of alternatives.entries()) {
+      const identity = row.identity;
+      const auditedRow = evidenceById.get(row.economics_id) || (usingA4 ? {} : row);
+      const components = auditedRow.components || {};
+      const costs = auditedRow.capital_costs || {};
+      const layout = row.configuration_yjf || {};
+      const metrics = document.createElement("dl"); metrics.className = "hub-metrics";
+      const route = String(identity.origin_id || "?") + " ↔ " + String(identity.destination_id || "?");
+      addHubMetric(metrics, "Rota", route);
+      addHubMetric(metrics, "Modelo", String(identity.model_id || tr("Sem dados")));
+      addHubMetric(metrics, "Motor pesquisado", String(identity.engine_id || tr("Sem dados")));
+      addHubMetric(metrics, "Configuração Y/J/F", ["y", "j", "f"].map(key =>
+        Number.isSafeInteger(layout[key]) ? nf.format(layout[key]) : "?").join(" / "));
+      addHubMetric(metrics, "Lucro incremental/dia", hubMoney(usingA4
+        ? row.profit_per_day : components.daily_net_profit_estimate));
+      addHubMetric(metrics, "Investimento total", hubMoney(usingA4
+        ? row.investment : costs.total_investment));
+      const payback = usingA4 ? row.payback_days : components.payback_days;
+      addHubMetric(metrics, "Retorno estimado", Number.isFinite(payback)
+        ? nf.format(payback) + " " + tr("dia") : tr("Sem dados"));
+      addHubMetric(metrics, "ROI anual", Number.isFinite(usingA4
+        ? row.roi_365d_percent : components.roi_365d_percent)
+        ? nf.format(usingA4 ? row.roi_365d_percent : components.roi_365d_percent) + "%"
+        : tr("Sem dados"));
+      addHubMetric(metrics, "Preço da aeronave", hubMoney(costs.aircraft_cost));
+      addHubMetric(metrics, "Custo adicional do motor", hubMoney(costs.engine_delta_cost));
+      addHubMetric(metrics, "Taxa da rota", hubMoney(costs.route_fee));
+      addHubMetric(metrics, "Custo do hangar", hubMoney(costs.hangar_cost));
+      addHubMetric(metrics, "Custo do hub", hubMoney(costs.hub_cost));
+      addHubMetric(metrics, "Outras taxas", hubMoney(costs.other_fees));
+      addHubMetric(metrics, "Receita estimada/dia", hubMoney(components.revenue_per_day));
+      addHubMetric(metrics, "Combustível/dia", hubMoney(components.fuel_cost_per_day));
+      addHubMetric(metrics, "CO₂/dia", hubMoney(components.co2_cost_per_day));
+      addHubMetric(metrics, "Custos recorrentes/dia", hubMoney(components.known_recurring_cost_per_day));
+      addHubMetric(metrics, "Caixa após compra", hubMoney(auditedRow.cash_after_purchase));
+      addHubMetric(metrics, "Margem de segurança", Number.isFinite(auditedRow.safety_margin_fraction)
+        ? nf.format(auditedRow.safety_margin_fraction * 100) + "%" : tr("Sem dados"));
+      if (usingA4) {
+        addHubMetric(metrics, "Score A4", Number.isFinite(row.score)
+          ? nf.format(row.score) : tr("Sem dados"));
+      }
+      const details = document.createElement("details"); details.open = position === 0;
+      const summary = document.createElement("summary");
+      summary.textContent = "#" + (position + 1) + " · " +
+        String(identity.model_id || tr("Sem dados")) + " / " +
+        String(identity.engine_id || tr("Sem dados")) + " · " + route;
+      const proof = document.createElement("p"); proof.className = "hub-context";
+      proof.textContent = tr("Prova mais antiga") + ": " +
+        hubDate(auditedRow.observed_at_oldest) + " · " +
+        tr("Snapshot") + ": " + String(auditedRow.snapshot_id || audited.snapshot_id || tr("Sem dados"));
+      details.append(summary, metrics, proof);
+      if (usingA4 && row.score_components) {
+        const score = document.createElement("p"); score.className = "hub-context";
+        score.textContent = tr("Composição do score") + ": " +
+          Object.entries(row.score_components).map(([key, value]) =>
+            key.replaceAll("_", " ") + " " + nf.format(value)).join(" · ");
+        details.append(score);
+      }
+      if (auditedRow.sensitivity && typeof auditedRow.sensitivity === "object") {
+        const stress = document.createElement("p"); stress.className = "hub-context";
+        stress.textContent = tr("Cenários de stress") + ": " +
+          Object.entries(auditedRow.sensitivity).map(([name, scenario]) =>
+            name.replaceAll("_", " ") + " ×" +
+            (Number.isFinite(scenario?.multiplier) ? nf.format(scenario.multiplier) : "?") +
+            " → " + hubMoney(scenario?.daily_net_profit_estimate)).join(" · ");
+        details.append(stress);
+      }
+      card.append(details);
+    }
+    grid.append(card);
+  }
+  if (!byHub.size) {
+    const empty = document.createElement("p"); empty.className = "hub-empty";
+    empty.textContent = tr("Sem alternativas auditadas para comparar entre hubs.");
     grid.append(empty);
   }
 }
@@ -2536,6 +2836,10 @@ async function loadHubRecommendations() {
     $("hubRecommendationsStatus").textContent = tr("Não foi possível consultar recomendações.");
     $("hubRecommendationsScope").textContent = "";
     $("hubAuditedExpansion").textContent = "";
+    $("hubExpansionPlannerStatus").textContent = tr("Análise auditada indisponível. Compras bloqueadas.");
+    $("hubExpansionPlannerExplanation").textContent = "";
+    $("hubExpansionPlannerBlockers").replaceChildren();
+    $("hubExpansionPlannerGrid").replaceChildren();
     $("hubRecommendationsCount").textContent = "";
     $("hubRecommendationsGrid").replaceChildren();
     $("hubResearchPrev").disabled = true;

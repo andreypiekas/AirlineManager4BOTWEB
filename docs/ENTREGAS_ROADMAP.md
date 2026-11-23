@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A3/A4/A7, detalhamento auditável do planejador (G0)
+
+**Objetivo:** tornar a comparação global de investimentos legível no painel, incluindo as premissas econômicas, alternativas por hub e os motivos que impedem decisões quando a pesquisa estiver inconclusiva.
+
+### Implementação
+
+- **`assets/web/index.html`:** novo painel expansível **Planejador de Expansão** na área **Próxima aeronave por base**, consumindo a API autenticada `GET /api/investment/audited-expansion`. Exibe ranking A4 por hub, origem/destino, modelo, motor, assentos Y/J/F, investimento total, lucro diário incremental, payback, ROI, score, diferença para a segunda opção, caixa disponível, custo de aeronave e motor, taxas, hangar, receita, combustível, CO₂, margem de segurança, cenários de stress, horário da evidência e identificador do snapshot.
+- A ausência de alternativas A4 mantém os resultados financeiros auditados A3 visíveis com indicação explícita de que o planejamento global continua pendente. Bloqueios e exclusões da política A4 são apresentados com descrições em português e inglês, inclusive compromissos não conciliados, evidências vencidas ou ausentes, cobertura incompleta, limites esgotados e hangar sem vaga.
+- Dados inválidos, resposta sem garantias de somente leitura e registros financeiros inválidos bloqueiam a apresentação de uma decisão positiva. Valores externos são apresentados como texto para evitar interpretação de HTML fornecido pelo jogo.
+- **`tests/test_hubs_dashboard_ui.py`:** teste de renderização em DOM simulado com Node, cobrindo ranking A4, decomposição de custos, score, evidência, stress, tradução de bloqueios e exclusões, fallback A3, registros inválidos e campos ausentes.
+
+### Verificação, pendências e reversão
+
+- Testes dirigidos do painel e do registro auditável aprovados (17). Ruff, compilação Python e `git diff --check` aprovados. Suíte Windows geral executada com exclusão do instalador Linux específico de POSIX.
+- **Gate G0 com fixtures e DOM simulado.** A coleta autenticada ainda precisa provar demanda residual, variantes e preços finais dos motores, disponibilidade das rotas, cobertura integral, compromissos e slots dos hubs. As fases A2–A9 e gates G1–G5 seguem em desenvolvimento e homologação. A consulta não autoriza gasto.
+- Sem compra no jogo, envio de Telegram, implantação em produção ou merge em `main`. Para reversão, examinar dependências e reverter o commit correspondente na branch de autonomia. A PR #44 permanece independente.
+
 ## 2026-11-23 — Autonomia Total A3/A4/A7, registro auditável de oportunidades (G0)
 
 **Objetivo:** persistir evidências financeiras por perfil e apresentar no painel o planejamento global sem revalidar artificialmente observações vencidas.
