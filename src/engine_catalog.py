@@ -54,6 +54,13 @@ def _validated_record(row: object, *, now: int) -> dict | None:
             or not isinstance(row.get("selector_id"), str)
             or not row["selector_id"].strip()):
         return None
+    observed_model_id = row.get("observed_model_id")
+    if observed_model_id is not None and observed_model_id != identity[0]:
+        return None
+    identity_verified = observed_model_id == identity[0]
+    if (row.get("model_detail_identity_verified", identity_verified) is not identity_verified
+            or row.get("engine_prices_verified", False) is not False):
+        return None
     variants = row.get("variants")
     if not isinstance(variants, list) or not variants or len(variants) > 100:
         return None
@@ -93,7 +100,8 @@ def _validated_record(row: object, *, now: int) -> dict | None:
         "observed_at": observed_at, "selector_type": row["selector_type"],
         "selector_id": row["selector_id"], "selected_engine_id": selected_id,
         "variants": clean, "engine_prices_verified": False,
-        "model_detail_identity_verified": False,
+        "observed_model_id": observed_model_id,
+        "model_detail_identity_verified": identity_verified,
     }
 
 
@@ -156,7 +164,8 @@ class EngineCatalogRegistry:
             self._write(state)
         return True
 
-    def record(self, model_id: str, model_name: str, catalog: EngineCatalog) -> bool:
+    def record(self, model_id: str, model_name: str, catalog: EngineCatalog, *,
+               observed_model_id: str | None = None) -> bool:
         """Accept a strictly parsed DOM catalog and retain prior good snapshots on failure."""
         if not isinstance(catalog, EngineCatalog):
             return False
@@ -167,6 +176,7 @@ class EngineCatalogRegistry:
             "selector_id": catalog.selector_id,
             "selected_engine_id": catalog.selected_engine_id,
             "variants": [vars(variant) for variant in catalog.variants],
+            "observed_model_id": observed_model_id,
         }
         clean = _validated_record(candidate, now=observed_at)
         if clean is None:

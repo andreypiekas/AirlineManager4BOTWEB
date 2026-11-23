@@ -1,5 +1,14 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Correlação explícita da identidade do modelo no catálogo de motores A1 (G0)
+
+**Objetivo:** impedir que uma resposta AJAX de detalhe pertencente a outro modelo seja atribuída ao pedido pesquisado, preservando os dados comprovados anteriormente.
+
+- A coleta read-only relê de forma estável `#acModel[data-model-id]` ao lado das variantes de motor. Quando o atributo existe e coincide exatamente com o ID solicitado no mercado, registra `observed_model_id` e `model_detail_identity_verified=true`. Ausência do atributo mantém a identidade pendente e a fila de investimentos bloqueada. Valor divergente, inválido ou instável descarta a nova leitura integralmente, sem substituir o último catálogo válido.
+- O registro persistente valida a correlação entre `model_id`, `observed_model_id` e a flag de verificação. Snapshots legados sem atributo continuam utilizáveis com `model_detail_identity_verified=false`. Em todos os casos, `engine_prices_verified=false` e `purchase_eligible=false` continuam obrigatórios.
+- Novas regressões cobrem correspondência, ausência, divergência e corrupção da evidência em disco. Verificação local com testes direcionados de catálogo e feed, Ruff e `git diff --check` aprovada.
+- **Estado G0.** A presença de `data-model-id` é uma possibilidade prevista no diagnóstico DOM. Ainda falta observar seu preenchimento em sessão autenticada, confirmar o preço final por variante, selecionar o hub explicitamente e comprovar a demanda residual. Nenhuma compra, implantação, merge ou alteração da `main` foi realizada. Reversão por `git revert` do commit desta entrega após conferir dependências.
+
 ## 2026-11-23 — Autonomia Total, catálogo incremental de variantes de motor A1/A2/A3 (G0)
 
 **Objetivo:** alimentar a fila de pesquisa dos hubs próprios com opções de motores observadas no formulário de cada modelo, sem inferir preço de aquisição e sem executar compras.

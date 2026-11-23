@@ -79,6 +79,24 @@ def test_registry_rejects_corruption_duplicate_engines_and_contradictions(tmp_pa
         engine_selection.parse_engine_catalog(_groups(invalid=True))
 
 
+def test_registry_requires_explicit_correlated_detail_for_identity(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    catalog = engine_selection.parse_engine_catalog(_groups())
+    assert not registry.record("11", "A320", catalog, observed_model_id="22")
+    assert registry.snapshot(now=NOW)["models"] == {}
+    assert registry.record("11", "A320", catalog)
+    assert registry.snapshot(now=NOW)["models"]["11"]["model_detail_identity_verified"] is False
+    assert registry.record("11", "A320", catalog, observed_model_id="11")
+    row = registry.snapshot(now=NOW)["models"]["11"]
+    assert row["model_detail_identity_verified"] is True
+    assert row["observed_model_id"] == "11"
+    raw = json.loads(registry.path.read_text(encoding="utf-8"))
+    raw["catalogs"]["11"]["observed_model_id"] = "22"
+    registry.path.write_text(json.dumps(raw), encoding="utf-8")
+    assert registry.snapshot(now=NOW)["models"] == {}
+
+
 def test_round_robin_records_failures_and_keeps_prior_success(tmp_path, monkeypatch):
     monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
     registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
@@ -138,6 +156,8 @@ def test_collector_reads_order_details_only_and_rotates_after_failure(tmp_path, 
         def js(self, script, *args):
             assert not args
             self.calls.append(("read", script))
+            if script == game_observations._ENGINE_DETAIL_IDENTITY_JS:
+                return {"attribute_present": True, "model_id": self.model_id}
             if script == game_observations._ENGINE_OPTIONS_JS:
                 return _groups(invalid=self.model_id == "22")
             from fleet import _MODELS_JS
@@ -155,6 +175,7 @@ def test_collector_reads_order_details_only_and_rotates_after_failure(tmp_path, 
     assert len([c for c in first.calls if c[0] == "read"
                 and c[1] == game_observations._ENGINE_OPTIONS_JS]) == 4
     assert registry.snapshot(now=NOW)["model_count"] == 1
+    assert registry.snapshot(now=NOW)["models"]["11"]["model_detail_identity_verified"] is True
     second = Bot()
     assert game_observations.collect_aircraft_engine_catalog(second, per_cycle=1) == 1
     assert [c[1] for c in second.calls if c[0] == "ajax"][-1] == (
@@ -182,9 +203,42 @@ def test_collector_rejects_unstable_game_reads_without_overwriting_cache(tmp_pat
             pass
 
         def js(self, script):
+            if script == game_observations._ENGINE_DETAIL_IDENTITY_JS:
+                return {"attribute_present": False, "model_id": None}
             if script == game_observations._ENGINE_OPTIONS_JS:
                 return []
             return [{"id": "11", "name": "A320"}]
 
     assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == 0
     assert registry.snapshot(now=NOW)["model_count"] == 1
+
+
+def test_collector_discards_mismatched_detail_without_replacing_last_good(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    monkeypatch.setattr(game_observations, "EngineCatalogRegistry", lambda: registry)
+    assert registry.record("11", "A320", engine_selection.parse_engine_catalog(_groups()),
+                           observed_model_id="11")
+    original = registry.snapshot(now=NOW)["models"]["11"]
+
+    class Bot:
+        stopping = False
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            pass
+
+        def ajax(self, *_args):
+            pass
+
+        def js(self, script):
+            if script == game_observations._ENGINE_OPTIONS_JS:
+                return _groups()
+            if script == game_observations._ENGINE_DETAIL_IDENTITY_JS:
+                return {"attribute_present": True, "model_id": "22"}
+            return [{"id": "11", "name": "A320"}]
+
+    assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == 0
+    assert registry.snapshot(now=NOW)["models"]["11"] == original

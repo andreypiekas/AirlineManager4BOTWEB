@@ -13,6 +13,16 @@ from engine_selection import EngineSelectionError, _ENGINE_OPTIONS_JS, parse_eng
 
 log = logging.getLogger("am4bot.observations")
 
+# Some game versions expose the model ID on the loaded detail panel. A matched
+# explicit attribute is independent evidence that the AJAX response belongs to
+# the requested model. Missing attributes remain unverified.
+_ENGINE_DETAIL_IDENTITY_JS = r"""
+const panel = document.querySelector('#acModel');
+if (!panel) return null;
+const id = panel.getAttribute('data-model-id');
+return {attribute_present: id !== null, model_id: id};
+"""
+
 # Only the currently selected airport can have an observed price. The country
 # selector contains no price evidence, and the airport details load asynchronously.
 _SELECTED_HUB_PRICE_JS = r"""
@@ -433,6 +443,7 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
             try:
                 bot.ajax(f"ac_orders.php?mode=detail&id={model_id}&charter=0", "acModel")
                 groups = _stable_read(bot, _ENGINE_OPTIONS_JS)
+                detail = _stable_read(bot, _ENGINE_DETAIL_IDENTITY_JS)
                 catalog = parse_engine_catalog(groups)
             except EngineSelectionError as exc:
                 log.info("Motor de %s (%s): pesquisa inconclusiva (%s).", name, model_id, exc)
@@ -440,7 +451,18 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
             except Exception:
                 log.warning("Motor de %s (%s): formulário indisponível no jogo.", name, model_id)
                 continue
-            if registry.record(model_id, name, catalog):
+            if (not isinstance(detail, dict)
+                    or type(detail.get("attribute_present")) is not bool):
+                log.info("Motor de %s (%s): identidade do detalhe instável.", name, model_id)
+                continue
+            explicit = detail["attribute_present"]
+            observed_id = detail.get("model_id")
+            if ((explicit and observed_id != model_id)
+                    or (not explicit and observed_id is not None)):
+                log.warning("Motor de %s (%s): ID de modelo divergente no detalhe.", name, model_id)
+                continue
+            if registry.record(model_id, name, catalog,
+                               observed_model_id=observed_id if explicit else None):
                 collected += 1
             else:
                 log.info("Motor de %s (%s): dados do formulário inconsistentes.", name, model_id)
