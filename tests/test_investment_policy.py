@@ -20,6 +20,7 @@ def test_ausencia_de_configuracao_preserva_legado_sem_habilitar_novo_fluxo():
     state = policy.report()
     assert state["legacy_autobuy_aircraft"] is True
     assert state["planning_enabled"] is False
+    assert state["valid"] is True
     assert state["execution_available"] is False
     assert "planejamento_desativado" in state["blocking_reasons"]
 
@@ -37,6 +38,7 @@ def test_modo_autonomo_configurado_segue_bloqueado_no_gate_g0():
     state = InvestmentPolicy.from_config(config).report()
     assert state["auto_buy_hub"] is True
     assert state["max_daily_spend"] == 200000
+    assert state["valid"] is True
     assert state["execution_available"] is False
     assert state["blocking_reasons"] == ["executor_aguarda_homologacao"]
 

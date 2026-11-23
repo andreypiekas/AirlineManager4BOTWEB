@@ -664,6 +664,10 @@ class Bot:
             from expansion_alerts import publish_expansion_alert
 
             self._guard(lambda: publish_expansion_alert(self), "enviar recomendações de expansão")
+        if opt("telegram_investment_daily"):
+            from investment_daily import publish_investment_daily
+
+            self._guard(lambda: publish_investment_daily(self), "enviar resumo diário de investimentos")
         self._guard(self._maybe_daily_summary, "enviar o resumo diário")
 
     def _guard(self, action: Callable[[], None], what: str) -> None:

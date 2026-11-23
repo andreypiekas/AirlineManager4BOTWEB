@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A9, relatório diário de investimentos (G0)
+
+**Objetivo:** disponibilizar uma prestação de contas diária do planejamento de investimentos, das intenções registradas e das evidências ainda ausentes.
+
+### Implementação e evidências
+
+- **A9 — `src/investment_daily.py`:** novo relatório Telegram por perfil, emitido após `summary_hour` e no máximo uma vez por dia. Apresenta intenções e compromissos previstos, confirmações registradas no diário, cobertura da pesquisa, oportunidades avaliadas, calibração disponível e motivos para não comprar. Gasto efetivo, entregas e lucro real continuam desconhecidos sem confirmação independente do jogo.
+- **Integridade da entrega:** `DailyInvestmentDelivery` persiste uma reivindicação SQLite por perfil/data, utiliza lease de 300 segundos e só confirma a entrega quando `send_now()` retorna sucesso. Falhas e exceções liberam a reivindicação para nova tentativa. O relatório identifica separadamente o estado do autobuyer legado e informa que esse fluxo não integra os totais do novo diário.
+- **Política:** o relatório utiliza `InvestmentPolicy.report()` para mostrar modo, validade, limites ausentes e bloqueio do executor no gate G0. Modos `approval` e `autonomous` são descritos com seus impedimentos reais.
+- **Configuração:** `telegram_investment_daily=off` por padrão, com controle na aba Telegram e descrições em português e inglês. A execução depende também do Telegram global estar habilitado.
+- **Regressões — `tests/test_investment_daily.py`, `tests/test_investment_policy.py` e `tests/test_telegram_filters.py`:** envio diário idempotente após reinício, isolamento por perfil, recuperação de lease, falha e reenvio, ambiente de simulação, origem dos valores, dados indisponíveis, política inválida, modo de aprovação, limites autônomos e estado independente do autobuyer legado.
+
+### Verificação, limites e reversão
+
+- Testes direcionados e suíte Windows completa aprovados, com exclusão apenas de `tests/test_instalacao_linux.py`, que depende de permissões POSIX. Ruff em `src` e `tests`, `compileall src` e `git diff --check` aprovados.
+- **Gate G0.** A confirmação de envio depende da resposta do cliente Telegram. Se a mensagem chegar ao Telegram e a resposta se perder, uma nova tentativa após o lease pode duplicá-la. O relatório cobre o diário da nova política por oportunidade e não audita compras do fluxo legado. Não há comprovação independente de gasto, entrega de aeronave ou lucro real.
+- Nenhum envio real ao Telegram, compra no jogo, alteração de configuração produtiva, implantação ou merge em `main`. A flag permanece desligada por padrão. Reversão pelo commit desta entrega após verificar dependências do novo módulo e da configuração.
+
 ## 2026-11-23 — Autonomia Total A4/A6/A7, exaustão comprovada e reenvio de alerta (G0)
 
 **Objetivo:** impedir que a comparação de oportunidades próprias marque uma pesquisa inconclusiva como esgotada e manter o fluxo de notificações de expansão recuperável após exceções de transporte.

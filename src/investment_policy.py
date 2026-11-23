@@ -89,6 +89,8 @@ class InvestmentPolicy:
             reasons.append("politica_invalida")
         if self.mode == "analyze":
             reasons.append("modo_somente_analise")
+        if self.mode == "approval":
+            reasons.append("aprovacao_humana_necessaria")
         if self.mode == "autonomous" and (
             not self.max_single_investment or not self.max_daily_spend
             or not self.max_acquisitions_per_day
@@ -110,6 +112,7 @@ class InvestmentPolicy:
             "risk_weight": self.risk_weight,
             "confidence_weight": self.confidence_weight,
             "diversification_weight": self.diversification_weight,
+            "valid": self.valid,
             "legacy_autobuy_aircraft": self.legacy_autobuy_aircraft,
             "execution_available": False,
             "release_gate": "G0",
