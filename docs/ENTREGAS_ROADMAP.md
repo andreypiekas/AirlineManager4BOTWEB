@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2, invalidação de candidatos de catálogos anteriores (G0)
+
+**Objetivo:** impedir que a pesquisa paginada mantenha candidatos removidos do catálogo de aeronaves, motores, hubs ou destinos após uma alteração estrutural, mesmo enquanto a evidência antiga ainda esteja dentro do prazo de validade.
+
+### Implementação e evidências
+
+- **`src/owned_hub_research_feed.py`:** o identificador do layout inclui IDs e códigos dos hubs, IDs e nomes dos modelos, além dos IDs e rótulos das variantes de motor. O identificador continua estável quando muda apenas preço, demanda ou horário da observação, permitindo percorrer páginas sem reiniciar a cada ciclo.
+- **`src/owned_hub_research_ingestion.py`:** a gravação da página reaproveita candidatos de ciclos anteriores somente se o layout persistido corresponder ao layout recebido. Uma alteração de composição descarta as páginas da geração anterior e repovoa a pesquisa progressivamente.
+- **`tests/test_owned_hub_research_ingestion.py`:** regressões para descarte de modelos removidos, inclusão de novo modelo, continuidade após alteração apenas de preço e sensibilidade a renomeação de hub e modelo. A retomada entre ciclos e após reinício continua coberta.
+
+### Verificação, limitações e reversão
+
+- Testes direcionados de ingestão e feed aprovados (65). Ruff, `compileall src` e `git diff --check` aprovados. Suíte Windows geral executada com exclusão do teste de instalação Linux específico de POSIX.
+- **Gate G0 com fixtures e caches simulados.** A pesquisa derivada permanece somente leitura e com compra inelegível. Ainda faltam evidência autenticada de demanda residual, preço final por variante, disponibilidade de rota, vínculo permanente da frota e cobertura conclusiva dos hubs. Gates G1–G5 e os critérios completos das fases A2–A9 permanecem pendentes.
+- Sem compra no jogo, envio de Telegram, implantação em produção ou merge na `main`. Reversão por commit específico na branch de autonomia, após verificar dependências. A PR #44 segue independente.
+
 ## 2026-11-23 — Autonomia Total A3/A4/A7, detalhamento auditável do planejador (G0)
 
 **Objetivo:** tornar a comparação global de investimentos legível no painel, incluindo as premissas econômicas, alternativas por hub e os motivos que impedem decisões quando a pesquisa estiver inconclusiva.

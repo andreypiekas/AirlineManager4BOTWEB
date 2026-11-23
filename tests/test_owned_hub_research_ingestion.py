@@ -176,6 +176,11 @@ def test_cycle_ingestion_rotates_pages_and_persists_across_restart(tmp_path, mon
                              "capacity": 150, "price": 1_400_000})
     assert ingest_owned_hub_research_inputs(per_cycle=1) == 1
     assert restarted.cursor() == 1
+    # The structural change invalidates old pages. The new catalogue is
+    # repopulated incrementally instead of mixing incompatible generations.
+    assert {row["model"] for row in restarted.snapshot()} == {"A319"}
+    assert ingest_owned_hub_research_inputs(per_cycle=1) == 1
+    assert ingest_owned_hub_research_inputs(per_cycle=1) == 1
     assert {row["model"] for row in restarted.snapshot()} == {"A319", "A320", "B737"}
 
     # A partially corrupted state cannot resume solely from its layout hash.
@@ -184,3 +189,53 @@ def test_cycle_ingestion_rotates_pages_and_persists_across_restart(tmp_path, mon
     restarted.path.write_text(json.dumps(cached), encoding="utf-8")
     assert ingest_owned_hub_research_inputs(per_cycle=1) == 1
     assert restarted.cursor() == 1
+
+
+def test_structural_change_removes_stale_research_candidates_without_waiting_for_ttl(tmp_path):
+    registry = OwnedHubResearchInputsRegistry(tmp_path / "research.json")
+    inventory, routes, market = _inputs()
+    first = build_owned_hub_research_queue(inventory, routes, market, now=NOW, max_items=1)
+    second = build_owned_hub_research_queue(
+        inventory, routes, market, now=NOW, max_items=1,
+        offset=1, expected_fingerprint=first["snapshot_fingerprint"],
+    )
+    assert registry.record_queue(first, now=NOW) == 1
+    assert registry.record_queue(second, now=NOW) == 1
+    assert {row["model"] for row in registry.snapshot(now=NOW)} == {"A320", "B737"}
+
+    # Only a monetary input changed. Previously collected models remain
+    # available for research until their own observations expire.
+    market["models"][0]["price"] += 1000
+    market["observed_at"] += 1
+    price_refresh = build_owned_hub_research_queue(
+        inventory, routes, market, now=NOW + 1, max_items=1,
+    )
+    assert price_refresh["layout_fingerprint"] == first["layout_fingerprint"]
+    assert registry.record_queue(price_refresh, now=NOW + 1) == 1
+    assert {row["model"] for row in registry.snapshot(now=NOW + 1)} == {"A320", "B737"}
+
+    # The game stopped offering B737 and introduced A319. A previous
+    # candidate must never survive a changed model/route/engine topology.
+    market["models"] = [market["models"][0],
+                        {"id": 33, "name": "A319", "range": 5000,
+                         "capacity": 150, "price": 1_400_000}]
+    replacement = build_owned_hub_research_queue(
+        inventory, routes, market, now=NOW + 1, max_items=1,
+    )
+    assert replacement["layout_fingerprint"] != first["layout_fingerprint"]
+    assert registry.record_queue(replacement, now=NOW + 1) == 1
+    assert [row["model"] for row in registry.snapshot(now=NOW + 1)] == ["A319"]
+
+
+def test_research_layout_tracks_hub_code_and_catalogue_labels():
+    inventory, routes, market = _inputs()
+    baseline = build_owned_hub_research_queue(inventory, routes, market, now=NOW)
+
+    inventory["hubs"][0]["code"] = "NEW"
+    renamed_hub = build_owned_hub_research_queue(inventory, routes, market, now=NOW)
+    assert renamed_hub["layout_fingerprint"] != baseline["layout_fingerprint"]
+
+    inventory["hubs"][0]["code"] = "XAP"
+    market["models"][0]["name"] = "A320 Updated"
+    renamed_model = build_owned_hub_research_queue(inventory, routes, market, now=NOW)
+    assert renamed_model["layout_fingerprint"] != baseline["layout_fingerprint"]

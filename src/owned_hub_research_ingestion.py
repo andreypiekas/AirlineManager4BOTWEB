@@ -192,7 +192,11 @@ class OwnedHubResearchInputsRegistry:
             saved = self._load()
             old = saved.get("items")
             records = {}
-            for row in old if isinstance(old, list) else []:
+            # A changed hub/route/model/engine set invalidates all accumulated
+            # pages. Reusing them would expose candidates absent from the new
+            # catalogue until their independent evidence eventually expired.
+            same_layout = saved.get("layout_fingerprint") == layout_fingerprint
+            for row in old if same_layout and isinstance(old, list) else []:
                 if (isinstance(row, dict) and row.get("source") == "derived_research_queue"
                         and _recent(row.get("observed_at"), now)
                         and _evidence_current(row, now)):

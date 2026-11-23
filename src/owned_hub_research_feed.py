@@ -261,9 +261,12 @@ def build_owned_hub_research_queue(
     # timestamps when the ordered candidate identities are unchanged. The
     # interactive UI still uses the stricter evidence fingerprint above.
     layout_data = {
+        "hub_identifiers": [(hub_id, hubs[hub_id]["code"]) for hub_id in sorted(hubs, key=int)],
         "hub_routes": {hub_id: [route["destination_id"] for route in samples_by_hub[hub_id]]
                        for hub_id in ordered_hubs},
-        "model_engines": [(model["id"], variant["engine_id"] if variant else None)
+        "model_engines": [(model["id"], model["name"],
+                           variant["engine_id"] if variant else None,
+                           variant["engine_label"] if variant else None)
                           for model, variant, _ in model_options],
     }
     layout_fingerprint = hashlib.sha256(json.dumps(
