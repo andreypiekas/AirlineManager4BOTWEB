@@ -1,6 +1,7 @@
 """Motorização: nunca comprar quando a seleção não foi confirmada no jogo."""
 from __future__ import annotations
 
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,161 @@ def engines(*, speed=True, fuel=True, selected="1"):
          "speed": 945 if speed else None, "fuel": 12.8 if fuel else None, "disabled": False},
     ]
     return [{"type": "select", "id": "acEngine", "name": "engine", "options": options}]
+
+
+def radios(*, selected="2"):
+    group = engines(selected=selected)[0]
+    group.update({"type": "radio", "id": "", "name": "engineChoice",
+                  "selectedValue": selected if selected in ("1", "2", "3") else None})
+    return [group]
+
+
+@pytest.mark.parametrize("groups,kind,selector,selected", [
+    (engines(), "select", "acEngine", "1"),
+    (radios(), "radio", "engineChoice", "2"),
+])
+def test_catalogo_somente_leitura_expoe_ids_reais_e_disponibilidade(groups, kind, selector, selected):
+    groups[0]["options"][2]["disabled"] = True
+    scripts = []
+
+    class Bot:
+        def js(self, script, *args):
+            assert not args
+            scripts.append(script)
+            return groups
+
+        def pause(self, *_):
+            pytest.fail("Inventário não deve alterar o formulário")
+
+    catalog = engine_selection.read_engine_catalog(Bot())
+    assert scripts == [engine_selection._ENGINE_OPTIONS_JS]
+    assert catalog.selector_type == kind
+    assert catalog.selector_id == selector
+    assert catalog.selected_engine_id == selected
+    assert [v.engine_id for v in catalog.variants] == ["1", "2", "3"]
+    assert [v.available for v in catalog.variants] == [True, True, False]
+    assert [v.selected for v in catalog.variants] == [selected == "1", selected == "2", False]
+    assert catalog.variants[1].label == "GP7270"
+    assert catalog.variants[1].speed == 921
+
+
+@pytest.mark.parametrize("groups,reason", [
+    (engines(selected="none"), "sem motor selecionado"),
+    (radios(selected="none"), "sem motor selecionado"),
+    (engines() + radios(), "único seletor"),
+    ([], "bloqueada"),
+])
+def test_catalogo_rejeita_ausencia_ou_ambiguidade_de_grupo_e_selecao(groups, reason):
+    with pytest.raises(engine_selection.EngineSelectionError, match=reason):
+        engine_selection.parse_engine_catalog(groups)
+
+
+def test_catalogo_aceita_um_unico_motor_sem_selecao():
+    groups = engines(selected="none")
+    groups[0]["options"] = groups[0]["options"][:1]
+    catalog = engine_selection.parse_engine_catalog(groups)
+    assert catalog.selected_engine_id is None
+    assert catalog.variants[0].engine_id == "1"
+
+
+@pytest.mark.parametrize("problem,reason", [
+    ("duplicate_id", "IDs duplicados"),
+    ("duplicate_selected", "Seleção ambígua"),
+    ("disabled_selected", "indisponível"),
+    ("selected_mismatch", "inconsistente"),
+    ("missing_identifier", "identificador estável"),
+    ("missing_option_id", "identificação"),
+])
+def test_catalogo_rejeita_identidade_e_estado_inconsistentes(problem, reason):
+    groups = radios() if problem == "missing_identifier" else engines()
+    group = groups[0]
+    if problem == "duplicate_id":
+        group["options"][2]["value"] = "2"
+        group["options"][2]["disabled"] = True
+    elif problem == "duplicate_selected":
+        group["options"][1]["selected"] = True
+    elif problem == "disabled_selected":
+        group["options"][0]["disabled"] = True
+    elif problem == "selected_mismatch":
+        group["selectedValue"] = "2"
+    elif problem == "missing_identifier":
+        group["name"] = ""
+    elif problem == "missing_option_id":
+        group["options"][0]["value"] = ""
+    with pytest.raises(engine_selection.EngineSelectionError, match=reason):
+        engine_selection.parse_engine_catalog(groups)
+
+
+@pytest.mark.parametrize("kind", ["select", "radio"])
+def test_dom_reconstruido_mantem_selecao_quando_identidade_e_opcoes_coincidem(kind):
+    before = engines() if kind == "select" else radios(selected="1")
+    before[0]["selectedValue"] = "1"
+    after = deepcopy(before)
+    after[0]["options"].reverse()
+    for option in after[0]["options"]:
+        option["selected"] = option["value"] == "3"
+    after[0]["selectedValue"] = "3"
+    calls = []
+
+    class Bot:
+        dry_run = False
+
+        def js(self, script, *args):
+            calls.append(args)
+            if args:
+                return args == (kind, "acEngine" if kind == "select" else "engineChoice", "3")
+            return deepcopy(before if len(calls) == 1 else after)
+
+        def pause(self, *_):
+            pass
+
+    assert engine_selection.prepare_engine(Bot(), "name:Trent 972") == "RR Trent 972"
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("change,reason", [
+    ("group_id", "grupo de motores mudou"),
+    ("group_name", "grupo de motores mudou"),
+    ("label", "Nome ou disponibilidade"),
+    ("availability", "Nome ou disponibilidade"),
+    ("removed_variant", "Nome ou disponibilidade"),
+    ("selected_value", "inconsistente"),
+])
+def test_revalidacao_bloqueia_formulario_alterado_apos_ajax(change, reason):
+    before = engines()
+    after = deepcopy(before)
+    for option in after[0]["options"]:
+        option["selected"] = option["value"] == "3"
+    after[0]["selectedValue"] = "3"
+    if change == "group_id":
+        after[0]["id"] = "novoEngine"
+    elif change == "group_name":
+        after[0]["name"] = "outroGrupo"
+    elif change == "label":
+        after[0]["options"][2]["label"] = "Motor substituído"
+    elif change == "availability":
+        after[0]["options"][1]["disabled"] = True
+    elif change == "removed_variant":
+        after[0]["options"].pop(1)
+    elif change == "selected_value":
+        after[0]["selectedValue"] = "2"
+    reads = 0
+
+    class Bot:
+        dry_run = False
+
+        def js(self, script, *args):
+            nonlocal reads
+            if args:
+                return True
+            reads += 1
+            return deepcopy(before if reads == 1 else after)
+
+        def pause(self, *_):
+            pass
+
+    with pytest.raises(engine_selection.EngineSelectionError, match=reason):
+        engine_selection.prepare_engine(Bot(), "name:Trent 972")
 
 
 @pytest.mark.parametrize("pref,expected", [
