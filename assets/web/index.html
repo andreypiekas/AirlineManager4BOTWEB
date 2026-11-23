@@ -427,6 +427,20 @@ footer strong { font-weight: 600; color: var(--aqua); }
 .hub-aircraft-list li { padding:9px 0; border-top:1px solid var(--border); font-size:12px; overflow-wrap:anywhere; }
 .hub-card summary { padding:10px 4px; color:var(--aqua); font-weight:700; }
 .hub-card summary:focus-visible { outline:2px solid var(--aqua); outline-offset:2px; }
+#hubResearchQueueList { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr)); gap:12px; padding:0; list-style:none; }
+#hubResearchQueueList > li { min-width:0; padding:14px; border:1px solid var(--border); background:var(--panel-hi); overflow-wrap:anywhere; }
+.hub-research-item h3 { margin:0; font-size:15px; line-height:1.5; overflow-wrap:anywhere; }
+.hub-research-item .hub-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:12px 0; }
+.hub-research-item .hub-metrics div { min-width:0; border-top:1px solid var(--border); padding-top:8px; }
+.hub-research-item .hub-metrics dt { color:var(--muted); font-size:11px; }
+.hub-research-item .hub-metrics dd { margin:4px 0 0; font-size:13px; font-weight:700; overflow-wrap:anywhere; }
+.hub-research-item .hub-context { margin:6px 0 0; color:var(--muted); font-size:12px; }
+.hub-research-item summary { padding:9px 0; color:var(--aqua); font-size:12px; cursor:pointer; }
+.hub-research-item summary:focus-visible { outline:2px solid var(--aqua); outline-offset:2px; }
+.hub-research-reasons { margin:6px 0 0; padding-left:20px; font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.hub-research-reasons li { margin:4px 0; }
+#hubResearchQueueList .hub-research-reasons li { padding:2px 0; border:0; }
+.hub-policy-reasons { margin:0 0 14px; }
 .hub-state { display:inline-flex; padding:4px 9px; border:1px solid var(--border-strong); color:var(--muted);
   font:700 11px/1.5 "Cascadia Mono", Consolas, monospace; }
 .hub-state[data-state="viavel"] { color:var(--signal); border-color:#547b40; }
@@ -452,6 +466,8 @@ footer strong { font-weight: 600; color: var(--aqua); }
   .hubs-field { width:100%; }
   .hub-card { padding:14px; }
   .hub-card .hub-metrics { gap:8px; }
+  #hubResearchQueueList { grid-template-columns:minmax(0,1fr); }
+  .hub-research-item .hub-metrics { grid-template-columns:minmax(0,1fr); }
   .hub-probe-actions { display:grid; grid-template-columns:minmax(0,1fr); }
   .hub-probe-actions button { width:100%; }
   .hub-probe-grid { grid-template-columns:minmax(0,1fr); }
@@ -707,7 +723,9 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <details id="hubResearchQueuePanel" class="hub-probe">
           <summary data-t="Próximas pesquisas de aeronaves e rotas">Próximas pesquisas de aeronaves e rotas</summary>
           <p id="hubResearchQueueStatus" class="hub-section-note" role="status" aria-live="polite"></p>
-          <ul id="hubResearchQueueList" class="hub-aircraft-list"></ul>
+          <p id="hubResearchPolicyStatus" class="hub-section-note" role="status" aria-live="polite"></p>
+          <ul id="hubResearchPolicyReasons" class="hub-research-reasons hub-policy-reasons" aria-label="Bloqueios da política de investimento" data-t-aria-label="Bloqueios da política de investimento"></ul>
+          <ul id="hubResearchQueueList" class="hub-aircraft-list" aria-label="Cenários aguardando pesquisa" data-t-aria-label="Cenários aguardando pesquisa"></ul>
         </details>
       </div>
       <div class="hub-card hub-subsection">
@@ -904,6 +922,40 @@ const EN = {
   "Pesquisa ainda pendente": "Research pending",
   "Indisponível": "Unavailable",
   "Mais possibilidades aguardam pesquisa.": "Additional possibilities await research.",
+  "Identidade do modelo": "Model identity", "Confirmada no detalhe do jogo": "Verified in game model details",
+  "Não comprovada no detalhe do jogo": "Not verified in game model details",
+  "Detalhe do modelo não observado": "Model details not observed",
+  "Situação do motor": "Engine status", "Selecionado no jogo": "Selected in game",
+  "Disponível, não selecionado": "Available, not selected",
+  "Seleção a confirmar": "Selection pending verification", "Motor a pesquisar": "Engine research pending",
+  "Preço final da aeronave": "Final aircraft price", "Não verificado": "Not verified",
+  "Custo total": "Total cost", "Lucro líquido diário": "Daily net profit",
+  "ROI": "ROI", "Desconhecido": "Unknown",
+  "Justificativas de bloqueio": "Reasons for blocking",
+  "Bloqueios da política de investimento": "Investment policy blockers",
+  "Cenários aguardando pesquisa": "Scenarios awaiting research",
+  "Motor ainda não pesquisado no jogo": "Engine not yet researched in game",
+  "Preço final do motor e da aeronave não verificado": "Final engine and aircraft price unverified",
+  "Demanda residual da rota não confirmada": "Remaining route demand unverified",
+  "Disponibilidade da rota não confirmada": "Route availability unverified",
+  "Compatibilidade da pista não confirmada": "Runway compatibility unverified",
+  "Configuração dos assentos não confirmada": "Seat configuration unverified",
+  "Taxa da rota não confirmada": "Route fee unverified",
+  "Custo do hangar não confirmado": "Hangar cost unverified",
+  "Lucro incremental ainda não calculado": "Incremental profit not yet calculated",
+  "Cobertura da frota não confirmada": "Fleet coverage unverified",
+  "Variante de motor indisponível no jogo": "Engine variant unavailable in game",
+  "Identidade do modelo no detalhe do jogo não comprovada": "Model identity not verified in game details",
+  "Alcance da aeronave não confirmado": "Aircraft range unverified",
+  "Capacidade da aeronave não confirmada": "Aircraft capacity unverified",
+  "Inventário de hubs desatualizado": "Hub inventory is outdated",
+  "Catálogo de aeronaves desatualizado": "Aircraft catalog is outdated",
+  "Modelos de aeronave ainda não pesquisados": "Aircraft models not yet researched",
+  "Demanda dos hubs ainda não pesquisada": "Hub demand not yet researched",
+  "Planejamento desativado": "Planning disabled", "Política inválida": "Invalid policy",
+  "Modo somente análise": "Analysis-only mode",
+  "Limites de gasto a configurar": "Spending limits need configuration",
+  "Executor aguarda homologação": "Executor awaiting validation",
   "Nenhum cenário pesquisado para esta base.": "No researched scenario for this hub.",
   "Não foi possível consultar recomendações.": "Could not load recommendations.",
   "Aeronaves exibidas": "Aircraft shown",
@@ -1682,6 +1734,33 @@ function addHubMetric(list, label, value) {
   item.append(term, description);
   list.append(item);
 }
+const hubResearchBlockerLabels = {
+  motor_a_pesquisar: "Motor ainda não pesquisado no jogo",
+  preco_final_motor_a_confirmar: "Preço final do motor e da aeronave não verificado",
+  demanda_residual_a_confirmar: "Demanda residual da rota não confirmada",
+  disponibilidade_da_rota_a_confirmar: "Disponibilidade da rota não confirmada",
+  pista_a_confirmar: "Compatibilidade da pista não confirmada",
+  configuracao_assentos_a_confirmar: "Configuração dos assentos não confirmada",
+  taxa_rota_a_confirmar: "Taxa da rota não confirmada",
+  custo_hangar_a_confirmar: "Custo do hangar não confirmado",
+  lucro_incremental_a_calcular: "Lucro incremental ainda não calculado",
+  cobertura_da_frota_a_confirmar: "Cobertura da frota não confirmada",
+  motor_indisponivel: "Variante de motor indisponível no jogo",
+  identidade_modelo_detalhe_a_confirmar: "Identidade do modelo no detalhe do jogo não comprovada",
+  alcance_modelo_a_confirmar: "Alcance da aeronave não confirmado",
+  capacidade_modelo_a_confirmar: "Capacidade da aeronave não confirmada",
+  inventario_hubs_desatualizado: "Inventário de hubs desatualizado",
+  catalogo_aeronaves_desatualizado: "Catálogo de aeronaves desatualizado",
+  modelos_a_pesquisar: "Modelos de aeronave ainda não pesquisados",
+  demanda_dos_hubs_a_pesquisar: "Demanda dos hubs ainda não pesquisada",
+  planejamento_desativado: "Planejamento desativado",
+  politica_invalida: "Política inválida",
+  modo_somente_analise: "Modo somente análise",
+  limites_de_gasto_a_configurar: "Limites de gasto a configurar",
+  executor_aguarda_homologacao: "Executor aguarda homologação"
+};
+const hubResearchBlocker = reason => tr(Object.hasOwn(hubResearchBlockerLabels, String(reason))
+  ? hubResearchBlockerLabels[reason] : String(reason).replaceAll("_", " "));
 function renderHubs(report) {
   const search = hubSearchText($("hubsSearch").value.trim());
   const grid = $("hubsGrid"); grid.replaceChildren();
@@ -1977,6 +2056,16 @@ function renderHubRecommendations(report) {
     " · " + tr("Hubs com amostras") + ": " + (researchQueue.sampled_hubs || 0) +
     " · " + tr("Rotas observadas") + ": " + (researchQueue.sampled_routes || 0) +
     " · " + tr("Cobertura parcial");
+  $("hubResearchPolicyStatus").textContent = tr("Somente análise. Nenhuma compra autorizada.") +
+    (report.investment_policy?.execution_available === false
+      ? " · " + tr("Execução de investimento bloqueada") : "");
+  const policyReasons = $("hubResearchPolicyReasons"); policyReasons.replaceChildren();
+  for (const reason of Array.isArray(report.investment_policy?.blocking_reasons)
+    ? report.investment_policy.blocking_reasons : []) {
+    const item = document.createElement("li");
+    item.textContent = hubResearchBlocker(reason);
+    policyReasons.append(item);
+  }
   const researchList = $("hubResearchQueueList"); researchList.replaceChildren();
   if (!researchItems.length && !researchBlockers.length) {
     const item = document.createElement("li");
@@ -1984,15 +2073,50 @@ function renderHubRecommendations(report) {
   }
   for (const reason of researchBlockers) {
     const item = document.createElement("li");
-    item.textContent = String(reason).replaceAll("_", " "); researchList.append(item);
+    item.textContent = hubResearchBlocker(reason); researchList.append(item);
   }
   for (const task of researchItems) {
-    const item = document.createElement("li");
-    const engine = task.engine_id ? " · " + (task.engine_label || task.engine_id) +
-      (task.engine_available === false ? " (" + tr("Indisponível") + ")" : "") : "";
-    item.textContent = (task.hub_code || task.hub_id) + " ↔ " + task.destination_id +
-      " · " + task.model + engine + " · " + tr("Pesquisa ainda pendente") +
-      " (" + (Array.isArray(task.pending) ? task.pending.length : 0) + ")";
+    const item = document.createElement("li"); item.className = "hub-research-item";
+    const heading = document.createElement("h3");
+    heading.textContent = String(task.hub_code || task.hub_id || tr("Sem dados")) +
+      " ↔ " + String(task.destination_id || tr("Sem dados"));
+    const note = document.createElement("p"); note.className = "hub-context";
+    note.textContent = tr("Pesquisa ainda pendente");
+    const metrics = document.createElement("dl"); metrics.className = "hub-metrics";
+    const engineEvidence = task.engine_evidence || task.evidence?.engine;
+    const identity = engineEvidence?.model_detail_identity_verified === true
+      ? tr("Confirmada no detalhe do jogo")
+      : engineEvidence ? tr("Não comprovada no detalhe do jogo")
+        : tr("Detalhe do modelo não observado");
+    const engine = task.engine_id
+      ? String(task.engine_label || task.engine_id) + (task.engine_label ? " (" + task.engine_id + ")" : "")
+      : tr("Motor a pesquisar");
+    const engineStatus = !task.engine_id ? tr("Motor a pesquisar")
+      : task.engine_available === false ? tr("Indisponível")
+      : task.engine_available === true && task.engine_selected === true ? tr("Selecionado no jogo")
+        : task.engine_available === true && task.engine_selected === false
+          ? tr("Disponível, não selecionado") : tr("Seleção a confirmar");
+    addHubMetric(metrics, "Modelo pesquisado", task.model || tr("Sem dados"));
+    addHubMetric(metrics, "Identidade do modelo", identity);
+    addHubMetric(metrics, "Motor pesquisado", engine);
+    addHubMetric(metrics, "Situação do motor", engineStatus);
+    addHubMetric(metrics, "Preço final da aeronave", tr("Não verificado"));
+    addHubMetric(metrics, "Custo total", tr("Desconhecido"));
+    addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
+    addHubMetric(metrics, "ROI", tr("Desconhecido"));
+    addHubMetric(metrics, "Retorno estimado", tr("Desconhecido"));
+    const pending = Array.isArray(task.pending) && task.pending.length ? task.pending : ["pesquisa_pendente"];
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = tr("Justificativas de bloqueio") + " (" + pending.length + ")";
+    const reasons = document.createElement("ul"); reasons.className = "hub-research-reasons";
+    for (const reason of pending) {
+      const entry = document.createElement("li");
+      entry.textContent = reason === "pesquisa_pendente" ? tr("Pesquisa ainda pendente") : hubResearchBlocker(reason);
+      reasons.append(entry);
+    }
+    details.append(summary, reasons);
+    item.append(heading, note, metrics, details);
     researchList.append(item);
   }
   if (researchQueue.has_more === true) {

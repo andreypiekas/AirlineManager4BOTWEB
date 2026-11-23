@@ -1,8 +1,10 @@
 """End-to-end fake purchase protocol, recovery, limits and profile isolation."""
 from __future__ import annotations
 
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -264,3 +266,185 @@ def test_submission_claim_requires_guard_and_blocks_other_uncertain_order(tmp_pa
     assert ledger.release_executor("first-worker")
     assert ledger.get(keys[0])["submit_attempts"] == 1
     assert ledger.get(keys[1])["submit_attempts"] == 0
+
+
+def test_concurrent_reconciliation_does_not_race_guard_acquisition(tmp_path):
+    store = tmp_path / "orders.sqlite3"
+    pending = executor(tmp_path).run(
+        plan(), SimulatedAircraftGateway(checkout(), outcome="timeout", order_store=store),
+    )
+    first = executor(tmp_path)
+    second = executor(tmp_path)
+    second_ready = Event()
+    first_reading = Event()
+    release_first = Event()
+
+    class PausedReader(SimulatedAircraftGateway):
+        def read_order_result(self, intent):
+            first_reading.set()
+            assert release_first.wait(10)
+            return super().read_order_result(intent)
+
+    original_recover = second.journal.recover_submitted
+    original_acquire = second.journal.acquire_executor
+
+    def delayed_recovery(*args, **kwargs):
+        second_ready.set()
+        assert first_reading.wait(10)
+        return original_recover(*args, **kwargs)
+
+    def delayed_acquire(token):
+        second_ready.set()
+        assert first_reading.wait(10)
+        return original_acquire(token)
+
+    # Force an overlap between a stale guard check and a newly acquired guard.
+    second.journal.recover_submitted = delayed_recovery
+    second.journal.acquire_executor = delayed_acquire
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        second_result = pool.submit(
+            second.reconcile, pending["intent_key"],
+            SimulatedAircraftGateway(checkout(), order_store=store),
+        )
+        assert second_ready.wait(10)
+        first_result = pool.submit(
+            first.reconcile, pending["intent_key"], PausedReader(checkout(), order_store=store),
+        )
+        assert first_reading.wait(10)
+        try:
+            assert second_result.result(timeout=10)["reasons"] == ["executor_ocupado"]
+        finally:
+            release_first.set()
+        assert first_result.result(timeout=10)["state"] == "CONFIRMED"
+    assert first.journal.get(pending["intent_key"])["submit_attempts"] == 1
+
+
+def test_losing_confirmation_compare_and_set_reports_actual_terminal_state(tmp_path):
+    store = tmp_path / "orders.sqlite3"
+    pending = executor(tmp_path).run(
+        plan(), SimulatedAircraftGateway(checkout(), outcome="timeout", order_store=store),
+    )
+    restarted = executor(tmp_path)
+
+    class ConcurrentProof(SimulatedAircraftGateway):
+        def read_order_result(self, intent):
+            evidence = super().read_order_result(intent)
+            assert restarted.journal.transition(
+                intent["intent_key"], "UNKNOWN", "CONFIRMED", confirmation=evidence,
+            )
+            return evidence
+
+    result = restarted.reconcile(
+        pending["intent_key"], ConcurrentProof(checkout(), order_store=store),
+    )
+    assert result["state"] == "CONFIRMED"
+    assert restarted.journal.get(pending["intent_key"])["state"] == "CONFIRMED"
+    assert restarted.journal.get(pending["intent_key"])["submit_attempts"] == 1
+
+
+def test_crash_restart_unknown_stays_blocked_through_multiple_reentries(tmp_path):
+    store = tmp_path / "orders.sqlite3"
+    crashed = executor(tmp_path).run(
+        plan(), SimulatedAircraftGateway(checkout(), outcome="crash", order_store=store),
+    )
+    restarted = executor(tmp_path)
+    missing_proof = SimulatedAircraftGateway(checkout(), outcome="timeout", order_store=store)
+    assert restarted.reconcile(
+        crashed["intent_key"], missing_proof,
+        stopped_owner_token=crashed["stopped_owner_token"],
+    )["state"] == "UNKNOWN"
+    assert executor(tmp_path).reconcile(crashed["intent_key"], missing_proof)["state"] == "UNKNOWN"
+    new_gateway = SimulatedAircraftGateway(checkout(destination_id="789"))
+    assert restarted.run(plan(plan_id="plan-2", destination_id="789"), new_gateway)["state"] == "BLOCKED"
+    assert new_gateway.submit_calls == 0
+    assert restarted.journal.get(crashed["intent_key"])["submit_attempts"] == 1
+    assert executor(tmp_path).reconcile(
+        crashed["intent_key"], SimulatedAircraftGateway(checkout(), order_store=store),
+    )["state"] == "CONFIRMED"
+    assert restarted.journal.get(crashed["intent_key"])["submit_attempts"] == 1
+
+
+def test_analyze_mode_does_not_write_intents_events_guards_or_orders(tmp_path):
+    worker = executor(tmp_path, mode="analyze")
+    gateway = SimulatedAircraftGateway(checkout(), order_store=tmp_path / "orders.sqlite3")
+
+    def counts(db_path, tables):
+        with sqlite3.connect(db_path) as conn:
+            return [conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    for table in tables]
+
+    journal_tables = ("intents", "events", "executor_guards")
+    order_tables = ("fake_orders", "fake_rejections")
+    before = counts(worker.journal.path, journal_tables)
+    orders_before = counts(gateway.order_store, order_tables)
+    assert worker.run(plan(), gateway)["state"] == "BLOCKED"
+    assert counts(worker.journal.path, journal_tables) == before == [0, 0, 0]
+    assert counts(gateway.order_store, order_tables) == orders_before == [0, 0]
+    assert gateway.submit_calls == 0
+
+
+def test_parallel_runs_only_one_checkout_per_profile_and_isolate_other_profiles(tmp_path):
+    first = executor(tmp_path)
+    competing = executor(tmp_path)
+    other_profile = executor(tmp_path, profile="secondary")
+    submitted = Event()
+    allow_completion = Event()
+    store = tmp_path / "shared_fake_orders.sqlite3"
+
+    class PausedSubmission(SimulatedAircraftGateway):
+        def submit_order(self, intent):
+            super().submit_order(intent)
+            submitted.set()
+            assert allow_completion.wait(10)
+
+    primary_gateway = PausedSubmission(checkout(), order_store=store)
+    secondary_gateway = SimulatedAircraftGateway(
+        checkout(profile="secondary"), order_store=store,
+    )
+    competing_gateway = SimulatedAircraftGateway(checkout(destination_id="789"), order_store=store)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        primary = pool.submit(first.run, plan(profile_id="principal"), primary_gateway)
+        assert submitted.wait(10)
+        blocked = pool.submit(
+            competing.run, plan(plan_id="plan-2", destination_id="789"), competing_gateway,
+        )
+        secondary = pool.submit(
+            other_profile.run, plan(profile_id="secondary"), secondary_gateway,
+        )
+        try:
+            assert blocked.result(timeout=10)["reasons"] == ["executor_ocupado"]
+            assert secondary.result(timeout=10)["state"] == "CONFIRMED"
+        finally:
+            allow_completion.set()
+        assert primary.result(timeout=10)["state"] == "CONFIRMED"
+    assert primary_gateway.submit_calls == 1
+    assert competing_gateway.submit_calls == 0
+    assert secondary_gateway.submit_calls == 1
+    assert first.journal.unresolved()["count"] == 0
+    assert other_profile.journal.unresolved()["count"] == 0
+
+
+def test_cross_profile_plan_cannot_submit_or_leave_guard_held(tmp_path):
+    worker = executor(tmp_path)
+    gateway = SimulatedAircraftGateway(checkout())
+    with pytest.raises(ValueError, match="perfil"):
+        worker.run(plan(profile_id="secondary"), gateway)
+    assert gateway.submit_calls == 0
+    assert not worker.journal.executor_busy()
+    with sqlite3.connect(worker.journal.path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0
+
+
+def test_reconcile_unknown_key_preserves_other_submitted_intents(tmp_path):
+    worker = executor(tmp_path)
+    intent, _ = worker.journal.register(plan())
+    key = intent["intent_key"]
+    assert worker.journal.transition(key, "PROPOSED", "APPROVED")
+    assert worker.journal.transition(key, "APPROVED", "PRECHECKED")
+    assert worker.journal.acquire_executor("first-owner")
+    assert worker.journal.claim_submission(key, "first-owner")
+    assert worker.journal.release_executor("first-owner")
+    with pytest.raises(KeyError, match="Intenção"):
+        worker.reconcile("sha256:" + "f" * 64, SimulatedAircraftGateway(checkout()))
+    assert worker.journal.get(key)["state"] == "SUBMITTED"
+    assert worker.journal.get(key)["submit_attempts"] == 1

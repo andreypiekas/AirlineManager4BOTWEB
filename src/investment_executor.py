@@ -248,6 +248,10 @@ class SimulatedInvestmentExecutor:
                 pass
         if current_state == "SUBMITTED":
             self.journal.transition(key, "SUBMITTED", "UNKNOWN")
+        actual_state = self.journal.get(key)["state"]
+        if actual_state in ("CONFIRMED", "FAILED"):
+            return {"state": actual_state, "intent_key": key,
+                    "reasons": [], "simulated": True}
         return {"state": "UNKNOWN", "intent_key": key,
                 "reasons": ["resultado_sem_comprovacao"], "simulated": True}
 
@@ -256,21 +260,18 @@ class SimulatedInvestmentExecutor:
         """Reconcile after restart from evidence, never submit a second order."""
         if not isinstance(gateway, SimulatedAircraftGateway):
             raise TypeError("Somente o gateway de simulação é aceito.")
+        if self.journal.get(key) is None:
+            raise KeyError("Intenção não encontrada no perfil.")
         if stopped_owner_token is not None and not self.journal.release_executor(stopped_owner_token):
             return {"state": "BLOCKED", "reasons": ["executor_anterior_nao_identificado"],
                     "simulated": True}
-        if self.journal.executor_busy():
-            return {"state": "BLOCKED", "reasons": ["executor_ocupado"],
-                    "simulated": True}
-        self.journal.recover_submitted()
         owner = uuid4().hex
         if not self.journal.acquire_executor(owner):
             return {"state": "BLOCKED", "reasons": ["executor_ocupado"],
                     "simulated": True}
         try:
+            self.journal.recover_submitted(owner_token=owner)
             intent = self.journal.get(key)
-            if intent is None:
-                raise KeyError("Intenção não encontrada no perfil.")
             if intent["state"] != "UNKNOWN":
                 return {"state": intent["state"], "intent_key": key,
                         "reasons": [], "simulated": True}

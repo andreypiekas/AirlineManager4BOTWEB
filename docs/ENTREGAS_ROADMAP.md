@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, economia auditável, conciliação segura, painel e calibração A3/A5/A7/A9 (G0)
+
+**Escopo:** aprofundar os módulos independentes do planejador global, ampliar a resistência do executor simulado a concorrência e reinício e deixar evidentes os impedimentos na interface.
+
+### Implementação
+
+- **A3:** `src/expansion_economics.py` calcula, em memória e em modo somente leitura, investimento por componente, receita Y/J/F, combustível, CO₂, custos recorrentes observados, margem conservadora, caixa após a aquisição, lucro líquido diário, ROI e payback. A função `evaluate_expansion_economics()` cruza identidade, perfil, snapshot, procedência, idade e unidades dos insumos com o avaliador de viabilidade existente. Custos recorrentes desconhecidos, demanda residual não comprovada ou divergência entre cálculo e pesquisa financeira bloqueiam a conclusão. `rank_expansion_economics()` compara cenários completos entre hubs, rotas, motores e assentos com desempate determinístico, descartando identidades contraditórias.
+- **A5:** `InvestmentJournal` rejeita planos com perfil divergente e permite recuperar estados `SUBMITTED` apenas sob guarda exclusiva comprovada, colocando-os em `UNKNOWN` sem repetir pedidos. `SimulatedInvestmentExecutor.reconcile()` adquire o bloqueio antes de recuperar, verifica a existência da intenção e devolve o estado confirmado por outra execução quando uma transição concorrente já terminou. Testes exercitam múltiplas threads, timeout, reinício, corrida de confirmação e modo análise sem mutações.
+- **A7:** a fila de pesquisa de hubs próprios apresenta cartões responsivos por rota/modelo/motor, identidade do detalhe do jogo, estado de seleção da variante, custos e retornos ainda não comprovados, razões individuais do bloqueio e restrições da política. O conteúdo de origem externa é renderizado como texto, com rótulos PT-BR e inglês. Os números permanecem desconhecidos até aparecer evidência verificável.
+- **A9:** `src/forecast_calibration.py` oferece `compare_forecast()` para confrontar previsão e desempenho diário quando entrega, intenção, confirmação de compra, voos independentes e razão financeira do jogo estiverem vinculados ao mesmo perfil, aeronave, motor, hub e rota. Exige janelas completas e consecutivas e fonte de custos identificável. Resultados inconclusivos não geram métricas ou ajuste. A calibração ainda não foi conectada ao ciclo automático.
+
+### Testes, cobertura e próximas dependências
+
+- Incluídos testes específicos dos contratos financeiros, da calibração, da interface e de idempotência do executor. A validação de integração usa a suíte Windows com exclusão do arquivo de instalação específico de Linux, Ruff, compilação e `git diff --check`.
+- **Gate G0 permanece ativo.** Os novos cálculos e a comparação de previsões são contratos puros e dependem de produtores de evidência real que ainda precisam ser integrados e homologados. É necessário comprovar demanda residual, custo final após escolha do motor, `#hubSelection`, base permanente individual, cobertura integral e saldo/pedidos em sessão autenticada. A fonte atual de histórico não apresenta os IDs independentes de voos e o livro completo de custos exigidos pela calibração. A compra real de aeronaves e hubs continua condicionada aos gates G3–G5.
+- A PR #44 apresenta conflitos de integração nos arquivos `README.md`, `assets/web/index.html`, `src/fleet.py`, `src/web.py` e `tests/test_settings_workspace.py`. Ela e a `main` permanecem preservadas para reconciliação própria. Nenhuma compra no jogo ou implantação no servidor integra esta entrega. Para reversão, usar `git revert` do commit correspondente, considerando eventuais commits dependentes.
+
 ## 2026-11-23 — Correlação explícita da identidade do modelo no catálogo de motores A1 (G0)
 
 **Objetivo:** impedir que uma resposta AJAX de detalhe pertencente a outro modelo seja atribuída ao pedido pesquisado, preservando os dados comprovados anteriormente.

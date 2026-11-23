@@ -169,6 +169,8 @@ class InvestmentJournal:
         """
         if not isinstance(plan, Mapping):
             raise ValueError("Plano de investimento inválido.")
+        if "profile_id" in plan and plan["profile_id"] != self.profile_id:
+            raise ValueError("Plano de investimento pertence a outro perfil.")
         valid = _validated_plan(plan)
         key = _intent_key(self.profile_id, valid)
         encoded = json.dumps(valid, sort_keys=True, separators=(",", ":"))
@@ -379,16 +381,27 @@ class InvestmentJournal:
             ).fetchone()
         return row["total"]
 
-    def recover_submitted(self) -> int:
-        """On restart, quarantine any in-flight request without retrying it."""
+    def recover_submitted(self, *, owner_token: str | None = None) -> int:
+        """Quarantine in-flight requests under exclusive ownership, without replay.
+
+        An explicit owner may recover while holding the profile guard. Calls
+        without an owner preserve the original stopped-executor requirement.
+        """
+        if owner_token is not None and (
+            not isinstance(owner_token, str) or _PLAN_ID.fullmatch(owner_token) is None
+        ):
+            raise ValueError("Identidade do executor inválida.")
         stamp = time.time()
         with self._connect() as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
-            if conn.execute(
-                "SELECT 1 FROM executor_guards WHERE profile_id=?",
+            guard = conn.execute(
+                "SELECT owner_token FROM executor_guards WHERE profile_id=?",
                 (self.profile_id,),
-            ).fetchone():
+            ).fetchone()
+            if owner_token is None and guard is not None:
                 raise RuntimeError("Há um executor registrado: confirme sua parada antes da conciliação.")
+            if owner_token is not None and (guard is None or guard["owner_token"] != owner_token):
+                raise RuntimeError("Executor sem exclusividade sobre o perfil.")
             rows = conn.execute(
                 "SELECT intent_key FROM intents WHERE profile_id=? AND state='SUBMITTED'",
                 (self.profile_id,),

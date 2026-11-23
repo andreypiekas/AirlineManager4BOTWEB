@@ -74,6 +74,30 @@ def test_registration_is_durable_idempotent_and_conflicts_on_replanned_route(tmp
     assert isolated.history(own_intent["intent_key"])[0]["new_state"] == "PROPOSED"
 
 
+def test_explicit_plan_profile_must_match_journal_profile(tmp_path):
+    ledger = journal(tmp_path)
+    with pytest.raises(ValueError, match="perfil"):
+        ledger.register(aircraft_plan(profile_id="secundario"))
+    assert ledger.unresolved()["count"] == 0
+    intent, created = ledger.register(aircraft_plan(profile_id="principal"))
+    assert created and intent["profile_id"] == "principal"
+    assert len(ledger.history(intent["intent_key"])) == 1
+
+
+def test_concurrent_registration_creates_one_intent_and_one_event(tmp_path):
+    ledger = journal(tmp_path)
+
+    def register(_index):
+        return journal(tmp_path).register(aircraft_plan())
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        attempts = list(pool.map(register, range(16)))
+    assert sum(created for _intent, created in attempts) == 1
+    keys = {intent["intent_key"] for intent, _created in attempts}
+    assert len(keys) == 1
+    assert len(ledger.history(keys.pop())) == 1
+
+
 def test_invalid_plans_and_unauthorized_transitions_fail_closed(tmp_path):
     ledger = journal(tmp_path)
     for changes in ({"hub_id": "unknown"}, {"origin_id": "987"},
@@ -162,6 +186,22 @@ def test_restart_quarantines_timeout_and_requires_plan_specific_game_proof(tmp_p
     assert restarted.get(key)["submit_attempts"] == 1
     assert restarted.history(key)[-1]["evidence"]["purchase_id"] == "98765"
     assert "session_secret" not in restarted.history(key)[-1]["evidence"]
+
+
+def test_recover_submitted_under_guard_requires_matching_owner(tmp_path):
+    ledger = journal(tmp_path)
+    key = ready(ledger)
+    assert ledger.acquire_executor("active-worker")
+    assert ledger.claim_submission(key, "active-worker")
+    with pytest.raises(RuntimeError, match="exclusividade"):
+        ledger.recover_submitted(owner_token="stranger")
+    with pytest.raises(RuntimeError, match="executor registrado"):
+        ledger.recover_submitted()
+    assert ledger.get(key)["state"] == "SUBMITTED"
+    assert ledger.recover_submitted(owner_token="active-worker") == 1
+    assert ledger.get(key)["state"] == "UNKNOWN"
+    assert ledger.get(key)["submit_attempts"] == 1
+    assert ledger.release_executor("active-worker")
 
 
 def test_failed_intent_releases_reservation_from_exposure(tmp_path):

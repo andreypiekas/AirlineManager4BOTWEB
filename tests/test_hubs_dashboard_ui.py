@@ -97,6 +97,16 @@ def test_hubs_filters_and_sort_controls_are_labeled_and_target_the_grids():
     assert 'report.demand_hub_progress' in html
     assert 'nf.format(pricedHubs)' in html
     assert '.hubs-controls { display:grid; grid-template-columns:minmax(0,1fr); }' in html
+    assert 'id="hubResearchPolicyStatus"' in html
+    assert 'id="hubResearchPolicyReasons"' in html
+    assert 'id="hubResearchQueueList"' in html
+    assert 'data-t-aria-label="Bloqueios da política de investimento"' in html
+    assert 'data-t-aria-label="Cenários aguardando pesquisa"' in html
+    assert 'grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr))' in html
+    assert '.hub-research-item .hub-metrics { grid-template-columns:minmax(0,1fr); }' in html
+    assert '"Não comprovada no detalhe do jogo": "Not verified in game model details"' in html
+    assert '"Preço final da aeronave": "Final aircraft price"' in html
+    assert '"Justificativas de bloqueio": "Reasons for blocking"' in html
 
 
 def test_investment_policy_controls_have_labels_and_separate_endpoints():
@@ -229,6 +239,7 @@ def test_hub_recommendations_render_filter_empty_state_and_translations(tmp_path
     helpers = script[script.index("const hubDate ="):script.index("function renderHubs(")]
     renderer = script[script.index("function renderHubRecommendations(report)"):
                       script.index("async function loadHubs()")]
+    assert ".innerHTML" not in renderer
     assertions = r"""
 const assert = require('node:assert/strict');
 const LANG = 'en';
@@ -254,6 +265,31 @@ const translations = {
   'Pesquisa ainda pendente': 'Research pending',
   'Indisponível': 'Unavailable',
   'Mais possibilidades aguardam pesquisa.': 'Additional possibilities await research.',
+  'Somente análise. Nenhuma compra autorizada.': 'Read-only analysis. No purchase authorized.',
+  'Execução de investimento bloqueada': 'Investment execution blocked',
+  'Modo somente análise': 'Analysis-only mode',
+  'Executor aguarda homologação': 'Executor awaiting validation',
+  'Modelo pesquisado': 'Researched model',
+  'Identidade do modelo': 'Model identity',
+  'Confirmada no detalhe do jogo': 'Verified in game model details',
+  'Não comprovada no detalhe do jogo': 'Not verified in game model details',
+  'Detalhe do modelo não observado': 'Model details not observed',
+  'Motor pesquisado': 'Researched engine',
+  'Situação do motor': 'Engine status',
+  'Motor a pesquisar': 'Engine research pending',
+  'Selecionado no jogo': 'Selected in game',
+  'Disponível, não selecionado': 'Available, not selected',
+  'Preço final da aeronave': 'Final aircraft price',
+  'Não verificado': 'Not verified',
+  'Custo total': 'Total cost',
+  'Lucro líquido diário': 'Daily net profit',
+  'Desconhecido': 'Unknown',
+  'Retorno estimado': 'Estimated payback',
+  'Justificativas de bloqueio': 'Reasons for blocking',
+  'Motor ainda não pesquisado no jogo': 'Engine not yet researched in game',
+  'Preço final do motor e da aeronave não verificado': 'Final engine and aircraft price unverified',
+  'Cobertura da frota não confirmada': 'Fleet coverage unverified',
+  'Inventário de hubs desatualizado': 'Hub inventory is outdated',
   'Nenhuma recomendação corresponde ao modelo selecionado.':
     'No recommendations match the selected model.',
   'Nenhuma base adquirida identificada.': 'No owned hubs identified.'
@@ -293,23 +329,74 @@ const report = {
     sampled_hubs:1, sampled_routes:2, has_more:true,
     items:[{hub_code:'AAA', hub_id:'1', destination_id:'2',
       model:'<script>unsafe</script>', pending:['motor_a_pesquisar']}],
-    blocking_reasons:[]}
+    blocking_reasons:[]},
+  investment_policy: {execution_available:false,
+    blocking_reasons:['modo_somente_analise', 'executor_aguarda_homologacao']}
 };
+const researchMetrics = item => Object.fromEntries(item.children[2].children.map(metric =>
+  [metric.children[0].textContent, metric.children[1].textContent]));
+const researchReasons = item => item.children[3].children[1].children.map(reason => reason.textContent);
 $('hubRecommendationSort').value = 'profit';
 renderHubRecommendations(report);
 assert.equal($('hubResearchQueueStatus').textContent,
   'Suggested research tasks: 1 · Hubs with samples: 1 · Observed routes: 2 · Partial coverage');
+assert.equal($('hubResearchPolicyStatus').textContent,
+  'Read-only analysis. No purchase authorized. · Investment execution blocked');
+assert.deepEqual($('hubResearchPolicyReasons').children.map(reason => reason.textContent),
+  ['Analysis-only mode', 'Executor awaiting validation']);
 assert.equal($('hubResearchQueueList').children.length, 2);
-assert.equal($('hubResearchQueueList').children[0].textContent,
-  'AAA ↔ 2 · <script>unsafe</script> · Research pending (1)');
+const withoutEngine = $('hubResearchQueueList').children[0];
+assert.equal(withoutEngine.children[0].textContent, 'AAA ↔ 2');
+assert.equal(withoutEngine.children[1].textContent, 'Research pending');
+assert.deepEqual(researchMetrics(withoutEngine), {
+  'Researched model':'<script>unsafe</script>',
+  'Model identity':'Model details not observed',
+  'Researched engine':'Engine research pending',
+  'Engine status':'Engine research pending',
+  'Final aircraft price':'Not verified',
+  'Total cost':'Unknown',
+  'Daily net profit':'Unknown', 'ROI':'Unknown', 'Estimated payback':'Unknown'
+});
+assert.equal(withoutEngine.children[3].children[0].textContent, 'Reasons for blocking (1)');
+assert.deepEqual(researchReasons(withoutEngine), ['Engine not yet researched in game']);
 assert.equal($('hubResearchQueueList').children[1].textContent,
   'Additional possibilities await research.');
 report.research_queue.items[0].engine_id = '2';
 report.research_queue.items[0].engine_label = '<img src=x onerror=alert(1)>';
 report.research_queue.items[0].engine_available = false;
+report.research_queue.items[0].engine_selected = false;
+report.research_queue.items[0].engine_evidence = {model_detail_identity_verified:false};
+report.research_queue.items[0].pending = ['motor_indisponivel', 'preco_final_motor_a_confirmar',
+  '<svg/onload=alert(1)>'];
 renderHubRecommendations(report);
-assert.equal($('hubResearchQueueList').children[0].textContent,
-  'AAA ↔ 2 · <script>unsafe</script> · <img src=x onerror=alert(1)> (Unavailable) · Research pending (1)');
+const unavailable = $('hubResearchQueueList').children[0];
+assert.equal(researchMetrics(unavailable)['Model identity'], 'Not verified in game model details');
+assert.equal(researchMetrics(unavailable)['Researched engine'],
+  '<img src=x onerror=alert(1)> (2)');
+assert.equal(researchMetrics(unavailable)['Engine status'], 'Unavailable');
+assert.deepEqual(researchReasons(unavailable), ['Variante de motor indisponível no jogo',
+  'Final engine and aircraft price unverified', '<svg/onload=alert(1)>']);
+report.research_queue.items.push({hub_code:'BBB', destination_id:'9', model:'A320',
+  engine_id:'1', engine_label:'Trent <prova>', engine_available:true, engine_selected:true,
+  evidence:{engine:{model_detail_identity_verified:true}},
+  final_aircraft_price:123456, daily_net_profit:123, roi:0.42, payback_days:10,
+  pending:['preco_final_motor_a_confirmar', 'cobertura_da_frota_a_confirmar']});
+renderHubRecommendations(report);
+const selected = $('hubResearchQueueList').children[1];
+assert.equal(researchMetrics(selected)['Model identity'], 'Verified in game model details');
+assert.equal(researchMetrics(selected)['Researched engine'], 'Trent <prova> (1)');
+assert.equal(researchMetrics(selected)['Engine status'], 'Selected in game');
+assert.equal(researchMetrics(selected)['Final aircraft price'], 'Not verified');
+assert.equal(researchMetrics(selected)['Total cost'], 'Unknown');
+assert.equal(researchMetrics(selected)['ROI'], 'Unknown');
+assert.equal(researchMetrics(selected)['Estimated payback'], 'Unknown');
+assert.deepEqual(researchReasons(selected),
+  ['Final engine and aircraft price unverified', 'Fleet coverage unverified']);
+assert.equal($('hubResearchQueueList').children.length, 3);
+report.research_queue.items[1].engine_selected = false;
+renderHubRecommendations(report);
+assert.equal(researchMetrics($('hubResearchQueueList').children[1])['Engine status'],
+  'Available, not selected');
 assert.deepEqual($('hubRecommendationModel').children.map(option => option.value), ['', 'A320', 'B737']);
 assert.equal($('hubRecommendationModel').children[0].textContent, 'All models');
 assert.equal($('hubRecommendationsCount').textContent, 'Recommendations shown: 2 / 2');
@@ -354,7 +441,8 @@ renderHubRecommendations({hubs:[], candidates:[], recommendations:[], cash_obser
 assert.equal($('hubResearchQueueList').children[0].textContent, 'Research pending');
 renderHubRecommendations({hubs:[], candidates:[], recommendations:[],
   research_queue: {items: [], blocking_reasons: ['inventario_hubs_desatualizado']}});
-assert.equal($('hubResearchQueueList').children[0].textContent, 'inventario hubs desatualizado');
+assert.equal($('hubResearchQueueList').children[0].textContent, 'Hub inventory is outdated');
+assert.equal($('hubResearchPolicyReasons').children.length, 0);
 assert.equal($('hubRecommendationsGrid').children[0].textContent, 'No owned hubs identified.');
 assert.equal($('hubRecommendationsCount').textContent, 'Recommendations shown: 0 / 0');
 """
