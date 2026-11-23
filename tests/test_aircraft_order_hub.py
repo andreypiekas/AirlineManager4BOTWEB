@@ -8,6 +8,7 @@ import pytest
 import aircraft_order_hub
 import engine_selection
 import fleet
+import game_source_probe
 
 
 def hub_state(selected="101", options=None, *, selector_count=1, disabled=False):
@@ -178,3 +179,89 @@ def test_encomenda_seleciona_base_do_plano_antes_de_reler_o_formulario(monkeypat
     assert events[0] == ("select_hub", "202")
     assert events[1][0] == "refresh_detail"
     assert not any(event[0] == "click" for event in events)
+
+
+def test_plano_bloqueia_compra_quando_preco_final_nao_esta_verificado(monkeypatch):
+    snapshot = object()
+    monkeypatch.setattr(engine_selection, "prepare_engine", lambda *_args: "Trent 970")
+    monkeypatch.setattr(engine_selection, "read_engine_catalog", lambda _bot: snapshot)
+    monkeypatch.setattr(engine_selection, "verify_engine_selection",
+                        lambda _bot, expected: "Trent 970")
+    monkeypatch.setattr(aircraft_order_hub, "verify_order_hub_selection",
+                        lambda _bot, expected: expected)
+    monkeypatch.setattr(fleet, "prepare_order_hub", lambda *_args: ("202", False))
+    monkeypatch.setattr(game_source_probe, "probe_game_sources", lambda _bot: {
+        "aircraft_checkout_diagnostics": {
+            "detail_model_id": "123",
+            "model_hub_correlated": True,
+            "ajax_idle_confirmed": True,
+            "detail_loading": False,
+            "price_verified": False,
+        }
+    })
+    calls = []
+
+    class Detail:
+        def find_elements(self, *_args):
+            return []
+
+    class Driver:
+        def find_element(self, *_args):
+            return Detail()
+
+    bot = SimpleNamespace(
+        config=SimpleNamespace(
+            get=lambda *_args: "default",
+            get_bool=lambda *_args: True,
+        ),
+        dry_run=False,
+        ajax=lambda *_args: Detail(),
+        driver=Driver(),
+        js=lambda *_args: "PP-123",
+        read_money=lambda: pytest.fail("Preço não verificado deve bloquear antes do saldo"),
+        click_element=lambda *_args: calls.append("click"),
+    )
+    choice = fleet.AircraftModel("123", "A380-800", 15000, 940, 600, 12, 300_000_000)
+
+    assert fleet.order_aircraft(bot, choice, hub_id="202") is False
+    assert calls == []
+
+
+def test_fluxo_legado_nao_depende_do_novo_diagnostico_de_checkout(monkeypatch):
+    monkeypatch.setattr(engine_selection, "prepare_engine", lambda *_args: "Trent 970")
+    monkeypatch.setattr(engine_selection, "read_engine_catalog",
+                        lambda _bot: pytest.fail("Fluxo legado não usa snapshot novo"))
+    monkeypatch.setattr(game_source_probe, "probe_game_sources",
+                        lambda _bot: pytest.fail("Fluxo legado não exige diagnóstico novo"))
+    monkeypatch.setattr(fleet, "prepare_order_hub", lambda *_args: ("101", False))
+    calls = []
+
+    class Detail:
+        def find_elements(self, *_args):
+            return []
+
+        def find_element(self, *_args):
+            return object()
+
+    class Driver:
+        def find_element(self, *_args):
+            return Detail()
+
+    bot = SimpleNamespace(
+        config=SimpleNamespace(
+            get=lambda *_args: "default",
+            get_bool=lambda *_args: True,
+        ),
+        dry_run=False,
+        ajax=lambda *_args: Detail(),
+        driver=Driver(),
+        js=lambda *_args: "PP-123",
+        read_money=lambda: 1_000_000_000,
+        click_element=lambda *_args: calls.append("click"),
+        wait_text=lambda *_args, **_kwargs: "Pedido recebido",
+        confirm_purchase=lambda *_args: False,
+    )
+    choice = fleet.AircraftModel("123", "A380-800", 15000, 940, 600, 12, 300_000_000)
+
+    assert fleet.order_aircraft(bot, choice) is False
+    assert calls == ["click"]

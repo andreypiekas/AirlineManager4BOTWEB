@@ -474,16 +474,28 @@ class HubExpansionRegistry:
         if not isinstance(options, list):
             return False
         incoming = {}
+        purchasability = {}
         incomplete = False
         for item in options:
             if not isinstance(item, dict):
                 incomplete = True
                 continue
-            if item.get("purchasable") is not True:
+            purchasable = item.get("purchasable")
+            if type(purchasable) is not bool:
+                incomplete = True
                 continue
             airport_id = _airport_id(item.get("id"))
             if airport_id is None:
-                incomplete = True
+                if purchasable:
+                    incomplete = True
+                continue
+            if (airport_id in purchasability
+                    and purchasability[airport_id] is not purchasable):
+                # A duplicate airport with contradictory purchase eligibility
+                # cannot establish whether the hub is actually purchasable.
+                return False
+            purchasability[airport_id] = purchasable
+            if not purchasable:
                 continue
             candidate = {
                 "id": airport_id,

@@ -76,10 +76,14 @@ def validate_aircraft_preflight(
             reasons.append(reason)
 
     expected_cost = intent.get("estimated_cost")
+    # Existing journals store checkout and full exposure as the same amount.
+    # Audited A3 plans reserve future route/hangar fees separately from checkout.
+    expected_checkout = intent.get("checkout_cost", expected_cost)
     checkout_cost = observation.get("checkout_cost")
-    if (type(expected_cost) is not int or type(checkout_cost) is not int
-            or expected_cost <= 0 or checkout_cost <= 0
-            or expected_cost != checkout_cost):
+    if (type(expected_cost) is not int or type(expected_checkout) is not int
+            or type(checkout_cost) is not int or expected_cost <= 0
+            or expected_checkout <= 0 or checkout_cost <= 0
+            or expected_checkout > expected_cost or expected_checkout != checkout_cost):
         reasons.append("preco_divergente")
 
     cash = observation.get("cash")
@@ -89,8 +93,9 @@ def validate_aircraft_preflight(
         reasons.append("compromissos_pendentes_nao_verificados")
     if (type(cash) is not int or cash < 0 or type(reserve) is not int
             or reserve < 0 or type(checkout_cost) is not int
-            or checkout_cost <= 0 or type(commitments) is not int
-            or commitments < 0 or cash - reserve - commitments < checkout_cost):
+            or checkout_cost <= 0 or type(expected_cost) is not int
+            or expected_cost <= 0 or type(commitments) is not int
+            or commitments < 0 or cash - reserve - commitments < expected_cost):
         reasons.append("caixa_insuficiente_ou_nao_verificado")
 
     return {"ready": not reasons, "reasons": reasons,

@@ -50,6 +50,7 @@ from owned_hub_research_feed import build_owned_hub_research_queue
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy, MODES
 from investment_journal import InvestmentJournal
+from investment_plan_bridge import build_aircraft_intent_plan
 from expansion_metrics import build_expansion_metrics
 from portfolio_planner import compare_portfolio
 from portfolio_planner import compare_audited_portfolio
@@ -339,6 +340,27 @@ class WebDashboard:
             portfolio["blocking_reasons"].append("registro_a3_invalido")
             portfolio["status"] = "inconclusivo"
             portfolio["decision"] = "nao_comprar"
+        purchase_plan = None
+        purchase_plan_blockers = []
+        if portfolio.get("decision") == "sugestao_para_analise":
+            winner = portfolio.get("best")
+            economics_id = winner.get("economics_id") if isinstance(winner, dict) else None
+            matches = [
+                row for row in evaluations
+                if isinstance(row, dict) and isinstance(economics_id, str)
+                and row.get("economics_id") == economics_id
+            ]
+            if len(matches) != 1:
+                purchase_plan_blockers.append("economia_a3_vencedora_ausente_ou_ambigua")
+            else:
+                try:
+                    purchase_plan = build_aircraft_intent_plan(portfolio, matches[0])
+                except (ValueError, TypeError, KeyError) as exc:
+                    purchase_plan_blockers.append(str(exc))
+        else:
+            purchase_plan_blockers.extend(portfolio.get("blocking_reasons") or [])
+            if not purchase_plan_blockers:
+                purchase_plan_blockers.append("nenhum_plano_elegivel")
         ranking = rank_expansion_economics(evaluations)
         return {
             "status": record["status"], "snapshot_id": record["snapshot_id"],
@@ -347,6 +369,8 @@ class WebDashboard:
             "evaluations": evaluations,
             "a3_ranking": ranking,
             "portfolio": portfolio,
+            "purchase_plan_preview": purchase_plan,
+            "purchase_plan_blockers": purchase_plan_blockers,
             "read_only": True, "execution_available": False,
         }
 

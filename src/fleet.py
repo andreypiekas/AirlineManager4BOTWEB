@@ -1670,17 +1670,23 @@ def order_aircraft(
     detail = bot.ajax(f"ac_orders.php?mode=detail&id={choice.id}&charter=0", "acModel")
     # O motor só pode ser escolhido antes de encomendar. Uma preferência
     # explícita NÃO aceita fallback silencioso para a seleção padrão do jogo.
-    from engine_selection import EngineSelectionError, prepare_engine
+    from engine_selection import (
+        EngineSelectionError, prepare_engine, read_engine_catalog,
+        verify_engine_selection,
+    )
+    from aircraft_order_hub import verify_order_hub_selection
 
     try:
-        motor = prepare_engine(bot, bot.config.get("settings", "engine_preference", "default"))
         selected_hub_id, hub_changed = prepare_order_hub(bot, hub_id)
+        preference = bot.config.get("settings", "engine_preference", "default")
+        motor = prepare_engine(bot, preference)
     except EngineSelectionError as exc:
         log_market.warning("Compra de %s bloqueada: %s", choice.name, exc)
         return False
     except AircraftOrderHubError as exc:
         log_market.warning("Compra de %s bloqueada: %s", choice.name, exc)
         return False
+
     if (motor and not bot.dry_run) or hub_changed:
         # Alterações de motor ou base podem reconstruir todo o fragmento Ajax.
         detail = bot.driver.find_element(By.ID, "acModel")
@@ -1697,12 +1703,44 @@ def order_aircraft(
         log_market.info("[SIMULAÇÃO] Encomendaria %s.", summary)
         bot.notify(f"🧪 SIMULAÇÃO: encomendaria {esc(summary)}.", silent=True, category="simulation")
         return True
-    # Releia a chave imediatamente antes do clique, pois o operador pode
+
+    # Releia a chave imediatamente antes do pré-voo, pois o operador pode
     # suspender a compra automática durante a pesquisa do mercado.
     get_bool = getattr(bot.config, "get_bool", None)
     if callable(get_bool) and not get_bool("options", "autobuy_aircraft", True):
         log_market.warning("Encomenda de %s cancelada: compra automática desativada.", choice.name)
         return False
+
+    # Aquisições vindas do planejador precisam comprovar que o checkout ainda
+    # representa o mesmo modelo, motor e hub do plano. Chamadas legadas não
+    # possuem um plano com hub explícito e mantêm o fluxo anterior até que a
+    # estrutura real do checkout seja homologada.
+    if hub_id is not None:
+        try:
+            engine_snapshot = read_engine_catalog(bot)
+            from game_source_probe import probe_game_sources
+
+            checkout = probe_game_sources(bot).get("aircraft_checkout_diagnostics")
+            if not isinstance(checkout, dict):
+                raise ValueError("O diagnóstico do formulário de encomenda está ausente.")
+            if checkout.get("detail_model_id") != str(choice.id):
+                raise ValueError("O modelo aberto no formulário não corresponde ao modelo planejado.")
+            if checkout.get("model_hub_correlated") is not True:
+                raise ValueError("A base e o modelo não foram confirmados no mesmo painel de encomenda.")
+            if (checkout.get("ajax_idle_confirmed") is not True
+                    or checkout.get("detail_loading") is not False):
+                raise ValueError("O formulário de encomenda ainda está atualizando ou carregando.")
+            if checkout.get("price_verified") is not True:
+                raise ValueError("O preço final da configuração ainda não possui fonte verificada.")
+
+            verified_motor = verify_engine_selection(bot, engine_snapshot)
+            if motor and verified_motor != motor:
+                raise EngineSelectionError("O motor confirmado diverge do motor preparado para o plano.")
+            selected_hub_id = verify_order_hub_selection(bot, selected_hub_id)
+        except Exception as exc:
+            log_market.warning("Pré-voo de %s não confirmado. Encomenda bloqueada: %s", choice.name, exc)
+            return False
+
     before = bot.read_money()
     bot.click_element(detail.find_element(By.XPATH, ".//*[@id='btnPurchaseIntro']"))
     response = bot.wait_text("//*[@id='orderAction']", timeout=15)

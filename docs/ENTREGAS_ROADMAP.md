@@ -1,5 +1,25 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A1/A4/A5/A6/A7, prévia de aquisição e integridade de catálogo (G0)
+
+**Objetivo:** conectar a melhor oportunidade global auditada aos contratos de intenção e pré-compra, distinguindo o preço de aeronave + motor das despesas futuras que consomem o orçamento total.
+
+### Implementação e evidências
+
+- **`src/investment_plan_bridge.py`:** conversão somente leitura do vencedor A4 e sua avaliação A3 correspondente em uma proposta persistível. Exige ranking global conclusivo, identidade e snapshot idênticos, proveniência A3 válida no tempo, custos completos, ausência de custos recorrentes desconhecidos e valores monetários inteiros na unidade do jogo. Rejeita centavos ou unidade ambígua, custo de hub em proposta para hub próprio, divergência financeira e fonte obsoleta.
+- **`src/investment_journal.py`:** contrato opcional e durável `capital_costs` + `checkout_cost`. `estimated_cost` continua representando o **investimento total**, incluindo rota, hangar e demais despesas, para reserva e limites de compra por dia. As parcelas são inteiras, somam exatamente o total e o checkout corresponde exatamente à aeronave + variação do motor. Intenções antigas sem discriminação preservam o valor único original. O journal permanece exclusivo por perfil, idempotente e resiliente a reinícios.
+- **`src/investment_preflight.py`:** comparação independente do preço do formulário com `checkout_cost` e checagem de saldo/reserva/compromissos contra `estimated_cost` total. Um checkout correto não permite comprar quando faltam recursos para as despesas já previstas. A validação ainda requer preço de motor incluído e identidade/snapshot/rota/hub atualizados.
+- **`src/aircraft_order_hub.py`, `src/engine_selection.py` e `src/fleet.py`:** confirmação adicional da seleção pós-AJAX de base e variante de motor. No fluxo explícito `hub_id`, a pré-validação também exige diagnóstico da tela de checkout com modelo/hub correlacionados, atualização concluída e preço verificado. O caminho sem `hub_id` mantém sua compatibilidade com chamadas existentes.
+- **A5/A7 — `src/web.py` e `assets/web/index.html`:** o GET autenticado da análise global relaciona o vencedor A4 a exatamente uma avaliação A3 e expõe uma prévia de intenção com modelo, motor, hub, rota, preço de checkout e composição do investimento. Se o vínculo estiver ausente, ambíguo ou inválido, a API retorna impedimentos. A interface apresenta os dados ou os motivos de bloqueio e mantém `read_only=true` e `execution_available=false`.
+- **A6 — `src/hub_expansion.py`:** IDs repetidos no mesmo lote com elegibilidade de compra contraditória invalidam o lote sem substituir o catálogo persistido. Valores de elegibilidade ausentes ou não booleanos deixam a cobertura incompleta. A persistência de evidência negativa entre páginas distintas ainda precisa ser tratada.
+- **Testes:** `tests/test_investment_plan_bridge.py` percorre ponte A3/A4, persistência/reinício, simulação de compra, teto diário, caixa insuficiente para capital total, divergência de preço, dados vencidos e custos inválidos. `tests/test_aircraft_order_hub.py` amplia as regressões da leitura do checkout pós-seleção. `tests/test_audited_economics_registry.py` cobre o endpoint autenticado e os bloqueios por avaliação A3 ausente ou ambígua. `tests/test_hub_expansion.py` cobre contradições de elegibilidade. `tests/test_hubs_dashboard_ui.py` executa o renderizador da prévia, os custos e os bloqueios com Node.
+
+### Verificação, limites e reversão
+
+- **Gate G0.** Testes locais e simuladores validam contratos e idempotência. O preço de checkout, a estrutura AJAX, a moeda/unidade exata e os vínculos de rota/base ainda precisam de homologação autenticada. A prévia é somente leitura e não habilita executor. Nenhuma compra no jogo foi executada, nenhuma nova política foi habilitada no servidor e os gates G1–G5 permanecem pendentes.
+- Esta entrega **não** conecta o adaptador a um executor de compra real. A comparação no painel segue apenas como sugestão, sujeita à aprovação e à verificação independente no checkout. Custos A3 fracionários são bloqueados até prova da unidade real do jogo.
+- Reversão pelo commit desta entrega na branch de autonomia, após conferir dependências. A inclusão de campos opcionais no JSON de uma intenção não altera o schema SQLite anterior, e registros antigos mantêm compatibilidade.
+
 ## 2026-11-23 — Autonomia Total A5, validação da base de entrega da aeronave (G0)
 
 **Objetivo:** garantir que cada encomenda esteja vinculada a uma base comprovada no formulário do jogo e permitir que um plano indique explicitamente a base de entrega.
@@ -15,6 +35,7 @@
 - Testes direcionados de base e motorização aprovados. Suíte Windows completa aprovada com exclusão apenas de `tests/test_instalacao_linux.py`, que depende de permissões POSIX. Ruff em `src` e `tests`, `compileall` e `git diff --check` aprovados.
 - **Gate G0.** A validação automatizada usa fixtures DOM. O seletor `#hubSelection` consta do diagnóstico de fonte do jogo, mas ainda falta homologar a seleção em sessão autenticada e confirmar como cada variante de formulário reage aos eventos. Nenhuma compra real foi executada. O caminho continua sujeito aos gates A1/A2/A3/A4 e ao pré-voo completo A5.
 - Sem compra no jogo, alteração de configuração de produção, Telegram, implantação ou merge em `main`. Reversão por commit desta entrega após verificar dependências em `fleet.py`.
+- **Código publicado:** [`4c61128`](https://github.com/andreypiekas/AirlineManager4BOTWEB/commit/4c61128deb72a38e447a39abe729fdd910f15e34), na [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
 
 ## 2026-11-23 — Autonomia Total A5/A8, recuperação comprovada de executor após encerramento do processo (G0)
 

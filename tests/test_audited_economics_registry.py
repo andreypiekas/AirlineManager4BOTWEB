@@ -7,6 +7,7 @@ from copy import deepcopy
 import pytest
 
 import paths
+import investment_plan_bridge
 from audited_economics_registry import AuditedEconomicsRegistry
 from expansion_economics import rank_expansion_economics
 from portfolio_planner import compare_audited_portfolio
@@ -169,3 +170,95 @@ def test_web_dashboard_fails_closed_for_invalid_a3_storage(registry, monkeypatch
         assert status == 200
         assert result["portfolio"]["decision"] == "nao_comprar"
         assert "registro_a3_invalido" in result["portfolio"]["blocking_reasons"]
+
+
+def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
+    tmp_path, registry, monkeypatch,
+):
+    data = record_fixture(registry)
+    snapshot_id = data[0]["snapshot_id"]
+    assert registry.record_portfolio_evidence(
+        snapshot_id=snapshot_id, controls=controls(snapshot_id),
+        hub_capacity={"123": proof(2, "game_hub_select", snapshot_id, hub_id="123")},
+        fleet_coverage_verified=True, research_coverage_verified=True,
+        commitments_verified=True,
+    )
+    portfolio = compare_registry(registry)
+    record = registry.snapshot(now=NOW)
+
+    class SnapshotRegistry:
+        def snapshot(self):
+            return deepcopy(record)
+
+    monkeypatch.setattr("web.AuditedEconomicsRegistry", SnapshotRegistry)
+    monkeypatch.setattr("web.compare_audited_portfolio", lambda *_args, **_kwargs: portfolio)
+    monkeypatch.setattr(
+        "web.build_aircraft_intent_plan",
+        lambda current_portfolio, evaluation: investment_plan_bridge.build_aircraft_intent_plan(
+            current_portfolio, evaluation, now=NOW,
+        ),
+    )
+
+    with served(tmp_path) as (port, _config):
+        denied, _ = request(port, "GET", "/api/investment/audited-expansion")
+        assert denied == 403
+        status, result = request(
+            port, "GET", "/api/investment/audited-expansion", headers=auth(),
+        )
+
+    assert status == 200
+    assert result["purchase_plan_blockers"] == []
+    assert result["purchase_plan_preview"]["plan_id"] == portfolio["best"]["plan_id"]
+    assert result["purchase_plan_preview"]["engine_id"] == "engine-02"
+    assert result["purchase_plan_preview"]["estimated_cost"] == 10700
+    assert result["purchase_plan_preview"]["checkout_cost"] == 10500
+    assert result["read_only"] is True
+    assert result["execution_available"] is False
+    assert not list(tmp_path.glob("*.sqlite3"))
+
+
+@pytest.mark.parametrize("tamper,expected_blocker", [
+    ("missing_costs", "Custos discriminados ausentes."),
+    ("ambiguous_winner", "economia_a3_vencedora_ausente_ou_ambigua"),
+])
+def test_a5_preview_fails_closed_for_missing_or_ambiguous_a3_economics(
+    tmp_path, registry, monkeypatch, tamper, expected_blocker,
+):
+    data = record_fixture(registry)
+    snapshot_id = data[0]["snapshot_id"]
+    assert registry.record_portfolio_evidence(
+        snapshot_id=snapshot_id, controls=controls(snapshot_id),
+        hub_capacity={"123": proof(2, "game_hub_select", snapshot_id, hub_id="123")},
+        fleet_coverage_verified=True, research_coverage_verified=True,
+        commitments_verified=True,
+    )
+    portfolio = compare_registry(registry)
+    record = registry.snapshot(now=NOW)
+    if tamper == "missing_costs":
+        record["evaluations"][0].pop("capital_costs")
+    else:
+        record["evaluations"].append(deepcopy(record["evaluations"][0]))
+
+    class SnapshotRegistry:
+        def snapshot(self):
+            return deepcopy(record)
+
+    monkeypatch.setattr("web.AuditedEconomicsRegistry", SnapshotRegistry)
+    monkeypatch.setattr("web.compare_audited_portfolio", lambda *_args, **_kwargs: portfolio)
+    monkeypatch.setattr(
+        "web.build_aircraft_intent_plan",
+        lambda current_portfolio, evaluation: investment_plan_bridge.build_aircraft_intent_plan(
+            current_portfolio, evaluation, now=NOW,
+        ),
+    )
+
+    with served(tmp_path) as (port, _config):
+        status, result = request(
+            port, "GET", "/api/investment/audited-expansion", headers=auth(),
+        )
+
+    assert status == 200
+    assert result["purchase_plan_preview"] is None
+    assert expected_blocker in result["purchase_plan_blockers"]
+    assert result["read_only"] is True
+    assert result["execution_available"] is False

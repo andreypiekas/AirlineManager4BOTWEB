@@ -289,6 +289,24 @@ def read_engine_catalog(bot: "Bot") -> EngineCatalog:
     """Inventaria variantes reais, exclusivamente por leitura do formulário."""
     return parse_engine_catalog(bot.js(_ENGINE_OPTIONS_JS))
 
+def verify_engine_selection(bot: "Bot", expected: EngineCatalog) -> str:
+    """Confirma que a variante selecionada permaneceu idêntica após outro AJAX."""
+    current = read_engine_catalog(bot)
+    if current != expected:
+        raise EngineSelectionError(
+            "O formulário de motores mudou após a seleção da base; compra bloqueada."
+        )
+    if current.selected_engine_id is None:
+        raise EngineSelectionError("O jogo deixou de confirmar o motor selecionado.")
+    selected = next(
+        (variant for variant in current.variants
+         if variant.engine_id == current.selected_engine_id),
+        None,
+    )
+    if selected is None or not selected.available or not selected.selected:
+        raise EngineSelectionError("O motor selecionado deixou de estar disponível.")
+    return selected.label
+
 
 def prepare_engine(bot: "Bot", preference: str) -> str | None:
     """Escolhe e confirma o motor. Em simulação, informa a opção sem clicar.

@@ -112,6 +112,26 @@ def _validated_plan(plan: Mapping) -> dict:
         target.update(origin_id=origin_id, destination_id=destination_id,
                       model_id=model_id, engine_id=engine_id)
 
+    if "capital_costs" in plan or "checkout_cost" in plan:
+        components = plan.get("capital_costs")
+        fields = ("aircraft_cost", "engine_delta_cost", "hub_cost", "route_fee",
+                  "hangar_cost", "other_fees")
+        if kind != "aircraft" or not isinstance(components, Mapping):
+            raise ValueError("Custos discriminados exigem proposta de aeronave.")
+        if (any(type(components.get(field)) is not int or components[field] < 0
+                for field in fields)
+                or type(components.get("total_investment")) is not int):
+            raise ValueError("Componentes do investimento exigem valores inteiros verificados.")
+        checkout_cost = plan.get("checkout_cost")
+        if (components["aircraft_cost"] <= 0 or components["hub_cost"] != 0
+                or components["total_investment"] != cost
+                or sum(components[field] for field in fields) != cost
+                or type(checkout_cost) is not int
+                or checkout_cost != components["aircraft_cost"] + components["engine_delta_cost"]):
+            raise ValueError("Preco de checkout e investimento total contraditorios.")
+        target.update(checkout_cost=checkout_cost,
+                      capital_costs={field: components[field] for field in (*fields, "total_investment")})
+
     return {**target, "plan_id": plan_id, "snapshot_id": snapshot_id,
             "estimated_cost": cost}
 

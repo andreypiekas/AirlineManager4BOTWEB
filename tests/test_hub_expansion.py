@@ -202,6 +202,30 @@ def test_conflicting_catalog_duplicates_cannot_replace_verified_evidence(tmp_pat
     assert rows[0]["hub_price"] == 8000
 
 
+@pytest.mark.parametrize("purchasability_order", [(True, False), (False, True)])
+def test_conflicting_duplicate_purchasability_cannot_create_candidate(
+        tmp_path, purchasability_order):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    options = [{**_candidate(), "purchasable": value}
+               for value in purchasability_order]
+
+    assert not registry.record_catalog(options, complete=True)
+    assert registry.snapshot(cash=50000)["candidates"] == []
+    assert not registry.path.exists()
+
+
+def test_unknown_purchasability_keeps_catalog_scan_incomplete(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate(), _candidate("456")], complete=True)
+
+    malformed = {**_candidate(), "purchasable": "false"}
+    assert registry.record_catalog([_candidate("789"), malformed], complete=True)
+
+    snapshot = registry.snapshot(cash=50000)
+    assert {row["id"] for row in snapshot["candidates"]} == {"123", "456", "789"}
+    assert snapshot["catalog_complete"] is False
+
+
 def test_catalog_preserves_subsecond_read_time_and_rejects_delayed_replays(tmp_path, monkeypatch):
     clock = [1_900_000_000.9]
     monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])

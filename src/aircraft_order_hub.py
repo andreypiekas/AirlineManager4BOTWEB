@@ -144,3 +144,18 @@ def prepare_order_hub(bot, requested_hub_id: str | int | None = None) -> tuple[s
     if confirmed_id != target_id:
         raise AircraftOrderHubError("A base de entrega mudou ou não foi confirmada após a seleção.")
     return target_id, True
+
+def verify_order_hub_selection(bot, expected_hub_id: str | int) -> str:
+    """Confirma a base esperada sem alterar o formulário do jogo."""
+    expected_id = _normalize_hub_id(expected_hub_id)
+    if expected_id is None:
+        raise AircraftOrderHubError("O ID da base esperada é inválido.")
+
+    selected_id, options = _read_order_hub_state(bot)
+    if selected_id != expected_id:
+        raise AircraftOrderHubError(
+            "A base de entrega mudou após a atualização do formulário."
+        )
+    if options.get(expected_id) is not False:
+        raise AircraftOrderHubError("A base de entrega deixou de estar disponível.")
+    return selected_id

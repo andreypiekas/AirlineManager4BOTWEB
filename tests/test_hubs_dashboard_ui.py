@@ -541,7 +541,7 @@ def test_audited_expansion_planner_renders_economics_and_blocks_invalid_data(tmp
     script = "\n".join(_page().scripts)
     translations = script[script.index("const EN = {"):script.index("let LANG =")]
     helpers = script[script.index("const hubDate ="):script.index("function renderHubs(")]
-    renderer = script[script.index("function renderAuditedExpansionPlanner(audited, hubs)"):
+    renderer = script[script.index("function renderPurchasePlanPreview(audited, hubs)"):
                       script.index("async function loadHubs()")]
     assert ".innerHTML" not in renderer
     assertions = r"""
@@ -596,6 +596,11 @@ const report = {read_only:true, execution_available:false,
 const hubs = [{id:'1', code:'AAA', name:'Alpha'}];
 assert.equal(EN['Planejador de Expansão'], 'Expansion Planner');
 renderAuditedExpansionPlanner(report, hubs);
+assert.equal($('hubPurchasePlanPanel').dataset.state, 'blocked');
+assert.equal($('hubPurchasePlanStatus').textContent,
+  'Preview unavailable. Review the blockers below.');
+assert.equal($('hubPurchasePlanBlockers').children[0].textContent,
+  'Plan preview missing from the API response.');
 assert.match($('hubExpansionPlannerStatus').textContent,
   /Profile principal · A3 evaluations: 1 · A4 alternatives: 1 · Analysis only/);
 assert.match($('hubExpansionPlannerExplanation').textContent,
@@ -624,6 +629,39 @@ assert.match(details.children[2].textContent, /Oldest evidence: /);
 assert.match(details.children[2].textContent, /Snapshot: snap-1/);
 assert.match(details.children[3].textContent, /Score breakdown: profit 0.4/);
 assert.match(details.children[4].textContent, /Stress scenarios: fuel price ×1.2 → \$655/);
+
+report.purchase_plan_preview = {
+  hub_id:'1', model_id:'A380-800 <model>', engine_id:'Trent XWB <variant>',
+  origin_id:'AAA', destination_id:'BBB', checkout_cost:9200,
+  estimated_cost:10500,
+  capital_costs:{total_investment:10500, aircraft_cost:9000,
+    engine_delta_cost:200, route_fee:300, hangar_cost:400,
+    hub_cost:0, other_fees:600}
+};
+report.purchase_plan_blockers = [];
+renderAuditedExpansionPlanner(report, hubs);
+assert.equal($('hubPurchasePlanPanel').dataset.state, 'available');
+assert.equal($('hubPurchasePlanStatus').textContent,
+  'Preview available for analysis. No purchase has been authorized.');
+const previewMetrics = Object.fromEntries([
+  ...$('hubPurchasePlanIdentity').children,
+  ...$('hubPurchasePlanCosts').children,
+].map(item => [item.children[0].textContent, item.children[1].textContent]));
+assert.equal(previewMetrics['Exact model'], 'A380-800 <model>');
+assert.equal(previewMetrics['Exact engine'], 'Trent XWB <variant>');
+assert.equal(previewMetrics['Selected hub'], 'AAA · Alpha · 1');
+assert.equal(previewMetrics['Exact route'], 'AAA ↔ BBB');
+assert.equal(previewMetrics['Checkout cost'], '$9200');
+assert.equal(previewMetrics['Total investment'], '$10500');
+
+report.purchase_plan_preview = null;
+report.purchase_plan_blockers = ['motor_a_pesquisar', 'preco_final_motor_a_confirmar'];
+renderAuditedExpansionPlanner(report, hubs);
+assert.equal($('hubPurchasePlanPanel').dataset.state, 'blocked');
+assert.deepEqual($('hubPurchasePlanBlockers').children.map(item => item.textContent), [
+  'Engine not yet researched in game',
+  'Final engine and aircraft price unverified',
+]);
 
 report.portfolio.status = 'inconclusivo';
 report.portfolio.decision = 'nao_comprar';

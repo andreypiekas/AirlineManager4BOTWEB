@@ -457,6 +457,16 @@ footer strong { font-weight: 600; color: var(--aqua); }
 .hub-probe-grid > div { min-width:0; padding:10px 12px; background:var(--panel-hi); border:1px solid var(--border); }
 .hub-probe-grid dt { color:var(--muted); font-size:11px; }
 .hub-probe-grid dd { margin:6px 0 0; font:700 12px/1.6 "Cascadia Mono", Consolas, monospace; overflow-wrap:anywhere; }
+.hub-purchase-plan { margin:12px 0; padding:12px; border:1px solid var(--border); background:var(--panel-hi); min-width:0; }
+.hub-purchase-plan-header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.hub-purchase-plan h3 { margin:0; font-size:14px; }
+.hub-purchase-plan h4 { margin:12px 0 6px; color:var(--muted); font:700 10px/1.5 "Cascadia Mono", Consolas, monospace; letter-spacing:.06em; text-transform:uppercase; }
+.hub-purchase-plan-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,145px),1fr)); gap:7px; margin:8px 0 0; }
+.hub-purchase-plan-grid > div { min-width:0; padding:8px 10px; border:1px solid var(--border); background:var(--panel); }
+.hub-purchase-plan-grid dt { color:var(--muted); font-size:10px; line-height:1.5; }
+.hub-purchase-plan-grid dd { margin:4px 0 0; font:700 12px/1.5 "Cascadia Mono", Consolas, monospace; overflow-wrap:anywhere; }
+.hub-purchase-plan[data-state="available"] .hub-purchase-plan-status { color:var(--signal); }
+.hub-purchase-plan[data-state="blocked"] .hub-purchase-plan-status { color:var(--warn); }
 .hub-probe [data-state="error"] { color:var(--bad); }
 .hub-probe [data-state="success"] { color:var(--signal); }
 @media (max-width:600px) {
@@ -719,6 +729,23 @@ footer strong { font-weight: 600; color: var(--aqua); }
           <summary data-t="Planejador de Expansão">Planejador de Expansão</summary>
           <p id="hubExpansionPlannerStatus" class="hub-section-note" role="status" aria-live="polite"></p>
           <p id="hubExpansionPlannerExplanation" class="hub-section-note"></p>
+          <section id="hubPurchasePlanPanel" class="hub-purchase-plan" data-state="blocked" aria-labelledby="hubPurchasePlanHeading">
+            <div class="hub-purchase-plan-header">
+              <h3 id="hubPurchasePlanHeading" data-t="Prévia do plano de compra">Prévia do plano de compra</h3>
+              <span class="hub-state" data-t="Somente leitura">Somente leitura</span>
+            </div>
+            <p id="hubPurchasePlanStatus" class="hub-section-note hub-purchase-plan-status" role="status" aria-live="polite"></p>
+            <div id="hubPurchasePlanDetails" hidden>
+              <h4 data-t="Identificação da oportunidade">Identificação da oportunidade</h4>
+              <dl id="hubPurchasePlanIdentity" class="hub-purchase-plan-grid" aria-label="Identificação da oportunidade" data-t-aria-label="Identificação da oportunidade"></dl>
+              <h4 data-t="Composição do investimento">Composição do investimento</h4>
+              <dl id="hubPurchasePlanCosts" class="hub-purchase-plan-grid" aria-label="Composição do investimento" data-t-aria-label="Composição do investimento"></dl>
+            </div>
+            <div id="hubPurchasePlanBlocked" hidden>
+              <p id="hubPurchasePlanBlockerStatus" class="hub-section-note"></p>
+              <ul id="hubPurchasePlanBlockers" class="hub-research-reasons" aria-label="Motivos do bloqueio da prévia" data-t-aria-label="Motivos do bloqueio da prévia"></ul>
+            </div>
+          </section>
           <ul id="hubExpansionPlannerBlockers" class="hub-research-reasons" aria-label="Impedimentos do planejamento" data-t-aria-label="Impedimentos do planejamento"></ul>
           <div id="hubExpansionPlannerGrid" class="hubs-grid" aria-label="Comparação auditada de oportunidades" data-t-aria-label="Comparação auditada de oportunidades"></div>
         </details>
@@ -977,6 +1004,26 @@ const EN = {
   "Teto de caixa após reservas locais": "Cash upper bound after local reservations",
   "Diário de investimentos indisponível.": "Investment ledger unavailable.",
   "Planejador de Expansão": "Expansion Planner",
+  "Prévia do plano de compra": "Purchase plan preview",
+  "Somente leitura": "Read only",
+  "Prévia disponível para análise. Nenhuma compra foi autorizada.":
+    "Preview available for analysis. No purchase has been authorized.",
+  "Prévia indisponível. Confira os impedimentos abaixo.":
+    "Preview unavailable. Review the blockers below.",
+  "Identificação da oportunidade": "Opportunity details",
+  "Composição do investimento": "Investment breakdown",
+  "Modelo exato": "Exact model",
+  "Motor exato": "Exact engine",
+  "Hub selecionado": "Selected hub",
+  "Rota exata": "Exact route",
+  "Custo no checkout": "Checkout cost",
+  "Custo adicional do motor": "Additional engine cost",
+  "Outras taxas": "Other fees",
+  "Impedimentos retornados pela análise.": "Blockers returned by the analysis.",
+  "A resposta da análise não informou os motivos do bloqueio.":
+    "The analysis response did not provide the blocking reasons.",
+  "Análise auditada indisponível.": "Audited analysis unavailable.",
+  "Prévia do plano ausente na resposta da API.": "Plan preview missing from the API response.",
   "Impedimentos do planejamento": "Planning blockers",
   "Comparação auditada de oportunidades": "Audited comparison of opportunities",
   "Análise auditada indisponível. Compras bloqueadas.": "Audited analysis unavailable. Purchases blocked.",
@@ -2509,7 +2556,77 @@ function renderHubRecommendations(report) {
     grid.append(empty);
   }
 }
+function renderPurchasePlanPreview(audited, hubs) {
+  const panel = $("hubPurchasePlanPanel");
+  const details = $("hubPurchasePlanDetails");
+  const blocked = $("hubPurchasePlanBlocked");
+  const status = $("hubPurchasePlanStatus");
+  const identityGrid = $("hubPurchasePlanIdentity");
+  const costsGrid = $("hubPurchasePlanCosts");
+  const blockersList = $("hubPurchasePlanBlockers");
+  const candidate = audited?.purchase_plan_preview;
+  const hasPreview = audited?.read_only === true && audited?.execution_available === false &&
+    candidate && typeof candidate === "object" && !Array.isArray(candidate);
+
+  identityGrid.replaceChildren();
+  costsGrid.replaceChildren();
+  blockersList.replaceChildren();
+  details.hidden = !hasPreview;
+  blocked.hidden = Boolean(hasPreview);
+  panel.dataset.state = hasPreview ? "available" : "blocked";
+
+  if (hasPreview) {
+    const hubId = typeof candidate.hub_id === "string" ? candidate.hub_id : "";
+    const knownHub = (Array.isArray(hubs) ? hubs : [])
+      .find(hub => hub && hub.id != null && String(hub.id) === hubId);
+    const hubLabel = knownHub ? hubName(knownHub) + " · " + hubId : hubId || tr("Sem dados");
+    const exactValue = value => typeof value === "string" && value.length ? value : tr("Sem dados");
+    const capitalCosts = candidate.capital_costs && typeof candidate.capital_costs === "object"
+      ? candidate.capital_costs : {};
+    const totalInvestment = Number.isFinite(capitalCosts.total_investment)
+      ? capitalCosts.total_investment : candidate.estimated_cost;
+
+    status.textContent = tr("Prévia disponível para análise. Nenhuma compra foi autorizada.");
+    addHubMetric(identityGrid, "Modelo exato", exactValue(candidate.model_id));
+    addHubMetric(identityGrid, "Motor exato", exactValue(candidate.engine_id));
+    addHubMetric(identityGrid, "Hub selecionado", hubLabel);
+    addHubMetric(identityGrid, "Rota exata", exactValue(candidate.origin_id) +
+      " ↔ " + exactValue(candidate.destination_id));
+
+    addHubMetric(costsGrid, "Custo no checkout", hubMoney(candidate.checkout_cost));
+    addHubMetric(costsGrid, "Custo da aeronave", hubMoney(capitalCosts.aircraft_cost));
+    addHubMetric(costsGrid, "Custo adicional do motor", hubMoney(capitalCosts.engine_delta_cost));
+    addHubMetric(costsGrid, "Taxa da rota", hubMoney(capitalCosts.route_fee));
+    addHubMetric(costsGrid, "Custo do hangar", hubMoney(capitalCosts.hangar_cost));
+    addHubMetric(costsGrid, "Custo do hub", hubMoney(capitalCosts.hub_cost));
+    addHubMetric(costsGrid, "Outras taxas", hubMoney(capitalCosts.other_fees));
+    addHubMetric(costsGrid, "Investimento total", hubMoney(totalInvestment));
+    return;
+  }
+
+  status.textContent = tr("Prévia indisponível. Confira os impedimentos abaixo.");
+  const reasons = Array.isArray(audited?.purchase_plan_blockers)
+    ? audited.purchase_plan_blockers : [];
+  $("hubPurchasePlanBlockerStatus").textContent = reasons.length
+    ? tr("Impedimentos retornados pela análise.")
+    : tr("A resposta da análise não informou os motivos do bloqueio.");
+  if (reasons.length) {
+    for (const reason of reasons) {
+      const item = document.createElement("li");
+      item.textContent = hubResearchBlocker(String(reason));
+      blockersList.append(item);
+    }
+  } else {
+    const item = document.createElement("li");
+    item.textContent = !audited
+      ? tr("Análise auditada indisponível.")
+      : tr("Prévia do plano ausente na resposta da API.");
+    blockersList.append(item);
+  }
+}
+
 function renderAuditedExpansionPlanner(audited, hubs) {
+  renderPurchasePlanPreview(audited, hubs);
   const grid = $("hubExpansionPlannerGrid"); grid.replaceChildren();
   const blockersList = $("hubExpansionPlannerBlockers"); blockersList.replaceChildren();
   const explanation = $("hubExpansionPlannerExplanation"); explanation.textContent = "";
