@@ -163,13 +163,79 @@ def test_hub_coverage_lists_owned_hubs_even_without_route_samples():
     )
     assert result["hub_coverage"] == [
         {"hub_id": "2926", "hub_code": "XAP", "sampled_routes": 1,
+         "conflicted_routes": 0,
          "last_route_observed_at": NOW, "coverage": "partial",
          "status": "pesquisa_iniciada"},
         {"hub_id": "2941", "hub_code": "GRU", "sampled_routes": 0,
+         "conflicted_routes": 0,
          "last_route_observed_at": None, "coverage": "partial",
          "status": "nao_pesquisado"},
     ]
+    assert result["sampled_hubs"] == 1
+    assert result["sampled_routes"] == 1
+    assert result["conflicted_routes"] == 0
     assert result["purchase_eligible"] is False
+
+
+def test_route_samples_use_single_latest_observation_independent_of_input_order():
+    older = _sample(observed_at=NOW - 120)
+    older["y"] = 85
+    latest = _sample(observed_at=NOW)
+    latest["y"] = 130
+    for rows in ([older, latest, deepcopy(latest)],
+                 [deepcopy(latest), older, latest]):
+        report = build_owned_hub_research_queue(
+            _inventory(), rows, _market(), now=NOW,
+        )
+        assert report["sampled_routes"] == 1
+        assert report["sampled_hubs"] == 1
+        assert report["conflicted_routes"] == 0
+        assert len(report["items"]) == 2  # Two models on one unique route.
+        assert all(item["observed_demand"]["y"] == 130 for item in report["items"])
+        assert all(item["evidence"]["route"]["observed_at"] == NOW
+                   for item in report["items"])
+
+
+def test_conflicting_latest_samples_are_quarantined_without_blocking_other_hubs():
+    first = _sample(observed_at=NOW)
+    conflict = deepcopy(first)
+    conflict["j"] = 90
+    other_hub = _sample("2941", "3140")
+    for samples in ([first, conflict, other_hub],
+                    [other_hub, conflict, first]):
+        report = build_owned_hub_research_queue(
+            _inventory(), samples, _market(), now=NOW,
+        )
+        assert report["conflicted_routes"] == 1
+        assert report["sampled_routes"] == 1
+        assert report["sampled_hubs"] == 1
+        assert len(report["items"]) == 2
+        assert {item["hub_id"] for item in report["items"]} == {"2941"}
+        assert report["hub_coverage"][0]["conflicted_routes"] == 1
+        assert report["hub_coverage"][0]["sampled_routes"] == 0
+        assert report["hub_coverage"][1]["conflicted_routes"] == 0
+
+
+def test_newer_observation_resolves_previous_conflict_without_fallback():
+    older = _sample(observed_at=NOW - 240)
+    first = _sample(observed_at=NOW - 120)
+    conflict = deepcopy(first)
+    conflict["distance_km"] = 2400
+    newer = _sample(observed_at=NOW)
+    newer["f"] = 15
+    blocked = build_owned_hub_research_queue(
+        _inventory(), [older, first, conflict], _market(), now=NOW,
+    )
+    assert blocked["items"] == []
+    assert blocked["conflicted_routes"] == 1
+    assert "demanda_dos_hubs_a_pesquisar" in blocked["blocking_reasons"]
+
+    recovered = build_owned_hub_research_queue(
+        _inventory(), [conflict, newer, older, first], _market(), now=NOW,
+    )
+    assert recovered["conflicted_routes"] == 0
+    assert recovered["sampled_routes"] == 1
+    assert all(item["observed_demand"]["f"] == 15 for item in recovered["items"])
 
 
 @pytest.mark.parametrize("engines", [

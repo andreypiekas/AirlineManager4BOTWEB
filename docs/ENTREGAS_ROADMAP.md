@@ -1,5 +1,40 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A1/A5, correlação do checkout e recibos exclusivos (G0)
+
+**Objetivo:** reduzir o risco de confirmar uma configuração observada em painéis diferentes e de usar a mesma encomenda para conciliar duas intenções de investimento.
+
+### Implementação e evidências
+
+- **`src/game_source_probe.py`:** `aircraft_checkout_diagnostics.model_hub_correlated` só fica verdadeiro quando existe um painel único `#acModel` com ID de modelo explícito, o seletor de hub consistente está contido nesse painel e o estado AJAX está comprovadamente ocioso, sem carregador ou `aria-busy`. O sanitizador valida essas condições novamente e trata respostas contraditórias como inconclusivas. A sondagem continua somente leitura e `price_verified` permanece falso.
+- **`tests/test_game_source_probe.py`:** novos cenários Node.js e Python cobrem hub fora do painel do modelo, múltiplos painéis, ausência/atividade de jQuery, carregamento, modelo inválido, seleção ausente e campos falsificados ou com tipos incompatíveis.
+- **`src/investment_journal.py`:** sob transação SQLite `BEGIN IMMEDIATE`, uma confirmação de aeronave consulta comprovantes `CONFIRMED` anteriores do mesmo perfil. Um `purchase_id` já vinculado a outra intenção é recusado. A regra também protege a conciliação após timeout e reinício.
+- **`tests/test_investment_journal.py` e `tests/test_investment_executor.py`:** validam a recusa de comprovante reutilizado, a preservação do estado `SUBMITTED`/`UNKNOWN`, a retomada e duas compras simuladas que usam recibos diferentes.
+
+### Limites e reversão
+
+- **G0.** A prova é de DOM simulado, journal SQLite e gateway de simulação. Identidade, hub, motor, preço final e recibo ainda dependem de homologação com uma conta autenticada. A compra real permanece fora do executor novo. G1–G5 continuam pendentes.
+- Reverter o commit desta entrega na branch de autonomia após inspecionar commits dependentes. Nenhum clique de compra, Telegram, implantação ou merge em `main` foi executado.
+
+## 2026-11-23 — Autonomia Total A2/A7, integridade e cobertura das pesquisas por rota (G0)
+
+**Objetivo:** fazer a fila de estudos de hubs representar cada rota observada uma única vez, sem inflar pesquisas por dados duplicados ou escolher arbitrariamente entre observações contraditórias.
+
+### Implementação e evidências
+
+- **`src/owned_hub_research_feed.py`:** agrupa as observações válidas por par `hub próprio × destino`. Leituras repetidas com os mesmos dados são deduplicadas. Leituras com horários diferentes usam apenas a mais recente. Se duas observações diferentes têm o mesmo horário máximo, a rota fica em quarentena até chegar observação mais nova, mantendo as demais rotas pesquisáveis. A seleção independe da ordem das amostras recebidas.
+- O resultado `research_queue` agora expõe `conflicted_routes` total e por hub, além de contar `sampled_routes` por rota única. Corrigida também a contagem de `sampled_hubs`, que era inflada ao criar entradas vazias para hubs sem pesquisa durante a montagem de `hub_coverage`.
+- **`assets/web/index.html`:** a tela de hubs informa quantas rotas têm amostras conflitantes. Uma base com conflito e nenhuma amostra aproveitável aparece como **Pesquisa de rota inconclusiva**. Traduções PT-BR/inglês incluídas. Valores e nomes continuam inseridos como texto.
+- **`src/hub_registry.py` e `assets/web/index.html`:** a API de hubs também encaminha a última auditoria integral histórica comprovada pelo registro de rotas. O painel apresenta sua data e total de IDs únicos, mantendo o inventário atual explicitamente parcial. A ausência do campo em registros anteriores é aceita.
+- **`tests/test_owned_hub_research_feed.py` e `tests/test_hubs_dashboard_ui.py`:** cobrem duplicatas idênticas, observações novas/antigas fora de ordem, conflitos no mesmo timestamp, recuperação por leitura posterior, continuidade da pesquisa em outros hubs, contagem de bases efetivamente amostradas e apresentação dos conflitos.
+- **`tests/test_hub_registry.py`:** comprova que um histórico de auditoria integral não altera `partial_fleet` nem transforma registros antigos em contagem atual.
+
+### Validação, pendências e reversão
+
+- Testes direcionados dos dois arquivos e suíte Windows com exclusão do instalador específico POSIX concluíram com código de saída zero em 23/11/2026. Ruff, `compileall` de `src` e `git diff --check` passaram. A prova é de testes locais com fixtures simuladas, sem coleta adicional autenticada do jogo.
+- **G0 — entrega local testada, aguardando homologação.** A cobertura continua parcial. Demanda bruta não comprova demanda residual, disponibilidade de rota, vínculo de base nem lucro real. A1, demais dependências A2/A3 e gates G1–G5 permanecem pendentes. Nenhuma compra, mutação no jogo, Telegram, implantação ou merge na `main` foi efetuado.
+- **Compatibilidade e reversão:** campos de conflito são aditivos e a UI aceita respostas antigas que não os incluam. A fila continua somente leitura com `purchase_eligible=false`. Reverter o commit desta entrega na branch `codex/autonomia-a0-a1-20261122`, observando dependências posteriores; a PR #44 permanece sob avaliação independente.
+
 ## 2026-11-23 — Autonomia Total A1, snapshot atômico de identidade e motores (G0)
 
 **Objetivo:** impedir que substituições AJAX do formulário de encomenda misturem variantes de uma aeronave com a identidade observada em outra leitura.

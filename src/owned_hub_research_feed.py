@@ -154,7 +154,10 @@ def build_owned_hub_research_queue(
                 hubs[hub_id] = {"id": hub_id, "code": str(raw.get("code") or "")}
 
     models = _models(market.get("models")) if market_fresh else []
-    samples_by_hub = defaultdict(list)
+    # A route is one research subject, even when cache migration or a partial
+    # page read supplies repeated observations. Equally fresh contradictory
+    # readings must not silently pick a winner based on input order.
+    latest_routes = {}
     for row in route_samples if isinstance(route_samples, list) else []:
         if not isinstance(row, dict) or row.get("source") != "game_route_search":
             continue
@@ -168,11 +171,26 @@ def build_owned_hub_research_queue(
                 or any(type(row.get(key)) is not int or not 0 <= row[key] <= 100_000_000
                        for key in ("y", "j", "f"))):
             continue
-        samples_by_hub[origin].append({
+        sample = {
             "origin_id": origin, "destination_id": destination,
             "distance_km": distance, "observed_at": row["observed_at"],
             "demand": {key: row[key] for key in ("y", "j", "f")},
-        })
+        }
+        key = (origin, destination)
+        prior = latest_routes.get(key)
+        if prior is None or sample["observed_at"] > prior["sample"]["observed_at"]:
+            latest_routes[key] = {"sample": sample, "conflict": False}
+        elif sample["observed_at"] == prior["sample"]["observed_at"]:
+            if sample != prior["sample"]:
+                prior["conflict"] = True
+
+    samples_by_hub = defaultdict(list)
+    conflicts_by_hub = defaultdict(int)
+    for (hub_id, _), observation in latest_routes.items():
+        if observation["conflict"]:
+            conflicts_by_hub[hub_id] += 1
+        else:
+            samples_by_hub[hub_id].append(observation["sample"])
 
     for rows in samples_by_hub.values():
         rows.sort(key=lambda row: (int(row["destination_id"]), -row["observed_at"]))
@@ -247,12 +265,13 @@ def build_owned_hub_research_queue(
     has_more = len(queue) > max_items
     hub_coverage = [
         {"hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
-         "sampled_routes": len(samples_by_hub[hub_id]),
+         "sampled_routes": len(samples_by_hub.get(hub_id, ())),
+         "conflicted_routes": conflicts_by_hub[hub_id],
          "last_route_observed_at": max(
-             (item["observed_at"] for item in samples_by_hub[hub_id]), default=None
+             (item["observed_at"] for item in samples_by_hub.get(hub_id, ())), default=None
          ),
          "coverage": "partial",
-         "status": "pesquisa_iniciada" if samples_by_hub[hub_id] else "nao_pesquisado"}
+         "status": "pesquisa_iniciada" if samples_by_hub.get(hub_id) else "nao_pesquisado"}
         for hub_id in sorted(hubs, key=int)
     ]
     return {
@@ -260,6 +279,7 @@ def build_owned_hub_research_queue(
         "coverage": "partial", "purchase_eligible": False,
         "owned_hubs": len(hubs), "sampled_hubs": len(samples_by_hub),
         "sampled_routes": sum(len(rows) for rows in samples_by_hub.values()),
+        "conflicted_routes": sum(conflicts_by_hub.values()),
         "hub_coverage": hub_coverage,
         "market_models": len(models), "market_observed_at": market.get("observed_at"),
         "items": queue[:max_items], "has_more": has_more,

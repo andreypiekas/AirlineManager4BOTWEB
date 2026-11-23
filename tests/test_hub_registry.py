@@ -324,6 +324,19 @@ def test_fleet_scan_is_reported_as_partial_evidence(tmp_path):
     assert len(report["unconfirmed_aircraft"]) == 1
 
 
+def test_hubs_report_preserves_historical_full_audit_without_claiming_current_coverage(tmp_path):
+    hubs = HubRegistry(tmp_path / "hubs.json")
+    assert hubs.record_options([{"id": "123", "text": "Base A"}])
+    historical_audit = {"at": 1_900_000_000, "audit_run_id": "run-123",
+                        "expected_routes": 40, "total_pages": 2, "unique_aircraft": 40}
+    report = hubs.snapshot({"relations": [],
+                            "last_verified_full_audit": historical_audit})
+    assert report["last_verified_full_audit"] == historical_audit
+    assert report["partial_fleet"] is True
+    assert report["known_aircraft"] == 0
+    assert hubs.snapshot({"relations": []})["last_verified_full_audit"] is None
+
+
 def test_hubs_web_workspace_is_read_only():
     from conftest import ROOT
 

@@ -184,4 +184,5 @@ class HubRegistry:
         return {"hubs": result, "unconfirmed_aircraft": unknown,
                 "observed_at": saved.get("observed_at"), "source": saved.get("source"),
                 "partial_fleet": True, "known_aircraft": len(relations),
-                "last_fleet_scan": route_report.get("last_scan")}
+                "last_fleet_scan": route_report.get("last_scan"),
+                "last_verified_full_audit": route_report.get("last_verified_full_audit")}

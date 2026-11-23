@@ -233,3 +233,39 @@ def test_hub_purchase_requires_independent_ownership_transition(tmp_path):
                           confirmation={**proof, "source": "game_order_list"})
     assert ledger.transition(key, "SUBMITTED", "CONFIRMED", confirmation=proof)
     assert ledger.unresolved()["count"] == 0
+
+
+def test_confirmed_purchase_receipt_cannot_be_reused_after_restart(tmp_path):
+    path = tmp_path / "simulated_intents.sqlite3"
+    ledger = InvestmentJournal(path, profile_id="principal", simulation=True)
+    first_key = ready(ledger)
+    second_key = ready(ledger, aircraft_plan(
+        plan_id="candidate-789", destination_id="789"))
+    assert ledger.acquire_executor("worker")
+    try:
+        assert ledger.claim_submission(first_key, "worker")
+        assert ledger.transition(first_key, "SUBMITTED", "CONFIRMED", confirmation={
+            **aircraft_proof(), "source": "simulation_order_list",
+        })
+        assert ledger.claim_submission(second_key, "worker")
+    finally:
+        assert ledger.release_executor("worker")
+
+    restarted = InvestmentJournal(path, profile_id="principal", simulation=True)
+    reused_receipt = aircraft_proof(
+        source="simulation_order_list", destination_id="789")
+    with pytest.raises(ValueError, match="comprovante"):
+        restarted.transition(second_key, "SUBMITTED", "CONFIRMED",
+                             confirmation=reused_receipt)
+    assert restarted.get(second_key)["state"] == "SUBMITTED"
+    assert [event["new_state"] for event in restarted.history(second_key)] == [
+        "PROPOSED", "APPROVED", "PRECHECKED", "SUBMITTED",
+    ]
+    assert restarted.recover_submitted() == 1
+    with pytest.raises(ValueError, match="comprovante"):
+        restarted.transition(second_key, "UNKNOWN", "CONFIRMED",
+                             confirmation=reused_receipt)
+    assert restarted.get(second_key)["state"] == "UNKNOWN"
+    assert restarted.transition(second_key, "UNKNOWN", "CONFIRMED",
+                                confirmation={**reused_receipt, "purchase_id": "98766"})
+    assert restarted.get(second_key)["state"] == "CONFIRMED"

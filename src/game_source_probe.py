@@ -21,6 +21,8 @@ selection only, and cannot establish a purchase or ownership of that hub.
 ``aircraft_checkout_diagnostics`` reports the structural location of possible
 price fields and engine controls inside ``#acModel``. Candidate counts are
 diagnostic only: they never verify the final price for a selected motor.
+``model_hub_correlated`` requires a single, idle aircraft detail panel that
+actually contains the selected hub control. It only describes one DOM snapshot.
 The source view depends on the popup currently displayed. Missing selectors are
 expected when their corresponding game pane is closed.
 
@@ -347,6 +349,21 @@ result.aircraft_order_hub_selection = orderHubSelection;
 const checkoutPanels = Array.from(document.querySelectorAll('#acModel'));
 const checkoutModelId = checkoutPanels.length === 1 ?
   safeAttribute(checkoutPanels[0], 'data-model-id') : null;
+const checkoutAjaxIdleConfirmed = typeof window !== 'undefined' &&
+  !!window.jQuery && window.jQuery.active === 0;
+const checkoutAjaxActive = typeof window !== 'undefined' &&
+  !!window.jQuery && typeof window.jQuery.active === 'number' &&
+  window.jQuery.active > 0;
+const checkoutLoading = checkoutPanels.some(panel =>
+  safeAttribute(panel, 'aria-busy') === 'true' ||
+  (typeof panel.querySelector === 'function' &&
+    !!panel.querySelector('img[src*="loader"], [aria-busy="true"]')));
+const modelHubCorrelated = checkoutPanels.length === 1 &&
+  isNumericId(checkoutModelId) && orderHubSelection.status === 'dom_consistent' &&
+  orderHubSelectors.length === 1 &&
+  typeof checkoutPanels[0].contains === 'function' &&
+  checkoutPanels[0].contains(orderHubSelectors[0]) &&
+  checkoutAjaxIdleConfirmed && !checkoutLoading;
 const checkoutControls = {};
 for (const [key, selector] of Object.entries(checkoutControlSpecs)) {
   checkoutControls[key] = document.querySelectorAll(selector).length;
@@ -376,6 +393,10 @@ result.aircraft_checkout_diagnostics = {
   detail_panel_count: checkoutPanels.length,
   detail_model_id: isNumericId(checkoutModelId) ?
     String(checkoutModelId).trim() : null,
+  ajax_active: checkoutAjaxActive,
+  ajax_idle_confirmed: checkoutAjaxIdleConfirmed,
+  detail_loading: checkoutLoading,
+  model_hub_correlated: modelHubCorrelated,
   controls: checkoutControls,
   price_candidates: checkoutPrices
 };
@@ -484,6 +505,15 @@ def _sanitize(raw: Any) -> dict:
     if (detail_panel_count != 1 or type(detail_model_id) is not str
             or _NUMERIC_ID.fullmatch(detail_model_id) is None):
         detail_model_id = None
+    model_hub_correlated = (
+        checkout.get("model_hub_correlated") is True
+        and checkout.get("ajax_active") is False
+        and checkout.get("ajax_idle_confirmed") is True
+        and checkout.get("detail_loading") is False
+        and detail_model_id is not None
+        and hub_id is not None
+        and selection_status == "dom_consistent"
+    )
     checkout_controls = checkout.get("controls")
     checkout_controls = checkout_controls if isinstance(checkout_controls, dict) else {}
     checkout_prices = checkout.get("price_candidates")
@@ -514,6 +544,10 @@ def _sanitize(raw: Any) -> dict:
         "aircraft_checkout_diagnostics": {
             "detail_panel_count": detail_panel_count,
             "detail_model_id": detail_model_id,
+            "ajax_active": checkout.get("ajax_active") is True,
+            "ajax_idle_confirmed": checkout.get("ajax_idle_confirmed") is True,
+            "detail_loading": checkout.get("detail_loading") is True,
+            "model_hub_correlated": model_hub_correlated,
             "controls": {key: _count(checkout_controls.get(key))
                          for key in _CHECKOUT_CONTROL_SELECTORS},
             "price_candidates": price_candidates,

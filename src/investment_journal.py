@@ -232,8 +232,21 @@ class InvestmentJournal:
             if row["state"] != expected:
                 return False
             plan = json.loads(row["plan_json"])
-            if next_state == "CONFIRMED" and not self._confirmed(confirmation, plan):
-                raise ValueError("Confirmação independente e vinculada ao plano obrigatória.")
+            if next_state == "CONFIRMED":
+                if not self._confirmed(confirmation, plan):
+                    raise ValueError("Confirmação independente e vinculada ao plano obrigatória.")
+                if plan["kind"] == "aircraft":
+                    # BEGIN IMMEDIATE serializes confirmations. Check durable
+                    # receipts so one game order cannot settle two intentions.
+                    receipts = conn.execute(
+                        "SELECT evidence_json FROM events WHERE profile_id=? "
+                        "AND intent_key<>? AND new_state='CONFIRMED' "
+                        "AND evidence_json IS NOT NULL",
+                        (self.profile_id, intent_key),
+                    )
+                    if any(json.loads(row["evidence_json"]).get("purchase_id")
+                           == confirmation["purchase_id"] for row in receipts):
+                        raise ValueError("comprovante de compra já usado por outra intenção.")
             if next_state == "FAILED" and expected in ("SUBMITTED", "UNKNOWN"):
                 if not self._refused(confirmation, plan):
                     raise ValueError("Recusa independente com ausência de pedido obrigatória.")

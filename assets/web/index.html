@@ -901,6 +901,8 @@ const EN = {
   "Aeronaves conhecidas no cadastro": "Aircraft known to registry",
   "Última página de rotas": "Last routes page", "visíveis": "visible",
   "identificadas": "identified", "Estimativas pendentes": "Pending estimates",
+  "Última auditoria integral histórica": "Last verified historical full-fleet audit",
+  "IDs únicos verificados": "verified unique IDs",
   "Consulta do hub": "Hub checked", "Saldo conferido em": "Balance checked at",
   "Próxima aeronave por base": "Next aircraft by hub", "Recomendações por base": "Recommendations by hub",
   "Filtrar por modelo": "Filter by model", "Todos os modelos": "All models",
@@ -945,8 +947,10 @@ const EN = {
   "Cobertura das pesquisas por hub": "Research coverage by hub",
   "Sem pesquisa de rota": "No route research",
   "Pesquisa de rota iniciada": "Route research started",
+  "Pesquisa de rota inconclusiva": "Route research inconclusive",
   "Amostras de rotas": "Route samples",
   "Rotas observadas": "Observed routes",
+  "Rotas com amostras conflitantes": "Routes with conflicting samples",
   "Cobertura parcial": "Partial coverage",
   "Pesquisa ainda pendente": "Research pending",
   "Indisponível": "Unavailable",
@@ -1815,6 +1819,14 @@ function renderHubs(report) {
       " · " + scan.visible + " " + tr("visíveis") +
       ", " + scan.identified + " " + tr("identificadas") + ".");
   }
+  const fullAudit = report.last_verified_full_audit;
+  if (fullAudit && Number.isSafeInteger(fullAudit.at) && fullAudit.at > 0 &&
+      Number.isSafeInteger(fullAudit.unique_aircraft) && fullAudit.unique_aircraft > 0 &&
+      fullAudit.unique_aircraft === fullAudit.expected_routes &&
+      typeof fullAudit.audit_run_id === "string" && fullAudit.audit_run_id.length > 0) {
+    coverage.push(tr("Última auditoria integral histórica") + ": " + hubDate(fullAudit.at) +
+      " · " + nf.format(fullAudit.unique_aircraft) + " " + tr("IDs únicos verificados") + ".");
+  }
   $("hubsScope").textContent = coverage.join(" ");
   const confirmedCount = report.hubs.reduce((total, hub) => total + (Number.isFinite(hub.aircraft_count) ? hub.aircraft_count : 0), 0);
   const estimatedCount = report.hubs.reduce((total, hub) => total + (Number.isFinite(hub.estimated_routes) ? hub.estimated_routes : 0), 0);
@@ -2080,10 +2092,13 @@ function renderHubRecommendations(report) {
   const researchQueue = report.research_queue || {};
   const researchItems = Array.isArray(researchQueue.items) ? researchQueue.items : [];
   const researchBlockers = Array.isArray(researchQueue.blocking_reasons) ? researchQueue.blocking_reasons : [];
+  const conflictedRoutes = Number.isSafeInteger(researchQueue.conflicted_routes)
+    && researchQueue.conflicted_routes > 0 ? researchQueue.conflicted_routes : 0;
   $("hubResearchQueueStatus").textContent =
     tr("Pesquisas sugeridas") + ": " + researchItems.length +
     " · " + tr("Hubs com amostras") + ": " + (researchQueue.sampled_hubs || 0) +
     " · " + tr("Rotas observadas") + ": " + (researchQueue.sampled_routes || 0) +
+    (conflictedRoutes ? " · " + tr("Rotas com amostras conflitantes") + ": " + conflictedRoutes : "") +
     " · " + tr("Cobertura parcial");
   $("hubResearchPolicyStatus").textContent = tr("Somente análise. Nenhuma compra autorizada.") +
     (report.investment_policy?.execution_available === false
@@ -2101,9 +2116,13 @@ function renderHubRecommendations(report) {
     const label = String(hub.hub_code || hub.hub_id || tr("Sem dados"));
     const samples = Number.isSafeInteger(hub.sampled_routes) && hub.sampled_routes >= 0
       ? hub.sampled_routes : 0;
+    const conflicts = Number.isSafeInteger(hub.conflicted_routes) && hub.conflicted_routes > 0
+      ? hub.conflicted_routes : 0;
     item.textContent = label + " · " +
-      (hub.status === "pesquisa_iniciada" ? tr("Pesquisa de rota iniciada") : tr("Sem pesquisa de rota")) +
+      (hub.status === "pesquisa_iniciada" ? tr("Pesquisa de rota iniciada")
+        : conflicts ? tr("Pesquisa de rota inconclusiva") : tr("Sem pesquisa de rota")) +
       " · " + tr("Amostras de rotas") + ": " + nf.format(samples) +
+      (conflicts ? " · " + tr("Rotas com amostras conflitantes") + ": " + nf.format(conflicts) : "") +
       " · " + tr("Cobertura parcial");
     coverageList.append(item);
   }

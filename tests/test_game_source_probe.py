@@ -234,6 +234,111 @@ globalThis.window = {statusData: null};
     assert checkout["price_verified"] is False
 
 
+@pytest.mark.parametrize("case,correlated", [
+    ("same_panel", True),
+    ("hub_outside_panel", False),
+    ("ajax_in_progress", False),
+    ("ajax_state_unavailable", False),
+    ("ajax_state_invalid", False),
+    ("nested_loader", False),
+    ("panel_busy", False),
+    ("duplicate_model_panels", False),
+    ("invalid_model_id", False),
+    ("hub_option_unselected", False),
+])
+def test_checkout_model_hub_correlation_requires_one_idle_panel(
+        tmp_path, case, correlated):
+    if not shutil.which("node"):
+        pytest.skip("Node.js is required to validate live checkout correlation")
+
+    fixture = json.dumps({"case": case})
+    js = r"""
+const fixture = FIXTURE;
+const makeNode = (attrs = {}, state = {}) => ({
+  id: attrs.id || '',
+  textContent: '',
+  value: state.value || '',
+  selected: state.selected === true,
+  disabled: false,
+  getAttribute: name => Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null,
+  hasAttribute: name => Object.prototype.hasOwnProperty.call(attrs, name),
+});
+const hub = makeNode({id: 'hubSelection'}, {value: '456'});
+const option = makeNode({value: '456'}, {value: '456',
+  selected: fixture.case !== 'hub_option_unselected'});
+const panelAttrs = {'data-model-id': fixture.case === 'invalid_model_id' ? 'invalid' : '785'};
+if (fixture.case === 'panel_busy') panelAttrs['aria-busy'] = 'true';
+const panel = makeNode(panelAttrs);
+panel.contains = node => fixture.case !== 'hub_outside_panel' && node === hub;
+panel.querySelector = () => fixture.case === 'nested_loader' ? {} : null;
+const panels = fixture.case === 'duplicate_model_panels' ? [panel, makeNode(panelAttrs)] : [panel];
+const nodes = {
+  '#acModel': panels,
+  '#hubSelection': [hub],
+  '#hubSelection option': [option],
+};
+globalThis.document = {querySelectorAll: selector => nodes[selector] || []};
+globalThis.window = {statusData: null};
+if (fixture.case !== 'ajax_state_unavailable') {
+  window.jQuery = {active: fixture.case === 'ajax_in_progress' ? 1 :
+    fixture.case === 'ajax_state_invalid' ? '0' : 0};
+}
+console.log(JSON.stringify((new Function(PROBE))()));
+""".replace("FIXTURE", fixture).replace("PROBE", json.dumps(PROBE_JS))
+    path = tmp_path / "checkout_context.js"
+    path.write_text(js, encoding="utf-8")
+    response = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+    assert response.returncode == 0, response.stderr
+
+    from game_source_probe import _sanitize
+
+    report = _sanitize(json.loads(response.stdout))
+    checkout = report["aircraft_checkout_diagnostics"]
+    assert checkout["model_hub_correlated"] is correlated
+    assert checkout["ajax_active"] is (case == "ajax_in_progress")
+    assert checkout["ajax_idle_confirmed"] is (
+        case not in ("ajax_in_progress", "ajax_state_unavailable", "ajax_state_invalid"))
+    assert checkout["detail_loading"] is (case in ("nested_loader", "panel_busy"))
+    assert checkout["price_verified"] is False
+    assert checkout["read_only"] is True
+    if case == "hub_outside_panel":
+        # A consistent hub dropdown can still belong to an unrelated pane.
+        assert report["aircraft_order_hub_selection"]["status"] == "dom_consistent"
+        assert checkout["detail_model_id"] == "785"
+
+
+@pytest.mark.parametrize("overrides,expected", [
+    ({}, True),
+    ({"detail_model_id": "not_an_id"}, False),
+    ({"detail_panel_count": 2}, False),
+    ({"ajax_active": True}, False),
+    ({"ajax_idle_confirmed": False}, False),
+    ({"ajax_idle_confirmed": "true"}, False),
+    ({"detail_loading": True}, False),
+    ({"ajax_active": "false"}, False),
+    ({"detail_loading": "false"}, False),
+    ({"model_hub_correlated": "true"}, False),
+])
+def test_checkout_correlation_rejects_contradictory_or_untyped_evidence(overrides, expected):
+    from game_source_probe import _sanitize
+
+    checkout = {"detail_panel_count": 1, "detail_model_id": "785",
+                "model_hub_correlated": True, "ajax_active": False,
+                "ajax_idle_confirmed": True,
+                "detail_loading": False, **overrides}
+    report = _sanitize({
+        "schema_version": 1,
+        "aircraft_order_hub_selection": {
+            "selector_count": 1, "option_count": 1,
+            "selected_option_count": 1, "selected_hub_id": "456",
+            "status": "dom_consistent",
+        },
+        "aircraft_checkout_diagnostics": checkout,
+    })
+    assert report["aircraft_checkout_diagnostics"]["model_hub_correlated"] is expected
+    assert report["aircraft_checkout_diagnostics"]["price_verified"] is False
+
+
 def test_malicious_response_cannot_inject_page_values_or_secrets():
     secret = "PASSWORD_COOKIE_TOKEN"
 

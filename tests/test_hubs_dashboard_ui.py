@@ -121,6 +121,17 @@ def test_hubs_filters_and_sort_controls_are_labeled_and_target_the_grids():
     assert '"Justificativas de bloqueio": "Reasons for blocking"' in html
 
 
+def test_hubs_dashboard_discloses_historical_audit_without_claiming_current_completeness():
+    html = (ROOT / "assets/web/index.html").read_text(encoding="utf-8")
+    renderer = html[html.index("function renderHubs(report)"):html.index("function renderHubRecommendations(report)")]
+    assert 'const fullAudit = report.last_verified_full_audit;' in renderer
+    assert 'fullAudit.unique_aircraft === fullAudit.expected_routes' in renderer
+    assert 'tr("Última auditoria integral histórica")' in renderer
+    assert 'tr("IDs únicos verificados")' in renderer
+    assert 'report.partial_fleet === true' in renderer
+    assert '"Última auditoria integral histórica": "Last verified historical full-fleet audit"' in html
+
+
 def test_investment_policy_controls_have_labels_and_separate_endpoints():
     page = _page()
     for identifier in ("investmentPlanning", "investmentAircraft", "investmentHub", "investmentMode",
@@ -274,8 +285,10 @@ const translations = {
   'Hubs com amostras': 'Hubs with samples',
   'Pesquisa de rota iniciada': 'Route research started',
   'Sem pesquisa de rota': 'No route research',
+  'Pesquisa de rota inconclusiva': 'Route research inconclusive',
   'Amostras de rotas': 'Route samples',
   'Rotas observadas': 'Observed routes',
+  'Rotas com amostras conflitantes': 'Routes with conflicting samples',
   'Cobertura parcial': 'Partial coverage',
   'Pesquisa ainda pendente': 'Research pending',
   'Indisponível': 'Unavailable',
@@ -367,6 +380,20 @@ assert.deepEqual($('hubResearchCoverageList').children.map(item => item.textCont
   'AAA · Route research started · Route samples: 2 · Partial coverage',
   '<img src=x> · No route research · Route samples: 0 · Partial coverage'
 ]);
+report.research_queue.conflicted_routes = 2;
+report.research_queue.hub_coverage[0].conflicted_routes = 1;
+report.research_queue.hub_coverage[1].conflicted_routes = 1;
+renderHubRecommendations(report);
+assert.equal($('hubResearchQueueStatus').textContent,
+  'Suggested research tasks: 1 · Hubs with samples: 1 · Observed routes: 2 · Routes with conflicting samples: 2 · Partial coverage');
+assert.deepEqual($('hubResearchCoverageList').children.map(item => item.textContent), [
+  'AAA · Route research started · Route samples: 2 · Routes with conflicting samples: 1 · Partial coverage',
+  '<img src=x> · Route research inconclusive · Route samples: 0 · Routes with conflicting samples: 1 · Partial coverage'
+]);
+delete report.research_queue.conflicted_routes;
+delete report.research_queue.hub_coverage[0].conflicted_routes;
+delete report.research_queue.hub_coverage[1].conflicted_routes;
+renderHubRecommendations(report);
 assert.equal($('hubResearchQueueList').children.length, 2);
 const withoutEngine = $('hubResearchQueueList').children[0];
 assert.equal(withoutEngine.children[0].textContent, 'AAA ↔ 2');

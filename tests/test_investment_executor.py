@@ -89,7 +89,9 @@ def test_timeout_blocks_new_purchase_until_reconciliation_without_resubmit(tmp_p
     assert first["state"] == "UNKNOWN"
     assert worker.run(plan(), gateway)["state"] == "UNKNOWN"
     next_plan = plan(plan_id="plan-2", destination_id="789")
-    next_gateway = SimulatedAircraftGateway(checkout(destination_id="789"))
+    next_gateway = SimulatedAircraftGateway(
+        checkout(destination_id="789"), purchase_id="987654322",
+    )
     blocked = worker.run(next_plan, next_gateway)
     assert blocked["state"] == "BLOCKED"
     assert "compra_anterior_sem_conciliacao" in blocked["reasons"]
@@ -100,7 +102,14 @@ def test_timeout_blocks_new_purchase_until_reconciliation_without_resubmit(tmp_p
     assert restarted.reconcile(first["intent_key"], gateway)["state"] == "CONFIRMED"
     assert gateway.submit_calls == 1
     assert restarted.journal.get(first["intent_key"])["submit_attempts"] == 1
-    assert restarted.run(next_plan, next_gateway)["state"] == "CONFIRMED"
+    second = restarted.run(next_plan, next_gateway)
+    assert second["state"] == "CONFIRMED"
+    assert next_gateway.submit_calls == 1
+    receipts = {
+        restarted.journal.history(key)[-1]["evidence"]["purchase_id"]
+        for key in (first["intent_key"], second["intent_key"])
+    }
+    assert receipts == {"987654321", "987654322"}
 
 
 def test_timeout_can_be_reconciled_as_verified_refusal(tmp_path):
