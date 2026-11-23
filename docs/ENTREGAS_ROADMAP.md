@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, avaliação de expansão A6 (G0)
+
+**Escopo:** investigar novos hubs somente após demonstrar cobertura completa e recente de oportunidades nos hubs próprios, na branch `codex/autonomia-a0-a1-20261122`.
+
+### Implementado
+
+- `src/hub_expansion.py` preserva cenários legados e recebe múltiplas combinações independentes de hub, rota, modelo e variante de motor. Cada opção exige evidência específica e recente de preço, pontos, demanda externa, viabilidade de rota, custo por componente e resultado financeiro. O motor é identificado pelo ID real informado na pesquisa, sem inferência pelo nome.
+- `src/expansion_feasibility.py` considera a prova de varredura completa dos hubs próprios, a integridade do catálogo externo e a disponibilidade financeira antes de emitir uma avaliação de expansão. A conclusão permanece `inconclusivo` quando faltar cobertura ou comprovação. O relatório pode priorizar os hubs já adquiridos ou classificar oportunidades externas com evidências válidas.
+- `src/expansion_reporting.py` gera um resumo HTML para Telegram com até três candidatos, custos e obstáculos, além de um mecanismo SQLite de reivindicação e confirmação de alerta para deduplicação por conteúdo e intervalo. O relatório ainda não é enviado automaticamente ao Telegram.
+- `GET /api/hubs/expansion` expõe a decisão e o painel Hubs apresenta ranking, custos de hub/aeronave/motor/rota/hangar, retorno e justificativas. A interface distingue explicitamente preço com e sem motor incluído.
+- Testes unitários cobrem custo de motor, evidências divergentes/desatualizadas, cobertura, priorização de hubs próprios, ordenação e deduplicação. Teste Node.js exercita o renderizador real de expansão, inclusive texto não confiável, estados inconclusivos e traduções.
+
+### Validação e pendências
+
+- Verificados em Windows: testes direcionados de expansão e painel (117 aprovações), `ruff check src scripts tests`, `compileall` e `git diff --check`. A suíte pytest Windows sem o teste de instalação POSIX terminou com sucesso e um teste ignorado. A verificação não constitui homologação do jogo.
+- **G0 permanece ativo.** A prova de varredura autenticada e conclusiva de todos os hubs próprios (`game_hub_opportunity_scan`) ainda não é emitida pelo leitor atual. Também faltam dados reais da pesquisa de hubs externos, validação de preços e variantes em sessão autenticada e integração do envio Telegram. Ranking conclusivo e autorização de gastos dependem dessas evidências.
+- Nenhuma compra real, envio Telegram, implantação no servidor, alteração da `main` ou da PR #44 ocorreu. As novas opções `[investment]` permanecem desligadas por padrão. A reversão requer `git revert` deste commit após conferir dependências posteriores.
+
 ## 2026-11-22 — Autonomia Total, execução simulada e recuperação A5 (G0)
 
 **Escopo:** exercitar a cadeia de compras de aeronaves em ambiente isolado, com limites e conciliação, na branch `codex/autonomia-a0-a1-20261122`.

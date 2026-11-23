@@ -308,3 +308,108 @@ assert.equal($('hubRecommendationsCount').textContent, 'Recommendations shown: 0
         capture_output=True, text=True, check=False, timeout=15,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not available")
+def test_external_expansion_ranking_requires_owned_coverage_and_displays_engine_costs(tmp_path):
+    script = "\n".join(_page().scripts)
+    helpers = script[script.index("const hubDate ="):script.index("function renderHubs(")]
+    renderer = script[script.index("function renderHubExpansion(report)"):
+                      script.index("function renderHubRecommendations(report)")]
+    assertions = r"""
+const assert = require('node:assert/strict');
+const LANG = 'en';
+const nf = new Intl.NumberFormat('en-GB');
+const money = value => '$' + String(value);
+const translations = {
+  'Motor incluído no preço': 'Engine included in price',
+  'Sim': 'Yes', 'Não': 'No',
+  'Varredura de hubs próprios inconclusiva': 'Owned-hub scan inconclusive',
+  'Priorizar oportunidades nos hubs próprios': 'Prioritize owned hubs',
+  'Expansão externa em avaliação': 'External expansion under evaluation',
+  'Somente análise. Nenhuma compra autorizada.': 'Read-only. No purchases authorized.'
+};
+const tr = text => translations[text] || text;
+class Element {
+  constructor(tag = 'div') {
+    this.tag = tag;
+    this.children = [];
+    this.dataset = {};
+    this.value = '';
+    this.textContent = '';
+    this.className = '';
+  }
+  append(...items) { this.children.push(...items); }
+  replaceChildren(...items) { this.children = items; this.textContent = ''; }
+}
+const document = {createElement: tag => new Element(tag)};
+const nodes = new Map();
+const $ = id => {
+  if (!nodes.has(id)) { nodes.set(id, new Element()); }
+  return nodes.get(id);
+};
+const airportLabel = airport => airport?.code || '-';
+""" + helpers + "\n" + renderer + r"""
+const candidate = {
+  id:'789', code:'XAP', name:'Hub <untrusted>', status:'viavel', hub_points:0,
+  hub_price:5000, observed_at:1800000000, investment:16550,
+  profit_per_day:500, payback_days:33.1, pending:[],
+  scenario:{model:'A320', engine_id:'engine-3', engine_label:'Motor <script>',
+    route:'XAP ↔ GRU', observed_at:1800000000,
+    excluded_costs:['A-check <script>'],
+    costs:{aircraft_price_includes_engine:false}},
+  cost_breakdown:{hub_price:5000, aircraft_price:10000,
+    engine_extra_charged:400, route_fee:1000, hangar_price:100,
+    other_fees:50, cash_required:18550}
+};
+const report = {
+  candidates:[candidate], availability_pending:false, catalog_complete:true,
+  available_cash:25000, cash:26000, reserve:1000,
+  expansion_decision:{status:'avaliacao_expansao', owned_hubs_evaluated:2,
+    external_pending_count:0, blocking_reasons:[], top_three:[candidate]}
+};
+const labels = metrics => Object.fromEntries(metrics.children.map(item =>
+  [item.children[0].textContent, item.children[1].textContent]));
+renderHubExpansion(report);
+assert.match($('hubExpansionDecision').textContent, /External expansion under evaluation/);
+assert.match($('hubExpansionDecision').textContent, /Read-only/);
+assert.equal($('hubExpansionRanking').children.length, 1);
+const ranked = $('hubExpansionRanking').children[0];
+assert.equal(ranked.children[0].textContent, '1. XAP · Hub <untrusted>');
+const rankedCosts = labels(ranked.children[1]);
+assert.equal(rankedCosts['Motor pesquisado'], 'Motor <script>');
+assert.equal(rankedCosts['Custo adicional do motor'], '$400');
+assert.equal(rankedCosts['Total com reserva'], '$18550');
+assert.equal(rankedCosts['Despesas excluídas'], 'A-check <script>');
+assert.equal($('hubExpansionGrid').children.length, 1);
+const details = $('hubExpansionGrid').children[0].children[3];
+assert.equal(labels(details.children[1])['Engine included in price'], 'No');
+candidate.scenario.costs.aircraft_price_includes_engine = true;
+renderHubExpansion(report);
+assert.equal(labels($('hubExpansionGrid').children[0].children[3].children[1])
+  ['Engine included in price'], 'Yes');
+
+report.expansion_decision.status = 'inconclusivo';
+report.expansion_decision.blocking_reasons = ['cobertura_frota_incompleta'];
+renderHubExpansion(report);
+assert.match($('hubExpansionDecision').textContent, /Owned-hub scan inconclusive/);
+assert.match($('hubExpansionDecision').textContent, /cobertura frota incompleta/);
+assert.equal($('hubExpansionRanking').children.length, 0);
+
+report.expansion_decision.status = 'priorizar_hubs_proprios';
+renderHubExpansion(report);
+assert.match($('hubExpansionDecision').textContent, /Prioritize owned hubs/);
+assert.equal($('hubExpansionRanking').children.length, 0);
+
+report.expansion_decision.status = 'avaliacao_expansao';
+report.expansion_decision.top_three = [];
+renderHubExpansion(report);
+assert.match($('hubExpansionRanking').children[0].textContent, /Nenhum candidato externo/);
+assert.equal(report.candidates.length, 1);
+"""
+    test_script = tmp_path / "external_expansion_ui.js"
+    test_script.write_text(assertions, encoding="utf-8")
+    result = subprocess.run(
+        ["node", str(test_script)], capture_output=True, text=True, check=False, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr

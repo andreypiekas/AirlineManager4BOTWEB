@@ -664,6 +664,8 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <h2 data-t="Novos hubs">Novos hubs</h2>
         <p id="hubExpansionStatus" role="status" aria-live="polite"></p>
         <p id="hubExpansionScope" class="hub-section-note"></p>
+        <p id="hubExpansionDecision" class="hub-section-note hub-coverage" role="status" aria-live="polite"></p>
+        <div class="hubs-grid" id="hubExpansionRanking" aria-label="Ranking externo com evidências verificadas" data-t-aria-label="Ranking externo com evidências verificadas"></div>
         <div class="hubs-controls">
           <label class="hubs-field"><span data-t="Buscar novo hub">Buscar novo hub</span>
             <input id="hubExpansionSearch" type="search" autocomplete="off" data-t-placeholder="Código ou nome do aeroporto" placeholder="Código ou nome do aeroporto" aria-controls="hubExpansionGrid"></label>
@@ -897,6 +899,23 @@ const EN = {
   "Frota total no jogo": "Total fleet in game", "registros históricos de rotas": "historical route records",
   "Preços de hubs registrados": "Hub prices recorded", "Amostras de demanda": "Demand samples",
   "recentes": "recent", "Demanda atualizada em": "Demand updated at",
+  "Ranking externo com evidências verificadas": "Verified external-hub ranking",
+  "Varredura de hubs próprios inconclusiva": "Owned-hub scan inconclusive",
+  "Priorizar oportunidades nos hubs próprios": "Prioritize opportunities at owned hubs",
+  "Expansão externa em avaliação": "External expansion under evaluation",
+  "Varredura própria comprovada": "Owned-hub scan verified",
+  "Candidatos externos pendentes": "External candidates awaiting evidence",
+  "Impedimentos": "Blockers",
+  "Nenhum candidato externo passou pela validação de evidências.": "No external candidate passed evidence validation.",
+  "Somente análise. Nenhuma compra autorizada.": "Read-only analysis. No purchase authorized.",
+  "Candidatos com status calculado": "Candidates with a calculated status",
+  "Viável na pesquisa": "Viable in research",
+  "Motor pesquisado": "Researched engine", "Motor incluído no preço": "Engine included in price",
+  "Custo adicional do motor": "Additional engine cost",
+  "Outras taxas": "Other fees", "Total com reserva": "Total including reserve",
+  "Despesas excluídas": "Excluded expenses", "Sem despesas declaradas": "No expenses declared",
+  "Evidência do cenário": "Scenario evidence", "Confirmada": "Confirmed", "Pendente": "Pending",
+  "Sim": "Yes", "Não": "No",
   "Registros sem base individual confirmada": "Records without confirmed home hub",
   "hangar {x} vagas": "hangar {x} free", "previsão {x}": "arrives {x}", "Atualizado {x}": "Updated {x}",
   "Meta": "Goal", "Valores": "Values", "Salvar": "Save", "vazio = mais rentável": "empty = most profitable",
@@ -1661,6 +1680,66 @@ function renderHubs(report) {
 }
 function renderHubExpansion(report) {
   const grid = $("hubExpansionGrid"); grid.replaceChildren();
+  const allCandidates = Array.isArray(report.candidates) ? report.candidates : [];
+  const ranking = $("hubExpansionRanking"); ranking.replaceChildren();
+  const decision = report.expansion_decision || {};
+  const decisions = {
+    inconclusivo: "Varredura de hubs próprios inconclusiva",
+    priorizar_hubs_proprios: "Priorizar oportunidades nos hubs próprios",
+    avaliacao_expansao: "Expansão externa em avaliação"
+  };
+  const decisionParts = [tr(decisions[decision.status] || "Varredura de hubs próprios inconclusiva")];
+  if (Number.isSafeInteger(decision.owned_hubs_evaluated)) {
+    decisionParts.push(tr("Varredura própria comprovada") + ": " + nf.format(decision.owned_hubs_evaluated));
+  }
+  if (Number.isSafeInteger(decision.external_pending_count) && decision.external_pending_count > 0) {
+    decisionParts.push(tr("Candidatos externos pendentes") + ": " + nf.format(decision.external_pending_count));
+  }
+  const blockers = Array.isArray(decision.blocking_reasons) ? decision.blocking_reasons : [];
+  if (blockers.length) {
+    decisionParts.push(tr("Impedimentos") + ": " + blockers.map(reason =>
+      tr(String(reason).replaceAll("_", " "))).join(", "));
+  }
+  decisionParts.push(tr("Somente análise. Nenhuma compra autorizada."));
+  $("hubExpansionDecision").textContent = decisionParts.join(" · ");
+  const topThree = decision.status === "avaliacao_expansao" && Array.isArray(decision.top_three)
+    ? decision.top_three.slice(0, 3) : [];
+  for (const [index, hub] of topThree.entries()) {
+    const scenario = hub.scenario || {};
+    const breakdown = hub.cost_breakdown || {};
+    const card = document.createElement("article"); card.className = "hub-card";
+    const heading = document.createElement("h3");
+    heading.textContent = (index + 1) + ". " + hubName(hub);
+    const metrics = document.createElement("dl"); metrics.className = "hub-metrics";
+    addHubMetric(metrics, "Modelo pesquisado", scenario.model || tr("Sem dados"));
+    addHubMetric(metrics, "Motor pesquisado", scenario.engine_label || scenario.engine_id || tr("Sem dados"));
+    addHubMetric(metrics, "Rota pesquisada", scenario.route || tr("Sem dados"));
+    addHubMetric(metrics, "Investimento inicial", hubMoney(hub.investment));
+    addHubMetric(metrics, "Lucro estimado/dia", hubMoney(hub.profit_per_day));
+    addHubMetric(metrics, "Retorno estimado", Number.isFinite(hub.payback_days)
+      ? nf.format(hub.payback_days) + " " + tr("dia") : tr("Sem dados"));
+    addHubMetric(metrics, "Custo do hub", hubMoney(breakdown.hub_price));
+    addHubMetric(metrics, "Custo em pontos", Number.isSafeInteger(hub.hub_points)
+      ? nf.format(hub.hub_points) : tr("Sem dados"));
+    addHubMetric(metrics, "Custo da aeronave", hubMoney(breakdown.aircraft_price));
+    addHubMetric(metrics, "Custo adicional do motor", hubMoney(breakdown.engine_extra_charged));
+    addHubMetric(metrics, "Taxa da rota", hubMoney(breakdown.route_fee));
+    addHubMetric(metrics, "Custo do hangar", hubMoney(breakdown.hangar_price));
+    addHubMetric(metrics, "Outras taxas", hubMoney(breakdown.other_fees));
+    addHubMetric(metrics, "Total com reserva", hubMoney(breakdown.cash_required));
+    const excluded = Array.isArray(scenario.excluded_costs) ? scenario.excluded_costs : [];
+    addHubMetric(metrics, "Despesas excluídas", excluded.length
+      ? excluded.join(", ") : tr("Sem despesas declaradas"));
+    const note = document.createElement("p"); note.className = "hub-context";
+    note.textContent = tr("Somente análise. Nenhuma compra autorizada.");
+    card.append(heading, metrics, note);
+    ranking.append(card);
+  }
+  if (decision.status === "avaliacao_expansao" && !topThree.length) {
+    const pending = document.createElement("p"); pending.className = "hub-empty";
+    pending.textContent = tr("Nenhum candidato externo passou pela validação de evidências.");
+    ranking.append(pending);
+  }
   $("hubExpansionStatus").textContent = report.availability_pending
     ? tr("Disponibilidade de compra a verificar")
     : tr("Caixa disponível acima da reserva") + ": " + hubMoney(report.available_cash);
@@ -1672,11 +1751,11 @@ function renderHubExpansion(report) {
     (report.availability_pending ? "" : " " + tr("Saldo conhecido") + ": " + hubMoney(report.cash) +
       " · " + tr("Reserva configurada") + ": " + hubMoney(report.reserve) + ".") +
     (report.cash_observed_at ? " " + tr("Saldo conferido em") + ": " + hubDate(report.cash_observed_at) + "." : "");
-  const pricedHubs = report.candidates.filter(hub =>
+  const pricedHubs = allCandidates.filter(hub =>
     Number.isFinite(hub.hub_price) && hub.hub_price >= 0).length;
   const observations = [];
   observations.push(tr("Preços de hubs registrados") + ": " + nf.format(pricedHubs) +
-    " / " + nf.format(report.candidates.length) + ".");
+    " / " + nf.format(allCandidates.length) + ".");
   if (Number.isFinite(report.demand_samples)) {
     let demand = tr("Amostras de demanda") + ": " + nf.format(report.demand_samples);
     if (Number.isFinite(report.demand_fresh_samples)) {
@@ -1688,18 +1767,18 @@ function renderHubExpansion(report) {
     observations.push(tr("Demanda atualizada em") + ": " + hubDate(report.demand_observed_at) + ".");
   }
   $("hubExpansionScope").textContent += " " + observations.join(" ");
-  const verified = report.candidates.filter(hub =>
+  const verified = allCandidates.filter(hub =>
     ["viavel", "saldo_insuficiente", "sem_lucro"].includes(hub.status)).length;
-  $("hubExpansionCoverage").textContent = tr("Cenários verificados") + ": " + verified + " / " +
-    report.candidates.length + " " + tr("candidatos analisados.");
+  $("hubExpansionCoverage").textContent = tr("Candidatos com status calculado") + ": " + verified + " / " +
+    allCandidates.length + " " + tr("candidatos analisados.");
   const search = hubSearchText($("hubExpansionSearch").value.trim());
   const selected = $("hubExpansionFilter").value;
-  const candidates = sortHubCandidates(report.candidates.filter(hub =>
+  const candidates = sortHubCandidates(allCandidates.filter(hub =>
     (!selected || hub.status === selected) &&
     [hub.id, hub.code, hub.name].some(value => hubSearchText(value).includes(search))),
     $("hubExpansionSort").value);
-  $("hubExpansionCount").textContent = tr("Candidatos exibidos") + ": " + candidates.length + " / " + report.candidates.length;
-  const labels = {viavel: "Viável", saldo_insuficiente: "Saldo insuficiente",
+  $("hubExpansionCount").textContent = tr("Candidatos exibidos") + ": " + candidates.length + " / " + allCandidates.length;
+  const labels = {viavel: "Viável na pesquisa", saldo_insuficiente: "Saldo insuficiente",
                   sem_lucro: "Sem lucro", dados_a_confirmar: "Dados a confirmar"};
   for (const hub of candidates) {
     const card = document.createElement("article"); card.className = "hub-card";
@@ -1719,15 +1798,24 @@ function renderHubExpansion(report) {
     addHubMetric(evidence, "Custo do hub", hubMoney(hub.hub_price));
     addHubMetric(evidence, "Custo em pontos", Number.isSafeInteger(hub.hub_points)
       ? nf.format(hub.hub_points) + " " + tr("pontos") : tr("Sem dados"));
-    addHubMetric(evidence, "Custo da aeronave", hubMoney(scenario.aircraft_price));
-    addHubMetric(evidence, "Taxa da rota", hubMoney(scenario.route_fee));
-    addHubMetric(evidence, "Custo do hangar", hubMoney(scenario.hangar_price));
+    const breakdown = hub.cost_breakdown || {};
+    const costs = scenario.costs || {};
+    addHubMetric(evidence, "Custo da aeronave", hubMoney(breakdown.aircraft_price ?? costs.aircraft_price ?? scenario.aircraft_price));
+    addHubMetric(evidence, "Motor pesquisado", scenario.engine_label || scenario.engine_id || tr("Sem dados"));
+    addHubMetric(evidence, "Motor incluído no preço", costs.aircraft_price_includes_engine === true
+      ? tr("Sim") : costs.aircraft_price_includes_engine === false ? tr("Não") : tr("Sem dados"));
+    addHubMetric(evidence, "Custo adicional do motor", hubMoney(breakdown.engine_extra_charged));
+    addHubMetric(evidence, "Taxa da rota", hubMoney(breakdown.route_fee ?? costs.route_fee ?? scenario.route_fee));
+    addHubMetric(evidence, "Custo do hangar", hubMoney(breakdown.hangar_price ?? costs.hangar_price ?? scenario.hangar_price));
+    addHubMetric(evidence, "Outras taxas", hubMoney(breakdown.other_fees ?? costs.other_fees));
+    addHubMetric(evidence, "Total com reserva", hubMoney(breakdown.cash_required));
     addHubMetric(evidence, "Modelo pesquisado", scenario.model || tr("Sem dados"));
     addHubMetric(evidence, "Rota pesquisada", scenario.route || tr("Sem dados"));
     addHubMetric(evidence, "Consulta do hub", hubDate(hub.observed_at));
     addHubMetric(evidence, "Observação do cenário", hubDate(scenario.observed_at));
     const note = document.createElement("p"); note.className = "hub-context";
-    note.textContent = scenario.source === "game_research" ? tr("Reparos e A-check fora da projeção.") :
+    const excluded = Array.isArray(scenario.excluded_costs) ? scenario.excluded_costs : [];
+    note.textContent = excluded.length ? tr("Despesas excluídas") + ": " + excluded.join(", ") :
       tr("Pesquisa de rota pendente.");
     details.append(title, evidence, note);
     card.append(heading, state, metrics, details);

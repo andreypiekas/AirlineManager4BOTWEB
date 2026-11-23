@@ -1,7 +1,7 @@
 """Read-only acquisition scenarios backed by separately verified game observations.
 
 The catalog and route research are collected independently. An airport cannot
-be ranked until both observations are present and the investment is complete.
+be ranked conclusively until its route, engine and cost evidence is complete.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from airport_catalog import game_code
 
 _LOCK = threading.RLock()
 _ID = re.compile(r"^[1-9][0-9]{0,11}$")
+_ENGINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_AGE_SECONDS = 3 * 86400
 
 
@@ -59,6 +60,154 @@ def _points(value: object) -> Optional[int]:
     return value
 
 
+def _engine_id(value: object) -> Optional[str]:
+    """Accept only an explicit selection ID, never a derived engine name."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    identifier = str(value).strip()
+    return identifier if _ENGINE_ID.fullmatch(identifier) else None
+
+
+def _fresh(stamp: object, now: int) -> bool:
+    return type(stamp) is int and 0 <= now - stamp <= MAX_AGE_SECONDS
+
+
+def _scenario_identity(scenario: dict) -> tuple:
+    """Keep different engine variants and routes independently addressable."""
+    return (str(scenario.get("model") or "").strip().casefold(),
+            _engine_id(scenario.get("engine_id")),
+            _airport_id(scenario.get("origin_id")),
+            _airport_id(scenario.get("destination_id")),
+            str(scenario.get("route") or "").strip().casefold())
+
+
+def _scenarios(candidate: dict) -> list[dict]:
+    """Combine the old single-slot format with variant-aware observations."""
+    stored = candidate.get("scenarios")
+    scenarios = [item for item in stored if isinstance(item, dict)] if isinstance(stored, list) else []
+    legacy_slot = candidate.get("scenario")
+    if (isinstance(legacy_slot, dict) and legacy_slot
+            and not any(_scenario_identity(item) == _scenario_identity(legacy_slot)
+                        for item in scenarios)):
+        scenarios.append(legacy_slot)
+    return scenarios
+
+
+def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
+                       price_fresh: bool, points_fresh: bool,
+                       available: Optional[float], reserve: Optional[float]) -> dict:
+    """Prove each external-hub alternative independently before ranking it."""
+    engine_id = _engine_id(scenario.get("engine_id"))
+    model = scenario.get("model")
+    model = model.strip() if isinstance(model, str) else ""
+    route = scenario.get("route")
+    route = route.strip() if isinstance(route, str) else ""
+    origin = _airport_id(scenario.get("origin_id"))
+    destination = _airport_id(scenario.get("destination_id"))
+    costs = scenario.get("costs") if isinstance(scenario.get("costs"), dict) else {}
+    financial = scenario.get("financial") if isinstance(scenario.get("financial"), dict) else {}
+    explicit_engine = "engine_id" in scenario and engine_id is not None
+
+    # Old flat prices are useful historical information, but cannot prove the
+    # selected engine's price or operating profit.
+    aircraft_price = _amount(costs.get("aircraft_price") if explicit_engine
+                             else scenario.get("aircraft_price"))
+    route_fee = _amount(costs.get("route_fee") if explicit_engine
+                        else scenario.get("route_fee"))
+    hangar_price = _amount(costs.get("hangar_price") if explicit_engine
+                           else scenario.get("hangar_price"))
+    other_fees = _amount(costs.get("other_fees")) if explicit_engine else None
+    engine_delta = _amount(costs.get("engine_delta_cost")) if explicit_engine else None
+    includes_engine = costs.get("aircraft_price_includes_engine") if explicit_engine else None
+    engine_extra = (0 if includes_engine is True and engine_delta in (None, 0) else engine_delta
+                    if includes_engine is False else None)
+    components = [candidate.get("hub_price"), aircraft_price, route_fee, hangar_price]
+    if explicit_engine:
+        components.extend((engine_extra, other_fees))
+    valid_costs = [_amount(value) for value in components]
+    total_cost = sum(valid_costs) if all(value is not None for value in valid_costs) else None
+    investment = round(total_cost, 2) if total_cost is not None and math.isfinite(total_cost) else None
+    profit = _profit(financial.get("profit_per_day") if explicit_engine
+                     else scenario.get("profit_per_day"))
+
+    pending = []
+    if not price_fresh or _amount(candidate.get("hub_price")) is None:
+        pending.append("preco_hub_a_confirmar")
+    if candidate.get("hub_points") is None:
+        pending.append("pontos_a_confirmar")
+    elif not points_fresh:
+        pending.append("pontos_desatualizados")
+    elif candidate["hub_points"] > 0:
+        pending.append("pontos_necessarios")
+    if scenario.get("source") != "game_research" or not _fresh(scenario.get("observed_at"), now):
+        pending.append("pesquisa_desatualizada")
+    if not model:
+        pending.append("modelo_a_confirmar")
+    if not route or origin != candidate["id"] or destination in (None, origin):
+        pending.append("rota_da_base_a_confirmar")
+    if not explicit_engine or scenario.get("engine_verified") is not True:
+        pending.append("motor_a_confirmar")
+    if scenario.get("route_feasible") is not True:
+        pending.append("rota_a_confirmar")
+    if scenario.get("demand_verified") is not True or scenario.get("external_demand_verified") is not True:
+        pending.append("demanda_externa_a_confirmar")
+
+    def matches_identity(block: dict) -> bool:
+        name = block.get("model")
+        block_route = block.get("route")
+        return (isinstance(name, str) and name.strip().casefold() == model.casefold()
+                and isinstance(block_route, str) and block_route.strip().casefold() == route.casefold()
+                and _engine_id(block.get("engine_id")) == engine_id
+                and _airport_id(block.get("origin_id")) == origin
+                and _airport_id(block.get("destination_id")) == destination)
+
+    if (not explicit_engine or costs.get("source") not in ("game_market", "game_research")
+            or not _fresh(costs.get("observed_at"), now)
+            or not matches_identity(costs)
+            or type(includes_engine) is not bool
+            or costs.get("engine_delta_invalid") is True
+            or ("engine_delta_cost" in costs and costs["engine_delta_cost"] is not None
+                and engine_delta is None)
+            or investment is None):
+        pending.append("custos_motor_rota_a_confirmar")
+    if (not explicit_engine or financial.get("source") not in ("route_optimizer", "game_research")
+            or not _fresh(financial.get("observed_at"), now)
+            or not matches_identity(financial) or profit is None):
+        pending.append("lucro_motor_rota_a_confirmar")
+    if available is None:
+        pending.append("saldo_ou_reserva_a_confirmar")
+
+    ready = not pending
+    status = ("dados_a_confirmar" if not ready else "sem_lucro" if profit <= 0
+              else "saldo_insuficiente" if investment > available else "viavel")
+    return {
+        **scenario,
+        "engine_id": engine_id,
+        "investment": investment,
+        "profit_per_day": profit,
+        "payback_days": round(investment / profit, 1) if ready and profit > 0 else None,
+        "status": status,
+        "pending": pending,
+        "ranking_conclusive": ready,
+        "purchase_evidence": status == "viavel",
+        "cost_breakdown": {
+            "hub_price": _amount(candidate.get("hub_price")),
+            "hub_points": candidate.get("hub_points"),
+            "aircraft_price": aircraft_price,
+            "aircraft_price_includes_engine": includes_engine,
+            "engine_delta_cost": engine_delta,
+            "engine_extra_charged": engine_extra,
+            "route_fee": route_fee,
+            "hangar_price": hangar_price,
+            "other_fees": other_fees,
+            "reserve": reserve,
+            "cash_required": round(investment + reserve, 2)
+            if investment is not None and reserve is not None else None,
+            "total": investment,
+        },
+    }
+
+
 def _stored_candidates(value: object) -> list[dict]:
     """Read legacy catalog rows defensively and keep their evidence conservative."""
     if not isinstance(value, list):
@@ -77,12 +226,16 @@ def _stored_candidates(value: object) -> list[dict]:
             "name": str(raw.get("name") or "").strip()[:160],
             "code": game_code(airport_id, raw.get("code")),
             "hub_price": _amount(raw.get("hub_price")),
-            "hub_points": _points(raw.get("hub_points", 0)),
+            "hub_price_observed_at": raw.get("hub_price_observed_at"),
+            "hub_points": _points(raw.get("hub_points")),
+            "hub_points_observed_at": raw.get("hub_points_observed_at"),
             "scenario": raw.get("scenario") if isinstance(raw.get("scenario"), dict) else {},
+            "scenarios": raw.get("scenarios") if isinstance(raw.get("scenarios"), list) else [],
         }
         if airport_id in candidates:
             # Conflicting persisted duplicates cannot be treated as fresh evidence.
-            candidates[airport_id].update({"observed_at": None, "scenario": {}})
+            candidates[airport_id].update({"observed_at": None, "scenario": {},
+                                           "scenarios": []})
             duplicate_ids.add(airport_id)
             continue
         candidates[airport_id] = normalized
@@ -234,10 +387,11 @@ class HubExpansionRegistry:
                 "name": str(item.get("name") or "").strip()[:160],
                 "code": game_code(airport_id, item.get("code")),
                 "hub_price": _amount(item.get("hub_price")),
-                "hub_points": _points(item.get("hub_points", 0)),
             }
-            if candidate["hub_points"] is None:
-                return False
+            if "hub_points" in item:
+                candidate["hub_points"] = _points(item["hub_points"])
+                if candidate["hub_points"] is None:
+                    return False
             if airport_id in incoming and incoming[airport_id] != candidate:
                 return False
             incoming[airport_id] = candidate
@@ -248,6 +402,26 @@ class HubExpansionRegistry:
             current = self._load()
             observed_at = int(time.time())
             previous = {c["id"]: c for c in _stored_candidates(current.get("candidates"))}
+
+            def refresh(airport_id: str, item: dict) -> dict:
+                older = previous.get(airport_id, {})
+                result = {**older, **item, "observed_at": observed_at}
+                if item["hub_price"] is not None:
+                    result["hub_price_observed_at"] = observed_at
+                else:
+                    # Incomplete game reads may not erase an earlier known price
+                    # or make that earlier observation appear freshly verified.
+                    result["hub_price"] = older.get("hub_price")
+                    result["hub_price_observed_at"] = older.get(
+                        "hub_price_observed_at") or older.get("observed_at", current.get("observed_at"))
+                if "hub_points" in item:
+                    result["hub_points_observed_at"] = observed_at
+                else:
+                    # A price-only read must not silently refresh stale points.
+                    result["hub_points_observed_at"] = older.get(
+                        "hub_points_observed_at") or older.get("observed_at", current.get("observed_at"))
+                return result
+
             if not verified_complete:
                 # Legacy records inherited the catalog timestamp. Capture it
                 # before the partial refresh advances the catalog timestamp.
@@ -256,12 +430,10 @@ class HubExpansionRegistry:
                 for airport_id, item in incoming.items():
                     # New price evidence takes precedence. Previous route research
                     # survives a catalog refresh for the same airport.
-                    previous[airport_id] = {**previous.get(airport_id, {}), **item,
-                                            "observed_at": observed_at}
+                    previous[airport_id] = refresh(airport_id, item)
                 incoming = previous
             else:
-                incoming = {airport_id: {**previous.get(airport_id, {}), **item,
-                                         "observed_at": observed_at}
+                incoming = {airport_id: refresh(airport_id, item)
                             for airport_id, item in incoming.items()}
             current.update({"source": "game_purchase_catalog", "observed_at": observed_at,
                             "catalog_complete": verified_complete,
@@ -270,29 +442,86 @@ class HubExpansionRegistry:
         return True
 
     def record_research(self, airport_id: str, research: dict) -> bool:
-        """Store a game-researched and model-specific projected route scenario."""
+        """Store separate hub/model/route/engine observations without losing legacy data.
+
+        A new observation needs its own timestamps and linked cost/profit proof
+        to rank conclusively. Legacy flat research remains readable but pending.
+        """
         airport_id = _airport_id(airport_id)
         if airport_id is None or not isinstance(research, dict):
             return False
         if research.get("source") != "game_research":
             return False
+        explicit_engine = "engine_id" in research
+        engine_id = _engine_id(research.get("engine_id")) if explicit_engine else None
+        if explicit_engine and engine_id is None:
+            return False
+
+        costs = research.get("costs") if isinstance(research.get("costs"), dict) else {}
+        financial = research.get("financial") if isinstance(research.get("financial"), dict) else {}
+
+        def proof(block: dict, *, price: bool) -> dict:
+            evidence = {
+                "source": block.get("source"), "observed_at": block.get("observed_at"),
+                "model": str(block.get("model") or "").strip()[:100],
+                "route": str(block.get("route") or "").strip()[:100],
+                "engine_id": _engine_id(block.get("engine_id")),
+                "origin_id": _airport_id(block.get("origin_id")),
+                "destination_id": _airport_id(block.get("destination_id")),
+            }
+            if price:
+                evidence.update({
+                    "aircraft_price": _amount(block.get("aircraft_price")),
+                    "engine_delta_cost": _amount(block.get("engine_delta_cost")),
+                    "engine_delta_invalid": (
+                        block.get("engine_delta_cost") is not None
+                        and _amount(block.get("engine_delta_cost")) is None),
+                    "aircraft_price_includes_engine": block.get("aircraft_price_includes_engine"),
+                    "route_fee": _amount(block.get("route_fee")),
+                    "hangar_price": _amount(block.get("hangar_price")),
+                    "other_fees": _amount(block.get("other_fees")),
+                })
+            else:
+                evidence["profit_per_day"] = _profit(block.get("profit_per_day"))
+            return evidence
+
+        scenario = {
+            "source": "game_research",
+            # Receipt time is not evidence of when an external-hub route was read.
+            "observed_at": research.get("observed_at") if explicit_engine else int(time.time()),
+            "model": str(research.get("model") or "").strip()[:100],
+            "route": str(research.get("route") or "").strip()[:100],
+            "origin_id": _airport_id(research.get("origin_id")),
+            "destination_id": _airport_id(research.get("destination_id")),
+            "route_feasible": research.get("route_feasible") is True,
+            "demand_verified": research.get("demand_verified") is True,
+            "external_demand_verified": research.get("external_demand_verified") is True,
+            "engine_verified": research.get("engine_verified") is True,
+            "aircraft_price": _amount(research.get("aircraft_price", costs.get("aircraft_price"))),
+            "route_fee": _amount(research.get("route_fee", costs.get("route_fee"))),
+            "hangar_price": _amount(research.get("hangar_price", costs.get("hangar_price"))),
+            "other_fees": _amount(research.get("other_fees", costs.get("other_fees"))),
+            "aircraft_price_includes_engine": costs.get("aircraft_price_includes_engine"),
+            "engine_delta_cost": _amount(costs.get("engine_delta_cost")),
+            "profit_per_day": _profit(research.get("profit_per_day", financial.get("profit_per_day"))),
+        }
+        if explicit_engine:
+            scenario.update({"engine_id": engine_id,
+                             "engine_label": str(research.get("engine_label") or "").strip()[:100],
+                             "costs": proof(costs, price=True),
+                             "financial": proof(financial, price=False)})
+
         with _LOCK:
             current = self._load()
             candidates = _stored_candidates(current.get("candidates"))
             row = next((item for item in candidates if item.get("id") == airport_id), None)
             if row is None:
                 return False
-            row["scenario"] = {
-                "source": "game_research", "observed_at": int(time.time()),
-                "model": str(research.get("model") or "").strip()[:100],
-                "route": str(research.get("route") or "").strip()[:100],
-                "route_feasible": research.get("route_feasible") is True,
-                "demand_verified": research.get("demand_verified") is True,
-                "aircraft_price": _amount(research.get("aircraft_price")),
-                "route_fee": _amount(research.get("route_fee")),
-                "hangar_price": _amount(research.get("hangar_price")),
-                "profit_per_day": _profit(research.get("profit_per_day")),
-            }
+            alternatives = [entry for entry in _scenarios(row)
+                            if _scenario_identity(entry) != _scenario_identity(scenario)]
+            alternatives.append(scenario)
+            row["scenarios"] = alternatives
+            row["scenario"] = scenario  # Kept for existing readers of the single-slot format.
             current["candidates"] = candidates
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
@@ -371,34 +600,48 @@ class HubExpansionRegistry:
             if raw["id"] in owned:
                 continue
             row = {k: raw.get(k) for k in ("id", "name", "code", "hub_price", "hub_points")}
-            scenario = raw.get("scenario") if isinstance(raw.get("scenario"), dict) else {}
             row_time = raw.get("observed_at", catalog_time)
-            catalog_fresh = (type(row_time) is int and 0 <= now - row_time <= MAX_AGE_SECONDS)
-            row.update({"scenario": scenario, "observed_at": row_time})
-            costs = [raw.get("hub_price"), scenario.get("aircraft_price"),
-                     scenario.get("route_fee"), scenario.get("hangar_price")]
-            valid_costs = [_amount(v) for v in costs]
-            investment = round(sum(valid_costs), 2) if all(v is not None for v in valid_costs) else None
-            profit = _profit(scenario.get("profit_per_day"))
-            research_time = scenario.get("observed_at")
-            fresh_research = (type(research_time) is int and
-                              0 <= now - research_time <= MAX_AGE_SECONDS)
-            ready = (catalog_fresh and raw.get("hub_points") == 0 and fresh_research
-                     and scenario.get("source") == "game_research"
-                     and scenario.get("route_feasible") is True and scenario.get("demand_verified") is True
-                     and bool(scenario.get("model")) and bool(scenario.get("route"))
-                     and investment is not None and profit is not None and available is not None)
-            if not ready:
-                status = "dados_a_confirmar"
-            elif profit <= 0:
-                status = "sem_lucro"
-            elif investment > available:
-                status = "saldo_insuficiente"
-            else:
-                status = "viavel"
-            row.update({"investment": investment, "profit_per_day": profit,
-                        "payback_days": round(investment / profit, 1) if ready and profit > 0 else None,
-                        "status": status})
+            price_time = raw.get("hub_price_observed_at")
+            if price_time is None:
+                price_time = row_time
+            points_time = raw.get("hub_points_observed_at")
+            if points_time is None:
+                points_time = row_time
+            evaluated = [_evaluate_scenario(
+                scenario, raw, now=now,
+                price_fresh=saved.get("source") == "game_purchase_catalog"
+                and _fresh(row_time, now) and _fresh(price_time, now),
+                points_fresh=_fresh(points_time, now), available=available,
+                reserve=reserve_value) for scenario in _scenarios(raw)]
+            evaluated.sort(key=lambda option: (
+                option["status"] != "viavel",
+                option["status"] == "dados_a_confirmar",
+                option["engine_id"] is None,
+                -(option["profit_per_day"] or 0) if option["ranking_conclusive"] else 0,
+                option["investment"] if option["investment"] is not None else float("inf"),
+                str(option.get("model") or "").casefold(),
+                option.get("engine_id") or "",
+                str(option.get("route") or "").casefold()))
+            best = evaluated[0] if evaluated else None
+            row.update({
+                "scenario": {key: value for key, value in best.items()
+                             if key not in ("investment", "payback_days", "status", "pending",
+                                            "ranking_conclusive", "purchase_evidence", "cost_breakdown")}
+                if best is not None else {},
+                "alternatives": evaluated,
+                "observed_at": row_time,
+                "hub_price_observed_at": price_time,
+                "hub_points_observed_at": points_time,
+                "investment": best["investment"] if best else None,
+                "profit_per_day": best["profit_per_day"] if best else None,
+                "payback_days": best["payback_days"] if best else None,
+                "engine_id": best["engine_id"] if best else None,
+                "status": best["status"] if best else "dados_a_confirmar",
+                "pending": best["pending"] if best else ["pesquisa_externa_a_confirmar"],
+                "ranking_conclusive": best["ranking_conclusive"] if best else False,
+                "purchase_evidence": best["purchase_evidence"] if best else False,
+                "cost_breakdown": best["cost_breakdown"] if best else None,
+            })
             candidates.append(row)
         candidates.sort(key=lambda row: (row["status"] != "viavel",
                                          -(row["profit_per_day"] or 0) if row["status"] == "viavel" else 0,

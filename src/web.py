@@ -46,6 +46,7 @@ from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy
 from investment_journal import InvestmentJournal
 from portfolio_planner import compare_portfolio
+from expansion_feasibility import assess_expansion
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
 if TYPE_CHECKING:
@@ -186,7 +187,8 @@ class WebDashboard:
 
     def hub_expansion(self) -> dict:
         """Compare candidate hubs against a recently verified balance."""
-        owned = {hub["id"] for hub in self.hubs()["hubs"]}
+        owned_inventory = self.hubs()
+        owned = {hub["id"] for hub in owned_inventory["hubs"]}
         cash, observed_at = recent_verified_money(self.bot, load_state())
         report = HubExpansionRegistry().snapshot(
             cash=cash,
@@ -194,6 +196,16 @@ class WebDashboard:
             owned_hub_ids=owned,
         )
         report["cash_observed_at"] = observed_at
+        recommendations_reader = getattr(self, "hub_recommendations", None)
+        owned_research = recommendations_reader() if callable(recommendations_reader) else {}
+        report["expansion_decision"] = assess_expansion(
+            owned_inventory,
+            owned_research,
+            owned_research.get("portfolio") if isinstance(owned_research, dict) else None,
+            report,
+            coverage=owned_research.get("opportunity_coverage")
+            if isinstance(owned_research, dict) else None,
+        )
         return report
 
     def hub_recommendations(self) -> dict:

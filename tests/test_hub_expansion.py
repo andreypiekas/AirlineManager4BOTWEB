@@ -1,5 +1,7 @@
 """Read-only financial scenarios require verified complete data."""
 import json
+import time
+from copy import deepcopy
 
 import pytest
 
@@ -7,17 +9,43 @@ from hub_expansion import MAX_AGE_SECONDS, HubExpansionRegistry
 
 
 def _candidate(airport_id="123", price=5000):
-    return {"id": airport_id, "code": "XAP", "name": "Chapecó",
-            "purchasable": True, "hub_price": price}
+    return {"id": airport_id, "code": "AAA", "name": "Airport fixture",
+            "purchasable": True, "hub_price": price, "hub_points": 0}
 
 
-def _research(**overrides):
-    data = {"source": "game_research", "model": "A320", "route": "XAP-GRU",
+def _research(*, airport_id="123", **overrides):
+    observed_at = int(time.time())
+    model = overrides.get("model", "model-fixture")
+    engine_id = overrides.get("engine_id", "engine-fixture-1")
+    origin_id = overrides.get("origin_id", airport_id)
+    destination_id = overrides.get("destination_id", "789" if airport_id == "456" else "456")
+    route = overrides.get("route", "fixture-route")
+    evidence_identity = {"model": model, "engine_id": engine_id,
+                         "origin_id": origin_id, "destination_id": destination_id,
+                         "route": route}
+    data = {"source": "game_research", "observed_at": observed_at,
+            "model": model, "engine_id": engine_id, "engine_verified": True,
+            "engine_label": "variant fixture", "route": route,
+            "origin_id": origin_id, "destination_id": destination_id,
+            "route_feasible": True, "demand_verified": True,
+            "external_demand_verified": True,
+            "costs": {"source": "game_market", "observed_at": observed_at,
+                      **evidence_identity, "aircraft_price": 10000,
+                      "aircraft_price_includes_engine": True,
+                      "route_fee": 1000, "hangar_price": 0, "other_fees": 0},
+            "financial": {"source": "route_optimizer", "observed_at": observed_at,
+                          **evidence_identity, "profit_per_day": 2000}}
+    data.update(overrides)
+    if "profit_per_day" in overrides:
+        data["financial"] = {**data["financial"], "profit_per_day": overrides["profit_per_day"]}
+    return data
+
+
+def _legacy_research():
+    return {"source": "game_research", "model": "model-legacy", "route": "route-legacy",
             "route_feasible": True, "demand_verified": True,
             "aircraft_price": 10000, "route_fee": 1000, "hangar_price": 0,
             "profit_per_day": 2000}
-    data.update(overrides)
-    return data
 
 
 def test_unknown_catalog_and_invalid_input_do_not_create_recommendation(tmp_path):
@@ -93,7 +121,7 @@ def test_partial_refresh_ages_each_candidate_independently(tmp_path, monkeypatch
     clock[0] += MAX_AGE_SECONDS + 1
     assert registry.record_catalog([_candidate("456", 3000)], complete=False)
     assert registry.record_research("123", _research())
-    assert registry.record_research("456", _research())
+    assert registry.record_research("456", _research(airport_id="456"))
 
     snapshot = registry.snapshot(cash=50000, now=clock[0])
     rows = {row["id"]: row for row in snapshot["candidates"]}
@@ -142,7 +170,7 @@ def test_complete_refresh_discards_unseen_and_updates_seen_candidate(tmp_path, m
     monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     assert registry.record_catalog([_candidate(), _candidate("456")])
-    assert registry.record_research("456", _research())
+    assert registry.record_research("456", _research(airport_id="456"))
 
     clock[0] += MAX_AGE_SECONDS + 1
     assert registry.record_catalog([_candidate("456", 7000)], complete=True)
@@ -156,7 +184,7 @@ def test_complete_refresh_discards_unseen_and_updates_seen_candidate(tmp_path, m
     assert row["scenario"]["observed_at"] == clock[0] - MAX_AGE_SECONDS - 1
     assert row["status"] == "dados_a_confirmar"
 
-    assert registry.record_research("456", _research())
+    assert registry.record_research("456", _research(airport_id="456"))
     assert registry.snapshot(cash=50000, now=clock[0])["candidates"][0]["status"] == "viavel"
 
 
@@ -198,20 +226,21 @@ def test_legacy_candidate_types_are_sanitized_and_merged(tmp_path, monkeypatch):
         "candidates": [None, "broken", {"id": {"malformed": True}},
                        {"id": 123, "name": 123, "code": ["XAP"], "hub_price": "5000",
                         "scenario": {"source": "game_research", "observed_at": 1800000000,
-                                     **{k: v for k, v in _research().items() if k != "source"}}}],
+                                     **{k: v for k, v in _legacy_research().items() if k != "source"}}}],
     }), encoding="utf-8")
 
     rows = registry.snapshot(cash=50000, now=1800000000)["candidates"]
     assert len(rows) == 1
     assert rows[0]["id"] == "123"
     assert isinstance(rows[0]["code"], str)
-    assert rows[0]["status"] == "viavel"
+    assert rows[0]["status"] == "dados_a_confirmar"
+    assert "motor_a_confirmar" in rows[0]["pending"]
 
     assert registry.record_research("123", _research())
     assert registry.record_catalog([_candidate("456")], complete=False)
     merged = registry.snapshot(cash=50000, now=1800000000)
     assert {row["id"] for row in merged["candidates"]} == {"123", "456"}
-    assert next(row for row in merged["candidates"] if row["id"] == "123")["status"] == "viavel"
+    assert next(row for row in merged["candidates"] if row["id"] == "123")["status"] == "dados_a_confirmar"
 
     registry.path.write_text(json.dumps({"candidates": None}), encoding="utf-8")
     assert registry.snapshot()["availability_pending"] is True
@@ -225,7 +254,7 @@ def test_legacy_boolean_research_timestamp_is_not_fresh(tmp_path):
         "observed_at": 1, "source": "game_purchase_catalog",
         "candidates": [{"id": "123", "name": "Chapecó", "code": "XAP", "hub_price": 5000,
                         "observed_at": 1,
-                        "scenario": {"observed_at": True, **_research()}}],
+                        "scenario": {"observed_at": True, **_legacy_research()}}],
     }), encoding="utf-8")
     assert registry.snapshot(cash=50000, now=1)["candidates"][0]["status"] == "dados_a_confirmar"
 
@@ -234,7 +263,7 @@ def test_lower_investment_breaks_equal_daily_profit_tie(tmp_path):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     assert registry.record_catalog([_candidate("123", 9000), _candidate("456", 1000)])
     assert registry.record_research("123", _research())
-    assert registry.record_research("456", _research())
+    assert registry.record_research("456", _research(airport_id="456"))
     rows = registry.snapshot(cash=50000)["candidates"]
     assert [row["id"] for row in rows] == ["456", "123"]
     assert rows[0]["payback_days"] < rows[1]["payback_days"]
@@ -252,6 +281,242 @@ def test_invalid_or_future_candidate_timestamp_is_not_fresh(tmp_path, monkeypatc
     row = registry.snapshot(cash=50000, now=1800000000)["candidates"][0]
     assert row["observed_at"] == invalid_timestamp
     assert row["status"] == "dados_a_confirmar"
+
+
+def test_legacy_research_is_readable_but_never_proves_a_purchase(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _legacy_research())
+
+    legacy = registry.snapshot(cash=50000)["candidates"][0]
+    assert legacy["scenario"]["aircraft_price"] == 10000
+    assert legacy["profit_per_day"] == 2000
+    assert legacy["engine_id"] is None
+    assert legacy["status"] == "dados_a_confirmar"
+    assert legacy["ranking_conclusive"] is False
+    assert legacy["purchase_evidence"] is False
+    assert "motor_a_confirmar" in legacy["pending"]
+
+    assert registry.record_research("123", _research())
+    verified = registry.snapshot(cash=50000)["candidates"][0]
+    assert verified["status"] == "viavel"
+    assert verified["ranking_conclusive"] is True
+    assert verified["purchase_evidence"] is True
+    assert len(verified["alternatives"]) == 2
+    assert any(option["engine_id"] is None and not option["purchase_evidence"]
+               for option in verified["alternatives"])
+
+
+@pytest.mark.parametrize("invalid_id", [None, True, False, "", "has space", "#bad", {}, []])
+def test_invalid_explicit_engine_id_is_rejected_without_erasing_research(tmp_path, invalid_id):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research())
+    original = registry.path.read_bytes()
+
+    assert not registry.record_research("123", _research(engine_id=invalid_id))
+    assert registry.path.read_bytes() == original
+    assert registry.snapshot(cash=50000)["candidates"][0]["status"] == "viavel"
+
+
+def test_distinct_engines_models_and_routes_have_independent_economics(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research())
+
+    other_engine = _research(engine_id="engine-fixture-2", model="model-fixture-2",
+                             route="different-fixture-route", destination_id="789")
+    other_engine["costs"].update({"aircraft_price": 11000,
+                                  "aircraft_price_includes_engine": False,
+                                  "engine_delta_cost": 1500, "route_fee": 200,
+                                  "hangar_price": 300, "other_fees": 50})
+    other_engine["financial"]["profit_per_day"] = 2500
+    assert registry.record_research("123", other_engine)
+
+    result = registry.snapshot(cash=30000, reserve=2000)["candidates"][0]
+    assert len(result["alternatives"]) == 2
+    assert {option["engine_id"] for option in result["alternatives"]} == {
+        "engine-fixture-1", "engine-fixture-2"}
+    assert result["engine_id"] == "engine-fixture-2"
+    assert result["scenario"]["model"] == "model-fixture-2"
+    assert result["status"] == "viavel"
+    assert result["ranking_conclusive"] is True
+    assert result["purchase_evidence"] is True
+    assert result["investment"] == 18050
+    assert result["payback_days"] == 7.2
+    assert result["cost_breakdown"] == {
+        "hub_price": 5000, "hub_points": 0, "aircraft_price": 11000,
+        "aircraft_price_includes_engine": False, "engine_delta_cost": 1500,
+        "engine_extra_charged": 1500, "route_fee": 200, "hangar_price": 300,
+        "other_fees": 50, "reserve": 2000, "cash_required": 20050, "total": 18050}
+
+    # A newer observation replaces only the same variant/route identity.
+    assert registry.record_research("123", _research())
+    assert len(registry.snapshot(cash=30000)["candidates"][0]["alternatives"]) == 2
+
+
+@pytest.mark.parametrize("field", ["aircraft_price", "route_fee", "hangar_price", "other_fees",
+                                     "aircraft_price_includes_engine"])
+def test_missing_cost_components_cannot_support_a_recommendation(tmp_path, field):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    research = _research()
+    research["costs"].pop(field)
+    assert registry.record_research("123", research)
+
+    result = registry.snapshot(cash=50000)["candidates"][0]
+    assert result["status"] == "dados_a_confirmar"
+    assert result["ranking_conclusive"] is False
+    assert result["purchase_evidence"] is False
+    assert "custos_motor_rota_a_confirmar" in result["pending"]
+
+
+@pytest.mark.parametrize("engine_delta", [None, -1, "invalid"])
+def test_engine_delta_required_when_price_does_not_include_engine(tmp_path, engine_delta):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    research = _research()
+    research["costs"]["aircraft_price_includes_engine"] = False
+    research["costs"]["engine_delta_cost"] = engine_delta
+    assert registry.record_research("123", research)
+    result = registry.snapshot(cash=50000)["candidates"][0]
+    assert result["investment"] is None
+    assert result["purchase_evidence"] is False
+    assert "custos_motor_rota_a_confirmar" in result["pending"]
+
+
+@pytest.mark.parametrize("invalid_delta", [100, -1, "invalid", True])
+def test_inconsistent_included_engine_price_cannot_be_ranked(tmp_path, invalid_delta):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    research = _research()
+    research["costs"]["engine_delta_cost"] = invalid_delta
+    assert registry.record_research("123", research)
+    result = registry.snapshot(cash=50000)["candidates"][0]
+    assert result["status"] == "dados_a_confirmar"
+    assert result["purchase_evidence"] is False
+    assert "custos_motor_rota_a_confirmar" in result["pending"]
+
+
+def test_unbounded_total_cost_cannot_support_a_conclusive_ranking(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate(price=1e308)])
+    research = _research()
+    research["costs"]["aircraft_price"] = 1e308
+    assert registry.record_research("123", research)
+    result = registry.snapshot(cash=50000)["candidates"][0]
+    assert result["investment"] is None
+    assert result["ranking_conclusive"] is False
+    assert result["purchase_evidence"] is False
+
+
+@pytest.mark.parametrize("block", ["costs", "financial"])
+@pytest.mark.parametrize("identity_field,bad_value", [
+    ("model", "other-model"), ("engine_id", "other-engine"),
+    ("origin_id", "789"), ("destination_id", "999"),
+    ("route", "different-route")])
+def test_cost_and_profit_proofs_must_match_exact_scenario_identity(
+        tmp_path, block, identity_field, bad_value):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    research = _research()
+    research[block][identity_field] = bad_value
+    assert registry.record_research("123", research)
+
+    result = registry.snapshot(cash=50000)["candidates"][0]
+    assert result["status"] == "dados_a_confirmar"
+    assert result["ranking_conclusive"] is False
+    assert result["purchase_evidence"] is False
+    expected = "custos_motor_rota_a_confirmar" if block == "costs" else "lucro_motor_rota_a_confirmar"
+    assert expected in result["pending"]
+
+
+@pytest.mark.parametrize("expired_part,reason", [
+    ("research", "pesquisa_desatualizada"),
+    ("costs", "custos_motor_rota_a_confirmar"),
+    ("financial", "lucro_motor_rota_a_confirmar")])
+def test_expired_scenario_or_nested_evidence_blocks_purchase(
+        tmp_path, monkeypatch, expired_part, reason):
+    clock = 1800000000
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock)
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    research = _research()
+    old = clock - MAX_AGE_SECONDS - 1
+    if expired_part == "research":
+        research["observed_at"] = old
+    else:
+        research[expired_part]["observed_at"] = old
+    assert registry.record_research("123", research)
+
+    result = registry.snapshot(cash=50000, now=clock)["candidates"][0]
+    assert result["status"] == "dados_a_confirmar"
+    assert result["purchase_evidence"] is False
+    assert reason in result["pending"]
+
+
+def test_missing_points_and_expired_points_are_not_revalidated_by_price_only_scan(
+        tmp_path, monkeypatch):
+    clock = [1800000000]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    no_points = _candidate()
+    del no_points["hub_points"]
+    assert registry.record_catalog([no_points])
+    assert registry.record_research("123", _research())
+    missing = registry.snapshot(cash=50000)["candidates"][0]
+    assert missing["hub_points"] is None
+    assert missing["purchase_evidence"] is False
+    assert "pontos_a_confirmar" in missing["pending"]
+
+    assert registry.record_catalog([_candidate()])
+    assert registry.snapshot(cash=50000)["candidates"][0]["status"] == "viavel"
+    clock[0] += MAX_AGE_SECONDS + 1
+    assert registry.record_catalog([no_points])
+    assert registry.record_research("123", _research())
+    stale = registry.snapshot(cash=50000, now=clock[0])["candidates"][0]
+    assert stale["hub_price"] == 5000
+    assert stale["hub_points"] == 0
+    assert stale["status"] == "dados_a_confirmar"
+    assert "pontos_desatualizados" in stale["pending"]
+
+    assert registry.record_catalog([_candidate()])
+    assert registry.snapshot(cash=50000, now=clock[0])["candidates"][0]["status"] == "viavel"
+
+
+def test_price_only_incomplete_refresh_preserves_old_catalog_price_and_age(tmp_path, monkeypatch):
+    clock = [1800000000]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research())
+    clock[0] += MAX_AGE_SECONDS + 1
+
+    assert registry.record_catalog([_candidate(price=None)])
+    assert registry.record_research("123", _research())
+    saved = registry.snapshot(cash=50000, now=clock[0])["candidates"][0]
+    assert saved["hub_price"] == 5000
+    assert saved["hub_price_observed_at"] == clock[0] - MAX_AGE_SECONDS - 1
+    assert saved["status"] == "dados_a_confirmar"
+    assert "preco_hub_a_confirmar" in saved["pending"]
+
+    assert registry.record_catalog([_candidate()])
+    assert registry.snapshot(cash=50000, now=clock[0])["candidates"][0]["status"] == "viavel"
+
+
+def test_conflicting_persisted_duplicates_cannot_reuse_variant_proof(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research())
+    saved = json.loads(registry.path.read_text(encoding="utf-8"))
+    saved["candidates"].append(deepcopy(saved["candidates"][0]))
+    registry.path.write_text(json.dumps(saved), encoding="utf-8")
+
+    result = registry.snapshot(cash=50000)["candidates"][0]
+    assert result["status"] == "dados_a_confirmar"
+    assert result["ranking_conclusive"] is False
+    assert result["purchase_evidence"] is False
+    assert result["alternatives"] == []
 
 
 def test_expansion_dashboard_is_only_a_get_endpoint():
