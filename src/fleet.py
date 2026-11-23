@@ -30,6 +30,7 @@ from selenium.webdriver.common.by import By
 
 from economy import (find_model, fmt_days, fmt_money, goal_progress, is_auto_goal, load_market, pick_ladder,
                      save_market)
+from aircraft_order_hub import AircraftOrderHubError, prepare_order_hub
 from gamemode import EASY, GameMode
 from helpers import clean_response, fmt, to_int
 from notify import esc
@@ -1662,7 +1663,10 @@ def save_for_goal(bot: "Bot", models: list[AircraftModel], goal_name: str, budge
     order_aircraft(bot, choice)
 
 
-def order_aircraft(bot: "Bot", choice: AircraftModel, goal: bool = False) -> bool:
+def order_aircraft(
+    bot: "Bot", choice: AircraftModel, goal: bool = False,
+    hub_id: str | int | None = None,
+) -> bool:
     detail = bot.ajax(f"ac_orders.php?mode=detail&id={choice.id}&charter=0", "acModel")
     # O motor só pode ser escolhido antes de encomendar. Uma preferência
     # explícita NÃO aceita fallback silencioso para a seleção padrão do jogo.
@@ -1670,11 +1674,15 @@ def order_aircraft(bot: "Bot", choice: AircraftModel, goal: bool = False) -> boo
 
     try:
         motor = prepare_engine(bot, bot.config.get("settings", "engine_preference", "default"))
+        selected_hub_id, hub_changed = prepare_order_hub(bot, hub_id)
     except EngineSelectionError as exc:
         log_market.warning("Compra de %s bloqueada: %s", choice.name, exc)
         return False
-    if motor and not bot.dry_run:
-        # A alteração de motor pode reconstruir todo o fragmento Ajax.
+    except AircraftOrderHubError as exc:
+        log_market.warning("Compra de %s bloqueada: %s", choice.name, exc)
+        return False
+    if (motor and not bot.dry_run) or hub_changed:
+        # Alterações de motor ou base podem reconstruir todo o fragmento Ajax.
         detail = bot.driver.find_element(By.ID, "acModel")
     low = detail.find_elements(By.XPATH, ".//*[@id='accountLow']")
     if low and low[0].is_displayed():
@@ -1684,6 +1692,7 @@ def order_aircraft(bot: "Bot", choice: AircraftModel, goal: bool = False) -> boo
     summary = f"1 x {choice.name} por ${fmt(choice.price)} (matrícula {reg}, {choice.capacity} passageiros, {fmt(choice.range_km)} km de autonomia)"
     if motor:
         summary += f" | motor: {motor}"
+    summary += f" | base: {selected_hub_id}"
     if bot.dry_run:
         log_market.info("[SIMULAÇÃO] Encomendaria %s.", summary)
         bot.notify(f"🧪 SIMULAÇÃO: encomendaria {esc(summary)}.", silent=True, category="simulation")

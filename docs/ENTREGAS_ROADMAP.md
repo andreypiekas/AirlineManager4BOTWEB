@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A5, validação da base de entrega da aeronave (G0)
+
+**Objetivo:** garantir que cada encomenda esteja vinculada a uma base comprovada no formulário do jogo e permitir que um plano indique explicitamente a base de entrega.
+
+### Implementação e evidências
+
+- **`src/aircraft_order_hub.py`:** leitura estrita de `#hubSelection`, com validação de seletor único, estado habilitado, opções sem IDs duplicados, seleção única e correspondência entre o valor atual e a opção selecionada. A seleção explícita dispara eventos `input` e `change`, aguarda a atualização e relê o DOM para confirmar o ID final. A simulação valida a disponibilidade da base sem modificar o formulário.
+- **`src/fleet.py`:** `order_aircraft()` aceita `hub_id` opcional. Quando um plano informa a base, o fluxo seleciona e confirma esse ID antes de continuar. No fluxo legado, a base atualmente selecionada precisa ser comprovada. Alterações de motor ou base fazem o fragmento `#acModel` ser relido antes de prosseguir, e o resumo da encomenda registra o ID da base.
+- **`tests/test_aircraft_order_hub.py`:** cobre seleção atual, seleção explícita, simulação sem mutação, seletor ausente/ambíguo/desabilitado, IDs duplicados, opção indisponível, falha de confirmação e bloqueio da encomenda quando a base não pode ser verificada.
+
+### Verificação, limitações e reversão
+
+- Testes direcionados de base e motorização aprovados. Suíte Windows completa aprovada com exclusão apenas de `tests/test_instalacao_linux.py`, que depende de permissões POSIX. Ruff em `src` e `tests`, `compileall` e `git diff --check` aprovados.
+- **Gate G0.** A validação automatizada usa fixtures DOM. O seletor `#hubSelection` consta do diagnóstico de fonte do jogo, mas ainda falta homologar a seleção em sessão autenticada e confirmar como cada variante de formulário reage aos eventos. Nenhuma compra real foi executada. O caminho continua sujeito aos gates A1/A2/A3/A4 e ao pré-voo completo A5.
+- Sem compra no jogo, alteração de configuração de produção, Telegram, implantação ou merge em `main`. Reversão por commit desta entrega após verificar dependências em `fleet.py`.
+
 ## 2026-11-23 — Autonomia Total A5/A8, recuperação comprovada de executor após encerramento do processo (G0)
 
 **Objetivo:** permitir a conciliação segura de uma compra simulada após a morte do processo que detinha o bloqueio do perfil, preservando o diário de intenção e a regra de tentativa única.
