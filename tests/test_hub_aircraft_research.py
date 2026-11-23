@@ -165,7 +165,7 @@ def test_corrupt_storage_and_missing_evidence_remain_pending(tmp_path):
     assert "observed_at" not in saved["scenarios"][0]["costs"]
 
 
-def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch):
+def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_path):
     scenario = _scenario()
     monkeypatch.setattr(web, "RouteRegistry", lambda: SimpleNamespace(snapshot=lambda **_kw: {"relations": []}))
     monkeypatch.setattr(web, "HubRegistry", lambda: SimpleNamespace(snapshot=lambda _routes: {
@@ -184,6 +184,15 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch):
         get_bool=lambda *_args: False,
         get_int=lambda _section, _key, _fallback=0: 2000,
     )
+    ledger = web.InvestmentJournal(tmp_path / "intents.sqlite3", profile_id="principal")
+    intent, _ = ledger.register({
+        "plan_id": "plan-123", "snapshot_id": "sha256:" + "a" * 64,
+        "kind": "aircraft", "hub_id": "123", "origin_id": "123",
+        "destination_id": "456", "model_id": "A320",
+        "engine_id": "engine-1", "estimated_cost": 6000,
+    })
+    assert ledger.transition(intent["intent_key"], "PROPOSED", "APPROVED")
+    monkeypatch.setattr(web, "InvestmentJournal", lambda: ledger)
     result = dashboard.hub_recommendations()
     assert result["hubs"][0]["code"] == "XAP"
     assert result["scenarios"] == [scenario]
@@ -193,6 +202,19 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch):
     assert result["portfolio"]["status"] == "inconclusivo"
     assert result["portfolio"]["execution_available"] is False
     assert result["investment_policy"]["release_gate"] == "G0"
+    assert result["investment_journal"]["count"] == 1
+    assert result["investment_journal"]["estimated_exposure"] == 6000
+    assert result["investment_journal"]["execution_available"] is False
+
+    def broken_ledger():
+        import sqlite3
+        raise sqlite3.DatabaseError("corrupt")
+
+    monkeypatch.setattr(web, "InvestmentJournal", broken_ledger)
+    unavailable = dashboard.hub_recommendations()["investment_journal"]
+    assert unavailable["estimated_exposure"] is None
+    assert unavailable["count"] is None
+    assert unavailable["blocking_reasons"] == ["diario_indisponivel"]
 
 
 def test_recommendations_endpoint_is_authenticated_read_only():

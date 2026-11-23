@@ -217,6 +217,9 @@ const translations = {
   'Bases analisadas': 'Hubs analysed',
   'Melhor cenário global comparado': 'Top globally compared scenario',
   'Conclusão do planejamento pendente.': 'Planning conclusion pending.',
+  'Intenções de compra em aberto': 'Open purchase intents',
+  'Exposição estimada no diário': 'Estimated ledger exposure',
+  'Diário de investimentos indisponível.': 'Investment ledger unavailable.',
   'Nenhum cenário global comparável.': 'No globally comparable scenario.',
   'Saldo a confirmar.': 'Cash balance pending verification.',
   'Nenhuma recomendação corresponde ao modelo selecionado.':
@@ -269,6 +272,13 @@ renderHubRecommendations(report);
 assert.match($('hubRecommendationsScope').textContent,
   /Top globally compared scenario: AAA · A320 \/ 2/);
 assert.match($('hubRecommendationsScope').textContent, /Planning conclusion pending/);
+report.investment_journal = {count:2, estimated_exposure:15500};
+renderHubRecommendations(report);
+assert.match($('hubRecommendationsScope').textContent,
+  /Open purchase intents: 2 · Estimated ledger exposure: \$15500/);
+report.investment_journal = {count:null, estimated_exposure:null};
+renderHubRecommendations(report);
+assert.match($('hubRecommendationsScope').textContent, /Investment ledger unavailable/);
 report.portfolio = {status:'inconclusivo', best:null};
 renderHubRecommendations(report);
 assert.match($('hubRecommendationsScope').textContent, /No globally comparable scenario/);

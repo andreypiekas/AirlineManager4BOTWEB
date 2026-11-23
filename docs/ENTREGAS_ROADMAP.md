@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-22 — Autonomia Total, diário A5 e pré-checagem simulada (G0)
+
+**Escopo:** iniciar a proteção transacional de futuras aquisições em `codex/autonomia-a0-a1-20261122`, mantendo execução real indisponível.
+
+### Implementado
+
+- **Diário persistente por perfil:** `src/investment_journal.py` mantém intenções em SQLite, com transações `BEGIN IMMEDIATE`, eventos auditáveis, identidade determinística de alvo e transições `PROPOSED → APPROVED → PRECHECKED → SUBMITTED → CONFIRMED` ou `UNKNOWN/FAILED`. Para aeronaves, o alvo é a combinação hub/rota. Uma escolha diferente de modelo, motor, custo ou snapshot para a mesma rota exige conciliação antes de reservar uma segunda intenção. Para hub, a identidade é seu ID. O registro é idempotente e conta submissões únicas.
+- **Recuperação conservadora:** intenções `SUBMITTED` são colocadas em `UNKNOWN` quando a rotina explícita de recuperação é acionada após reinício. A retomada não libera uma segunda submissão. Confirmação de aeronave exige evidência recente da lista de pedidos do jogo com ID de compra, perfil, base, rota, modelo e motor iguais ao plano. A confirmação de hub requer evidência de alteração na propriedade do hub. O histórico armazena apenas campos de prova permitidos, evitando informações de sessão.
+- **Pré-compra A5 inicial:** `src/investment_preflight.py` valida, sem mutações, identidade de perfil, snapshot recente, seleção confirmada de hub, origem/destino, modelo, motor, disponibilidade, demanda, capacidade, preço final com motor, caixa, reserva e compromissos verificados. Divergências ou ausências bloqueiam o sinal de pré-checagem. A função depende de evidências fornecidas por um futuro leitor de checkout autenticado.
+- **Consulta operacional:** `GET /api/hubs/recommendations` inclui o estado somente leitura do diário, suas intenções em aberto e exposição estimada. Falha ao abrir o SQLite é representada por exposição **desconhecida**, preservando o relatório e sinalizando o impedimento. O painel de hubs apresenta contagem/exposição ou indisponibilidade. A exposição do diário é informativa e ainda não substitui a conciliação integral dos compromissos no planejador A4.
+- **Testes simulados:** registro, replay, conflitos de plano, isolamento entre perfis, concorrência por uma única submissão, timeout/restart, quarentena, recusa e aceitação de provas independentes específicas ao plano, conservação da exposição e falhas de checkout por preço, motor, hub, caixa, compromissos e idade. Testes de API e renderização verificam a nova consulta.
+
+### Pendências para avançar os gates
+
+- O **G0 permanece ativo**. Não existe executor conectado ao botão de compra, confirmação autenticada de `#hubSelection` ou leitor de checkout homologado. Os testes utilizam observações simuladas, sem prova de compra real. Falta executar e homologar os fluxos de compra correta, compra recusada, timeout e retorno pós-restart com uma camada de execução simulada e com dados reais observados. `G1` e `G2` não foram liberados.
+- O diário reserva apenas intenções locais. Antes de permitir gastos, o coordenador deverá conciliar caixa, pedidos pendentes, histórico de compras, alvos já presentes no jogo, limites e reservas financeiras. A transição para `PRECHECKED` deverá ser controlada pelo pré-voo integrado e a aprovação dependerá da política efetiva. O caso `UNKNOWN` exige reconciliação externa antes de qualquer nova tentativa.
+- Nenhuma compra de aeronave/hub, implantação no servidor, alteração na `main` ou na PR #44 foi realizada. As flags `[investment]` permanecem desligadas por padrão. A reversão pode ser feita por `git revert` do commit desta entrega, após revisar dependências.
+
 ## 2026-11-22 — Autonomia Total, comparação global A4 inicial (G0)
 
 **Escopo:** comparação somente leitura de oportunidades de compra entre todos os hubs e variantes de motor pesquisados. Continuação da branch `codex/autonomia-a0-a1-20261122`.

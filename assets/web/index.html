@@ -835,6 +835,9 @@ const EN = {
   "Melhor cenário global comparado": "Top globally compared scenario",
   "Nenhum cenário global comparável.": "No globally comparable scenario.",
   "Conclusão do planejamento pendente.": "Planning conclusion pending.",
+  "Intenções de compra em aberto": "Open purchase intents",
+  "Exposição estimada no diário": "Estimated ledger exposure",
+  "Diário de investimentos indisponível.": "Investment ledger unavailable.",
   "Verificações pendentes": "Pending verifications", "Verificado em": "Verified at",
   "Nenhum cenário pesquisado para esta base.": "No researched scenario for this hub.",
   "Não foi possível consultar recomendações.": "Could not load recommendations.",
@@ -1780,6 +1783,13 @@ function renderHubRecommendations(report) {
     $("hubRecommendationsScope").textContent += " " + comparison +
       (report.portfolio.status === "inconclusivo"
         ? " " + tr("Conclusão do planejamento pendente.") : "");
+  }
+  if (report.investment_journal) {
+    const journal = report.investment_journal;
+    $("hubRecommendationsScope").textContent += journal.count === null
+      ? " " + tr("Diário de investimentos indisponível.")
+      : " " + tr("Intenções de compra em aberto") + ": " + journal.count +
+        " · " + tr("Exposição estimada no diário") + ": " + hubMoney(journal.estimated_exposure) + ".";
   }
   const labels = {viavel: "Recomendação disponível", saldo_insuficiente: "Saldo insuficiente",
     sem_lucro: "Sem lucro", rota_ocupada: "Rota ocupada", rota_indisponivel: "Rota indisponível",

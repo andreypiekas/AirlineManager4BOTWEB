@@ -23,6 +23,7 @@ import ipaddress
 import json
 import logging
 import os
+import sqlite3
 import socket
 import threading
 import urllib.request
@@ -43,6 +44,7 @@ from hub_expansion import HubExpansionRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy
+from investment_journal import InvestmentJournal
 from portfolio_planner import compare_portfolio
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
@@ -214,6 +216,18 @@ class WebDashboard:
                                    if investment_policy.enabled and investment_policy.max_single_investment > 0
                                    else None),
         )
+        try:
+            report["investment_journal"] = {
+                **InvestmentJournal().unresolved(),
+                "read_only": True, "execution_available": False,
+            }
+        except (OSError, sqlite3.Error):
+            # An unavailable ledger must not be mistaken for zero commitments.
+            report["investment_journal"] = {
+                "intents": [], "count": None, "estimated_exposure": None,
+                "read_only": True, "execution_available": False,
+                "blocking_reasons": ["diario_indisponivel"],
+            }
         return report
 
     def game_source_probe(self) -> tuple[int, dict]:
