@@ -76,22 +76,46 @@ class SimulatedHubGateway:
                 PRIMARY KEY (profile_id, intent_key))""")
 
     def read_checkout(self) -> dict:
-        return dict(self.checkout)
+        checkout = dict(self.checkout)
+        profile_id = checkout.get("profile_id")
+        hub_id = checkout.get("selected_hub_id")
+        if isinstance(profile_id, str) and profile_id and isinstance(hub_id, str) and hub_id:
+            with sqlite3.connect(self.ownership_store) as db:
+                owned = db.execute(
+                    "SELECT 1 FROM hub_outcomes "
+                    "WHERE profile_id=? AND hub_id=? AND status='owned' LIMIT 1",
+                    (profile_id, hub_id),
+                ).fetchone()
+            if owned is not None:
+                checkout["before_owned"] = True
+                checkout["can_purchase"] = False
+        return checkout
 
     def submit_order(self, intent: Mapping) -> None:
         if intent.get("profile_id") != self.checkout.get("profile_id"):
             raise ValueError("Pedido de outro perfil.")
+        if intent.get("hub_id") != self.checkout.get("selected_hub_id"):
+            raise ValueError("Pedido para hub diferente do checkout.")
         status = "refused" if self.outcome == "refused" else "owned"
         with sqlite3.connect(self.ownership_store) as db:
             db.execute("BEGIN IMMEDIATE")
             try:
+                existing = db.execute(
+                    "SELECT 1 FROM hub_outcomes "
+                    "WHERE profile_id=? AND hub_id=? AND status='owned' LIMIT 1",
+                    (intent["profile_id"], intent["hub_id"]),
+                ).fetchone()
+                if existing is not None:
+                    raise AssertionError("Tentativa de recompra do mesmo hub.")
                 db.execute(
                     "INSERT INTO hub_outcomes (profile_id, intent_key, hub_id, status) "
                     "VALUES (?, ?, ?, ?)",
                     (intent["profile_id"], intent["intent_key"], intent["hub_id"], status),
                 )
             except sqlite3.IntegrityError as exc:
-                raise AssertionError("Tentativa de recompra do mesmo hub.") from exc
+                raise AssertionError(
+                    "Tentativa de recompra do mesmo hub ou repetição da intenção."
+                ) from exc
         self.submit_calls += 1
         if self.outcome == "crash":
             raise SimulatedProcessCrash("Queda simulada após envio do hub.")

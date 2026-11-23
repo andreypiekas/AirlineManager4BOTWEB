@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A8, bloqueio de recompra de hub no simulador (G0)
+
+**Objetivo:** garantir que uma segunda intenção, outro processo ou uma retomada após falha não consiga registrar novamente a aquisição de um hub já reservado como adquirido no armazenamento simulado.
+
+### Implementação e evidências
+
+- **`src/hub_purchase.py`:** `SimulatedHubGateway.read_checkout()` consulta a posse persistida por perfil e ID do hub e força `before_owned=true` e `can_purchase=false` quando já existe aquisição registrada. `submit_order()` valida que o hub enviado corresponde ao checkout e, dentro de `BEGIN IMMEDIATE`, consulta a posse antes de inserir. A transação serializa intenções concorrentes que usem o mesmo armazenamento, inclusive quando possuem `intent_key` diferentes.
+- A proteção mantém o isolamento por perfil. Registros recusados continuam permitindo uma nova intenção, enquanto resultados confirmados, enviados com timeout ou interrompidos após o envio bloqueiam outra aquisição do mesmo hub.
+- **`tests/test_hub_purchase.py`:** novos cenários para intenção diferente após reinício, confirmação/timeout/crash, submissão direta, concorrência entre gateways, isolamento por perfil e nova tentativa após recusa.
+
+### Verificação, limites e reversão
+
+- Testes direcionados de hub, executor e diário de investimento aprovados. Suíte Windows completa aprovada com exclusão do teste de instalação Linux que depende de permissões POSIX. Ruff em `src` e `tests`, `compileall` e `git diff --check` aprovados.
+- **Gate G0.** A8 continua sem seletor ou executor de compra real homologado. Permanecem pendentes a evidência autenticada de preço e posse, controles comprovados do jogo, fluxo de confirmação independente e aprovação explícita de homologação. Nenhuma compra real é habilitada por esta entrega.
+- Sem alteração de configuração de produção, compra no jogo, implantação ou merge em `main`. Reversão por commit desta entrega após verificar as dependências.
+
 ## 2026-11-23 — Autonomia Total A1/A2/A3/A7/A9, validações conservadoras e diagnóstico de histórico (G0)
 
 **Objetivo:** fortalecer a consistência de escolhas e registros de investimento e disponibilizar uma sondagem manual, somente leitura, da estrutura do histórico de voos. Entrega incremental vinculada a `docs/ROADMAP_AUTONOMIA_TOTAL.md`.

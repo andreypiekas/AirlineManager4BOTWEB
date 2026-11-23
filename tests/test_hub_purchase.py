@@ -2,6 +2,7 @@
 
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -164,3 +165,101 @@ def test_reserve_and_wrong_profile_cannot_submit(tmp_path):
     result = executor.run(_plan(), gateway, approved=True)
     assert result["state"] == "APPROVED"
     assert gateway.submit_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_first_state"),
+    [("confirmed", "CONFIRMED"), ("timeout", "UNKNOWN"), ("crash", "SUBMITTED")],
+)
+def test_different_intent_cannot_repurchase_owned_hub_after_restart(
+    tmp_path, outcome, expected_first_state
+):
+    _, first_executor, gateway = _env(tmp_path, outcome=outcome)
+    first = first_executor.run(_plan(), gateway, approved=True)
+    assert first["state"] == expected_first_state
+
+    second_gateway = SimulatedHubGateway(
+        _checkout(), ownership_store=tmp_path / "owned.sqlite3"
+    )
+    second_plan = {**_plan(), "plan_id": "hub-proposal-2"}
+    checkout = second_gateway.read_checkout()
+    assert checkout["before_owned"] is True
+    assert checkout["can_purchase"] is False
+
+    second_journal = InvestmentJournal(
+        tmp_path / "second-journal.sqlite3", profile_id="main", simulation=True
+    )
+    second_executor = SimulatedHubExecutor(second_journal, _policy())
+    second = second_executor.run(second_plan, second_gateway, approved=True)
+    assert second["state"] == "APPROVED"
+    assert "hub_ja_adquirido_ou_indisponivel" in second["reasons"]
+    assert second_gateway.submit_calls == 0
+
+    with pytest.raises(AssertionError, match="recompra"):
+        second_gateway.submit_order({
+            "profile_id": "main",
+            "intent_key": "different-intent-key",
+            "hub_id": "123",
+        })
+    assert second_gateway.submit_calls == 0
+
+
+def test_refused_hub_does_not_mark_ownership_for_another_intent(tmp_path):
+    _, _, gateway = _env(tmp_path, outcome="refused")
+    gateway.submit_order({
+        "profile_id": "main", "intent_key": "refused-intent", "hub_id": "123"
+    })
+
+    retry_gateway = SimulatedHubGateway(
+        _checkout(), ownership_store=tmp_path / "owned.sqlite3"
+    )
+    checkout = retry_gateway.read_checkout()
+    assert checkout["before_owned"] is False
+    assert checkout["can_purchase"] is True
+    retry_gateway.submit_order({
+        "profile_id": "main", "intent_key": "retry-intent", "hub_id": "123"
+    })
+    assert retry_gateway.submit_calls == 1
+
+
+def test_hub_ownership_is_isolated_by_profile(tmp_path):
+    _, _, main_gateway = _env(tmp_path)
+    main_gateway.submit_order({
+        "profile_id": "main", "intent_key": "main-intent", "hub_id": "123"
+    })
+
+    other_checkout = {**_checkout(), "profile_id": "other"}
+    other_gateway = SimulatedHubGateway(
+        other_checkout, ownership_store=tmp_path / "owned.sqlite3"
+    )
+    assert other_gateway.read_checkout()["before_owned"] is False
+    other_gateway.submit_order({
+        "profile_id": "other", "intent_key": "other-intent", "hub_id": "123"
+    })
+    assert other_gateway.submit_calls == 1
+
+
+def test_concurrent_intents_cannot_acquire_same_hub_twice(tmp_path):
+    ownership_store = tmp_path / "owned.sqlite3"
+    gateways = [
+        SimulatedHubGateway(_checkout(), ownership_store=ownership_store)
+        for _ in range(2)
+    ]
+    intents = [
+        {"profile_id": "main", "intent_key": f"intent-{index}", "hub_id": "123"}
+        for index in range(2)
+    ]
+
+    def submit(gateway, intent):
+        try:
+            gateway.submit_order(intent)
+        except AssertionError:
+            return "duplicate"
+        return "submitted"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(submit, gateways, intents))
+
+    assert results.count("submitted") == 1
+    assert results.count("duplicate") == 1
+    assert sum(gateway.submit_calls for gateway in gateways) == 1
