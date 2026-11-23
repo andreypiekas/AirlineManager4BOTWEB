@@ -202,8 +202,17 @@ def rank_next_aircraft(
         missing = []
         if not inventory_fresh:
             missing.append("inventario_hubs_desatualizado")
-        if not (scenario.get("source") == "game_research"
+        if (scenario.get("source") == "derived_research_queue"
                 and _recent(scenario.get("observed_at"), now, MAX_AGE_SECONDS)):
+            # Independent observed inputs are useful research tasks, but
+            # cannot certify remaining demand, route fees or profitability.
+            missing.append("pesquisa_complementar_a_confirmar")
+            pending_inputs = scenario.get("research_pending")
+            if isinstance(pending_inputs, list):
+                missing.extend(reason for reason in pending_inputs
+                               if isinstance(reason, str))
+        elif not (scenario.get("source") == "game_research"
+                  and _recent(scenario.get("observed_at"), now, MAX_AGE_SECONDS)):
             missing.append("pesquisa_desatualizada")
         if not (financial.get("source") in _FINANCIAL_SOURCES
                 and _recent(financial.get("observed_at"), now, MAX_AGE_SECONDS)
@@ -306,6 +315,7 @@ def rank_next_aircraft(
         candidate = {
             "hub_id": hub_id, "hub_code": hub["code"], "hub_name": hub["name"],
             "model": aircraft_model, "engine_id": engine_id, "engine_label": engine_label,
+            "research_source": scenario.get("source"),
             "route_key": key,
             "origin": origin, "destination": destination,
             "observed_at": _number(scenario.get("observed_at")),
@@ -316,6 +326,9 @@ def rank_next_aircraft(
             "status": status, "pending": sorted(set(missing)),
             "financial_source": financial.get("source"), "costs_source": costs.get("source"),
         }
+        if scenario.get("source") == "derived_research_queue":
+            candidate["observed_demand"] = scenario.get("observed_demand")
+            candidate["research_evidence"] = scenario.get("research_evidence")
         candidates.append(candidate)
         if key and aircraft_model:
             identity = (hub_id, aircraft_model.casefold(), key, engine_id)

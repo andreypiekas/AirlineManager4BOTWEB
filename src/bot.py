@@ -621,6 +621,11 @@ class Bot:
             self._guard(lambda: collect_aircraft_engine_catalog(
                 self, per_cycle=max(1, min(10, self.config.get_int("settings", "engine_models_per_cycle", 2)))),
                 "pesquisar motores de aeronaves")
+        if opt("collect_market_observations") or opt("collect_engine_catalog"):
+            from owned_hub_research_ingestion import ingest_owned_hub_research_inputs
+
+            self._guard(ingest_owned_hub_research_inputs,
+                        "consolidar pesquisas pendentes de hubs e aeronaves")
         if opt("auto_depart"):
             self._guard(self._depart_all, "decolar aeronaves")
         else:

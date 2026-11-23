@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A3/A7, ingestão persistente da pesquisa dos hubs próprios (G0)
+
+**Objetivo:** conectar as observações já coletadas no ciclo do bot à análise da próxima aeronave, mantendo a distinção entre dados brutos para pesquisa e cenário comprovado de compra.
+
+### Implementação e evidências
+
+- **`src/owned_hub_research_ingestion.py`:** novo registro por perfil agrega páginas de `hub × rota × modelo × variante de motor` produzidas a partir de hubs próprios, demanda observada, cache de modelos e catálogo de motores. Preserva fonte, horários, evidências e pendências, com limite de armazenamento, atualização idempotente, retomada do cursor e expiração individual de cada origem de evidência.
+- O cursor persistido passa a carregar o fingerprint da pesquisa. Alterações na evidência entre ciclos reiniciam a paginação com segurança e impedem saltos silenciosos. Arquivos legados sem fingerprint reiniciam a varredura na primeira página ao detectar diferença. Contradições de mesmo horário ficam identificadas como pesquisas conflitantes até observação posterior.
+- **`src/bot.py`:** ingestão acontece no ciclo regular após os coletores de demanda ou motores, quando as respectivas opções estão habilitadas, usando somente caches previamente observados. A ingestão não navega no jogo e não submete compras.
+- **`src/hub_recommendations.py` e `src/web.py`:** `GET /api/hubs/recommendations` combina pesquisas verificadas com registros pendentes sem duplicar uma mesma combinação comprovada. Expõe fonte, demanda bruta, evidência, contagem de entradas e pendências. Pesquisas derivadas permanecem com `demand_remaining=null`, `financial={}`, `costs={}` e bloqueio `pesquisa_complementar_a_confirmar`.
+- **`tests/test_owned_hub_research_ingestion.py`:** cobre isolamento de perfis, idempotência, validade temporal de provas independentes, conflitos, prioridade da pesquisa verificada, atualização do fingerprint, retomada e compatibilidade com cache legado.
+
+### Validação e limites
+
+- Testes direcionados de ingestão, feed e ranking aprovados, totalizando 87 testes. Ruff (`src`, `tests`), compilação Python e `git diff --check` passaram. A suíte geral Windows foi executada separadamente.
+- **Gate G0 com fixtures simuladas.** Ainda faltam coleta autenticada e comprovação de demanda residual, custos totais, preço final de motor, disponibilidade de rota e cobertura conclusiva dos hubs. A2–A9 e gates G1–G5 permanecem pendentes. Nenhuma pesquisa derivada autoriza compra.
+- Nenhuma aquisição no jogo, mensagem Telegram, implantação no servidor ou merge na `main`. A PR #44 segue separada.
+
 ## 2026-11-23 — Autonomia Total A2/A6, consistência de pesquisa externa e horários (G0)
 
 **Objetivo:** impedir que amostras atrasadas ou contraditórias de rota/modelo/motor autorizem uma sugestão de expansão e preservar a precisão temporal dos dados no gate A6.

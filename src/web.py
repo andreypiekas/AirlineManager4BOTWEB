@@ -43,6 +43,7 @@ from hub_registry import HubRegistry
 from hub_expansion import HubExpansionRegistry
 from engine_catalog import EngineCatalogRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
+from owned_hub_research_ingestion import OwnedHubResearchInputsRegistry
 from owned_hub_research_feed import build_owned_hub_research_queue
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy, MODES
@@ -220,14 +221,21 @@ class WebDashboard:
         routes = self.routes()
         cash, observed_at = recent_verified_money(self.bot, load_state())
         inventory = HubRegistry().snapshot(routes)
+        verified_scenarios = HubAircraftResearchRegistry().snapshot()
+        pending_inputs = OwnedHubResearchInputsRegistry().snapshot(verified=verified_scenarios)
         report = rank_next_aircraft(
             inventory,
-            HubAircraftResearchRegistry().snapshot(),
+            [*verified_scenarios, *pending_inputs],
             route_report=routes,
             cash=cash,
             cash_observed_at=observed_at,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
         )
+        report["research_ingestion"] = {
+            "saved_verified_scenarios": len(verified_scenarios),
+            "saved_pending_inputs": len(pending_inputs),
+            "coverage": "partial", "read_only": True,
+        }
         owned_ids = {hub["id"] for hub in inventory.get("hubs", [])
                      if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
         demand_snapshot = HubExpansionRegistry().demand_research_snapshot(owned_ids)
