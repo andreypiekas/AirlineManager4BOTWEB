@@ -214,7 +214,8 @@ class WebDashboard:
         )
         return report
 
-    def hub_recommendations(self) -> dict:
+    def hub_recommendations(self, *, research_offset: int = 0,
+                            research_fingerprint: str | None = None) -> dict:
         """Rank proven research for owned hubs using independent cached reads."""
         routes = self.routes()
         cash, observed_at = recent_verified_money(self.bot, load_state())
@@ -234,6 +235,8 @@ class WebDashboard:
             HubExpansionRegistry().demand_observations(owned_ids),
             load_market_evidence(),
             engines=EngineCatalogRegistry().snapshot(),
+            offset=research_offset,
+            expected_fingerprint=research_fingerprint,
         )
         investment_policy = InvestmentPolicy.from_config(self.cfg)
         report["investment_policy"] = investment_policy.report()
@@ -558,6 +561,15 @@ class WebDashboard:
                 if url.path == "/api/hubs/expansion":
                     return self._json(dashboard.hub_expansion())
                 if url.path == "/api/hubs/recommendations":
+                    params = parse_qs(url.query)
+                    raw_offset = params.get("research_offset", ["0"])[0]
+                    research_offset = (int(raw_offset) if raw_offset.isdecimal()
+                                       and len(raw_offset) <= 9 else 0)
+                    if research_offset:
+                        return self._json(dashboard.hub_recommendations(
+                            research_offset=research_offset,
+                            research_fingerprint=params.get("research_snapshot", [None])[0],
+                        ))
                     return self._json(dashboard.hub_recommendations())
                 self._send(HTTPStatus.NOT_FOUND, b"Not found", "text/plain")
 

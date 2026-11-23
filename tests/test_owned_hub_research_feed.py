@@ -128,6 +128,101 @@ def test_research_queue_schedules_distinct_engine_variants_across_owned_hubs():
             assert "motor_indisponivel" in row["pending"]
 
 
+@pytest.mark.parametrize("page_size", [1, 2, 3, 4, 7])
+def test_research_pages_cover_all_candidates_in_hub_balanced_order(page_size):
+    samples = [_sample("2926", str(destination)) for destination in range(3139, 3143)]
+    samples.append(_sample("2941", "3250"))
+    inventory = _inventory()
+    market = _market()
+    engines = _engines()
+    complete = build_owned_hub_research_queue(
+        inventory, samples, market, engines=engines, now=NOW, max_items=200,
+    )
+    assert complete["total_candidates"] == 15  # 5 routes × (2 engines + 1 model)
+    assert [item["hub_id"] for item in complete["items"][:6]] == [
+        "2926", "2941", "2926", "2941", "2926", "2941",
+    ]
+    assert all(item["purchase_eligible"] is False for item in complete["items"])
+
+    seen = []
+    offset = 0
+    fingerprint = None
+    while True:
+        page = build_owned_hub_research_queue(
+            inventory, samples, market, engines=engines, now=NOW,
+            offset=offset, expected_fingerprint=fingerprint, max_items=page_size,
+        )
+        assert page["offset"] == offset
+        assert page["page_size"] == page_size
+        assert page["total_candidates"] == 15
+        assert page["cursor_reset"] is False
+        assert page["snapshot_fingerprint"] == complete["snapshot_fingerprint"]
+        assert 0 < len(page["items"]) <= page_size
+        seen.extend(page["items"])
+        assert page["has_more"] == (len(seen) < 15)
+        if not page["has_more"]:
+            assert page["next_offset"] is None
+            break
+        offset = page["next_offset"]
+        fingerprint = page["snapshot_fingerprint"]
+        assert offset == len(seen)
+
+    assert seen == complete["items"]
+    assert len({(item["hub_id"], item["destination_id"], item["model_id"],
+                 item["engine_id"]) for item in seen}) == 15
+
+
+def test_research_cursor_invalidates_changed_or_shrunk_snapshots():
+    samples = [_sample(), _sample("2941", "3140")]
+    first = build_owned_hub_research_queue(
+        _inventory(), samples, _market(), now=NOW, max_items=1,
+    )
+    assert first["next_offset"] == 1
+    next_page = build_owned_hub_research_queue(
+        _inventory(), samples[::-1], _market(), now=NOW, max_items=1,
+        offset=1, expected_fingerprint=first["snapshot_fingerprint"],
+    )
+    assert next_page["offset"] == 1
+    assert next_page["cursor_reset"] is False
+
+    changed = deepcopy(samples)
+    changed[0]["y"] = 300
+    refreshed = build_owned_hub_research_queue(
+        _inventory(), changed, _market(), now=NOW, max_items=1,
+        offset=1, expected_fingerprint=first["snapshot_fingerprint"],
+    )
+    assert refreshed["cursor_reset"] is True
+    assert refreshed["offset"] == 0
+    assert refreshed["items"][0]["observed_demand"]["y"] == 300
+    assert refreshed["snapshot_fingerprint"] != first["snapshot_fingerprint"]
+
+    for offset in (-1, "1", True):
+        invalid = build_owned_hub_research_queue(
+            _inventory(), samples, _market(), now=NOW, offset=offset,
+            expected_fingerprint=first["snapshot_fingerprint"],
+        )
+        assert invalid["offset"] == 0
+    after_shrink = build_owned_hub_research_queue(
+        _inventory(), [_sample()], _market(), now=NOW, max_items=1,
+        offset=3, expected_fingerprint=first["snapshot_fingerprint"],
+    )
+    assert after_shrink["offset"] == 0
+    assert after_shrink["cursor_reset"] is True
+
+
+def test_research_paging_returns_no_candidates_for_stale_inventory():
+    report = build_owned_hub_research_queue(
+        _inventory(observed_at=NOW - 4 * 86400), [_sample()], _market(),
+        now=NOW, offset=3, expected_fingerprint="outdated", max_items=2,
+    )
+    assert report["items"] == []
+    assert report["total_candidates"] == 0
+    assert report["next_offset"] is None
+    assert report["has_more"] is False
+    assert report["cursor_reset"] is True
+    assert report["purchase_eligible"] is False
+
+
 def test_fractional_engine_read_timestamp_is_accepted_without_promoting_purchase():
     engines = _engines(observed_at=NOW - 0.375)
     result = build_owned_hub_research_queue(

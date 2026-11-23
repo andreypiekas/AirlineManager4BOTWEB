@@ -295,7 +295,7 @@ def test_recommendations_endpoint_is_authenticated_read_only():
 
     html = (ROOT / "assets/web/index.html").read_text(encoding="utf-8")
     source = (ROOT / "src/web.py").read_text(encoding="utf-8")
-    assert 'api("/api/hubs/recommendations")' in html
+    assert 'api("/api/hubs/recommendations" + query)' in html
     assert 'url.path == "/api/hubs/recommendations"' in source
     assert 'elif path == "/api/hubs/recommendations"' not in source
     assert 'id="hubRecommendationsGrid"' in html

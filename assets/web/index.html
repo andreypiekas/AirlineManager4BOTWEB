@@ -734,6 +734,10 @@ footer strong { font-weight: 600; color: var(--aqua); }
           <ul id="hubResearchPolicyReasons" class="hub-research-reasons hub-policy-reasons" aria-label="Bloqueios da política de investimento" data-t-aria-label="Bloqueios da política de investimento"></ul>
           <ul id="hubResearchCoverageList" class="hub-research-coverage" aria-label="Cobertura das pesquisas por hub" data-t-aria-label="Cobertura das pesquisas por hub"></ul>
           <ul id="hubResearchQueueList" class="hub-aircraft-list" aria-label="Cenários aguardando pesquisa" data-t-aria-label="Cenários aguardando pesquisa"></ul>
+          <div class="hubs-controls">
+            <button id="hubResearchPrev" type="button" data-t="Pesquisas anteriores" disabled>Pesquisas anteriores</button>
+            <button id="hubResearchNext" type="button" data-t="Próximas pesquisas" disabled>Próximas pesquisas</button>
+          </div>
         </details>
       </div>
       <div class="hub-card hub-subsection">
@@ -955,6 +959,9 @@ const EN = {
   "Pesquisa ainda pendente": "Research pending",
   "Indisponível": "Unavailable",
   "Mais possibilidades aguardam pesquisa.": "Additional possibilities await research.",
+  "Pesquisas anteriores": "Previous research tasks",
+  "Próximas pesquisas": "Next research tasks",
+  "Possibilidades": "Possibilities",
   "Identidade do modelo": "Model identity", "Confirmada no detalhe do jogo": "Verified in game model details",
   "Não comprovada no detalhe do jogo": "Not verified in game model details",
   "Detalhe do modelo não observado": "Model details not observed",
@@ -1661,6 +1668,9 @@ let hubsLoading = false;
 let hubInventoryReport = null;
 let hubExpansionReport = null;
 let hubRecommendationsReport = null;
+let researchPageOffset = 0;
+let researchPageFingerprint = null;
+let researchRequestSequence = 0;
 let investmentPolicyVersion = null;
 window.addEventListener("hashchange", activateWorkspaceFromHash);
 activateWorkspaceFromHash();
@@ -2094,12 +2104,19 @@ function renderHubRecommendations(report) {
   const researchBlockers = Array.isArray(researchQueue.blocking_reasons) ? researchQueue.blocking_reasons : [];
   const conflictedRoutes = Number.isSafeInteger(researchQueue.conflicted_routes)
     && researchQueue.conflicted_routes > 0 ? researchQueue.conflicted_routes : 0;
+  const paged = Number.isSafeInteger(researchQueue.total_candidates)
+    && Number.isSafeInteger(researchQueue.offset) && Number.isSafeInteger(researchQueue.page_size);
   $("hubResearchQueueStatus").textContent =
     tr("Pesquisas sugeridas") + ": " + researchItems.length +
     " · " + tr("Hubs com amostras") + ": " + (researchQueue.sampled_hubs || 0) +
     " · " + tr("Rotas observadas") + ": " + (researchQueue.sampled_routes || 0) +
     (conflictedRoutes ? " · " + tr("Rotas com amostras conflitantes") + ": " + conflictedRoutes : "") +
-    " · " + tr("Cobertura parcial");
+    " · " + tr("Cobertura parcial") +
+    (paged ? " · " + tr("Possibilidades") + ": " + nf.format(researchQueue.total_candidates) +
+      " (" + nf.format(researchQueue.offset + (researchItems.length ? 1 : 0)) +
+      "–" + nf.format(researchQueue.offset + researchItems.length) + ")" : "");
+  $("hubResearchPrev").disabled = !paged || researchQueue.offset <= 0;
+  $("hubResearchNext").disabled = !paged || researchQueue.next_offset == null;
   $("hubResearchPolicyStatus").textContent = tr("Somente análise. Nenhuma compra autorizada.") +
     (report.investment_policy?.execution_available === false
       ? " · " + tr("Execução de investimento bloqueada") : "");
@@ -2465,21 +2482,47 @@ $("investmentStop").addEventListener("click", async () => {
   }
 });
 async function loadHubRecommendations() {
+  const requestSequence = ++researchRequestSequence;
+  $("hubResearchPrev").disabled = true;
+  $("hubResearchNext").disabled = true;
   try {
-    const report = await api("/api/hubs/recommendations");
+    const query = researchPageOffset > 0 && researchPageFingerprint
+      ? "?research_offset=" + researchPageOffset +
+        "&research_snapshot=" + encodeURIComponent(researchPageFingerprint) : "";
+    const report = await api("/api/hubs/recommendations" + query);
+    if (requestSequence !== researchRequestSequence) { return; }
     if (!report || !Array.isArray(report.hubs) || !Array.isArray(report.candidates)) {
       throw new Error("Invalid recommendations response");
     }
     hubRecommendationsReport = report;
+    const page = report.research_queue || {};
+    researchPageOffset = Number.isSafeInteger(page.offset) ? page.offset : 0;
+    researchPageFingerprint = typeof page.snapshot_fingerprint === "string"
+      ? page.snapshot_fingerprint : null;
     renderHubRecommendations(report);
   } catch (_) {
+    if (requestSequence !== researchRequestSequence) { return; }
     hubRecommendationsReport = null;
     $("hubRecommendationsStatus").textContent = tr("Não foi possível consultar recomendações.");
     $("hubRecommendationsScope").textContent = "";
     $("hubRecommendationsCount").textContent = "";
     $("hubRecommendationsGrid").replaceChildren();
+    $("hubResearchPrev").disabled = true;
+    $("hubResearchNext").disabled = true;
   }
 }
+$("hubResearchPrev").addEventListener("click", () => {
+  const page = hubRecommendationsReport?.research_queue;
+  if (!page || !Number.isSafeInteger(page.offset) || page.offset <= 0) { return; }
+  researchPageOffset = Math.max(0, page.offset - page.page_size);
+  loadHubRecommendations();
+});
+$("hubResearchNext").addEventListener("click", () => {
+  const page = hubRecommendationsReport?.research_queue;
+  if (!page || !Number.isSafeInteger(page.next_offset)) { return; }
+  researchPageOffset = page.next_offset;
+  loadHubRecommendations();
+});
 for (const id of ["hubRecommendationModel", "hubRecommendationSort"]) {
   $(id).addEventListener("change", () => {
     if (hubRecommendationsReport) { renderHubRecommendations(hubRecommendationsReport); }

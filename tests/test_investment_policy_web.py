@@ -77,6 +77,41 @@ def auth():
     return {"X-Token": TOKEN, "X-AM4": "1"}
 
 
+def test_hub_research_pagination_endpoint_requires_auth_and_passes_cursor(tmp_path, monkeypatch):
+    requests = []
+
+    def recommendations(_dashboard, *, research_offset=0, research_fingerprint=None):
+        requests.append((research_offset, research_fingerprint))
+        return {"hubs": [], "candidates": [], "research_queue": {
+            "items": [], "read_only": True, "offset": research_offset,
+            "snapshot_fingerprint": "read-only-evidence", "purchase_eligible": False,
+        }}
+
+    monkeypatch.setattr(WebDashboard, "hub_recommendations", recommendations)
+    with served(tmp_path) as (port, _config):
+        denied, _ = request(port, "GET", "/api/hubs/recommendations?research_offset=4")
+        assert denied == 403
+        assert requests == []
+
+        status, base = request(port, "GET", "/api/hubs/recommendations", headers=auth())
+        assert status == 200 and base["research_queue"]["offset"] == 0
+        status, paged = request(port, "GET",
+                               "/api/hubs/recommendations?research_offset=4&research_snapshot=abc123",
+                               headers=auth())
+        assert status == 200 and paged["research_queue"]["offset"] == 4
+        assert paged["research_queue"]["purchase_eligible"] is False
+        assert requests == [(0, None), (4, "abc123")]
+
+        for invalid in ("-1", "1.5", "999999999999", "abc"):
+            status, result = request(
+                port, "GET", f"/api/hubs/recommendations?research_offset={invalid}",
+                headers=auth(),
+            )
+            assert status == 200
+            assert result["research_queue"]["offset"] == 0
+        assert requests[2:] == [(0, None)] * 4
+
+
 def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_path, monkeypatch):
     from investment_journal import InvestmentJournal
 

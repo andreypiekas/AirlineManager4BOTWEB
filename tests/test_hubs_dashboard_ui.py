@@ -112,6 +112,10 @@ def test_hubs_filters_and_sort_controls_are_labeled_and_target_the_grids():
     assert 'id="hubResearchPolicyStatus"' in html
     assert 'id="hubResearchPolicyReasons"' in html
     assert 'id="hubResearchQueueList"' in html
+    assert 'id="hubResearchPrev" type="button"' in html
+    assert 'id="hubResearchNext" type="button"' in html
+    assert '"Pesquisas anteriores": "Previous research tasks"' in html
+    assert '"Próximas pesquisas": "Next research tasks"' in html
     assert 'data-t-aria-label="Bloqueios da política de investimento"' in html
     assert 'data-t-aria-label="Cenários aguardando pesquisa"' in html
     assert 'grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr))' in html
@@ -282,6 +286,7 @@ const translations = {
   'Nenhum cenário global comparável.': 'No globally comparable scenario.',
   'Saldo a confirmar.': 'Cash balance pending verification.',
   'Pesquisas sugeridas': 'Suggested research tasks',
+  'Possibilidades': 'Possibilities',
   'Hubs com amostras': 'Hubs with samples',
   'Pesquisa de rota iniciada': 'Route research started',
   'Sem pesquisa de rota': 'No route research',
@@ -372,6 +377,24 @@ $('hubRecommendationSort').value = 'profit';
 renderHubRecommendations(report);
 assert.equal($('hubResearchQueueStatus').textContent,
   'Suggested research tasks: 1 · Hubs with samples: 1 · Observed routes: 2 · Partial coverage');
+assert.equal($('hubResearchPrev').disabled, true);
+assert.equal($('hubResearchNext').disabled, true);
+Object.assign(report.research_queue, {
+  total_candidates:9, offset:4, page_size:2, next_offset:6
+});
+renderHubRecommendations(report);
+assert.equal($('hubResearchQueueStatus').textContent,
+  'Suggested research tasks: 1 · Hubs with samples: 1 · Observed routes: 2 · Partial coverage · Possibilities: 9 (5–5)');
+assert.equal($('hubResearchPrev').disabled, false);
+assert.equal($('hubResearchNext').disabled, false);
+report.research_queue.next_offset = null;
+renderHubRecommendations(report);
+assert.equal($('hubResearchNext').disabled, true);
+delete report.research_queue.total_candidates;
+delete report.research_queue.offset;
+delete report.research_queue.page_size;
+delete report.research_queue.next_offset;
+renderHubRecommendations(report);
 assert.equal($('hubResearchPolicyStatus').textContent,
   'Read-only analysis. No purchase authorized. · Investment execution blocked');
 assert.deepEqual($('hubResearchPolicyReasons').children.map(reason => reason.textContent),
@@ -502,6 +525,86 @@ assert.equal($('hubRecommendationsCount').textContent, 'Recommendations shown: 0
     result = subprocess.run(
         ["node", str(test_script)],
         capture_output=True, text=True, check=False, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not available")
+def test_research_pagination_disregards_out_of_order_http_responses(tmp_path):
+    script = "\n".join(_page().scripts)
+    loader = script[script.index("async function loadHubRecommendations()"):script.index(
+        'for (const id of ["hubRecommendationModel", "hubRecommendationSort"])'
+    )]
+    assertions = r"""
+const assert = require('node:assert/strict');
+let researchPageOffset = 0;
+let researchPageFingerprint = null;
+let researchRequestSequence = 0;
+let hubRecommendationsReport = null;
+const nodes = new Map();
+const $ = id => {
+  if (!nodes.has(id)) {
+    nodes.set(id, {disabled:false, textContent:'', events:{},
+      addEventListener(name, handler) { this.events[name] = handler; },
+      replaceChildren() { this.textContent = ''; }});
+  }
+  return nodes.get(id);
+};
+const calls = [];
+const api = path => new Promise((resolve, reject) => calls.push({path, resolve, reject}));
+const renders = [];
+const renderHubRecommendations = report => {
+  renders.push(report);
+  $('hubResearchPrev').disabled = !report.research_queue.offset;
+  $('hubResearchNext').disabled = report.research_queue.next_offset == null;
+};
+const tr = text => text;
+""" + loader + r"""
+const report = (offset, next_offset) => ({
+  hubs:[], candidates:[], research_queue: {
+    offset, next_offset, page_size:2, total_candidates:5,
+    snapshot_fingerprint:'snapshot-a', items:[]
+  }
+});
+async function run() {
+  const initial = loadHubRecommendations();
+  assert.equal(calls[0].path, '/api/hubs/recommendations');
+  calls[0].resolve(report(0, 2));
+  await initial;
+  assert.equal($('hubResearchNext').disabled, false);
+
+  $('hubResearchNext').events.click();
+  assert.equal(calls[1].path,
+    '/api/hubs/recommendations?research_offset=2&research_snapshot=snapshot-a');
+  assert.equal($('hubResearchNext').disabled, true);
+  const latest = loadHubRecommendations();
+  calls[2].resolve(report(2, 4));
+  await latest;
+  calls[1].resolve(report(0, 2));
+  await Promise.resolve();
+  assert.equal(renders.length, 2);
+  assert.equal(hubRecommendationsReport.research_queue.offset, 2);
+  assert.equal(researchPageOffset, 2);
+  assert.equal($('hubResearchPrev').disabled, false);
+
+  $('hubResearchNext').events.click();
+  assert.equal(calls[3].path,
+    '/api/hubs/recommendations?research_offset=4&research_snapshot=snapshot-a');
+  const refresh = loadHubRecommendations();
+  calls[4].resolve(report(0, 2)); // Evidence changed; server reset the cursor.
+  await refresh;
+  calls[3].reject(new Error('stale failure'));
+  await Promise.resolve();
+  assert.equal(hubRecommendationsReport.research_queue.offset, 0);
+  assert.equal(researchPageOffset, 0);
+  assert.equal(renders.length, 3);
+}
+run().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    filename = tmp_path / "research_pagination.js"
+    filename.write_text(assertions, encoding="utf-8")
+    result = subprocess.run(
+        ["node", str(filename)], capture_output=True, text=True, check=False, timeout=15,
     )
     assert result.returncode == 0, result.stderr
 

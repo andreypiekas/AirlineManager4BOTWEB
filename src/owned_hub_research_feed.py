@@ -6,11 +6,12 @@ promote an estimate into HubAircraftResearchRegistry.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 import time
-from collections import defaultdict, deque
-from itertools import product
+from collections import defaultdict
 from typing import Optional
 
 
@@ -135,6 +136,7 @@ def _engine_variants(engines: dict, model: dict, now: int) -> tuple[list[dict], 
 def build_owned_hub_research_queue(
     inventory: dict, route_samples: list[dict], market: dict, *,
     now: Optional[int] = None, max_items: int = 40, engines: Optional[dict] = None,
+    offset: int = 0, expected_fingerprint: Optional[str] = None,
 ) -> dict:
     """Produce bounded, balanced per-hub tasks from independent cached reads.
 
@@ -211,70 +213,113 @@ def build_owned_hub_research_queue(
     if not samples_by_hub:
         blockers.append("demanda_dos_hubs_a_pesquisar")
 
+    # Every page is tied to the same normalized evidence. A refresh between
+    # requests invalidates the cursor instead of silently skipping candidates.
+    model_options = []
+    for model in models:
+        variants, engine_evidence = _engine_variants(engines, model, now)
+        model_options.extend((model, variant, engine_evidence)
+                             for variant in (variants or [None]))
+    ordered_hubs = sorted(samples_by_hub, key=int)
+    lengths = {hub_id: len(samples_by_hub[hub_id]) * len(model_options)
+               for hub_id in ordered_hubs}
+    total_candidates = sum(lengths.values()) if not blockers else 0
+    fingerprint_data = {
+        "hubs": hubs, "inventory_source": inventory.get("source"),
+        "inventory_observed_at": inventory.get("observed_at"),
+        "market_source": market.get("source"),
+        "market_observed_at": market.get("observed_at"),
+        "blockers": blockers, "models": models,
+        "options": model_options, "routes": dict(samples_by_hub),
+        "conflicts": dict(conflicts_by_hub),
+    }
+    fingerprint = hashlib.sha256(json.dumps(
+        fingerprint_data, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()[:24]
+    requested_offset = offset if type(offset) is int and offset > 0 else 0
+    cursor_reset = requested_offset > 0 and (
+        expected_fingerprint != fingerprint or requested_offset >= total_candidates
+    )
+    offset = requested_offset
+    if cursor_reset:
+        offset = 0
+
     queue = []
     if not blockers:
-        def tasks(hub_id):
-            for sample, model in product(samples_by_hub[hub_id], models):
-                variants, engine_evidence = _engine_variants(engines, model, now)
-                for variant in variants or [None]:
-                    yield sample, model, variant, engine_evidence
+        # Find the round-robin round containing the requested offset without
+        # generating the potentially large prefix of earlier research tasks.
+        low, high = 0, max(lengths.values())
+        while low < high:
+            middle = (low + high + 1) // 2
+            before = sum(min(middle, length) for length in lengths.values())
+            if before <= offset:
+                low = middle
+            else:
+                high = middle - 1
+        round_index = low
+        skipped_in_round = offset - sum(min(low, length) for length in lengths.values())
+        while round_index < max(lengths.values()) and len(queue) < max_items:
+            for hub_id in ordered_hubs:
+                if round_index >= lengths[hub_id]:
+                    continue
+                if skipped_in_round:
+                    skipped_in_round -= 1
+                    continue
+                sample_index, model_index = divmod(round_index, len(model_options))
+                sample = samples_by_hub[hub_id][sample_index]
+                model, variant, engine_evidence = model_options[model_index]
+                if len(queue) >= max_items:
+                    break
+                pending = [item for item in _RESEARCH_PENDING
+                           if item != "motor_a_pesquisar" or variant is None]
+                # Direct range does not rule out a route with a legal stopover.
+                # Keep the combination in the research queue until both legs,
+                # stopover runway and the game's actual rules are verified.
+                if (model["range_km"] is not None
+                        and model["range_km"] < sample["distance_km"]):
+                    pending.append("escala_e_trechos_a_confirmar")
+                if variant is not None:
+                    if not variant["engine_available"]:
+                        pending.append("motor_indisponivel")
+                    if not engine_evidence["model_detail_identity_verified"]:
+                        pending.append("identidade_modelo_detalhe_a_confirmar")
+                if model["range_km"] is None:
+                    pending.append("alcance_modelo_a_confirmar")
+                if model["capacity"] is None:
+                    pending.append("capacidade_modelo_a_confirmar")
+                queue.append({
+                    "hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
+                    "destination_id": sample["destination_id"],
+                    "distance_km": sample["distance_km"],
+                    "direct_range_sufficient": (model["range_km"] >= sample["distance_km"]
+                                                if model["range_km"] is not None else None),
+                    "observed_demand": sample["demand"],
+                    "model_id": model["id"], "model": model["name"],
+                    "range_km": model["range_km"], "capacity": model["capacity"],
+                    "catalog_price": model["catalog_price"],
+                    "engine_id": variant["engine_id"] if variant else None,
+                    "engine_label": variant["engine_label"] if variant else None,
+                    "engine_available": variant["engine_available"] if variant else None,
+                    "engine_selected": variant["engine_selected"] if variant else None,
+                    "engine_speed": variant["engine_speed"] if variant else None,
+                    "engine_fuel": variant["engine_fuel"] if variant else None,
+                    "final_aircraft_price": None,
+                    "daily_net_profit": None, "status": "pesquisa_pendente",
+                    "pending": pending, "purchase_eligible": False,
+                    "evidence": {
+                        "hub": {"source": "game_hub_select",
+                                "observed_at": inventory["observed_at"]},
+                        "route": {"source": "game_route_search",
+                                  "observed_at": sample["observed_at"]},
+                        "model": {"source": "bot_aircraft_market_cache",
+                                  "observed_at": market["observed_at"]},
+                        "engine": engine_evidence,
+                    },
+                })
+            round_index += 1
 
-        streams = deque((hub_id, tasks(hub_id)) for hub_id in sorted(samples_by_hub, key=int))
-        while streams and len(queue) <= max_items:
-            hub_id, stream = streams.popleft()
-            try:
-                sample, model, variant, engine_evidence = next(stream)
-            except StopIteration:
-                continue
-            streams.append((hub_id, stream))
-            pending = [item for item in _RESEARCH_PENDING
-                       if item != "motor_a_pesquisar" or variant is None]
-            # Direct range does not rule out a route with a legal stopover.
-            # Keep the combination in the research queue until both legs,
-            # stopover runway and the game's actual rules are verified.
-            if (model["range_km"] is not None
-                    and model["range_km"] < sample["distance_km"]):
-                pending.append("escala_e_trechos_a_confirmar")
-            if variant is not None:
-                if not variant["engine_available"]:
-                    pending.append("motor_indisponivel")
-                if not engine_evidence["model_detail_identity_verified"]:
-                    pending.append("identidade_modelo_detalhe_a_confirmar")
-            if model["range_km"] is None:
-                pending.append("alcance_modelo_a_confirmar")
-            if model["capacity"] is None:
-                pending.append("capacidade_modelo_a_confirmar")
-            queue.append({
-                "hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
-                "destination_id": sample["destination_id"],
-                "distance_km": sample["distance_km"],
-                "direct_range_sufficient": (model["range_km"] >= sample["distance_km"]
-                                            if model["range_km"] is not None else None),
-                "observed_demand": sample["demand"],
-                "model_id": model["id"], "model": model["name"],
-                "range_km": model["range_km"], "capacity": model["capacity"],
-                "catalog_price": model["catalog_price"],
-                "engine_id": variant["engine_id"] if variant else None,
-                "engine_label": variant["engine_label"] if variant else None,
-                "engine_available": variant["engine_available"] if variant else None,
-                "engine_selected": variant["engine_selected"] if variant else None,
-                "engine_speed": variant["engine_speed"] if variant else None,
-                "engine_fuel": variant["engine_fuel"] if variant else None,
-                "final_aircraft_price": None,
-                "daily_net_profit": None, "status": "pesquisa_pendente",
-                "pending": pending, "purchase_eligible": False,
-                "evidence": {
-                    "hub": {"source": "game_hub_select",
-                            "observed_at": inventory["observed_at"]},
-                    "route": {"source": "game_route_search",
-                              "observed_at": sample["observed_at"]},
-                    "model": {"source": "bot_aircraft_market_cache",
-                              "observed_at": market["observed_at"]},
-                    "engine": engine_evidence,
-                },
-            })
-
-    has_more = len(queue) > max_items
+    has_more = offset + len(queue) < total_candidates
     hub_coverage = [
         {"hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
          "sampled_routes": len(samples_by_hub.get(hub_id, ())),
@@ -294,6 +339,10 @@ def build_owned_hub_research_queue(
         "conflicted_routes": sum(conflicts_by_hub.values()),
         "hub_coverage": hub_coverage,
         "market_models": len(models), "market_observed_at": market.get("observed_at"),
-        "items": queue[:max_items], "has_more": has_more,
+        "items": queue, "has_more": has_more,
+        "total_candidates": total_candidates, "offset": offset,
+        "page_size": max_items,
+        "next_offset": offset + len(queue) if has_more else None,
+        "snapshot_fingerprint": fingerprint, "cursor_reset": cursor_reset,
         "blocking_reasons": blockers,
     }

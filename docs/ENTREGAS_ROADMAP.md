@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A3/A7, paginação consistente das pesquisas dos hubs (G0)
+
+**Objetivo:** permitir investigar todas as combinações observadas de hub próprio × rota × modelo × variante de motor, inclusive quando o número de possibilidades ultrapassa o limite inicial de 40 itens, sem omissões nem duplicação entre páginas.
+
+### Implementação e evidências
+
+- **`src/owned_hub_research_feed.py`:** a fila de pesquisa agora suporta `offset` e fingerprint de evidência, com salto para a rodada adequada de alternância entre hubs. Retorna `total_candidates`, `page_size`, `next_offset` e `cursor_reset`. Mudança ou redução do snapshot invalida a posição antiga e reinicia na primeira página.
+- **`src/web.py`:** `GET /api/hubs/recommendations` encaminha `research_offset` e `research_snapshot` para o feed. Requisições continuam autenticadas e somente leitura; parâmetros fora do limite são tratados como início da pesquisa.
+- **`assets/web/index.html`:** o painel oferece navegação anterior/próxima, mostra a quantidade total de possibilidades e a faixa apresentada, conserva o cursor entre consultas periódicas e descarta respostas HTTP atrasadas que poderiam sobrescrever uma página recente. Traduções em inglês incluídas.
+- **`tests/test_owned_hub_research_feed.py`, `tests/test_investment_policy_web.py`, `tests/test_hubs_dashboard_ui.py` e `tests/test_hub_aircraft_research.py`:** novas verificações para páginas de tamanho variável, hubs com cargas desiguais, motores múltiplos, unicidade, invalidação por mudança de evidência, controles acessíveis, ordem de respostas HTTP e autenticação do endpoint.
+
+### Validação, limites e reversão
+
+- Testes direcionados passaram. A suíte Windows `python -m pytest tests -q --ignore=tests/test_instalacao_linux.py` terminou com código zero. Ruff e `compileall` passaram. O cenário Linux permanece dependente de ambiente POSIX.
+- **Gate G0, com provas simuladas.** A paginação permite consultar pesquisas pendentes, mas ainda falta observação autenticada e validada de todos os hubs, motores, preços finais e demanda residual. G1–G5 permanecem pendentes. Todas as propostas dessa fila mantêm `purchase_eligible=false`.
+- A entrega é reversível por commit da branch de autonomia, observadas as dependências subsequentes. Nenhuma compra real, envio Telegram, implantação ou merge em `main` foi realizado. A PR #44 permanece independente.
+
 ## 2026-11-23 — Autonomia Total A2, invalidação de auditoria dinâmica da frota (G0)
 
 **Objetivo:** impedir que paginação móvel e alterações simultâneas da frota produzam uma certificação falsa de cobertura completa.
