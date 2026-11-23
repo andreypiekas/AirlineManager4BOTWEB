@@ -43,6 +43,7 @@ from hub_expansion import HubExpansionRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy
+from portfolio_planner import compare_portfolio
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
 if TYPE_CHECKING:
@@ -205,7 +206,14 @@ class WebDashboard:
             cash_observed_at=observed_at,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
         )
-        report["investment_policy"] = InvestmentPolicy.from_config(self.cfg).report()
+        investment_policy = InvestmentPolicy.from_config(self.cfg)
+        report["investment_policy"] = investment_policy.report()
+        report["portfolio"] = compare_portfolio(
+            report,
+            max_single_investment=(investment_policy.max_single_investment
+                                   if investment_policy.enabled and investment_policy.max_single_investment > 0
+                                   else None),
+        )
         return report
 
     def game_source_probe(self) -> tuple[int, dict]:

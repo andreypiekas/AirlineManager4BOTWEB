@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-22 — Autonomia Total, comparação global A4 inicial (G0)
+
+**Escopo:** comparação somente leitura de oportunidades de compra entre todos os hubs e variantes de motor pesquisados. Continuação da branch `codex/autonomia-a0-a1-20261122`.
+
+### Implementado
+
+- **Planejador de portfólio:** `src/portfolio_planner.py` compara todos os candidatos físicos e financeiramente viáveis do relatório de hubs, incluindo múltiplos motores do mesmo modelo. O ranking usa lucro incremental diário normalizado (peso 60%) e lucro por capital normalizado (peso 40%), desempate determinístico e exposição das métricas para auditoria. Pode ser chamado com limites opcionais de lucro mínimo, payback e investimento por compra.
+- **Integridade da comparação:** exclui cenários sem preço, lucro, IDs de rota/hub ou motor confirmados, duplicações contraditórias, custos inválidos e cenários fora dos limites conhecidos. A provisão de compromissos pendentes é subtraída do caixa apenas quando sua origem é explicitamente confirmada. Dados desconhecidos deixam a conclusão `inconclusivo`; nenhuma recomendação é tratada como autorização para gastar.
+- **Web/API:** `GET /api/hubs/recommendations` agora inclui `portfolio`, com melhor cenário provisório, alternativas, pontuação, orçamento, exclusões e bloqueios de cobertura da pesquisa, frota ou compromissos. O painel de hubs mostra o melhor cenário global comparado e sinaliza conclusão pendente. A contagem foi renomeada para **Cenários viáveis** para diferenciar viabilidade de aprovação de compra.
+- **Testes:** cenários entre hubs e motores, ordem de pesquisa embaralhada, repetição e conflito de observações, limitação de caixa após compromissos, limites financeiros, evidência desconhecida e renderização em Node.js. A comparação preserva os dados de entrada e permanece `read_only=true` com `execution_available=false`.
+
+### Limites e próximos critérios
+
+- A comparação utiliza os valores estimados pelos leitores/rankings existentes. **Dados de jogo autenticados para cobertura integral de pesquisa, custo final por motor e compromissos financeiros ainda não foram integrados**. Portanto a API atual retorna conclusão `inconclusivo`, inclusive quando exibe uma melhor alternativa provisória. Pesos são defaults do módulo e ainda não estão expostos nos ajustes do painel.
+- Ausência de dados de hub externo, rota, hangar, despesas recorrentes ou pedidos pendentes não pode fundamentar a decisão final de compra. A otimização de múltiplas aquisições, concorrência pelo mesmo mercado, gerador de oportunidades, revalidação pré-compra e journal transacional permanecem pendentes nas fases A2–A5.
+- Implementação local em G0, com cenários simulados. Nenhuma compra real, implantação, alteração na `main` ou alteração na PR #44 foi realizada. Reversão pelo commit desta entrega, preservando as flags `[investment]` desativadas.
+
 ## 2026-11-22 — Autonomia Total, primeira onda A0/A1/A2/A3 (G0)
 
 **Escopo:** implementação incremental do `ROADMAP_AUTONOMIA_TOTAL.md` em `codex/autonomia-a0-a1-20261122`, preservando a `main` e a PR #44.

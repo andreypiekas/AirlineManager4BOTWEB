@@ -825,13 +825,16 @@ const EN = {
   "Ordenar recomendações": "Sort recommendations", "Recomendações exibidas": "Recommendations shown",
   "Nenhuma recomendação corresponde ao modelo selecionado.": "No recommendations match the selected model.",
   "Saldo a confirmar.": "Cash balance pending verification.",
-  "Cenários aprovados": "Approved scenarios", "Bases analisadas": "Hubs analysed",
+  "Cenários viáveis": "Viable scenarios", "Bases analisadas": "Hubs analysed",
   "Nenhuma base adquirida identificada.": "No owned hubs identified.",
   "Aguardando pesquisa de demanda, custos e rotas no jogo.": "Awaiting game research for demand, costs and routes.",
   "Recomendação disponível": "Recommendation available", "Rota ocupada": "Route occupied",
   "Rota indisponível": "Route unavailable", "Rota inviável": "Infeasible route",
   "Lucro adicional estimado/dia": "Estimated added profit/day", "Rota sugerida": "Suggested route",
   "Motor pesquisado": "Researched engine", "Somente análise de investimentos": "Investment analysis only",
+  "Melhor cenário global comparado": "Top globally compared scenario",
+  "Nenhum cenário global comparável.": "No globally comparable scenario.",
+  "Conclusão do planejamento pendente.": "Planning conclusion pending.",
   "Verificações pendentes": "Pending verifications", "Verificado em": "Verified at",
   "Nenhum cenário pesquisado para esta base.": "No researched scenario for this hub.",
   "Não foi possível consultar recomendações.": "Could not load recommendations.",
@@ -1759,14 +1762,25 @@ function renderHubRecommendations(report) {
   modelControl.value = selectedModel || previouslySelected;
   const rows = hubRecommendationRows(report, modelControl.value, $("hubRecommendationSort").value);
   $("hubRecommendationsCount").textContent = tr("Recomendações exibidas") + ": " + rows.length + " / " + hubs.length;
-  const approved = Array.isArray(report.recommendations) ? report.recommendations.length : 0;
-  $("hubRecommendationsStatus").textContent = tr("Cenários aprovados") + ": " + approved +
+  const viable = Array.isArray(report.recommendations) ? report.recommendations.length : 0;
+  $("hubRecommendationsStatus").textContent = tr("Cenários viáveis") + ": " + viable +
     " · " + tr("Bases analisadas") + ": " + hubs.length +
     (report.investment_policy?.execution_available === false ? " · " + tr("Somente análise de investimentos") : "");
   $("hubRecommendationsScope").textContent =
     (candidates.length ? "" : tr("Aguardando pesquisa de demanda, custos e rotas no jogo.") + " ") +
     (report.cash_observed_at ? tr("Saldo conferido em") + ": " + hubDate(report.cash_observed_at) + "."
       : tr("Saldo a confirmar."));
+  if (report.portfolio) {
+    const best = report.portfolio.best;
+    const comparison = best
+      ? tr("Melhor cenário global comparado") + ": " + (best.hub_code || best.hub_id) +
+        " · " + best.model + " / " + (best.engine_label || best.engine_id) +
+        " · " + hubMoney(best.profit_per_day) + "/" + tr("dia") + "."
+      : tr("Nenhum cenário global comparável.");
+    $("hubRecommendationsScope").textContent += " " + comparison +
+      (report.portfolio.status === "inconclusivo"
+        ? " " + tr("Conclusão do planejamento pendente.") : "");
+  }
   const labels = {viavel: "Recomendação disponível", saldo_insuficiente: "Saldo insuficiente",
     sem_lucro: "Sem lucro", rota_ocupada: "Rota ocupada", rota_indisponivel: "Rota indisponível",
     rota_inviavel: "Rota inviável", dados_a_confirmar: "Dados a confirmar"};

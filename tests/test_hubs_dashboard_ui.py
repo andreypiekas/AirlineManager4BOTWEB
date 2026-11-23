@@ -213,8 +213,11 @@ const money = value => '$' + String(value);
 const translations = {
   'Todos os modelos': 'All models',
   'Recomendações exibidas': 'Recommendations shown',
-  'Cenários aprovados': 'Approved scenarios',
+  'Cenários viáveis': 'Viable scenarios',
   'Bases analisadas': 'Hubs analysed',
+  'Melhor cenário global comparado': 'Top globally compared scenario',
+  'Conclusão do planejamento pendente.': 'Planning conclusion pending.',
+  'Nenhum cenário global comparável.': 'No globally comparable scenario.',
   'Saldo a confirmar.': 'Cash balance pending verification.',
   'Nenhuma recomendação corresponde ao modelo selecionado.':
     'No recommendations match the selected model.',
@@ -260,6 +263,15 @@ assert.equal($('hubRecommendationsCount').textContent, 'Recommendations shown: 2
 assert.equal($('hubRecommendationsGrid').children[0].children[0].textContent, 'AAA · Alpha');
 assert.equal($('hubRecommendationsGrid').children[0].children[1].dataset.state, 'viavel');
 assert.equal($('hubRecommendationsScope').textContent, 'Cash balance pending verification.');
+report.portfolio = {status:'inconclusivo', best:{hub_code:'AAA', model:'A320',
+  engine_id:'2', profit_per_day:120}};
+renderHubRecommendations(report);
+assert.match($('hubRecommendationsScope').textContent,
+  /Top globally compared scenario: AAA · A320 \/ 2/);
+assert.match($('hubRecommendationsScope').textContent, /Planning conclusion pending/);
+report.portfolio = {status:'inconclusivo', best:null};
+renderHubRecommendations(report);
+assert.match($('hubRecommendationsScope').textContent, /No globally comparable scenario/);
 
 $('hubRecommendationModel').value = 'A320';
 renderHubRecommendations(report);

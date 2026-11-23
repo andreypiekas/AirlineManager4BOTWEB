@@ -190,6 +190,9 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch):
     assert result["routes"] == {"relations": []}
     assert result["cash"] == 20000
     assert result["reserve"] == 2000
+    assert result["portfolio"]["status"] == "inconclusivo"
+    assert result["portfolio"]["execution_available"] is False
+    assert result["investment_policy"]["release_gate"] == "G0"
 
 
 def test_recommendations_endpoint_is_authenticated_read_only():
