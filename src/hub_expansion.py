@@ -699,22 +699,46 @@ class HubExpansionRegistry:
                 sequences[hub] = attempt["sequence"]
         return min(hubs, key=lambda hub: (last_seen[hub], sequences[hub], int(hub)))
 
-    def demand_observations(self, owned_hub_ids: set[str], *,
-                            now: Optional[int] = None) -> list[dict]:
-        """Return fresh game-observed route samples for currently owned hubs.
+    def demand_research_snapshot(self, owned_hub_ids: set[str], *,
+                                 now: Optional[float] = None) -> dict:
+        """Read demand, unresolved conflicts and research attempts atomically.
 
-        Route search demand is raw traffic. It does not prove residual demand,
-        route availability, airplane compatibility or complete hub coverage.
+        Search attempts only prove that research was tried. They never certify
+        complete coverage, zero demand or a route's remaining availability.
         """
         owned = {_airport_id(value) for value in owned_hub_ids} - {None}
         now = time.time() if now is None else now
         with _LOCK:
-            samples, _ = _trusted_demand(self._load())
+            saved = self._load()
+            samples, conflicts = _trusted_demand(saved)
+            attempts = _stored_demand_attempts(saved.get("route_demand_attempts"))
         rows = [deepcopy(row) for row in samples.values()
                 if row["origin_id"] in owned
                 and 0 <= now - row["observed_at"] <= MAX_AGE_SECONDS]
-        return sorted(rows, key=lambda row: (
-            int(row["origin_id"]), int(row["destination_id"])))
+        rows.sort(key=lambda row: (int(row["origin_id"]), int(row["destination_id"])))
+        progress = []
+        for hub in sorted(owned, key=int):
+            attempt = attempts.get(hub)
+            attempted_at = attempt["attempted_at"] if attempt else None
+            if attempted_at is not None and not 0 <= now - attempted_at:
+                attempted_at = None
+            progress.append({
+                "hub_id": hub,
+                "last_attempt_at": attempted_at,
+                "last_attempt_status": (attempt["status"] if attempted_at is not None
+                                        else "unattempted"),
+                "conflicted_routes": sum(
+                    key.startswith(hub + ":")
+                    and 0 <= now - conflict["observed_at"] <= MAX_AGE_SECONDS
+                    for key, conflict in conflicts.items()),
+                "coverage": "partial",
+            })
+        return {"samples": rows, "hub_progress": progress, "coverage": "partial"}
+
+    def demand_observations(self, owned_hub_ids: set[str], *,
+                            now: Optional[float] = None) -> list[dict]:
+        """Return fresh raw traffic samples for owned hubs without inferred demand."""
+        return self.demand_research_snapshot(owned_hub_ids, now=now)["samples"]
 
     def snapshot(self, *, cash: object = None, reserve: object = 0,
                  now: Optional[int] = None, owned_hub_ids: Optional[set[str]] = None) -> dict:

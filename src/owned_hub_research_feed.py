@@ -43,15 +43,14 @@ def _positive_number(raw: object) -> Optional[float]:
     return number if math.isfinite(number) and number > 0 else None
 
 
-def _fresh(raw: object, now: int) -> bool:
-    return (type(raw) is int and raw > 0
-            and 0 <= now - raw <= MAX_EVIDENCE_AGE)
+def _fresh(raw: object, now: float) -> bool:
+    timestamp = _positive_number(raw)
+    return timestamp is not None and 0 <= now - timestamp <= MAX_EVIDENCE_AGE
 
 
-def _fresh_engine_read(raw: object, now: int) -> bool:
+def _fresh_engine_read(raw: object, now: float) -> bool:
     """Engine catalogs preserve the precise time of the stable DOM read."""
-    return (type(raw) in (int, float) and 0 < raw <= now
-            and now - raw <= MAX_EVIDENCE_AGE)
+    return _fresh(raw, now)
 
 
 def _models(raw: object) -> list[dict]:
@@ -135,15 +134,18 @@ def _engine_variants(engines: dict, model: dict, now: int) -> tuple[list[dict], 
 
 def build_owned_hub_research_queue(
     inventory: dict, route_samples: list[dict], market: dict, *,
-    now: Optional[int] = None, max_items: int = 40, engines: Optional[dict] = None,
+    now: Optional[float] = None, max_items: int = 40, engines: Optional[dict] = None,
     offset: int = 0, expected_fingerprint: Optional[str] = None,
+    hub_progress: Optional[list[dict]] = None,
 ) -> dict:
     """Produce bounded, balanced per-hub tasks from independent cached reads.
 
     The returned items are *always* pending research. All values are read-only
     and the queue cannot be consumed as an approval or purchase order.
     """
-    now = int(time.time() if now is None else now)
+    # The route observer saves a subsecond timestamp from its stable DOM read.
+    # Truncating the clock or accepting integers only drops valid live samples.
+    now = _positive_number(time.time() if now is None else now) or 0.0
     max_items = max_items if type(max_items) is int and 1 <= max_items <= 200 else 40
     inventory = inventory if isinstance(inventory, dict) else {}
     market = market if isinstance(market, dict) else {}
@@ -203,6 +205,23 @@ def build_owned_hub_research_queue(
     for rows in samples_by_hub.values():
         rows.sort(key=lambda row: (int(row["destination_id"]), -row["observed_at"]))
 
+    attempts_by_hub = {}
+    for row in hub_progress if isinstance(hub_progress, list) else []:
+        if not isinstance(row, dict) or row.get("hub_id") not in hubs:
+            continue
+        hub_id = row["hub_id"]
+        attempt_at = row.get("last_attempt_at")
+        attempt_status = row.get("last_attempt_status")
+        recent_attempt = (_fresh(attempt_at, now)
+                          and attempt_status in ("inconclusive", "samples_observed"))
+        count = row.get("conflicted_routes")
+        if type(count) is int and 0 <= count <= 5000:
+            conflicts_by_hub[hub_id] = max(conflicts_by_hub[hub_id], count)
+        attempts_by_hub[hub_id] = {
+            "last_attempt_at": attempt_at if recent_attempt else None,
+            "last_attempt_status": attempt_status if recent_attempt else "unattempted",
+        }
+
     blockers = []
     if not inventory_fresh:
         blockers.append("inventario_hubs_desatualizado")
@@ -232,6 +251,7 @@ def build_owned_hub_research_queue(
         "blockers": blockers, "models": models,
         "options": model_options, "routes": dict(samples_by_hub),
         "conflicts": dict(conflicts_by_hub),
+        "attempts": attempts_by_hub,
     }
     fingerprint = hashlib.sha256(json.dumps(
         fingerprint_data, ensure_ascii=False, sort_keys=True,
@@ -324,11 +344,17 @@ def build_owned_hub_research_queue(
         {"hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
          "sampled_routes": len(samples_by_hub.get(hub_id, ())),
          "conflicted_routes": conflicts_by_hub[hub_id],
+         "last_attempt_at": attempts_by_hub.get(hub_id, {}).get("last_attempt_at"),
+         "last_attempt_status": attempts_by_hub.get(hub_id, {}).get("last_attempt_status", "unattempted"),
          "last_route_observed_at": max(
              (item["observed_at"] for item in samples_by_hub.get(hub_id, ())), default=None
          ),
          "coverage": "partial",
-         "status": "pesquisa_iniciada" if samples_by_hub.get(hub_id) else "nao_pesquisado"}
+         "status": ("pesquisa_iniciada" if samples_by_hub.get(hub_id)
+                    else "pesquisa_inconclusiva"
+                    if (conflicts_by_hub[hub_id]
+                        or attempts_by_hub.get(hub_id, {}).get("last_attempt_status") == "inconclusive")
+                    else "nao_pesquisado")}
         for hub_id in sorted(hubs, key=int)
     ]
     return {

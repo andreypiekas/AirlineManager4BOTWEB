@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A7, pesquisas inconclusivas e timestamps precisos (G0)
+
+**Objetivo:** fazer as observações reais de demanda com precisão subsegundo chegarem à fila de investigação e explicitar por hub pesquisas sem resultado ou com demanda contraditória.
+
+### Implementação e evidências
+
+- **`src/owned_hub_research_feed.py`:** timestamps numéricos finitos de inventário, pesquisa de rota, mercado e motor são aceitos com precisão fracionária, desde que recentes. A fila conserva o horário da amostra e continua gerando apenas tarefas de investigação, com `purchase_eligible=false`.
+- **`src/hub_expansion.py`:** `demand_research_snapshot()` lê amostras de demanda, tentativas de pesquisa e conflitos persistidos sob a mesma trava. Cada hub próprio tem horário/estado da tentativa mais recente e quantidade de rotas conflitantes. O método legado `demand_observations()` continua fornecendo só a lista de amostras.
+- **`src/web.py` e `assets/web/index.html`:** `GET /api/hubs/recommendations` encaminha o progresso persistido ao feed, e o painel informa a última tentativa inconclusiva, pesquisas iniciadas e conflitos. Mudanças de evidência invalidam o cursor de paginação por fingerprint.
+- **`tests/test_owned_hub_research_feed.py`, `tests/test_hub_aircraft_research.py` e `tests/test_hubs_dashboard_ui.py`:** testam caminho de timestamp fracionário até a fila, validade temporal, persistência de tentativas/conflitos, resolução e expiração, integração com a API e renderização segura da mensagem.
+
+### Validação, pendências e reversão
+
+- A suíte Windows `python -m pytest tests -q --ignore=tests/test_instalacao_linux.py` passou com código zero. Testes direcionados após as alterações finais também passaram. Ruff, `compileall src` e `git diff --check` concluíram sem falhas. O teste de instalação depende de ambiente POSIX.
+- **Gate G0 com dados simulados.** G1–G5 continuam dependentes de observações reais de rota, demanda **residual**, cobertura conclusiva por hub e configuração final de motor e preço. A2–A9 permanecem parcialmente implementadas. Nenhuma amostra de tráfego bruto habilita compra.
+- Sem aquisição no jogo, Telegram, implantação ou merge em `main`. Reversão pelo commit desta entrega na branch de autonomia após conferir dependências. A PR #44 permanece independente.
+
 ## 2026-11-23 — Autonomia Total A2/A7, proveniência temporal e quarentena da demanda (G0)
 
 **Objetivo:** impedir que leituras de pesquisa de rota processadas fora de ordem substituam demanda mais recente e tornar contradições visíveis sem alimentar o planejamento com dados disputados.

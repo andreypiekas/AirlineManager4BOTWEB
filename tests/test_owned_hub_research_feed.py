@@ -235,6 +235,54 @@ def test_fractional_engine_read_timestamp_is_accepted_without_promoting_purchase
     assert all(row["purchase_eligible"] is False for row in result["items"])
 
 
+def test_fractional_live_route_read_reaches_research_queue(tmp_path, monkeypatch):
+    read_at = NOW + 0.375
+    monkeypatch.setattr("hub_expansion.time.time", lambda: NOW + 0.875)
+    monkeypatch.setattr("owned_hub_research_feed.time.time", lambda: NOW + 0.875)
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_demand("2926", [
+        {"arr_id": "3139", "distance": 2000, "y": 100, "j": 20, "f": 5},
+    ], observed_at=read_at) == 1
+    observations = registry.demand_observations({"2926"}, now=NOW + 0.875)
+    assert observations[0]["observed_at"] == read_at
+
+    report = build_owned_hub_research_queue(_inventory(), observations, _market())
+    assert report["sampled_routes"] == 1
+    assert len(report["items"]) == 2
+    assert report["items"][0]["evidence"]["route"]["observed_at"] == read_at
+    assert report["items"][0]["purchase_eligible"] is False
+
+
+@pytest.mark.parametrize("timestamp", [
+    NOW + 1.5, NOW - 3 * 86400 - 0.5, float("nan"), float("inf"),
+    -float("inf"), 10 ** 500, "1900000000.5", True, None,
+])
+def test_invalid_fractional_route_observations_cannot_enter_queue(timestamp):
+    report = build_owned_hub_research_queue(
+        _inventory(), [_sample(observed_at=timestamp)], _market(), now=NOW,
+    )
+    assert report["items"] == []
+    assert report["sampled_routes"] == 0
+    assert "demanda_dos_hubs_a_pesquisar" in report["blocking_reasons"]
+
+
+@pytest.mark.parametrize("field", ["inventory", "market", "engine"])
+def test_fractional_evidence_timestamp_is_supported_across_sources(field):
+    inventory, market, engines = _inventory(), _market(), _engines()
+    if field == "inventory":
+        inventory["observed_at"] = NOW - 0.25
+    elif field == "market":
+        market["observed_at"] = NOW - 0.25
+    else:
+        engines["models"]["11"]["observed_at"] = NOW - 0.25
+    report = build_owned_hub_research_queue(
+        inventory, [_sample()], market, engines=engines, now=NOW,
+    )
+    assert report["sampled_routes"] == 1
+    assert len(report["items"]) == 3
+    assert report["blocking_reasons"] == []
+
+
 def test_engine_selection_and_confirmed_model_identity_must_match_observation():
     verified = _engines()
     verified["models"]["11"].update(
@@ -270,11 +318,13 @@ def test_hub_coverage_lists_owned_hubs_even_without_route_samples():
     )
     assert result["hub_coverage"] == [
         {"hub_id": "2926", "hub_code": "XAP", "sampled_routes": 1,
-         "conflicted_routes": 0,
+         "conflicted_routes": 0, "last_attempt_at": None,
+         "last_attempt_status": "unattempted",
          "last_route_observed_at": NOW, "coverage": "partial",
          "status": "pesquisa_iniciada"},
         {"hub_id": "2941", "hub_code": "GRU", "sampled_routes": 0,
-         "conflicted_routes": 0,
+         "conflicted_routes": 0, "last_attempt_at": None,
+         "last_attempt_status": "unattempted",
          "last_route_observed_at": None, "coverage": "partial",
          "status": "nao_pesquisado"},
     ]
@@ -430,3 +480,52 @@ def test_demand_observations_are_fresh_and_scoped_to_owned_hubs(tmp_path, monkey
     observed[0]["y"] = 0
     assert registry.demand_observations({"2926"}, now=NOW)[0]["y"] == 100
     assert registry.demand_observations({"2926"}, now=NOW + 4 * 86400) == []
+
+
+def test_persisted_attempts_and_conflicts_reach_research_coverage(tmp_path, monkeypatch):
+    clock = [NOW + 0.875]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+
+    def queue(*, now):
+        research = registry.demand_research_snapshot({"2926", "2941"}, now=now)
+        assert research["coverage"] == "partial"
+        return build_owned_hub_research_queue(
+            _inventory(), research["samples"], _market(),
+            hub_progress=research["hub_progress"], now=now,
+        )
+
+    assert registry.record_demand_attempt("2926")
+    attempted = queue(now=clock[0])
+    assert attempted["items"] == []
+    assert attempted["hub_coverage"][0]["status"] == "pesquisa_inconclusiva"
+    assert attempted["hub_coverage"][0]["last_attempt_status"] == "inconclusive"
+    assert attempted["hub_coverage"][0]["last_attempt_at"] == NOW
+    assert attempted["hub_coverage"][1]["status"] == "nao_pesquisado"
+
+    sample = {"arr_id": "3139", "distance": 2000, "y": 100, "j": 20, "f": 5}
+    assert registry.record_demand("2926", [sample], observed_at=NOW + 0.25) == 1
+    observed = queue(now=clock[0])
+    assert observed["sampled_routes"] == 1
+    assert observed["hub_coverage"][0]["status"] == "pesquisa_iniciada"
+    assert observed["hub_coverage"][0]["last_attempt_status"] == "samples_observed"
+
+    assert registry.record_demand("2926", [{**sample, "y": 101}],
+                                  observed_at=NOW + 0.25) == 0
+    conflicted = queue(now=clock[0])
+    assert conflicted["sampled_routes"] == 0
+    assert conflicted["conflicted_routes"] == 1
+    assert conflicted["hub_coverage"][0]["status"] == "pesquisa_inconclusiva"
+    assert conflicted["items"] == []
+
+    assert registry.record_demand("2926", [sample], observed_at=NOW + 0.5) == 1
+    recovered = queue(now=clock[0])
+    assert recovered["sampled_routes"] == 1
+    assert recovered["conflicted_routes"] == 0
+    assert recovered["items"]
+    assert recovered["purchase_eligible"] is False
+
+    aged = queue(now=NOW + 4 * 86400)
+    assert aged["sampled_routes"] == 0
+    assert aged["hub_coverage"][0]["last_attempt_status"] == "unattempted"
+    assert aged["hub_coverage"][0]["status"] == "nao_pesquisado"

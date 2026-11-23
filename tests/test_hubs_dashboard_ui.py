@@ -291,6 +291,7 @@ const translations = {
   'Pesquisa de rota iniciada': 'Route research started',
   'Sem pesquisa de rota': 'No route research',
   'Pesquisa de rota inconclusiva': 'Route research inconclusive',
+  'Última tentativa inconclusiva': 'Last inconclusive attempt',
   'Amostras de rotas': 'Route samples',
   'Rotas observadas': 'Observed routes',
   'Rotas com amostras conflitantes': 'Routes with conflicting samples',
@@ -416,7 +417,13 @@ assert.deepEqual($('hubResearchCoverageList').children.map(item => item.textCont
 delete report.research_queue.conflicted_routes;
 delete report.research_queue.hub_coverage[0].conflicted_routes;
 delete report.research_queue.hub_coverage[1].conflicted_routes;
+report.research_queue.hub_coverage[1].status = 'pesquisa_inconclusiva';
+report.research_queue.hub_coverage[1].last_attempt_status = 'inconclusive';
+report.research_queue.hub_coverage[1].last_attempt_at = 1800000000;
 renderHubRecommendations(report);
+assert.equal($('hubResearchCoverageList').children[1].textContent,
+  '<img src=x> · Route research inconclusive · Route samples: 0' +
+  ' · Last inconclusive attempt: ' + hubDate(1800000000) + ' · Partial coverage');
 assert.equal($('hubResearchQueueList').children.length, 2);
 const withoutEngine = $('hubResearchQueueList').children[0];
 assert.equal(withoutEngine.children[0].textContent, 'AAA ↔ 2');

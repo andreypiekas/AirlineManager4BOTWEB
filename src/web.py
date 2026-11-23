@@ -230,11 +230,13 @@ class WebDashboard:
         )
         owned_ids = {hub["id"] for hub in inventory.get("hubs", [])
                      if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
+        demand_snapshot = HubExpansionRegistry().demand_research_snapshot(owned_ids)
         report["research_queue"] = build_owned_hub_research_queue(
             inventory,
-            HubExpansionRegistry().demand_observations(owned_ids),
+            demand_snapshot["samples"],
             load_market_evidence(),
             engines=EngineCatalogRegistry().snapshot(),
+            hub_progress=demand_snapshot["hub_progress"],
             offset=research_offset,
             expected_fingerprint=research_fingerprint,
         )

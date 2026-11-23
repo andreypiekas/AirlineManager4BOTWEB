@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -246,6 +247,14 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_p
         "hubs": [{"id": "123", "code": "XAP", "name": "Chapecó"}]}))
     monkeypatch.setattr(web, "HubAircraftResearchRegistry",
                         lambda: SimpleNamespace(snapshot=lambda: [scenario]))
+    progress = [{"hub_id": "123", "last_attempt_at": time.time(),
+                 "last_attempt_status": "inconclusive", "conflicted_routes": 1,
+                 "coverage": "partial"}]
+    monkeypatch.setattr(web, "HubExpansionRegistry", lambda: SimpleNamespace(
+        demand_research_snapshot=lambda owned: {
+            "samples": [], "hub_progress": progress if owned == {"123"} else [],
+            "coverage": "partial",
+        }))
     monkeypatch.setattr(web, "recent_verified_money", lambda *_args: (20000, 1_800_000_000))
     monkeypatch.setattr(web, "load_state", lambda: {})
     monkeypatch.setattr(web, "rank_next_aircraft", lambda *args, **kwargs: {
@@ -278,6 +287,11 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_p
     assert result["investment_journal"]["count"] == 1
     assert result["investment_journal"]["estimated_exposure"] == 6000
     assert result["investment_journal"]["execution_available"] is False
+    research = result["research_queue"]
+    assert research["purchase_eligible"] is False
+    assert research["hub_coverage"][0]["status"] == "pesquisa_inconclusiva"
+    assert research["hub_coverage"][0]["last_attempt_status"] == "inconclusive"
+    assert research["hub_coverage"][0]["conflicted_routes"] == 1
 
     def broken_ledger():
         import sqlite3

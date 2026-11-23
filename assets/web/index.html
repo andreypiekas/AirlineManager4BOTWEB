@@ -952,6 +952,7 @@ const EN = {
   "Sem pesquisa de rota": "No route research",
   "Pesquisa de rota iniciada": "Route research started",
   "Pesquisa de rota inconclusiva": "Route research inconclusive",
+  "Última tentativa inconclusiva": "Last inconclusive attempt",
   "Amostras de rotas": "Route samples",
   "Rotas observadas": "Observed routes",
   "Rotas com amostras conflitantes": "Routes with conflicting samples",
@@ -2147,9 +2148,12 @@ function renderHubRecommendations(report) {
       ? hub.conflicted_routes : 0;
     item.textContent = label + " · " +
       (hub.status === "pesquisa_iniciada" ? tr("Pesquisa de rota iniciada")
-        : conflicts ? tr("Pesquisa de rota inconclusiva") : tr("Sem pesquisa de rota")) +
+        : hub.status === "pesquisa_inconclusiva" || conflicts
+          ? tr("Pesquisa de rota inconclusiva") : tr("Sem pesquisa de rota")) +
       " · " + tr("Amostras de rotas") + ": " + nf.format(samples) +
       (conflicts ? " · " + tr("Rotas com amostras conflitantes") + ": " + nf.format(conflicts) : "") +
+        (hub.last_attempt_status === "inconclusive" && Number.isFinite(hub.last_attempt_at)
+          ? " · " + tr("Última tentativa inconclusiva") + ": " + hubDate(hub.last_attempt_at) : "") +
       " · " + tr("Cobertura parcial");
     coverageList.append(item);
   }
