@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A1, snapshot atômico de identidade e motores (G0)
+
+**Objetivo:** impedir que substituições AJAX do formulário de encomenda misturem variantes de uma aeronave com a identidade observada em outra leitura.
+
+### Implementação e evidências
+
+- **`src/game_observations.py`:** o catálogo de motores passou a ler `data-model-id` e grupos `select`/`radio` em uma única execução síncrona de JavaScript. O script reutiliza a inspeção de motores empregada no fluxo existente, exige painel `#acModel` único e descarta estados com carregador ou atividade AJAX. O conjunto completo de identidade e opções precisa coincidir nas duas leituras antes da gravação.
+- Quando há `data-model-id`, a coleta exige correspondência exata com o modelo solicitado. Ausência da identidade explícita continua registrada como evidência pendente; divergência ou troca de motor entre leituras impede a substituição do catálogo anterior. A pesquisa apenas lê o formulário e não seleciona motor nem envia pedidos.
+- **`tests/test_engine_catalog.py`:** regressões simulam mudança do modelo ou das opções durante o intervalo entre leituras, respostas estáveis divergentes e preservação dos registros. Um teste executa o JavaScript real em Node.js contra DOM simulado com motores, troca de identidade, carregador e AJAX ativo.
+
+### Verificação, limites e reversão
+
+- Testes direcionados do catálogo/seleção e suíte Windows excluindo o instalador POSIX concluíram com código de saída zero em 23/11/2026. Ruff em `src scripts tests`, compilação Python em `src scripts` e `git diff --check` também concluíram sem erros. O teste de instalação Linux permanece para ambiente POSIX.
+- **Gate G0.** Os cenários exercitam objetos e DOM simulados. A presença e semântica de `data-model-id` no jogo, o preço final de cada motor, a escolha de `#hubSelection`, a demanda residual e a confirmação independente de uma encomenda continuam sem homologação autenticada. Não houve compra, alteração de configuração, envio Telegram, implantação ou merge na `main`.
+- A alteração está restrita à coleta somente leitura e aos testes, mantendo o fluxo de compra legado. A reversão pode ser feita pelo commit correspondente da branch `codex/autonomia-a0-a1-20261122`, com conferência das dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A1/A5, diagnóstico estrutural do checkout de aeronaves (G0)
 
 **Objetivo:** localizar com segurança possíveis fontes do preço final e da configuração de motor no formulário de encomenda, facilitando a homologação da etapa que ainda impede uma compra baseada em plano.

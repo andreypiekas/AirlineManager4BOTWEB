@@ -13,14 +13,20 @@ from engine_selection import EngineSelectionError, _ENGINE_OPTIONS_JS, parse_eng
 
 log = logging.getLogger("am4bot.observations")
 
-# Some game versions expose the model ID on the loaded detail panel. A matched
-# explicit attribute is independent evidence that the AJAX response belongs to
-# the requested model. Missing attributes remain unverified.
-_ENGINE_DETAIL_IDENTITY_JS = r"""
+# The engine groups and model identity must come from the same synchronous DOM
+# snapshot. Separate stable reads can straddle an AJAX panel replacement and
+# mistakenly assign one model's engines to another model. Keep the existing
+# engine parser shared with the purchase flow.
+_ENGINE_DETAIL_SNAPSHOT_JS = r"""
 const panel = document.querySelector('#acModel');
-if (!panel) return null;
+if (!panel || document.querySelectorAll('#acModel').length !== 1 ||
+    (window.jQuery && window.jQuery.active > 0) ||
+    panel.querySelector('img[src*="loader"], [aria-busy="true"]')) return null;
 const id = panel.getAttribute('data-model-id');
-return {attribute_present: id !== null, model_id: id};
+const groups = (() => {
+""" + _ENGINE_OPTIONS_JS + r"""
+})();
+return {detail: {attribute_present: id !== null, model_id: id}, groups};
 """
 
 # Only the currently selected airport can have an observed price. The country
@@ -416,8 +422,9 @@ def collect_owned_hub_demand(bot: object) -> int:
 def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
     """Inspect a bounded number of model detail screens without choosing or buying.
 
-    The model list and each engine form are stable double reads. The AJAX target
-    is cleared by bot.ajax(), so an old model's form cannot pass as a new one.
+    The model list and each combined detail snapshot are stable double reads.
+    The AJAX target is cleared by bot.ajax(), so an old model's form cannot
+    pass as a new one while its engine options and identity stay correlated.
     Model ID correspondence and final engine prices still require verification
     from the actual order form before any investment is authorized.
     """
@@ -442,9 +449,11 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
             registry.record_attempt(model_id, name)
             try:
                 bot.ajax(f"ac_orders.php?mode=detail&id={model_id}&charter=0", "acModel")
-                groups = _stable_read(bot, _ENGINE_OPTIONS_JS)
-                detail = _stable_read(bot, _ENGINE_DETAIL_IDENTITY_JS)
-                catalog = parse_engine_catalog(groups)
+                snapshot = _stable_read(bot, _ENGINE_DETAIL_SNAPSHOT_JS)
+                if not isinstance(snapshot, dict):
+                    continue
+                detail = snapshot.get("detail")
+                catalog = parse_engine_catalog(snapshot.get("groups"))
             except EngineSelectionError as exc:
                 log.info("Motor de %s (%s): pesquisa inconclusiva (%s).", name, model_id, exc)
                 continue

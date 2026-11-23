@@ -1,5 +1,7 @@
 """Evidence-driven research of aircraft engine variants without game mutations."""
 import json
+import shutil
+import subprocess
 from configparser import ConfigParser
 from pathlib import Path
 from types import SimpleNamespace
@@ -156,10 +158,9 @@ def test_collector_reads_order_details_only_and_rotates_after_failure(tmp_path, 
         def js(self, script, *args):
             assert not args
             self.calls.append(("read", script))
-            if script == game_observations._ENGINE_DETAIL_IDENTITY_JS:
-                return {"attribute_present": True, "model_id": self.model_id}
-            if script == game_observations._ENGINE_OPTIONS_JS:
-                return _groups(invalid=self.model_id == "22")
+            if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
+                return {"detail": {"attribute_present": True, "model_id": self.model_id},
+                        "groups": _groups(invalid=self.model_id == "22")}
             from fleet import _MODELS_JS
             assert script == _MODELS_JS
             return [{"id": "11", "name": "A320"}, {"id": "22", "name": "B737"},
@@ -173,7 +174,7 @@ def test_collector_reads_order_details_only_and_rotates_after_failure(tmp_path, 
         "ac_orders.php?first=true", "ac_orders.php?mode=detail&id=11&charter=0",
         "ac_orders.php?mode=detail&id=22&charter=0"]
     assert len([c for c in first.calls if c[0] == "read"
-                and c[1] == game_observations._ENGINE_OPTIONS_JS]) == 4
+                and c[1] == game_observations._ENGINE_DETAIL_SNAPSHOT_JS]) == 4
     assert registry.snapshot(now=NOW)["model_count"] == 1
     assert registry.snapshot(now=NOW)["models"]["11"]["model_detail_identity_verified"] is True
     second = Bot()
@@ -203,10 +204,9 @@ def test_collector_rejects_unstable_game_reads_without_overwriting_cache(tmp_pat
             pass
 
         def js(self, script):
-            if script == game_observations._ENGINE_DETAIL_IDENTITY_JS:
-                return {"attribute_present": False, "model_id": None}
-            if script == game_observations._ENGINE_OPTIONS_JS:
-                return []
+            if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
+                return {"detail": {"attribute_present": False, "model_id": None},
+                        "groups": []}
             return [{"id": "11", "name": "A320"}]
 
     assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == 0
@@ -234,11 +234,106 @@ def test_collector_discards_mismatched_detail_without_replacing_last_good(tmp_pa
             pass
 
         def js(self, script):
-            if script == game_observations._ENGINE_OPTIONS_JS:
-                return _groups()
-            if script == game_observations._ENGINE_DETAIL_IDENTITY_JS:
-                return {"attribute_present": True, "model_id": "22"}
+            if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
+                return {"detail": {"attribute_present": True, "model_id": "22"},
+                        "groups": _groups()}
             return [{"id": "11", "name": "A320"}]
 
     assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == 0
     assert registry.snapshot(now=NOW)["models"]["11"] == original
+
+
+@pytest.mark.parametrize("change", ["model", "engine"])
+def test_collector_rejects_ajax_panel_change_between_snapshots(tmp_path, monkeypatch, change):
+    """An AJAX replacement cannot combine engines and identity from different forms."""
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    monkeypatch.setattr(game_observations, "EngineCatalogRegistry", lambda: registry)
+    assert registry.record("11", "A320", engine_selection.parse_engine_catalog(_groups()),
+                           observed_model_id="11")
+    original = registry.snapshot(now=NOW)["models"]["11"]
+
+    class Bot:
+        stopping = False
+
+        def __init__(self):
+            self.snapshots = 0
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            pass
+
+        def ajax(self, *_args):
+            pass
+
+        def js(self, script):
+            if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
+                self.snapshots += 1
+                groups = _groups()
+                detail_id = "11"
+                if self.snapshots == 2:
+                    if change == "model":
+                        detail_id = "22"
+                    else:
+                        groups[0]["options"][0]["label"] = "Different motor"
+                return {"detail": {"attribute_present": True, "model_id": detail_id},
+                        "groups": groups}
+            from fleet import _MODELS_JS
+            assert script == _MODELS_JS
+            return [{"id": "11", "name": "A320"}]
+
+    bot = Bot()
+    assert game_observations.collect_aircraft_engine_catalog(bot, per_cycle=1) == 0
+    assert bot.snapshots == 2
+    assert registry.snapshot(now=NOW)["models"]["11"] == original
+
+
+def test_combined_engine_snapshot_runs_against_dom_and_rejects_loading(tmp_path):
+    if not shutil.which("node"):
+        pytest.skip("Node.js required to exercise the engine detail DOM snapshot")
+
+    mock = r"""
+const option = (value, label, selected) => ({
+  value, textContent: label, selected,
+  matches: () => false,
+  getAttribute: name => name === 'data-speed' ? '905' : null
+});
+const select = {
+  name: 'engine', id: 'acEngine', value: '1',
+  options: [option('1', 'Trent 970', true), option('2', 'GP7270', false)],
+  closest: () => null, matches: () => false,
+  getAttribute: name => name === 'aria-label' ? 'Engine' : null
+};
+let modelId = '11';
+let loading = false;
+const panel = {
+  getAttribute: name => name === 'data-model-id' ? modelId : null,
+  querySelector: () => loading ? {} : null,
+  querySelectorAll: name => name === 'select' ? [select] : []
+};
+globalThis.document = {
+  querySelector: name => name === '#acModel' ? panel : null,
+  querySelectorAll: name => name === '#acModel' ? [panel] : []
+};
+globalThis.window = {jQuery: {active: 0}};
+"""
+    js = (mock + "\nconst snapshot = new Function(" +
+          json.dumps(game_observations._ENGINE_DETAIL_SNAPSHOT_JS) +
+          ");\nconst first = snapshot();\n" +
+          "window.jQuery.active = 1; const ajax = snapshot();\n" +
+          "window.jQuery.active = 0; loading = true; const loader = snapshot();\n" +
+          "loading = false; modelId = '22'; const next = snapshot();\n" +
+          "console.log(JSON.stringify({first, ajax, loader, next}));\n")
+    path = tmp_path / "engine_snapshot.js"
+    path.write_text(js, encoding="utf-8")
+    result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    reads = json.loads(result.stdout)
+    assert reads["first"]["detail"] == {"attribute_present": True, "model_id": "11"}
+    catalog = engine_selection.parse_engine_catalog(reads["first"]["groups"])
+    assert [item.engine_id for item in catalog.variants] == ["1", "2"]
+    assert reads["ajax"] is None
+    assert reads["loader"] is None
+    assert reads["next"]["detail"]["model_id"] == "22"
