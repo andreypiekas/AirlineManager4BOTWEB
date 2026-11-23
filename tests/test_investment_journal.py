@@ -88,6 +88,9 @@ def test_invalid_plans_and_unauthorized_transitions_fail_closed(tmp_path):
     intent, _ = ledger.register(aircraft_plan())
     with pytest.raises(ValueError):
         ledger.transition(intent["intent_key"], "PROPOSED", "SUBMITTED")
+    key = ready(journal(tmp_path), aircraft_plan(destination_id="789"))
+    with pytest.raises(ValueError, match="Transição inválida"):
+        ledger.transition(key, "PRECHECKED", "SUBMITTED")
     with pytest.raises(KeyError):
         ledger.transition("sha256:" + "f" * 64, "PROPOSED", "APPROVED")
     assert ledger.get("garbage") is None
@@ -100,7 +103,14 @@ def test_submitted_is_claimed_once_even_with_concurrent_workers(tmp_path):
     assert ledger.unresolved()["estimated_exposure"] == 10000
 
     def claim(_index):
-        return journal(tmp_path).transition(key, "PRECHECKED", "SUBMITTED")
+        worker = journal(tmp_path)
+        owner = f"worker-{_index}"
+        if not worker.acquire_executor(owner):
+            return False
+        try:
+            return worker.claim_submission(key, owner)
+        finally:
+            worker.release_executor(owner)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         claims = list(pool.map(claim, range(16)))
@@ -115,7 +125,9 @@ def test_submitted_is_claimed_once_even_with_concurrent_workers(tmp_path):
 def test_restart_quarantines_timeout_and_requires_plan_specific_game_proof(tmp_path):
     ledger = journal(tmp_path)
     key = ready(ledger)
-    assert ledger.transition(key, "PRECHECKED", "SUBMITTED")
+    assert ledger.acquire_executor("original-worker")
+    assert ledger.claim_submission(key, "original-worker")
+    assert ledger.release_executor("original-worker")
     restarted = journal(tmp_path)
     assert restarted.recover_submitted() == 1
     assert restarted.recover_submitted() == 0
@@ -167,7 +179,9 @@ def test_hub_purchase_requires_independent_ownership_transition(tmp_path):
     plan = {"plan_id": "new-hub", "snapshot_id": SNAPSHOT, "kind": "hub",
             "hub_id": "777", "estimated_cost": 50000}
     key = ready(ledger, plan)
-    assert ledger.transition(key, "PRECHECKED", "SUBMITTED")
+    assert ledger.acquire_executor("hub-worker")
+    assert ledger.claim_submission(key, "hub-worker")
+    assert ledger.release_executor("hub-worker")
     proof = {"source": "game_owned_hubs", "profile_id": "principal",
              "verified": True, "observed_at": time.time(), "hub_id": "777",
              "before_owned": False, "after_owned": True}

@@ -28,9 +28,9 @@ _INTENT_KEY = re.compile(r"^sha256:[0-9a-f]{64}$")
 _TRANSITIONS = {
     "PROPOSED": {"APPROVED", "FAILED"},
     "APPROVED": {"PRECHECKED", "FAILED"},
-    "PRECHECKED": {"SUBMITTED", "FAILED"},
-    "SUBMITTED": {"UNKNOWN", "CONFIRMED"},
-    "UNKNOWN": {"CONFIRMED"},
+    "PRECHECKED": {"FAILED"},
+    "SUBMITTED": {"UNKNOWN", "CONFIRMED", "FAILED"},
+    "UNKNOWN": {"CONFIRMED", "FAILED"},
     "CONFIRMED": set(),
     "FAILED": set(),
 }
@@ -93,11 +93,14 @@ def _intent_key(profile_id: str, plan: Mapping) -> str:
 class InvestmentJournal:
     """Single-target, one-shot state transitions isolated by active profile."""
 
-    def __init__(self, path: Path | None = None, *, profile_id: str | None = None):
+    def __init__(self, path: Path | None = None, *, profile_id: str | None = None,
+                 simulation: bool = False):
         self.profile_id = paths.current().label if profile_id is None else profile_id
         if not isinstance(self.profile_id, str) or _PLAN_ID.fullmatch(self.profile_id) is None:
             raise ValueError("Perfil inválido para diário de investimentos.")
-        self.path = Path(path) if path is not None else paths.current().data / "investment_journal.sqlite3"
+        self.simulation = simulation
+        filename = "investment_simulation.sqlite3" if simulation else "investment_journal.sqlite3"
+        self.path = Path(path) if path is not None else paths.current().data / filename
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn, conn:
             conn.executescript("""
@@ -122,7 +125,24 @@ class InvestmentJournal:
                     FOREIGN KEY (profile_id, intent_key)
                       REFERENCES intents (profile_id, intent_key)
                 );
+                CREATE TABLE IF NOT EXISTS journal_environment (
+                    environment TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS executor_guards (
+                    profile_id TEXT PRIMARY KEY,
+                    owner_token TEXT NOT NULL,
+                    acquired_at REAL NOT NULL
+                );
             """)
+            conn.execute("BEGIN IMMEDIATE")
+            environment = "simulation" if self.simulation else "game"
+            row = conn.execute("SELECT environment FROM journal_environment").fetchone()
+            if row is None:
+                if self.simulation and conn.execute("SELECT 1 FROM intents LIMIT 1").fetchone():
+                    raise ValueError("Um diário de compras existente não pode virar simulação.")
+                conn.execute("INSERT INTO journal_environment (environment) VALUES (?)", (environment,))
+            elif row["environment"] != environment:
+                raise ValueError("Diário de investimentos de ambiente incompatível.")
 
     def _connect(self):
         conn = sqlite3.connect(self.path, timeout=10)
@@ -190,7 +210,7 @@ class InvestmentJournal:
 
     def transition(self, intent_key: str, expected: str, next_state: str,
                    *, confirmation: Mapping | None = None) -> bool:
-        """Atomic compare-and-set. Only one worker can claim SUBMITTED.
+        """Atomic compare-and-set. Submission requires claim_submission().
 
         A false result means another worker/restart advanced the intent. That
         worker must never repeat a click based on the failed transition.
@@ -209,9 +229,12 @@ class InvestmentJournal:
                 raise KeyError("Intenção não encontrada no perfil.")
             if row["state"] != expected:
                 return False
-            if next_state == "CONFIRMED" and not self._confirmed(
-                    confirmation, json.loads(row["plan_json"])):
+            plan = json.loads(row["plan_json"])
+            if next_state == "CONFIRMED" and not self._confirmed(confirmation, plan):
                 raise ValueError("Confirmação independente e vinculada ao plano obrigatória.")
+            if next_state == "FAILED" and expected in ("SUBMITTED", "UNKNOWN"):
+                if not self._refused(confirmation, plan):
+                    raise ValueError("Recusa independente com ausência de pedido obrigatória.")
             conn.execute(
                 "UPDATE intents SET state=?, updated_at=?, "
                 "submit_attempts=submit_attempts + ? WHERE profile_id=? AND intent_key=?",
@@ -222,12 +245,14 @@ class InvestmentJournal:
             public_evidence = ({name: confirmation[name] for name in (
                 "source", "profile_id", "verified", "observed_at", "purchase_id",
                 "hub_id", "model_id", "engine_id", "origin_id", "destination_id",
-                "before_owned", "after_owned",
-            ) if name in confirmation} if next_state == "CONFIRMED" else None)
+                "before_owned", "after_owned", "request_rejected", "orders_checked",
+                "order_absent", "refusal_code",
+            ) if name in confirmation} if next_state in ("CONFIRMED", "FAILED")
+                and confirmation is not None else None)
             self._event(conn, intent_key, expected, next_state, stamp, public_evidence)
         return True
 
-    def _confirmed(self, evidence: Mapping | None, plan: Mapping) -> bool:
+    def _matching_evidence(self, evidence: Mapping | None, plan: Mapping) -> bool:
         if (not isinstance(evidence, Mapping)
                 or evidence.get("profile_id") != self.profile_id
                 or evidence.get("verified") is not True
@@ -236,20 +261,120 @@ class InvestmentJournal:
                 or not 0 <= time.time() - evidence["observed_at"] < 900
                 or evidence.get("hub_id") != plan["hub_id"]):
             return False
+        if plan["kind"] == "aircraft":
+            return all(evidence.get(name) == plan[name] for name in (
+                "model_id", "engine_id", "origin_id", "destination_id"))
+        return True
+
+    def _confirmed(self, evidence: Mapping | None, plan: Mapping) -> bool:
+        if not self._matching_evidence(evidence, plan):
+            return False
         if plan["kind"] == "hub":
-            return (evidence.get("source") == "game_owned_hubs"
+            source = "simulation_owned_hubs" if self.simulation else "game_owned_hubs"
+            return (evidence.get("source") == source
                     and evidence.get("before_owned") is False
                     and evidence.get("after_owned") is True)
-        return (evidence.get("source") == "game_order_list"
-                and _game_id(evidence.get("purchase_id"))
-                and all(evidence.get(name) == plan[name] for name in (
-                    "model_id", "engine_id", "origin_id", "destination_id")))
+        source = "simulation_order_list" if self.simulation else "game_order_list"
+        return evidence.get("source") == source and _game_id(evidence.get("purchase_id"))
+
+    def _refused(self, evidence: Mapping | None, plan: Mapping) -> bool:
+        source = "simulation_order_rejection" if self.simulation else "game_order_rejection"
+        return (self._matching_evidence(evidence, plan)
+                and evidence.get("source") == source
+                and evidence.get("request_rejected") is True
+                and evidence.get("orders_checked") is True
+                and evidence.get("order_absent") is True
+                and _choice_id(evidence.get("refusal_code")))
+
+    def acquire_executor(self, owner_token: str) -> bool:
+        """Acquire the single durable mutation slot for this profile."""
+        if not isinstance(owner_token, str) or _PLAN_ID.fullmatch(owner_token) is None:
+            raise ValueError("Identidade do executor inválida.")
+        with self._connect() as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            result = conn.execute(
+                "INSERT OR IGNORE INTO executor_guards (profile_id, owner_token, acquired_at) "
+                "VALUES (?, ?, ?)", (self.profile_id, owner_token, time.time()),
+            )
+            return result.rowcount == 1
+
+    def release_executor(self, owner_token: str) -> bool:
+        if not isinstance(owner_token, str) or _PLAN_ID.fullmatch(owner_token) is None:
+            raise ValueError("Identidade do executor inválida.")
+        with self._connect() as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            return conn.execute(
+                "DELETE FROM executor_guards WHERE profile_id=? AND owner_token=?",
+                (self.profile_id, owner_token),
+            ).rowcount == 1
+
+    def executor_busy(self) -> bool:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT 1 FROM executor_guards WHERE profile_id=?",
+                (self.profile_id,),
+            ).fetchone() is not None
+
+    def claim_submission(self, intent_key: str, owner_token: str) -> bool:
+        """Claim one submission only under the profile lock and no unknown orders."""
+        if (not isinstance(intent_key, str) or _INTENT_KEY.fullmatch(intent_key) is None
+                or not isinstance(owner_token, str) or _PLAN_ID.fullmatch(owner_token) is None):
+            raise ValueError("Identidade de compra ou executor inválida.")
+        with self._connect() as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            guard = conn.execute(
+                "SELECT owner_token FROM executor_guards WHERE profile_id=?",
+                (self.profile_id,),
+            ).fetchone()
+            if guard is None or guard["owner_token"] != owner_token:
+                raise ValueError("Executor sem exclusividade sobre o perfil.")
+            row = conn.execute(
+                "SELECT state FROM intents WHERE profile_id=? AND intent_key=?",
+                (self.profile_id, intent_key),
+            ).fetchone()
+            if row is None:
+                raise KeyError("Intenção não encontrada no perfil.")
+            if row["state"] != "PRECHECKED":
+                return False
+            if conn.execute(
+                "SELECT 1 FROM intents WHERE profile_id=? AND intent_key<>? "
+                "AND state IN ('SUBMITTED', 'UNKNOWN') LIMIT 1",
+                (self.profile_id, intent_key),
+            ).fetchone():
+                return False
+            stamp = time.time()
+            conn.execute(
+                "UPDATE intents SET state='SUBMITTED', updated_at=?, "
+                "submit_attempts=submit_attempts+1 WHERE profile_id=? AND intent_key=?",
+                (stamp, self.profile_id, intent_key),
+            )
+            self._event(conn, intent_key, "PRECHECKED", "SUBMITTED", stamp)
+            return True
+
+    def budget_exposure_since(self, since: float, *, exclude_intent_key: str | None = None) -> int:
+        """Conservatively count current commitments plus confirmed spend in a window."""
+        if type(since) not in (int, float) or not math.isfinite(since):
+            raise ValueError("Início de janela inválido.")
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT intent_key, state, created_at, updated_at, plan_json FROM intents "
+                "WHERE profile_id=? AND (state IN ('APPROVED','PRECHECKED','SUBMITTED','UNKNOWN') "
+                "OR (state='CONFIRMED' AND updated_at>=?))",
+                (self.profile_id, since),
+            ).fetchall()
+        return sum(json.loads(row["plan_json"])["estimated_cost"] for row in rows
+                   if row["intent_key"] != exclude_intent_key)
 
     def recover_submitted(self) -> int:
         """On restart, quarantine any in-flight request without retrying it."""
         stamp = time.time()
         with self._connect() as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
+            if conn.execute(
+                "SELECT 1 FROM executor_guards WHERE profile_id=?",
+                (self.profile_id,),
+            ).fetchone():
+                raise RuntimeError("Há um executor registrado: confirme sua parada antes da conciliação.")
             rows = conn.execute(
                 "SELECT intent_key FROM intents WHERE profile_id=? AND state='SUBMITTED'",
                 (self.profile_id,),

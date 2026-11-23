@@ -20,6 +20,7 @@ def validate_aircraft_preflight(
     *,
     reserve: int = 0,
     now: float | None = None,
+    simulation: bool = False,
 ) -> dict:
     """Reject missing, stale or changed checkout evidence before any order.
 
@@ -33,9 +34,13 @@ def validate_aircraft_preflight(
                 "read_only": True, "execution_available": False}
     if intent.get("state") != "APPROVED":
         reasons.append("intencao_sem_aprovacao")
+    expected_source = "simulation_checkout" if simulation else "game_checkout_dom"
+    verified = (isinstance(observation, Mapping)
+                and (observation.get("simulated") is True if simulation
+                     else observation.get("session_authenticated") is True))
     if (not isinstance(observation, Mapping)
-            or observation.get("source") != "game_checkout_dom"
-            or observation.get("session_authenticated") is not True):
+            or observation.get("source") != expected_source
+            or not verified):
         return {"ready": False, "reasons": reasons + ["checkout_nao_verificado"],
                 "read_only": True, "execution_available": False}
 

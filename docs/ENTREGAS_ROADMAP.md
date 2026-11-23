@@ -1,5 +1,26 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-22 — Autonomia Total, execução simulada e recuperação A5 (G0)
+
+**Escopo:** exercitar a cadeia de compras de aeronaves em ambiente isolado, com limites e conciliação, na branch `codex/autonomia-a0-a1-20261122`.
+
+### Implementado
+
+- **Executor simulado A5:** `src/investment_executor.py` percorre a aprovação da política, a reserva da intenção, a pré-checagem, o claim de envio e a confirmação de pedido. O gateway fictício modela aprovação, recusa, timeout e falha após o envio. Nenhum navegador, API do jogo ou comprador legado é acionado. A simulação aceita exclusivamente `simulation_checkout` e provas `simulation_order_list` ou `simulation_order_rejection`.
+- **Separação persistente dos ambientes:** `InvestmentJournal(simulation=True)` usa, por padrão, `investment_simulation.sqlite3`, com metadado de ambiente que impede abrir um diário de jogo como simulado e vice-versa. Bancos de dados anteriores permanecem legíveis na modalidade real. A prova da simulação não pode confirmar uma compra real.
+- **Exclusividade entre executores:** lock transacional por perfil em SQLite, com token de proprietário. A reivindicação de `SUBMITTED` exige esse lock e impede novo envio se houver outro pedido `UNKNOWN` ou `SUBMITTED` no perfil. Não existe expiração automática que libere o lock de um processo potencialmente ainda ativo.
+- **Caminho único de submissão:** a transição genérica do diário não aceita `PRECHECKED → SUBMITTED`. A mudança exige `claim_submission()` sob o lock exclusivo do perfil, impedindo contornar a proteção por um chamador do diário.
+- **Recuperação após falha:** uma queda simulada deixa o pedido `SUBMITTED` e o lock preservados. Após confirmar que o executor anterior parou, a rotina explícita de retomada libera o token conhecido, move envios pendentes para `UNKNOWN` e consulta o livro de pedidos fictícios. A confirmação posterior não executa um segundo envio. O gateway pode persistir esse livro em SQLite separado, permitindo reconstruir o leitor após reinício.
+- **Recusa verificável e orçamento:** `SUBMITTED/UNKNOWN → FAILED` exige recusa e ausência de pedido comprovadas, recentes e compatíveis com perfil, hub, modelo, motor e rota. Os compromissos abertos e os pedidos confirmados nas últimas 24 horas entram no limite financeiro da política. Compra individual, saldo, compromissos, reserva e checkout continuam sujeitos à validação.
+- **Livro fictício independente:** pedidos simulados aceitos e recusas simuladas usam registros distintos em SQLite. Uma tentativa com timeout pode ser posteriormente reconciliada como aceita ou recusada conforme o registro persistido, mesmo após reconstrução do leitor. Uma ordem aceita nunca é convertida artificialmente em recusa pela alteração do estado do gateway.
+- **Tentativa novamente após dados corrigidos:** um plano `APPROVED` cuja pré-checagem falhou pode ser reavaliado com observação nova. Pedidos já submetidos, confirmados, recusados ou incertos não voltam a ser enviados.
+
+### Validação e pendências
+
+- Testes de simulação verificam confirmação, recusa comprovada, timeout, queda com livro de pedidos persistido, reinício, revalidação, isolamento de ambientes/perfis, lock concorrente, falta de comprovação de checkout e limites de gasto. A verificação de sintaxe, Ruff e a suíte Windows sem o teste de instalação POSIX acompanham esta entrega.
+- **G0 continua ativo.** A5 ainda depende de observação autenticada e homologação do seletor `#hubSelection`, variantes de motor, custo final e confirmação independente no jogo. O executor de produção, botões de aprovação, autorizações remotas, integração Telegram e compra de hubs permanecem pendentes. Os testes demonstram a consistência do protocolo fictício e não autorizam G1/G2 ou gastos reais.
+- Sem implantação no servidor e sem alteração da `main` ou da PR #44. A próxima integração técnica deve conectar os leitores autenticados somente leitura e provar a revalidação pós-AJAX antes de habilitar qualquer caminho de compra.
+
 ## 2026-11-22 — Autonomia Total, diário A5 e pré-checagem simulada (G0)
 
 **Escopo:** iniciar a proteção transacional de futuras aquisições em `codex/autonomia-a0-a1-20261122`, mantendo execução real indisponível.
