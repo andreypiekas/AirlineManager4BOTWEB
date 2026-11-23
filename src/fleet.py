@@ -628,6 +628,17 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
                 break
             staged_ids.update(page_ids)
             staged.append((page, verified_rows))
+        if (len(staged) == total and
+                {page for page, _ in staged} == set(range(1, total + 1))):
+            # A stable route count alone cannot prove a coherent fleet snapshot:
+            # aircraft may move between pages without changing the total.
+            # Revisit every page before publishing a full-cycle audit.
+            for page, original_rows in staged:
+                if not load(page) or verified_rows != original_rows:
+                    log.warning("Auditoria paginada: conteúdo da página %d mudou na "
+                                "releitura integral; lote descartado.", page)
+                    staged.clear()
+                    break
     finally:
         try:
             current = snapshot()
@@ -664,6 +675,13 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     if unverified_navigation:
         log.warning("Auditoria paginada: navegação AJAX não confirmada; lote descartado.")
         return []
+    if (len(staged) == total and
+            {page for page, _ in staged} == set(range(1, total + 1))):
+        original_start_rows = next(rows for page, rows in staged if page == start)
+        if restored[2] != original_start_rows:
+            log.warning("Auditoria paginada: página inicial mudou durante a "
+                        "restauração; lote integral descartado.")
+            return []
 
     visited = []
     for page, rows in staged:

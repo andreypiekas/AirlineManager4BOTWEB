@@ -1,5 +1,19 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, releitura integral contra movimentação de aeronaves A2 (G0)
+
+**Escopo:** impedir que a contagem constante de rotas produza um falso certificado de cobertura quando aeronaves trocam de página durante a auditoria.
+
+### Implementado
+
+- `audit_routes_live_pages()` relê todas as páginas de uma varredura integral antes de persistir qualquer registro do lote. Confere identidade e conteúdo das linhas contra a primeira leitura, inclusive da página inicial após sua restauração, e descarta o lote completo se houver divergência ou falha de navegação.
+- Auditorias incrementais continuam parciais; a segunda passagem é exigida quando o ciclo reuniu todas as páginas. Testes reproduzem troca de aeronaves entre páginas e durante a restauração mantendo a mesma quantidade de rotas. Verificam que o registro anterior permanece intacto. O cenário estável de 11 páginas confirma que a releitura realmente ocorreu.
+
+### Validação e limitações
+
+- Testes direcionados de auditoria paginada e registro de rotas aprovados em Windows. A suíte Windows, análise estática e compilação são executadas antes do commit.
+- **G0 permanece ativo.** Duas passagens coerentes reduzem falsos positivos observáveis, mas a interface paginada não oferece snapshot transacional garantido. São necessárias evidências em sessão autenticada para homologar a cobertura e assegurar o uso das rotas no planejamento. Não houve compras, implantação, merge na `main` ou alteração da PR #44.
+
 ## 2026-11-23 — Autonomia Total, consistência de motores, auditoria e custos A1/A2/A3 (G0)
 
 **Escopo:** fechar ambiguidades encontradas na seleção de motores, na certificação de cobertura da frota e na estimativa de lucro com preços de mercado incompletos.

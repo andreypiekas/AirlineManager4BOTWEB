@@ -772,7 +772,7 @@ def test_live_page_loader_verifies_each_page_and_restores_initial_view(tmp_path)
     assert audit_routes(bot, registry)
     assert audit_routes_live_pages(bot, registry, pages_per_cycle=3) == [1, 3, 2]
     assert bot.page == 2
-    assert bot.navigations == [1, 2, 3, 2]
+    assert bot.navigations == [1, 2, 3, 2, 1, 2, 3, 2]
     coverage = registry.snapshot()["scan_coverage"]
     assert coverage["observed_pages"] == 3
     assert coverage["unique_aircraft"] == 3

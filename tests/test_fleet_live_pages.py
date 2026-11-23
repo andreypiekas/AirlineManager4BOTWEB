@@ -194,9 +194,70 @@ def test_all_eleven_pages_can_be_audited_in_one_read_only_cycle(tmp_path):
     assert coverage["repeated_aircraft_across_pages"] == 0
     assert coverage["full_page_coverage_verified"] is True
     assert registry.snapshot()["last_verified_full_audit"]["expected_routes"] == 204
+    # The full audit rereads every page before certifying the snapshot.
+    assert sum(page == 2 for page, _, _ in bot.navigations) >= 2
     assert audit_routes(bot, registry, page=1, total_pages=11)
     assert registry.snapshot()["scan_coverage"]["full_page_coverage_verified"] is False
     assert registry.snapshot()["last_verified_full_audit"]["expected_routes"] == 204
+
+
+def test_same_total_page_movement_during_full_recheck_discards_audit(tmp_path):
+    class MovingAircraftBot(LiveRoutesBot):
+        shifted = False
+
+        def ajax(self, url, target):
+            previous_page = self.page
+            super().ajax(url, target)
+            if previous_page == 3 and self.page == 2:
+                self.shifted = True
+
+        def js(self, script):
+            rows = super().js(script)
+            if script == _ROUTE_AUDIT_JS and self.shifted:
+                if self.page == 1:
+                    rows[0]["aircraft_id"] = "24000200"
+                elif self.page == 2:
+                    rows[0]["aircraft_id"] = "24000100"
+            return rows
+
+    bot = MovingAircraftBot(total_pages=3)
+    registry = RouteRegistry(tmp_path / "routes.json")
+    assert audit_routes(bot, registry, page=1, total_pages=3)
+    before = registry.snapshot()
+
+    assert audit_routes_live_pages(bot, registry, pages_per_cycle=3) == []
+    assert bot.shifted is True
+    assert bot.page == 1
+    assert registry.snapshot() == before
+    assert registry.snapshot()["last_verified_full_audit"] is None
+
+
+def test_same_total_page_movement_during_restoration_discards_full_audit(tmp_path):
+    class MovingOnRestoreBot(LiveRoutesBot):
+        shifted = False
+
+        def ajax(self, url, target):
+            previous_page = self.page
+            super().ajax(url, target)
+            visited_last_twice = sum(page == 3 for page, _, _ in self.navigations) >= 2
+            if visited_last_twice and previous_page == 2 and self.page == 1:
+                self.shifted = True
+
+        def js(self, script):
+            rows = super().js(script)
+            if script == _ROUTE_AUDIT_JS and self.shifted and self.page == 1:
+                rows[0]["aircraft_id"] = "24000999"
+            return rows
+
+    bot = MovingOnRestoreBot(total_pages=3)
+    registry = RouteRegistry(tmp_path / "routes.json")
+    assert audit_routes(bot, registry, page=1, total_pages=3)
+    before = registry.snapshot()
+
+    assert audit_routes_live_pages(bot, registry, pages_per_cycle=3) == []
+    assert bot.shifted is True
+    assert bot.page == 1
+    assert registry.snapshot() == before
 
 
 def test_cross_cycle_duplicate_aircraft_cannot_be_full_coverage(tmp_path):
