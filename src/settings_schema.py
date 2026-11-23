@@ -101,6 +101,7 @@ TELEGRAM_SWITCHES = [
     ("telegram_simulation", "Eventos da simulação"),
     ("telegram_expansion", "Recomendações verificadas de novos hubs"),
     ("telegram_investment_daily", "Relatório diário de investimentos e impedimentos"),
+    ("telegram_investment_events", "Atualizações por compra e etapa do investimento"),
 ]
 ALL_SWITCHES = MARKET_SWITCHES + FLEET_SWITCHES + AIRCRAFT_SWITCHES + OPTION_SWITCHES + TELEGRAM_SWITCHES
 

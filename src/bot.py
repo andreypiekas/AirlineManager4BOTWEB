@@ -668,6 +668,10 @@ class Bot:
             from investment_daily import publish_investment_daily
 
             self._guard(lambda: publish_investment_daily(self), "enviar resumo diário de investimentos")
+        if opt("telegram_investment_events"):
+            from investment_events import publish_investment_event
+
+            self._guard(lambda: publish_investment_event(self), "notificar evento de investimento")
         self._guard(self._maybe_daily_summary, "enviar o resumo diário")
 
     def _guard(self, action: Callable[[], None], what: str) -> None:

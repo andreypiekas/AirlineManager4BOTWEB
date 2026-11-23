@@ -553,6 +553,61 @@ class InvestmentJournal:
                  "evidence": json.loads(row["evidence_json"]) if row["evidence_json"] else None}
                 for row in rows]
 
+    @staticmethod
+    def _event_record(row: sqlite3.Row) -> dict:
+        return {
+            "event_id": row["event_id"],
+            "profile_id": row["profile_id"],
+            "intent_key": row["intent_key"],
+            "previous_state": row["previous_state"],
+            "new_state": row["new_state"],
+            "observed_at": row["observed_at"],
+            "evidence": json.loads(row["evidence_json"]) if row["evidence_json"] else None,
+            "plan": json.loads(row["plan_json"]),
+        }
+
+    def latest_event_id(self) -> int:
+        """Return the newest event ID visible to this profile."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(event_id), 0) AS latest_event_id FROM events "
+                "WHERE profile_id=?",
+                (self.profile_id,),
+            ).fetchone()
+        return int(row["latest_event_id"])
+
+    def events_after(self, event_id: int, *, limit: int = 1) -> list[dict]:
+        """Read ordered state changes after a profile-scoped event cursor."""
+        if type(event_id) is not int or event_id < 0:
+            raise ValueError("Cursor de eventos inválido.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("Limite de eventos inválido.")
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT e.event_id, e.profile_id, e.intent_key, e.previous_state, "
+                "e.new_state, e.observed_at, e.evidence_json, i.plan_json "
+                "FROM events e JOIN intents i "
+                "ON i.profile_id=e.profile_id AND i.intent_key=e.intent_key "
+                "WHERE e.profile_id=? AND e.event_id>? ORDER BY e.event_id LIMIT ?",
+                (self.profile_id, event_id, limit),
+            ).fetchall()
+        return [self._event_record(row) for row in rows]
+
+    def event(self, event_id: int) -> dict | None:
+        """Read one event with its validated plan, scoped to the active profile."""
+        if type(event_id) is not int or event_id <= 0:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT e.event_id, e.profile_id, e.intent_key, e.previous_state, "
+                "e.new_state, e.observed_at, e.evidence_json, i.plan_json "
+                "FROM events e JOIN intents i "
+                "ON i.profile_id=e.profile_id AND i.intent_key=e.intent_key "
+                "WHERE e.profile_id=? AND e.event_id=?",
+                (self.profile_id, event_id),
+            ).fetchone()
+        return self._event_record(row) if row is not None else None
+
     def audit_metrics(self, since: float) -> dict:
         """Read an atomic, profile-scoped journal summary for A9 observability.
 

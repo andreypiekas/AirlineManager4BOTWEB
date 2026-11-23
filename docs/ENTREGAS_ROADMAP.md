@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A9, notificações de transições do investimento (G0)
+
+**Objetivo:** informar individualmente as etapas de cada intenção de investimento sem perder eventos após reinícios ou falhas de transporte.
+
+### Implementação e evidências
+
+- **Diário por evento:** `InvestmentJournal` agora permite consultar o último evento, listar transições em ordem e recuperar um evento por ID, com isolamento por perfil. O conteúdo da mensagem distingue propostas, aprovação, pré-checagem, submissão, confirmação independente, resultado incerto e falha. O valor exibido é expressamente **previsto**, sem atribuir gasto real a um clique.
+- **Entrega resiliente:** `src/investment_events.py` implementa cursor SQLite por **perfil e modo real/simulação**, com reivindicação exclusiva, lease de 300 segundos, confirmação somente após sucesso de `send_now()`, reenvio após falha e no máximo um evento por ciclo. A primeira ativação inicia no último evento existente, evitando disparo retrospectivo de todo o histórico. Transições posteriores são entregues em ordem.
+- **Configuração e integração:** nova opção `telegram_investment_events=off` em `config/defaults.ini`, exposta na aba Telegram com ajuda PT-BR/EN. A integração em `src/bot.py` requer simultaneamente a opção e o Telegram global habilitados. As mensagens de simulação são identificadas e usam seu próprio diário e cursor.
+- **Testes:** `tests/test_investment_events.py` verifica ordenação, conteúdo, retry após falha/exceção/reinício, claim concorrente e vencido, isolamento de perfil e de modo, alternância real/simulação, seleção de evento e inatividade com opção desabilitada. `tests/test_telegram_filters.py` cobre o novo controle desligado por padrão.
+
+### Verificação, limites e reversão
+
+- Testes direcionados aprovados, incluindo journal, relatório diário e filtros de Telegram. Suíte completa de Windows com exclusão apenas do instalador POSIX, Ruff, `compileall src` e `git diff --check` verificados nesta entrega.
+- **Gate G0.** Fixtures de journal e cliente Telegram simulado. Não houve mensagem real, compra de aeronave/hub, implantação ou merge na `main`. Sem observação autenticada, a notificação informa estados registrados no journal, que ainda não comprovam compra/entrega/lucro real por si sós. Resposta perdida após envio remoto pode gerar notificação duplicada no retry. Eventos já existentes antes da ativação ficam fora da primeira remessa.
+- A entrega é reversível por commit na branch `codex/autonomia-a0-a1-20261122`, observadas dependências posteriores. PR #46 permanece em rascunho, PR #44 preservada. A prioridade técnica seguinte é homologar o preço final do checkout após a seleção real do motor e validar a cobertura A1/A2 no jogo autenticado, sem autorizar gasto a partir de fixtures.
+
 ## 2026-11-23 — Autonomia Total A9, relatório diário de investimentos (G0)
 
 **Objetivo:** disponibilizar uma prestação de contas diária do planejamento de investimentos, das intenções registradas e das evidências ainda ausentes.
