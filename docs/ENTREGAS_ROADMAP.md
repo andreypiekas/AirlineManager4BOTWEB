@@ -14,7 +14,7 @@
 
 - Testes direcionados, suíte Windows sem o teste de instalação Linux específico de permissões POSIX, Ruff, `compileall` e `git diff --check` executados nesta entrega. A prova de término do subprocesso utiliza o sistema operacional do executor local; gateway e pedidos são simulados.
 - **Gate G0.** A recuperação automática exige o mesmo hostname e metadados de processo. PID reutilizado, PID inacessível, mudança de host e bloqueios de versões antigas permanecem conservadoramente retidos para recuperação explícita. A simulação não comprova seletores, pedidos ou propriedade do jogo real. A5 e A8 ainda dependem de reconciliação autenticada, verificação da configuração final e homologação para liberar qualquer gasto. Gates G1–G5 pendentes.
-- Sem alteração de configuração de produção, compra no jogo, Telegram, implantação ou merge na `main`. Branch `codex/autonomia-a0-a1-20261122`, preservando a PR #44. A reversão exige inspecionar os usos do diário e reverter o commit correspondente. Novas colunas opcionais do SQLite podem permanecer após a reversão sem afetar leitores legados.
+- Sem alteração de configuração de produção, compra no jogo, Telegram, implantação ou merge na `main`. Branch `codex/autonomia-a0-a1-20261122`, commit [`90fd00f`](https://github.com/andreypiekas/AirlineManager4BOTWEB/commit/90fd00fa97469dd5a144dbfcfcbdd6fbc9723bd4) e [PR de acompanhamento #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46) em rascunho, preservando a PR #44. A reversão exige inspecionar os usos do diário e reverter o commit correspondente. Novas colunas opcionais do SQLite podem permanecer após a reversão sem afetar leitores legados.
 
 ## 2026-11-23 — Autonomia Total A8, bloqueio de recompra de hub no simulador (G0)
 
