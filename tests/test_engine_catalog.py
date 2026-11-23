@@ -165,6 +165,33 @@ def test_registry_same_time_identity_priority_and_conflicting_variants(tmp_path,
         "Other variant")
 
 
+def test_registry_preserves_verified_identity_against_newer_unverified_read(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    path = tmp_path / "engines.json"
+    registry = engine_catalog.EngineCatalogRegistry(path)
+    original = engine_selection.parse_engine_catalog(_groups())
+    assert registry.record("11", "A320", original, observed_at=NOW - 20,
+                           observed_model_id="11")
+
+    verified = registry.snapshot(now=NOW)["models"]["11"]
+    contents = path.read_bytes()
+    changed = _groups()
+    changed[0]["options"][1]["label"] = "Uncorrelated engine"
+    unverified = engine_selection.parse_engine_catalog(changed)
+
+    restarted = engine_catalog.EngineCatalogRegistry(path)
+    assert not restarted.record("11", "A320", unverified, observed_at=NOW - 5)
+    assert path.read_bytes() == contents
+    assert restarted.snapshot(now=NOW)["models"]["11"] == verified
+
+    assert restarted.record("11", "A320", unverified, observed_at=NOW - 5,
+                            observed_model_id="11")
+    latest = restarted.snapshot(now=NOW)["models"]["11"]
+    assert latest["model_detail_identity_verified"] is True
+    assert latest["variants"][1]["label"] == "Uncorrelated engine"
+
+
 @pytest.mark.parametrize("invalid", [
     None, True, False, "1900000000", -1, 0,
     float("nan"), float("inf"), float("-inf"),

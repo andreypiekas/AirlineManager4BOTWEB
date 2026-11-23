@@ -201,13 +201,14 @@ class EngineCatalogRegistry:
             catalogs = catalogs if isinstance(catalogs, dict) else {}
             previous = _validated_record(catalogs.get(model_id), now=now)
             if previous is not None:
+                if (previous["model_detail_identity_verified"]
+                        and not clean["model_detail_identity_verified"]):
+                    return False  # Recent uncorrelated DOM reads cannot replace verified identity.
                 if clean["observed_at"] < previous["observed_at"]:
                     return False
                 if clean["observed_at"] == previous["observed_at"]:
                     prior_verified = previous["model_detail_identity_verified"]
                     current_verified = clean["model_detail_identity_verified"]
-                    if prior_verified and not current_verified:
-                        return False
                     if prior_verified == current_verified and clean != previous:
                         return False  # Contradictory, equally dated evidence.
             catalogs[model_id] = clean
