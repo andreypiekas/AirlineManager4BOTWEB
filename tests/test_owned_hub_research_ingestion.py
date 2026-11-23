@@ -133,9 +133,11 @@ def test_cursor_state_can_read_legacy_cache_safely(tmp_path):
     assert registry.cursor_state() == (1, page["snapshot_fingerprint"])
     legacy = json.loads(registry.path.read_text(encoding="utf-8"))
     del legacy["snapshot_fingerprint"]
+    del legacy["layout_fingerprint"]
     legacy["version"] = 1
     registry.path.write_text(json.dumps(legacy), encoding="utf-8")
     assert registry.cursor_state() == (1, None)
+    assert registry.pagination_state() == (1, None, None)
 
 
 def test_cycle_ingestion_rotates_pages_and_persists_across_restart(tmp_path, monkeypatch):
@@ -157,15 +159,28 @@ def test_cycle_ingestion_rotates_pages_and_persists_across_restart(tmp_path, mon
     assert restarted.cursor() == 1
     old_fingerprint = restarted.cursor_state()[1]
 
-    # A changed market invalidates the saved offset: revisit the new first
-    # combination before moving to the second, even after a process restart.
+    # A refreshed market changes its evidence fingerprint every cycle. Keep
+    # rotating through candidates while their ordered identities are stable.
     market["models"][0]["price"] = 2_000_000
-    assert ingest_owned_hub_research_inputs(per_cycle=1) == 1
-    assert restarted.cursor() == 1
-    assert restarted.cursor_state()[1] != old_fingerprint
-    assert {row["model"] for row in restarted.snapshot()} == {"A320"}
+    market["observed_at"] = now + 0.001
     assert ingest_owned_hub_research_inputs(per_cycle=1) == 1
     assert restarted.cursor() == 0
+    assert restarted.cursor_state()[1] != old_fingerprint
     assert {row["model"] for row in restarted.snapshot()} == {"A320", "B737"}
+
+    # Adding a model changes the candidate order, so the old offset cannot
+    # skip the new first candidate. A structural change resets the cursor.
     assert ingest_owned_hub_research_inputs(per_cycle=1) == 1
-    assert len(restarted.snapshot()) == 2
+    assert restarted.cursor() == 1
+    market["models"].append({"id": 33, "name": "A319", "range": 5000,
+                             "capacity": 150, "price": 1_400_000})
+    assert ingest_owned_hub_research_inputs(per_cycle=1) == 1
+    assert restarted.cursor() == 1
+    assert {row["model"] for row in restarted.snapshot()} == {"A319", "A320", "B737"}
+
+    # A partially corrupted state cannot resume solely from its layout hash.
+    cached = json.loads(restarted.path.read_text(encoding="utf-8"))
+    del cached["snapshot_fingerprint"]
+    restarted.path.write_text(json.dumps(cached), encoding="utf-8")
+    assert ingest_owned_hub_research_inputs(per_cycle=1) == 1
+    assert restarted.cursor() == 1

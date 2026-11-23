@@ -257,6 +257,19 @@ def build_owned_hub_research_queue(
         fingerprint_data, ensure_ascii=False, sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")).hexdigest()[:24]
+    # A background ingest may continue through refreshed prices, demand or
+    # timestamps when the ordered candidate identities are unchanged. The
+    # interactive UI still uses the stricter evidence fingerprint above.
+    layout_data = {
+        "hub_routes": {hub_id: [route["destination_id"] for route in samples_by_hub[hub_id]]
+                       for hub_id in ordered_hubs},
+        "model_engines": [(model["id"], variant["engine_id"] if variant else None)
+                          for model, variant, _ in model_options],
+    }
+    layout_fingerprint = hashlib.sha256(json.dumps(
+        layout_data, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()[:24]
     requested_offset = offset if type(offset) is int and offset > 0 else 0
     cursor_reset = requested_offset > 0 and (
         expected_fingerprint != fingerprint or requested_offset >= total_candidates
@@ -370,5 +383,6 @@ def build_owned_hub_research_queue(
         "page_size": max_items,
         "next_offset": offset + len(queue) if has_more else None,
         "snapshot_fingerprint": fingerprint, "cursor_reset": cursor_reset,
+        "layout_fingerprint": layout_fingerprint,
         "blocking_reasons": blockers,
     }

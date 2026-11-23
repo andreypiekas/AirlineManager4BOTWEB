@@ -49,6 +49,10 @@ def _recent(value: object, now: float) -> bool:
             and 0 <= now - value <= MAX_EVIDENCE_AGE)
 
 
+def _fingerprint(value: object) -> str | None:
+    return value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{24}", value) else None
+
+
 def _evidence_current(row: dict, now: float) -> bool:
     """Each independent source must still be fresh when a cached row is read."""
     evidence = row.get("research_evidence")
@@ -144,13 +148,16 @@ class OwnedHubResearchInputsRegistry:
 
     def cursor_state(self) -> tuple[int, str | None]:
         """Return the offset together with the evidence snapshot it belongs to."""
+        offset, fingerprint, _ = self.pagination_state()
+        return offset, fingerprint
+
+    def pagination_state(self) -> tuple[int, str | None, str | None]:
         with _LOCK:
             saved = self._load()
         cursor = saved.get("next_offset")
-        fingerprint = saved.get("snapshot_fingerprint")
         return (cursor if type(cursor) is int and cursor >= 0 else 0,
-                fingerprint if isinstance(fingerprint, str)
-                and re.fullmatch(r"[0-9a-f]{24}", fingerprint) else None)
+                _fingerprint(saved.get("snapshot_fingerprint")),
+                _fingerprint(saved.get("layout_fingerprint")))
 
     def snapshot(self, *, verified: Optional[list[dict]] = None,
                  now: Optional[float] = None) -> list[dict]:
@@ -175,8 +182,9 @@ class OwnedHubResearchInputsRegistry:
                 or page.get("read_only") is not True
                 or not isinstance(page.get("items"), list)):
             return 0
-        fingerprint = page.get("snapshot_fingerprint")
-        if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{24}", fingerprint):
+        fingerprint = _fingerprint(page.get("snapshot_fingerprint"))
+        layout_fingerprint = _fingerprint(page.get("layout_fingerprint"))
+        if fingerprint is None or layout_fingerprint is None:
             return 0
         converted = [_scenario(item, now) for item in page["items"]]
         converted = [row for row in converted if row is not None]
@@ -208,8 +216,9 @@ class OwnedHubResearchInputsRegistry:
             ))[:_MAX_STORED]
             offset = page.get("next_offset")
             next_offset = offset if type(offset) is int and offset >= 0 else 0
-            updated = {"version": 2, "items": items,
-                       "next_offset": next_offset, "snapshot_fingerprint": fingerprint}
+            updated = {"version": 3, "items": items,
+                       "next_offset": next_offset, "snapshot_fingerprint": fingerprint,
+                       "layout_fingerprint": layout_fingerprint}
             if updated != saved:
                 paths.write_atomic(self.path, json.dumps(updated, ensure_ascii=False, indent=2))
         return len(converted)
@@ -236,11 +245,18 @@ def ingest_owned_hub_research_inputs(*, per_cycle: int = 40) -> int:
         inventory, demand["samples"], market, **parameters,
     )
     registry = OwnedHubResearchInputsRegistry()
-    cursor, previous_fingerprint = registry.cursor_state()
+    cursor, previous_fingerprint, previous_layout = registry.pagination_state()
     if cursor and cursor < first["total_candidates"]:
+        # Reading a fresh price or a new demand sample changes the evidence
+        # fingerprint every cycle. Continue fairly when candidate ordering is
+        # stable; reset when a route, model, motor or hub was added/removed.
+        expected = (first["snapshot_fingerprint"]
+                    if previous_fingerprint is not None and previous_layout is not None
+                    and previous_layout == first["layout_fingerprint"]
+                    else previous_fingerprint)
         page = build_owned_hub_research_queue(
             inventory, demand["samples"], market,
-            offset=cursor, expected_fingerprint=previous_fingerprint,
+            offset=cursor, expected_fingerprint=expected,
             **parameters,
         )
     else:

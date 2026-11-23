@@ -1,5 +1,20 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2, rotação contínua com evidências renovadas (G0)
+
+**Objetivo:** evitar que as leituras periódicas de preço, demanda ou motores reiniciem indefinidamente a pesquisa de um catálogo grande e impeçam a avaliação dos candidatos posteriores.
+
+### Implementação e evidências
+
+- **`src/owned_hub_research_feed.py`:** além do fingerprint completo de evidências usado pela paginação da interface, o feed expõe `layout_fingerprint` calculado pela ordem das identidades dos hubs, destinos, modelos e variantes de motor. Preço, demanda, horários e progresso de observação continuam alterando o fingerprint estrito da interface.
+- **`src/owned_hub_research_ingestion.py`:** a retomada automática persiste os dois fingerprints. Ao renovar evidências mantendo a mesma ordem de combinações, o ciclo avança para a próxima página. Mudanças de composição, catálogo de motores, destinos ou modelos reiniciam no começo, evitando pular identidades novas. O cache antigo continua legível e se atualiza na próxima ingestão.
+- **`tests/test_owned_hub_research_ingestion.py`:** regressão com alteração de preço e horário durante a varredura, seguida da inclusão de novo modelo, comprovando a rotação e o reinício seguro.
+
+### Validação e limites
+
+- Testes dirigidos (87), Ruff e compilação Python aprovados. Suíte geral Windows executada com exclusão do teste específico POSIX.
+- **Gate G0 com fixtures.** Cobertura parcial continua sem comprovação de esgotamento das oportunidades reais. Faltam demanda residual, precificação final por motor, coleta externa autenticada e gates G1–G5. Nenhuma ação de compra, implantação ou merge na `main`.
+
 ## 2026-11-23 — Autonomia Total A2/A3/A7, ingestão persistente da pesquisa dos hubs próprios (G0)
 
 **Objetivo:** conectar as observações já coletadas no ciclo do bot à análise da próxima aeronave, mantendo a distinção entre dados brutos para pesquisa e cenário comprovado de compra.
@@ -7,7 +22,7 @@
 ### Implementação e evidências
 
 - **`src/owned_hub_research_ingestion.py`:** novo registro por perfil agrega páginas de `hub × rota × modelo × variante de motor` produzidas a partir de hubs próprios, demanda observada, cache de modelos e catálogo de motores. Preserva fonte, horários, evidências e pendências, com limite de armazenamento, atualização idempotente, retomada do cursor e expiração individual de cada origem de evidência.
-- O cursor persistido passa a carregar o fingerprint da pesquisa. Alterações na evidência entre ciclos reiniciam a paginação com segurança e impedem saltos silenciosos. Arquivos legados sem fingerprint reiniciam a varredura na primeira página ao detectar diferença. Contradições de mesmo horário ficam identificadas como pesquisas conflitantes até observação posterior.
+- O cursor persistido passa a carregar o fingerprint da pesquisa. O registro conserva evidência por página e aceita migração de arquivos legados sem fingerprint. Contradições de mesmo horário ficam identificadas como pesquisas conflitantes até observação posterior. A retomada entre atualizações frequentes foi aprimorada na entrega seguinte.
 - **`src/bot.py`:** ingestão acontece no ciclo regular após os coletores de demanda ou motores, quando as respectivas opções estão habilitadas, usando somente caches previamente observados. A ingestão não navega no jogo e não submete compras.
 - **`src/hub_recommendations.py` e `src/web.py`:** `GET /api/hubs/recommendations` combina pesquisas verificadas com registros pendentes sem duplicar uma mesma combinação comprovada. Expõe fonte, demanda bruta, evidência, contagem de entradas e pendências. Pesquisas derivadas permanecem com `demand_remaining=null`, `financial={}`, `costs={}` e bloqueio `pesquisa_complementar_a_confirmar`.
 - **`tests/test_owned_hub_research_ingestion.py`:** cobre isolamento de perfis, idempotência, validade temporal de provas independentes, conflitos, prioridade da pesquisa verificada, atualização do fingerprint, retomada e compatibilidade com cache legado.
