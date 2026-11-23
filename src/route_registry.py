@@ -26,7 +26,7 @@ _MAX_PAGE_AIRCRAFT = 40
 _MAX_PAGES_PER_CYCLE = 5
 _MAX_LIVE_AUDIT_PAGES = 25
 _LIVE_ROSTER_MAX_AGE = 900
-_GAME_AIRCRAFT_ID_RE = re.compile(r"^[0-9]{1,14}$")
+_GAME_AIRCRAFT_ID_RE = re.compile(r"^[1-9][0-9]{0,13}$")
 _AIRPORT_ID_RE = re.compile(r"^\d{1,12}$")
 _IATA_RE = re.compile(r"^[A-Z]{3,4}$")
 # The route-card DOM hook is a candidate until a reader supplies the exact,
@@ -472,6 +472,7 @@ class RouteRegistry:
         with _LOCK:
             data = _state(self.path)
             now = int(time.time())
+            observed_ids = None
             if route_observations is not None:
                 identified = 0
                 processed: set[str] = set()
@@ -521,6 +522,7 @@ class RouteRegistry:
                             entry["home_hub_evidence"] = HOME_HUB_EVIDENCE
                             entry["home_hub_evidence_aircraft_id"] = identity
                             entry["home_hub_verified_at"] = now
+                observed_ids = processed
             data["last_scan"] = {
                 "at": now,
                 "visible": max(0, int(visible)),
@@ -555,12 +557,26 @@ class RouteRegistry:
                 }
                 if total_pages:
                     coverage["total_pages"] = total_pages
+                raw_ids = [str(aircraft_id).strip() for aircraft_id in aircraft_ids]
                 recorded_ids = list(dict.fromkeys(
-                    str(aircraft_id).strip() for aircraft_id in aircraft_ids
-                    if _GAME_AIRCRAFT_ID_RE.fullmatch(str(aircraft_id).strip())
+                    identity for identity in raw_ids
+                    if _GAME_AIRCRAFT_ID_RE.fullmatch(identity)
                 ))[:_MAX_PAGE_AIRCRAFT]
+                # The page must account for every raw row before it can prove
+                # completeness. Filtering or deduplicating malformed captures
+                # must never turn a partial read into a certified full audit.
+                page_ids_verified = (
+                    type(visible) is int and 0 < visible <= 20
+                    and len(raw_ids) == visible
+                    and len(recorded_ids) == len(raw_ids)
+                    and (route_observations is None or (
+                        len(route_observations) == visible
+                        and observed_ids == set(recorded_ids)
+                    ))
+                )
                 observation = {
                     **data["last_scan"], "aircraft_ids": recorded_ids,
+                    "page_ids_verified": page_ids_verified,
                 }
                 if audit_run_id:
                     observation["audit_run_id"] = audit_run_id
@@ -588,6 +604,7 @@ class RouteRegistry:
                                     and entry.get("audit_run_id") == audit_run_id
                                     and 0 < entry.get("visible", 0) <= 20
                                     and len(entry.get("aircraft_ids", [])) == entry["visible"]
+                                    and entry.get("page_ids_verified") is True
                                     for entry in page_rows))
                 if complete:
                     data["last_verified_full_audit"] = {

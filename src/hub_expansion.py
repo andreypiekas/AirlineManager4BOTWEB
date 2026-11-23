@@ -648,6 +648,24 @@ class HubExpansionRegistry:
                            0 <= now - attempts[hub]["attempted_at"]}
         sampled_owned = {item["origin_id"] for item in demand.values()} & owned
         fresh_sampled_owned = {item["origin_id"] for item in fresh_demand.values()} & owned
+        progress = {
+            hub: {"hub_id": hub, "last_attempt_at": attempts[hub]["attempted_at"]
+                  if hub in attempted_owned else None,
+                  "last_attempt_status": attempts[hub]["status"]
+                  if hub in attempted_owned else "unattempted",
+                  "sample_count": 0, "fresh_sample_count": 0,
+                  "last_sample_at": None, "coverage": "partial"}
+            for hub in sorted(owned, key=int)
+        }
+        for key, sample in demand.items():
+            hub = progress.get(sample["origin_id"])
+            if hub is None:
+                continue
+            hub["sample_count"] += 1
+            hub["last_sample_at"] = max(hub["last_sample_at"] or 0,
+                                        sample["observed_at"])
+            if key in fresh_demand:
+                hub["fresh_sample_count"] += 1
         candidates = []
         for raw in stored_candidates:
             if raw["id"] in owned:
@@ -715,4 +733,5 @@ class HubExpansionRegistry:
                 "demand_owned_hubs_fresh_samples": len(fresh_sampled_owned),
                 "demand_last_attempt_at": max(
                     (attempts[hub]["attempted_at"] for hub in attempted_owned), default=None),
+                "demand_hub_progress": list(progress.values()),
                 "demand_coverage": "partial"}

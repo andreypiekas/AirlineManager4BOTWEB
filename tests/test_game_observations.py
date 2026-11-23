@@ -134,6 +134,11 @@ def test_inconclusive_attempts_rotate_and_persist_across_restart(tmp_path, monke
     assert report["demand_owned_hubs_inconclusive"] == 3
     assert report["demand_samples"] == 0
     assert report["demand_coverage"] == "partial"
+    assert [row["hub_id"] for row in report["demand_hub_progress"]] == [
+        "2926", "2941", "3139"]
+    assert all(row["last_attempt_status"] == "inconclusive" and
+               row["sample_count"] == 0 and row["coverage"] == "partial"
+               for row in report["demand_hub_progress"])
     assert "route_demand" not in json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -155,6 +160,16 @@ def test_verified_samples_survive_inconclusive_retry_and_expiry(tmp_path, monkey
     assert retry["demand_samples"] == 1
     assert retry["demand_owned_hubs_inconclusive"] == 1
     assert retry["demand_owned_hubs_attempted"] == 1
+    assert retry["demand_hub_progress"] == [
+        {"hub_id": "2926", "last_attempt_at": now[0],
+         "last_attempt_status": "inconclusive", "sample_count": 1,
+         "fresh_sample_count": 1, "last_sample_at": 1900000000,
+         "coverage": "partial"},
+        {"hub_id": "2941", "last_attempt_at": None,
+         "last_attempt_status": "unattempted", "sample_count": 0,
+         "fresh_sample_count": 0, "last_sample_at": None,
+         "coverage": "partial"},
+    ]
     now[0] += hub_expansion.MAX_AGE_SECONDS + 1
     expired = HubExpansionRegistry(registry.path).snapshot(
         now=now[0], owned_hub_ids={"2926", "2941"})
@@ -162,6 +177,8 @@ def test_verified_samples_survive_inconclusive_retry_and_expiry(tmp_path, monkey
     assert expired["demand_owned_hubs_fresh_samples"] == 0
     assert expired["demand_owned_hubs_attempted"] == 1
     assert expired["demand_coverage"] == "partial"
+    assert expired["demand_hub_progress"][0]["sample_count"] == 1
+    assert expired["demand_hub_progress"][0]["fresh_sample_count"] == 0
 
 
 def test_invalid_attempt_and_corrupt_legacy_cursor_do_not_claim_coverage(tmp_path):

@@ -184,14 +184,30 @@ def choose_engine(groups: list[dict], preference: str) -> tuple[dict, EngineChoi
                 "O jogo não expôs velocidade comparável em todas as opções; "
                 "não vou escolher o motor mais rápido por suposição."
             )
-        choice = max(available, key=lambda o: (o.speed, -(o.fuel or float("inf"))))
+        best_speed = max(o.speed for o in available)
+        candidates = [o for o in available if o.speed == best_speed]
+        if len(candidates) > 1:
+            if any(o.fuel is None for o in candidates):
+                raise EngineSelectionError("Velocidades empatadas sem consumo para desempate; seleção ambígua.")
+            best_fuel = min(o.fuel for o in candidates)
+            candidates = [o for o in candidates if o.fuel == best_fuel]
     else:
         if any(o.fuel is None for o in available):
             raise EngineSelectionError(
                 "O jogo não expôs consumo comparável em todas as opções; "
                 "não vou escolher o motor mais econômico por suposição."
             )
-        choice = min(available, key=lambda o: (o.fuel, -(o.speed or 0)))
+        best_fuel = min(o.fuel for o in available)
+        candidates = [o for o in available if o.fuel == best_fuel]
+        if len(candidates) > 1:
+            if any(o.speed is None for o in candidates):
+                raise EngineSelectionError("Consumos empatados sem velocidade para desempate; seleção ambígua.")
+            best_speed = max(o.speed for o in candidates)
+            candidates = [o for o in candidates if o.speed == best_speed]
+    if mode != "name":
+        if len(candidates) != 1:
+            raise EngineSelectionError("Variantes com métricas idênticas; seleção de motor ambígua.")
+        choice = candidates[0]
     return group, choice
 
 
@@ -277,16 +293,20 @@ def read_engine_catalog(bot: "Bot") -> EngineCatalog:
 def prepare_engine(bot: "Bot", preference: str) -> str | None:
     """Escolhe e confirma o motor. Em simulação, informa a opção sem clicar.
 
-    Retorna o nome confirmado ou None quando o jogo mantém o padrão antigo.
+    Retorna o nome confirmado, inclusive quando o jogo já selecionou o padrão.
     Em falhas lança EngineSelectionError (order_aircraft interrompe a compra).
     """
     mode, _ = parse_preference(preference)
-    if mode == "default":
-        return None
     groups = bot.js(_ENGINE_OPTIONS_JS) or []
     if not isinstance(groups, list):
         raise EngineSelectionError("O jogo não retornou uma lista válida de motores.")
     before = parse_engine_catalog(groups)
+    if mode == "default":
+        if before.selected_engine_id is None:
+            raise EngineSelectionError("O jogo não confirmou qual motor padrão está selecionado.")
+        selected = next(v for v in before.variants if v.engine_id == before.selected_engine_id)
+        log.info("Motorização padrão confirmada no formulário: %s.", selected.label)
+        return selected.label
     group, choice = choose_engine(groups, preference)
     log.info("Motorização para a próxima compra: %s (%s).", choice.label, mode)
     if bot.dry_run:

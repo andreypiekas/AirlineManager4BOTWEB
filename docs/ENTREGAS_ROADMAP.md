@@ -1,5 +1,37 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, consistência de motores, auditoria e custos A1/A2/A3 (G0)
+
+**Escopo:** fechar ambiguidades encontradas na seleção de motores, na certificação de cobertura da frota e na estimativa de lucro com preços de mercado incompletos.
+
+### Implementado
+
+- **A1:** a preferência `default` passa a ler o motor efetivamente selecionado em controles `select` ou `radio`, sem alterar o formulário. Quando não há seleção comprovada, o comprador interrompe a encomenda. Preferências por maior velocidade ou menor consumo agora exigem desempate determinístico por métrica observada; empate integral ou ausência da métrica necessária bloqueiam a escolha.
+- **A2:** a auditoria de páginas registra `page_ids_verified` e só certifica uma página com uma identificação única e válida por linha visível. Capturas com IDs duplicados, malformados ou com lista parcial de observações deixam a cobertura inconclusiva, mesmo que a deduplicação produza uma contagem aparentemente correta. IDs numéricos com zero à esquerda deixam de ser aceitos como identidades inequívocas de aeronave.
+- **A3:** `estimate_route()` recusa lucro projetado quando o preço de combustível ou de CO₂ é nulo, ausente ou não positivo. `rank_candidates()` também interrompe a classificação nesses casos, evitando uma seleção por demanda que pareça financeiramente comprovada. A classificação legada por demanda com modelo não cadastrado continua disponível quando ambos os preços são válidos.
+- Testes de regressão cobrem seleção padrão, indisponibilidade de motores, empates, dados faltantes, páginas duplicadas, alias numérico, observações parciais e custos desconhecidos.
+
+### Validação e limitações
+
+- As verificações foram executadas em Windows com `python -m pytest -q --ignore=tests/test_instalacao_linux.py`, `python -m ruff check src scripts tests`, `python -m compileall -q src scripts` e `git diff --check`. A suíte POSIX fica a cargo do ambiente Linux. Os testes de regressão utilizam HTML/observações simulados.
+- **G0 permanece ativo:** falta validar o seletor real de cada modelo, o preço final após mudança de motor, o hub de entrega e a cobertura da frota com a sessão autenticada. Um modelo cujo modal não exponha um seletor identificável será bloqueado pelo novo comportamento `default`; essa compatibilidade precisa ser homologada antes de implantação. A auditoria de páginas ainda não prova consistência atômica se a frota variar durante a pesquisa. Estimativas econômicas continuam dependentes de demanda, capacidade e custos comprovados.
+- Não houve compra real, envio ao Telegram, implantação, merge na `main` ou alteração da PR #44. As novas flags de investimento permanecem desligadas. Reversão pelo `git revert` do commit associado, após conferir dependências posteriores.
+
+## 2026-11-23 — Autonomia Total, mapa de progresso de demanda por hub A2 (G0)
+
+**Escopo:** tornar a pesquisa incremental auditável individualmente para cada hub próprio, inclusive quando uma tentativa não produz dados válidos.
+
+### Implementado
+
+- `HubExpansionRegistry.snapshot()` agora apresenta `demand_hub_progress` ordenado por ID de hub, com última tentativa, situação observada, quantidade de destinos amostrados, quantidade de amostras ainda válidas e horário da última amostra confirmada. Cada item informa `coverage=partial`. Tentativas sem resultados permanecem separadas de amostras já verificadas, inclusive após expiração ou reinício.
+- A seção de novos hubs inclui painel expansível de pesquisa por base, mostrando o ID e a situação de cada uma. Entradas ainda não pesquisadas e últimas buscas inconclusivas são identificadas sem converter ausência de dados em demanda inexistente. Conteúdo dinâmico é exibido como texto, preservando segurança contra HTML não confiável. Traduções PT-BR/inglês foram incluídas.
+- Os testes de snapshot verificam ordem determinística, tentativas inconclusivas, amostras preservadas e envelhecidas. O teste JavaScript do painel verifica os estados por hub e a apresentação dos dados.
+
+### Validação e limitações
+
+- Testes direcionados de observação, expansão e interface aprovados em Windows, além de Ruff e `git diff --check`. A suíte geral e a compilação fazem parte da validação do commit desta entrega.
+- **G0 continua ativo.** O mapa indica somente o progresso das buscas e as amostras confirmadas, sem evidência de cobertura completa de todas as rotas, opções de aeronave ou motores. Não houve compra, alteração do jogo, notificação enviada, implantação no servidor, merge na `main` ou mudança na PR #44. Reversão por `git revert` do commit, observadas as dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total, rotação resiliente de demanda dos hubs próprios A2 (G0)
 
 **Escopo:** corrigir a pesquisa incremental dos hubs próprios para que respostas inconclusivas ou interrupções no Selenium não mantenham o mesmo hub como prioridade indefinidamente.

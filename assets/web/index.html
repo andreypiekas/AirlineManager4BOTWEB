@@ -709,6 +709,10 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <h2 data-t="Novos hubs">Novos hubs</h2>
         <p id="hubExpansionStatus" role="status" aria-live="polite"></p>
         <p id="hubExpansionScope" class="hub-section-note"></p>
+        <details id="hubDemandProgressPanel" class="hub-probe">
+          <summary data-t="Pesquisa de demanda por hub próprio (cobertura parcial)">Pesquisa de demanda por hub próprio (cobertura parcial)</summary>
+          <ul id="hubDemandProgressList" class="hub-section-note"></ul>
+        </details>
         <p id="hubExpansionDecision" class="hub-section-note hub-coverage" role="status" aria-live="polite"></p>
         <div class="hubs-grid" id="hubExpansionRanking" aria-label="Ranking externo com evidências verificadas" data-t-aria-label="Ranking externo com evidências verificadas"></div>
         <div class="hubs-controls">
@@ -949,6 +953,12 @@ const EN = {
   "tentativas inconclusivas": "inconclusive attempts",
   "Cobertura de demanda parcial; respostas vazias não comprovam ausência de rotas.":
     "Partial demand coverage; empty responses do not prove there are no routes.",
+  "Pesquisa de demanda por hub próprio (cobertura parcial)": "Demand research by owned hub (partial coverage)",
+  "pesquisa ainda não iniciada": "research not started",
+  "última pesquisa inconclusiva": "last research inconclusive",
+  "amostras verificadas": "verified samples",
+  "destinos amostrados": "sampled destinations",
+  "última tentativa": "last attempt",
   "Ranking externo com evidências verificadas": "Verified external-hub ranking",
   "Varredura de hubs próprios inconclusiva": "Owned-hub scan inconclusive",
   "Priorizar oportunidades nos hubs próprios": "Prioritize opportunities at owned hubs",
@@ -1861,6 +1871,23 @@ function renderHubExpansion(report) {
       tr("Cobertura de demanda parcial; respostas vazias não comprovam ausência de rotas."));
   }
   $("hubExpansionScope").textContent += " " + observations.join(" ");
+  const demandProgress = Array.isArray(report.demand_hub_progress) ? report.demand_hub_progress : [];
+  const progressList = $("hubDemandProgressList");
+  progressList.replaceChildren();
+  $("hubDemandProgressPanel").hidden = demandProgress.length === 0;
+  for (const hub of demandProgress) {
+    if (!/^\d+$/.test(String(hub.hub_id))) { continue; }
+    const status = hub.last_attempt_status === "samples_observed" ? tr("amostras verificadas") :
+      hub.last_attempt_status === "inconclusive" ? tr("última pesquisa inconclusiva") :
+        tr("pesquisa ainda não iniciada");
+    const row = document.createElement("li");
+    row.textContent = "#" + hub.hub_id + " · " + status + " · " +
+      tr("destinos amostrados") + ": " + nf.format(hub.sample_count || 0) + " (" +
+      nf.format(hub.fresh_sample_count || 0) + " " + tr("recentes") + ")" +
+      (Number.isFinite(hub.last_attempt_at) ? " · " + tr("última tentativa") +
+        ": " + hubDate(hub.last_attempt_at) : "");
+    progressList.append(row);
+  }
   const verified = allCandidates.filter(hub =>
     ["viavel", "saldo_insuficiente", "sem_lucro"].includes(hub.status)).length;
   $("hubExpansionCoverage").textContent = tr("Candidatos com status calculado") + ": " + verified + " / " +

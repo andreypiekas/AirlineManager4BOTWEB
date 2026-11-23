@@ -83,7 +83,7 @@ def estimate_route(candidate, *, seats: int, model: Optional[dict],
         return None
     if not all(map(isfinite, (distance, speed, fuel_rate, load, price_fuel, price_co2))):
         return None
-    if distance < 100 or speed <= 0 or fuel_rate <= 0 or capacity <= 0 or price_fuel < 0 or price_co2 < 0:
+    if distance < 100 or speed <= 0 or fuel_rate <= 0 or capacity <= 0 or price_fuel <= 0 or price_co2 <= 0:
         return None
 
     legs = 24 / (distance / (speed * mode.speed) + TURNAROUND_H * (1 + extra_stops))
@@ -101,6 +101,16 @@ def estimate_route(candidate, *, seats: int, model: Optional[dict],
 
 def rank_candidates(candidates, **estimate_kwargs):
     """Return (candidate, estimate) best-first; fall back to demand when data is missing."""
+    # Unknown market costs invalidate financial comparisons and must not trigger
+    # demand-only routing. That legacy fallback is reserved for a missing model.
+    for name in ("fuel_price", "co2_price"):
+        try:
+            price = float(estimate_kwargs[name])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return []
+        if not isfinite(price) or price <= 0:
+            return []
+
     ranked = [(candidate, estimate_route(candidate, **estimate_kwargs)) for candidate in candidates]
     if any(result is not None for _, result in ranked):
         ranked.sort(

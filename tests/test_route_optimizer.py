@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 
 from gamemode import EASY, REALISM
-from route_optimizer import estimate_route
+from route_optimizer import estimate_route, rank_candidates
 
 
 @dataclass
@@ -67,6 +67,19 @@ def test_invalid_model_does_not_generate_fake_profit():
         co2_price=125, premium=False,
     )
     assert result is None
+
+
+def test_zero_fuel_or_co2_price_blocks_unverified_profit_ranking():
+    candidate = Candidate(1200, 1600)
+    assert estimate(candidate).profit_per_day > 0
+
+    for fuel_price, co2_price in ((0, 125), (650, 0), (None, 125), (650, None)):
+        kwargs = dict(
+            seats=180, model=MODEL, mode=EASY, load_factor=0.8,
+            fuel_price=fuel_price, co2_price=co2_price, premium=False,
+        )
+        assert estimate_route(candidate, **kwargs) is None
+        assert rank_candidates([candidate], **kwargs) == []
 
 
 def test_realistic_mode_changes_expected_revenue_and_flights():

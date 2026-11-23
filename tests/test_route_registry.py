@@ -119,3 +119,53 @@ def test_parked_without_route_invalidates_old_assignment(tmp_path):
     assert snapshot["duplicate_routes"] == 0
     assert not registry.is_occupied(first, last)
     assert snapshot["history"][0]["action"] == "rota_removida_no_jogo"
+
+
+def test_full_audit_rejects_duplicate_raw_ids_even_when_dedup_matches_visible(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "a" * 32
+    first_page = [str(identity) for identity in range(1, 21)]
+    second_page = [str(identity) for identity in range(21, 41)]
+
+    registry.record_scan(20, 0, 20, aircraft_ids=first_page + ["1"],
+                         page=1, total_pages=2, expected_routes=40,
+                         audit_run_id=run_id)
+    registry.record_scan(20, 0, 20, aircraft_ids=second_page,
+                         page=2, total_pages=2, expected_routes=40,
+                         audit_run_id=run_id)
+
+    coverage = RouteRegistry(registry.path).snapshot()["scan_coverage"]
+    assert coverage["observed_pages"] == 2
+    assert coverage["unique_aircraft"] == 40
+    assert coverage["full_page_coverage_verified"] is False
+    assert registry.snapshot()["last_verified_full_audit"] is None
+
+
+def test_full_audit_rejects_partial_route_observations_for_claimed_page(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "b" * 32
+    first_page = [str(identity) for identity in range(1, 21)]
+    second_page = [str(identity) for identity in range(21, 41)]
+
+    registry.record_scan(20, 0, 20, aircraft_ids=first_page,
+                         page=1, total_pages=2, expected_routes=40,
+                         audit_run_id=run_id,
+                         route_observations=[{"aircraft_id": identity} for identity in first_page[:-1]])
+    registry.record_scan(20, 0, 20, aircraft_ids=second_page,
+                         page=2, total_pages=2, expected_routes=40,
+                         audit_run_id=run_id,
+                         route_observations=[{"aircraft_id": identity} for identity in second_page])
+
+    coverage = registry.snapshot()["scan_coverage"]
+    assert coverage["observed_pages"] == 2
+    assert coverage["full_page_coverage_verified"] is False
+    assert registry.snapshot()["last_verified_full_audit"] is None
+
+
+def test_game_roster_rejects_duplicate_numeric_aliases(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    assert not registry.record_game_roster([
+        {"aircraft_id": "123", "route_id": 100},
+        {"aircraft_id": "0123", "route_id": 100},
+    ], expected_total=2)
+    assert registry.snapshot()["current_roster_available"] is False

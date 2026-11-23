@@ -279,12 +279,85 @@ def test_simulacao_nunca_seleciona_nem_compra():
     assert calls[0] == ()
 
 
-def test_padrao_do_jogo_preserva_comportamento_antigo():
-    class Bot:
-        def js(self, *_args):
-            pytest.fail("Motor padrão não deve inspecionar nem alterar o navegador")
+@pytest.mark.parametrize("groups,expected", [
+    (engines(selected="2"), "GP7270"),
+    (radios(selected="2"), "GP7270"),
+])
+def test_padrao_exige_leitura_da_variante_selecionada_sem_alterar_o_formulario(groups, expected):
+    calls = []
 
-    assert engine_selection.prepare_engine(Bot(), "default") is None
+    class Bot:
+        dry_run = False
+
+        def js(self, script, *args):
+            assert not args, "Motor padrão não deve alterar o navegador"
+            calls.append(script)
+            return deepcopy(groups)
+
+    assert engine_selection.prepare_engine(Bot(), "default") == expected
+    assert calls == [engine_selection._ENGINE_OPTIONS_JS]
+
+
+@pytest.mark.parametrize("groups", [
+    [],
+    engines(selected="none"),
+    engines(),
+])
+def test_padrao_bloqueia_quando_motor_nao_pode_ser_confirmado(groups):
+    if groups and groups[0]["options"][0]["selected"]:
+        groups[0]["options"][0]["disabled"] = True
+
+    class Bot:
+        dry_run = False
+
+        def js(self, script, *args):
+            assert script == engine_selection._ENGINE_OPTIONS_JS and not args
+            return deepcopy(groups)
+
+    with pytest.raises(engine_selection.EngineSelectionError):
+        engine_selection.prepare_engine(Bot(), "default")
+
+
+@pytest.mark.parametrize("preference", ["fastest", "economical"])
+def test_metricas_empatadas_nao_escolhem_uma_variante_arbitraria(preference):
+    groups = engines()
+    groups[0]["options"][1]["speed"] = 905
+    groups[0]["options"][1]["fuel"] = 12.1
+    groups[0]["options"][2]["disabled"] = True
+
+    with pytest.raises(engine_selection.EngineSelectionError, match="ambíg"):
+        engine_selection.choose_engine(groups, preference)
+
+
+@pytest.mark.parametrize("preference,missing_metric", [
+    ("fastest", "fuel"),
+    ("economical", "speed"),
+])
+def test_empate_sem_dado_de_desempate_eh_ambiguo(preference, missing_metric):
+    groups = engines()
+    groups[0]["options"][1]["speed"] = 905
+    groups[0]["options"][1]["fuel"] = 12.1
+    groups[0]["options"][1][missing_metric] = None
+    groups[0]["options"][2]["disabled"] = True
+
+    with pytest.raises(engine_selection.EngineSelectionError, match="ambíg"):
+        engine_selection.choose_engine(groups, preference)
+
+
+@pytest.mark.parametrize("preference,expected", [
+    ("fastest", "Trent 970"),
+    ("economical", "GP7270"),
+])
+def test_empate_com_dado_de_desempate_identifica_uma_variante(preference, expected):
+    groups = engines()
+    groups[0]["options"][2]["disabled"] = True
+    if preference == "fastest":
+        groups[0]["options"][1]["speed"] = 905
+    else:
+        groups[0]["options"][1]["fuel"] = 12.1
+
+    _, choice = engine_selection.choose_engine(groups, preference)
+    assert choice.label == expected
 
 
 def test_fluxo_de_compra_nao_aciona_confirmacao_sem_motor_verificado(monkeypatch):
