@@ -477,6 +477,101 @@ def test_distinct_engines_models_and_routes_have_independent_economics(tmp_path)
     assert len(registry.snapshot(cash=30000)["candidates"][0]["alternatives"]) == 2
 
 
+def test_delayed_external_research_cannot_replace_latest_engine_route(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    latest = _research(observed_at=int(time.time()) - 10)
+    assert registry.record_research("123", latest)
+    original_bytes = registry.path.read_bytes()
+
+    delayed = deepcopy(latest)
+    delayed["observed_at"] -= 5
+    delayed["financial"]["profit_per_day"] = -500
+    assert registry.record_research("123", delayed)
+    assert registry.path.read_bytes() == original_bytes
+
+    reopened = HubExpansionRegistry(registry.path)
+    row = reopened.snapshot(cash=50000)["candidates"][0]
+    assert row["status"] == "viavel"
+    assert row["profit_per_day"] == 2000
+    assert len(row["alternatives"]) == 1
+
+
+def test_equal_time_external_research_conflict_is_durable_and_requires_new_read(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    first = _research(observed_at=int(time.time()) - 15)
+    contradictory = deepcopy(first)
+    contradictory["financial"]["profit_per_day"] = 4000
+    assert registry.record_research("123", first)
+    assert registry.record_research("123", contradictory)
+
+    reopened = HubExpansionRegistry(registry.path)
+    quarantined = reopened.snapshot(cash=50000)["candidates"][0]
+    assert quarantined["status"] == "dados_a_confirmar"
+    assert len(quarantined["alternatives"]) == 2
+    assert all("pesquisa_externa_conflitante" in option["pending"]
+               and not option["ranking_conclusive"]
+               and not option["purchase_evidence"]
+               for option in quarantined["alternatives"])
+
+    unchanged = registry.path.read_bytes()
+    assert reopened.record_research("123", first)
+    assert reopened.record_research("123", contradictory)
+    assert registry.path.read_bytes() == unchanged
+
+    repaired = deepcopy(contradictory)
+    repaired["observed_at"] += 1
+    assert reopened.record_research("123", repaired)
+    resolved = reopened.snapshot(cash=50000)["candidates"][0]
+    assert resolved["status"] == "viavel"
+    assert resolved["profit_per_day"] == 4000
+    assert len(resolved["alternatives"]) == 1
+    assert "pesquisa_externa_conflitante" not in resolved["pending"]
+
+
+def test_external_research_conflict_is_local_to_the_engine_route(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    first = _research(observed_at=int(time.time()) - 20)
+    independent = _research(engine_id="engine-fixture-2",
+                            observed_at=first["observed_at"])
+    # The nested cost and profit evidence must refer to the alternate motor.
+    independent["costs"]["engine_id"] = "engine-fixture-2"
+    independent["financial"]["engine_id"] = "engine-fixture-2"
+    assert registry.record_research("123", first)
+    assert registry.record_research("123", independent)
+    conflicting = deepcopy(first)
+    conflicting["route_feasible"] = False
+    assert registry.record_research("123", conflicting)
+
+    row = registry.snapshot(cash=50000)["candidates"][0]
+    assert row["status"] == "viavel"
+    assert row["engine_id"] == "engine-fixture-2"
+    assert len(row["alternatives"]) == 3
+    assert sum("pesquisa_externa_conflitante" in option["pending"]
+               for option in row["alternatives"]) == 2
+
+
+def test_persisted_stale_variant_cannot_override_newer_incomplete_research(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research(observed_at=int(time.time()) - 20))
+    saved = json.loads(registry.path.read_text(encoding="utf-8"))
+    row = saved["candidates"][0]
+    newer = deepcopy(row["scenarios"][0])
+    newer["observed_at"] += 1
+    newer["demand_verified"] = False
+    row["scenarios"].append(newer)
+    registry.path.write_text(json.dumps(saved), encoding="utf-8")
+
+    evaluated = HubExpansionRegistry(registry.path).snapshot(cash=50000)["candidates"][0]
+    assert len(evaluated["alternatives"]) == 1
+    assert evaluated["status"] == "dados_a_confirmar"
+    assert "demanda_externa_a_confirmar" in evaluated["pending"]
+    assert evaluated["purchase_evidence"] is False
+
+
 @pytest.mark.parametrize("field", ["aircraft_price", "route_fee", "hangar_price", "other_fees",
                                      "aircraft_price_includes_engine"])
 def test_missing_cost_components_cannot_support_a_recommendation(tmp_path, field):

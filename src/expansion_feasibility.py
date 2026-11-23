@@ -21,8 +21,16 @@ _CONCLUSIVE_STATUSES = {
 }
 
 
-def _fresh(when: object, now: int, max_age_seconds: int) -> bool:
-    return type(when) is int and 0 <= now - when <= max_age_seconds
+def _fresh(when: object, now: float, max_age_seconds: int) -> bool:
+    """Require recent, finite game timestamps without truncating DOM precision."""
+    if type(when) not in (int, float) or type(now) not in (int, float):
+        return False
+    try:
+        observed, current = float(when), float(now)
+    except (OverflowError, ValueError):
+        return False
+    return (math.isfinite(observed) and math.isfinite(current)
+            and observed > 0 and 0 <= current - observed <= max_age_seconds)
 
 
 def _nonnegative(value: object) -> bool:
@@ -34,7 +42,7 @@ def _nonnegative(value: object) -> bool:
         return False
 
 
-def _valid_external(row: Mapping, external: Mapping, now: int, *,
+def _valid_external(row: Mapping, external: Mapping, now: float, *,
                     max_age_seconds: int, profile_id: str | None,
                     snapshot_id: str | None) -> bool:
     """Recheck a candidate's exact engine, route, cost and profit evidence."""
@@ -129,7 +137,7 @@ def assess_expansion(
     external_report: Mapping | None,
     *,
     coverage: Mapping | None = None,
-    now: int | None = None,
+    now: float | None = None,
     max_age_seconds: int = MAX_AGE_SECONDS,
     profile_id: str | None = None,
     snapshot_id: str | None = None,
@@ -140,7 +148,7 @@ def assess_expansion(
     Its per-hub rows must cover routes, aircraft models, engine variants and
     financial research from the same scan. No current caller fabricates it.
     """
-    now = int(time.time()) if now is None else now
+    now = time.time() if now is None else now
     if type(max_age_seconds) is not int or max_age_seconds <= 0:
         raise ValueError("max_age_seconds inválido")
     inventory = owned_inventory if isinstance(owned_inventory, Mapping) else {}

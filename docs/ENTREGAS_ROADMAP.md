@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A6, consistência de pesquisa externa e horários (G0)
+
+**Objetivo:** impedir que amostras atrasadas ou contraditórias de rota/modelo/motor autorizem uma sugestão de expansão e preservar a precisão temporal dos dados no gate A6.
+
+### Implementação e evidências
+
+- **`src/hub_expansion.py`:** a pesquisa externa mantém somente a observação mais recente de cada combinação hub, modelo, motor e rota. Replays atrasados não substituem evidência nova. Leituras divergentes no mesmo instante são persistidas em quarentena por combinação, sinalizadas como `pesquisa_externa_conflitante` e resolvidas apenas por coleta posterior. As demais combinações continuam avaliáveis, preservando a leitura de estado legado.
+- **`src/expansion_feasibility.py`:** A6 valida horários inteiros ou fracionários numéricos e finitos sem truncar milissegundos; horários inválidos, futuros ou expirados impedem a conclusão correspondente. O relógio padrão usa a precisão de `time.time()`.
+- **`tests/test_hub_expansion.py` e `tests/test_expansion_feasibility.py`:** regressões de atraso de pesquisa externa, contradição após reinício, recuperação, isolamento por motor, substituição de cenário antigo persistido, provas fracionárias, horários inválidos e validade temporal por origem de evidência.
+
+### Validação, pendências e reversão
+
+- Testes dirigidos de A2/A6, suíte Windows `python -m pytest tests -q --ignore=tests/test_instalacao_linux.py`, Ruff, `compileall src` e `git diff --check` executados nesta entrega. O teste de instalação Linux requer ambiente POSIX.
+- **Gate G0, com fixtures simuladas.** Ainda não existe produtor homologado para pesquisa de demanda residual em hubs externos nem certificação autenticada de cobertura completa e configuração final de motor. Fases A2–A9 e gates G1–G5 permanecem pendentes; nenhum resultado deste código habilita gasto no jogo.
+- Nenhuma compra real, envio Telegram, implantação ou merge em `main`. Reversão pelo commit desta entrega na branch de autonomia, considerando dependências. PR #44 independente.
+
 ## 2026-11-23 — Autonomia Total A2, proveniência e quarentena do preço dos hubs (G0)
 
 **Objetivo:** impedir que preços e pontos lidos antes de uma atualização do jogo substituam evidências mais recentes, preservando a rastreabilidade individual de cada campo e a cobertura real do catálogo.

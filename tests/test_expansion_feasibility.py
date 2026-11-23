@@ -1,5 +1,6 @@
 """A6 exhaustive owned-hub gate and evidence-backed external suggestions."""
 from copy import deepcopy
+import time
 
 import pytest
 
@@ -88,6 +89,75 @@ def test_only_after_complete_owned_sweep_rank_three_evidence_backed_external_opt
     assert result["read_only"] is True
     assert result["execution_available"] is False
     assert data == original
+
+
+def _timestamps(data):
+    """Every independent timestamp used by the owned/external A6 gate."""
+    inventory, _, _, external, coverage = data
+    timestamps = [
+        inventory,
+        coverage,
+        *coverage["hubs"],
+        external,
+    ]
+    for candidate in external["candidates"]:
+        timestamps.extend((
+            (candidate, "hub_price_observed_at"),
+            (candidate, "hub_points_observed_at"),
+            candidate["scenario"],
+            candidate["scenario"]["costs"],
+            candidate["scenario"]["financial"],
+        ))
+    return [(item, "observed_at") if isinstance(item, dict) else item
+            for item in timestamps]
+
+
+def test_fractional_dom_timestamps_survive_all_owned_and_external_proofs():
+    data = inputs()
+    observed = NOW + 0.25
+    for part, key in _timestamps(data):
+        part[key] = observed
+    result = assess_expansion(*data[:4], coverage=data[4], now=NOW + 0.75)
+    assert result["status"] == "avaliacao_expansao"
+    assert result["blocking_reasons"] == []
+    assert len(result["top_three"]) == 3
+    assert result["external_pending_count"] == 0
+
+
+@pytest.mark.parametrize("invalid", [
+    True, False, None, "1800000000", -1, 0, float("nan"),
+    float("inf"), -float("inf"), 10 ** 500,
+    NOW + 0.01, NOW - 259201,
+])
+@pytest.mark.parametrize("proof_index", range(2 + 2 + 1 + 5))
+def test_invalid_stale_or_future_timestamp_never_qualifies_external(proof_index, invalid):
+    data = inputs()
+    # Inventory, scan, its two hubs, external catalog, and the first
+    # candidate's two price proofs, scenario, costs and financial research.
+    selected = _timestamps(data)
+    part, key = selected[proof_index]
+    part[key] = invalid
+    result = evaluate(data)
+    if proof_index < 4:
+        assert result["status"] == "inconclusivo"
+        assert result["top_three"] == []
+    elif proof_index == 4:
+        assert result["status"] == "inconclusivo"
+        assert "catalogo_expansao_incompleto_ou_vencido" in result["blocking_reasons"]
+    else:
+        assert result["status"] == "avaliacao_expansao"
+        assert result["external_pending_count"] == 1
+        assert all(row["id"] != "789" for row in result["top_three"])
+
+
+def test_default_clock_accepts_current_fractional_proof():
+    data = inputs()
+    observed = time.time() - 0.25
+    for part, key in _timestamps(data):
+        part[key] = observed
+    result = assess_expansion(*data[:4], coverage=data[4])
+    assert result["status"] == "avaliacao_expansao"
+    assert len(result["top_three"]) == 3
 
 
 def test_inconclusive_owned_sweep_never_promotes_external_investment():

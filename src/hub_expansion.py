@@ -95,9 +95,51 @@ def _scenarios(candidate: dict) -> list[dict]:
     return scenarios
 
 
+def _research_stamp(scenario: dict) -> float:
+    stamp = scenario.get("observed_at")
+    if type(stamp) not in (int, float):
+        return float("-inf")
+    try:
+        stamp = float(stamp)
+    except OverflowError:
+        return float("-inf")
+    return stamp if math.isfinite(stamp) and stamp > 0 else float("-inf")
+
+
+_RESEARCH_PROOF_FIELDS = (
+    "source", "observed_at", "route_feasible", "demand_verified",
+    "external_demand_verified", "engine_verified", "costs", "financial",
+    "aircraft_price", "route_fee", "hangar_price", "other_fees",
+    "aircraft_price_includes_engine", "engine_delta_cost", "profit_per_day",
+)
+
+
+def _same_research_proof(first: dict, second: dict) -> bool:
+    """Ignore display labels while comparing decision-making evidence."""
+    return all(first.get(field) == second.get(field)
+               for field in _RESEARCH_PROOF_FIELDS)
+
+
+def _latest_research(candidate: dict) -> list[tuple[dict, bool]]:
+    """Exclude stale variants and quarantine contradictory latest observations."""
+    groups = {}
+    for scenario in _scenarios(candidate):
+        identity = _scenario_identity(scenario)
+        stamp = _research_stamp(scenario)
+        current = groups.get(identity)
+        if current is None or stamp > current[0]:
+            groups[identity] = (stamp, [scenario])
+        elif stamp == current[0] and not any(
+                _same_research_proof(scenario, saved) for saved in current[1]):
+            current[1].append(scenario)
+    return [(scenario, len(group) > 1) for _, group in groups.values()
+            for scenario in group]
+
+
 def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
                        price_fresh: bool, points_fresh: bool,
-                       available: Optional[float], reserve: Optional[float]) -> dict:
+                       available: Optional[float], reserve: Optional[float],
+                       research_conflict: bool = False) -> dict:
     """Prove each external-hub alternative independently before ranking it."""
     engine_id = _engine_id(scenario.get("engine_id"))
     model = scenario.get("model")
@@ -133,6 +175,8 @@ def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
                      else scenario.get("profit_per_day"))
 
     pending = []
+    if research_conflict:
+        pending.append("pesquisa_externa_conflitante")
     if candidate.get("hub_price_conflict_at") is not None:
         pending.append("preco_hub_conflitante")
     if candidate.get("hub_points_conflict_at") is not None:
@@ -646,11 +690,34 @@ class HubExpansionRegistry:
             row = next((item for item in candidates if item.get("id") == airport_id), None)
             if row is None:
                 return False
-            alternatives = [entry for entry in _scenarios(row)
-                            if _scenario_identity(entry) != _scenario_identity(scenario)]
-            alternatives.append(scenario)
+            identity = _scenario_identity(scenario)
+            existing = _scenarios(row)
+            matching = [entry for entry in existing
+                        if _scenario_identity(entry) == identity]
+            incoming_stamp = _research_stamp(scenario)
+            latest_stamp = max((_research_stamp(entry) for entry in matching),
+                               default=float("-inf"))
+            if incoming_stamp < latest_stamp:
+                return True
+            if matching and incoming_stamp == latest_stamp and incoming_stamp > 0:
+                latest = [entry for entry in matching
+                          if _research_stamp(entry) == latest_stamp]
+                if any(_same_research_proof(entry, scenario) for entry in latest):
+                    return True
+                if len(latest) >= 2:
+                    return True
+                # Both readings remain durable so the evaluator can quarantine
+                # their identity until a genuinely later research observation.
+                alternatives = [entry for entry in existing
+                                if _scenario_identity(entry) != identity
+                                or _research_stamp(entry) == latest_stamp]
+                alternatives.append(scenario)
+            else:
+                alternatives = [entry for entry in existing
+                                if _scenario_identity(entry) != identity]
+                alternatives.append(scenario)
             row["scenarios"] = alternatives
-            row["scenario"] = scenario  # Kept for existing readers of the single-slot format.
+            row["scenario"] = scenario  # Legacy single-slot reader.
             current["candidates"] = candidates
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
@@ -879,11 +946,11 @@ class HubExpansionRegistry:
             if points_time is None:
                 points_time = row_time
             evaluated = [_evaluate_scenario(
-                scenario, raw, now=now,
+                scenario, raw, now=now, research_conflict=conflict,
                 price_fresh=saved.get("source") == "game_purchase_catalog"
                 and _fresh(row_time, now) and _fresh(price_time, now),
                 points_fresh=_fresh(points_time, now), available=available,
-                reserve=reserve_value) for scenario in _scenarios(raw)]
+                reserve=reserve_value) for scenario, conflict in _latest_research(raw)]
             evaluated.sort(key=lambda option: (
                 option["status"] != "viavel",
                 option["status"] == "dados_a_confirmar",
