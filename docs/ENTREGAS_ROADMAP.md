@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, fila observável de pesquisa por hub próprio A2/A3 (G0)
+
+**Escopo:** transformar observações já disponíveis de hubs próprios, destinos pesquisados e catálogo de aeronaves em uma fila reproduzível de combinações para pesquisa posterior, com limites explícitos de evidência.
+
+### Implementado
+
+- `load_market_evidence()` expõe a data real de leitura e a validade de três dias do catálogo de aeronaves, preservando o contrato anterior de `load_market()`. O preço do modelo em cache permanece uma referência de catálogo e não equivale ao preço confirmado da variante de motor.
+- `HubExpansionRegistry.demand_observations()` fornece amostras recentes de demanda dos hubs comprovadamente adquiridos, filtrando por identidade, origem e idade. Não altera o registro de amostras e mantém a pesquisa original sem tratar tráfego bruto como demanda residual.
+- `build_owned_hub_research_queue()` produz uma fila determinística com alternância entre hubs, verificando identidades, distância, alcance conhecido, idade das fontes e modelos contraditórios. Restringe a quantidade de itens e informa quando há mais possibilidades. Cada combinação registra a origem e o horário da evidência, além das pendências de motor, preço final, demanda residual, pista, rota, configuração de assentos, encargos, rentabilidade e cobertura da frota.
+- `GET /api/hubs/recommendations` inclui `research_queue`. A seção **Próxima aeronave por base** exibe as combinações pendentes e a cobertura parcial em um painel expansível. As mensagens são exibidas como texto e possuem tradução PT-BR/inglês.
+- Testes específicos cobrem catálogo ausente, desatualizado, futuro e corrompido, observações restritas a hubs próprios, entradas contraditórias, valores numéricos extremos, limites de fila, alternância entre bases e invariantes de compra desabilitada. Teste JavaScript verifica a visualização dos pendentes e o tratamento de texto não confiável.
+
+### Validação e pendências
+
+- Verificações locais de pytest Windows, Ruff, compileall e `git diff --check` acompanham esta entrega.
+- **G0 ativo.** A fila constitui tarefas de pesquisa, com `coverage=partial`, `read_only=true` e `purchase_eligible=false`. Ela não grava cenários completos automaticamente, não prova rotas livres, demanda residual, compatibilidade de pista ou preço por motor e não habilita nenhuma compra. Para fechar A2/A3, falta conectar leitores reais do jogo para esses campos, persistir cenários com dados financeiros verificáveis e homologar o fluxo em sessão autenticada.
+- Nenhuma compra, alteração no jogo, envio de Telegram, implantação no servidor, merge na `main` ou alteração da PR #44 faz parte desta entrega. As flags de compra da nova política continuam desligadas.
+
 ## 2026-11-23 — Autonomia Total, releitura integral contra movimentação de aeronaves A2 (G0)
 
 **Escopo:** impedir que a contagem constante de rotas produza um falso certificado de cobertura quando aeronaves trocam de página durante a auditoria.

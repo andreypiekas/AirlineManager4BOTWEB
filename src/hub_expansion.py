@@ -628,6 +628,23 @@ class HubExpansionRegistry:
                 sequences[hub] = attempt["sequence"]
         return min(hubs, key=lambda hub: (last_seen[hub], sequences[hub], int(hub)))
 
+    def demand_observations(self, owned_hub_ids: set[str], *,
+                            now: Optional[int] = None) -> list[dict]:
+        """Return fresh game-observed route samples for currently owned hubs.
+
+        Route search demand is raw traffic. It does not prove residual demand,
+        route availability, airplane compatibility or complete hub coverage.
+        """
+        owned = {_airport_id(value) for value in owned_hub_ids} - {None}
+        now = int(time.time() if now is None else now)
+        with _LOCK:
+            samples = _stored_demand(self._load().get("route_demand"))
+        rows = [deepcopy(row) for row in samples.values()
+                if row["origin_id"] in owned
+                and 0 <= now - row["observed_at"] <= MAX_AGE_SECONDS]
+        return sorted(rows, key=lambda row: (
+            int(row["origin_id"]), int(row["destination_id"])))
+
     def snapshot(self, *, cash: object = None, reserve: object = 0,
                  now: Optional[int] = None, owned_hub_ids: Optional[set[str]] = None) -> dict:
         """Evaluate evidence age, affordability and payback without game writes."""

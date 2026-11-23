@@ -247,6 +247,12 @@ const translations = {
   'Diário de investimentos indisponível.': 'Investment ledger unavailable.',
   'Nenhum cenário global comparável.': 'No globally comparable scenario.',
   'Saldo a confirmar.': 'Cash balance pending verification.',
+  'Pesquisas sugeridas': 'Suggested research tasks',
+  'Hubs com amostras': 'Hubs with samples',
+  'Rotas observadas': 'Observed routes',
+  'Cobertura parcial': 'Partial coverage',
+  'Pesquisa ainda pendente': 'Research pending',
+  'Mais possibilidades aguardam pesquisa.': 'Additional possibilities await research.',
   'Nenhuma recomendação corresponde ao modelo selecionado.':
     'No recommendations match the selected model.',
   'Nenhuma base adquirida identificada.': 'No owned hubs identified.'
@@ -281,10 +287,22 @@ const report = {
     {hub_id:'1', model:'A320', status:'viavel', profit_per_day:120,
       payback_days:2, route_key:'two'}
   ],
-  recommendations: [{hub_id:'1'}], cash_observed_at:null
+  recommendations: [{hub_id:'1'}], cash_observed_at:null,
+  research_queue: {read_only:true, purchase_eligible:false, coverage:'partial',
+    sampled_hubs:1, sampled_routes:2, has_more:true,
+    items:[{hub_code:'AAA', hub_id:'1', destination_id:'2',
+      model:'<script>unsafe</script>', pending:['motor_a_pesquisar']}],
+    blocking_reasons:[]}
 };
 $('hubRecommendationSort').value = 'profit';
 renderHubRecommendations(report);
+assert.equal($('hubResearchQueueStatus').textContent,
+  'Suggested research tasks: 1 · Hubs with samples: 1 · Observed routes: 2 · Partial coverage');
+assert.equal($('hubResearchQueueList').children.length, 2);
+assert.equal($('hubResearchQueueList').children[0].textContent,
+  'AAA ↔ 2 · <script>unsafe</script> · Research pending (1)');
+assert.equal($('hubResearchQueueList').children[1].textContent,
+  'Additional possibilities await research.');
 assert.deepEqual($('hubRecommendationModel').children.map(option => option.value), ['', 'A320', 'B737']);
 assert.equal($('hubRecommendationModel').children[0].textContent, 'All models');
 assert.equal($('hubRecommendationsCount').textContent, 'Recommendations shown: 2 / 2');
@@ -326,6 +344,10 @@ assert.equal($('hubRecommendationModel').value, 'A380');
 
 $('hubRecommendationModel').value = '';
 renderHubRecommendations({hubs:[], candidates:[], recommendations:[], cash_observed_at:null});
+assert.equal($('hubResearchQueueList').children[0].textContent, 'Research pending');
+renderHubRecommendations({hubs:[], candidates:[], recommendations:[],
+  research_queue: {items: [], blocking_reasons: ['inventario_hubs_desatualizado']}});
+assert.equal($('hubResearchQueueList').children[0].textContent, 'inventario hubs desatualizado');
 assert.equal($('hubRecommendationsGrid').children[0].textContent, 'No owned hubs identified.');
 assert.equal($('hubRecommendationsCount').textContent, 'Recommendations shown: 0 / 0');
 """

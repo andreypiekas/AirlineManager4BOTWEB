@@ -215,6 +215,35 @@ def load_market(path: Optional[Path] = None) -> list[dict]:
         return []
 
 
+def load_market_evidence(path: Optional[Path] = None, *, now: Optional[int] = None) -> dict:
+    """Read the aircraft catalog with its real cache age for research planning.
+
+    The model price in this cache is not an engine-specific, confirmed order
+    price. Callers must research the final propulsion variant separately.
+    """
+    now = int(time.time() if now is None else now)
+    try:
+        document = json.loads(Path(path or market_file()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        document = None
+    if not isinstance(document, dict):
+        document = {}
+    raw_models = document.get("models")
+    models = ([item for item in raw_models if isinstance(item, dict)
+               and isinstance(item.get("name"), str) and item["name"].strip()]
+              if isinstance(raw_models, list) else [])
+    stamp = document.get("updated")
+    observed_at = stamp if type(stamp) is int and stamp > 0 else None
+    fresh = (observed_at is not None and 0 <= now - observed_at <= 3 * 86400)
+    return {
+        "source": "bot_aircraft_market_cache",
+        "observed_at": observed_at,
+        "fresh": fresh,
+        "models": models,
+        "engine_prices_verified": False,
+    }
+
+
 def find_model(models: list[dict], name: str) -> Optional[dict]:
     """Exact (case-insensitive) match first, then substring."""
     wanted = (name or "").strip().lower()

@@ -36,12 +36,13 @@ from urllib.parse import parse_qs, urlparse
 
 import paths
 from dashboard import snapshot, recent_verified_money, fleet_summary
-from economy import AUTO_GOAL_LABEL, is_auto_goal, load_market, load_state
+from economy import AUTO_GOAL_LABEL, is_auto_goal, load_market, load_market_evidence, load_state
 from i18n import language, t, tip
 from route_registry import RouteRegistry, endpoint
 from hub_registry import HubRegistry
 from hub_expansion import HubExpansionRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
+from owned_hub_research_feed import build_owned_hub_research_queue
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy, MODES
 from investment_journal import InvestmentJournal
@@ -215,13 +216,21 @@ class WebDashboard:
         """Rank proven research for owned hubs using independent cached reads."""
         routes = self.routes()
         cash, observed_at = recent_verified_money(self.bot, load_state())
+        inventory = HubRegistry().snapshot(routes)
         report = rank_next_aircraft(
-            HubRegistry().snapshot(routes),
+            inventory,
             HubAircraftResearchRegistry().snapshot(),
             route_report=routes,
             cash=cash,
             cash_observed_at=observed_at,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
+        )
+        owned_ids = {hub["id"] for hub in inventory.get("hubs", [])
+                     if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
+        report["research_queue"] = build_owned_hub_research_queue(
+            inventory,
+            HubExpansionRegistry().demand_observations(owned_ids),
+            load_market_evidence(),
         )
         investment_policy = InvestmentPolicy.from_config(self.cfg)
         report["investment_policy"] = investment_policy.report()

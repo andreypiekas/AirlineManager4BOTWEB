@@ -704,6 +704,11 @@ footer strong { font-weight: 600; color: var(--aqua); }
         </div>
         <p id="hubRecommendationsCount" class="hub-section-note" role="status" aria-live="polite"></p>
         <div class="hubs-grid" id="hubRecommendationsGrid" aria-label="Recomendações por base" data-t-aria-label="Recomendações por base"></div>
+        <details id="hubResearchQueuePanel" class="hub-probe">
+          <summary data-t="Próximas pesquisas de aeronaves e rotas">Próximas pesquisas de aeronaves e rotas</summary>
+          <p id="hubResearchQueueStatus" class="hub-section-note" role="status" aria-live="polite"></p>
+          <ul id="hubResearchQueueList" class="hub-aircraft-list"></ul>
+        </details>
       </div>
       <div class="hub-card hub-subsection">
         <h2 data-t="Novos hubs">Novos hubs</h2>
@@ -891,6 +896,13 @@ const EN = {
   "Teto de caixa após reservas locais": "Cash upper bound after local reservations",
   "Diário de investimentos indisponível.": "Investment ledger unavailable.",
   "Verificações pendentes": "Pending verifications", "Verificado em": "Verified at",
+  "Próximas pesquisas de aeronaves e rotas": "Next aircraft and route research",
+  "Pesquisas sugeridas": "Suggested research tasks",
+  "Hubs com amostras": "Hubs with samples",
+  "Rotas observadas": "Observed routes",
+  "Cobertura parcial": "Partial coverage",
+  "Pesquisa ainda pendente": "Research pending",
+  "Mais possibilidades aguardam pesquisa.": "Additional possibilities await research.",
   "Nenhum cenário pesquisado para esta base.": "No researched scenario for this hub.",
   "Não foi possível consultar recomendações.": "Could not load recommendations.",
   "Aeronaves exibidas": "Aircraft shown",
@@ -1956,6 +1968,34 @@ function renderHubExpansion(report) {
 }
 function renderHubRecommendations(report) {
   const grid = $("hubRecommendationsGrid"); grid.replaceChildren();
+  const researchQueue = report.research_queue || {};
+  const researchItems = Array.isArray(researchQueue.items) ? researchQueue.items : [];
+  const researchBlockers = Array.isArray(researchQueue.blocking_reasons) ? researchQueue.blocking_reasons : [];
+  $("hubResearchQueueStatus").textContent =
+    tr("Pesquisas sugeridas") + ": " + researchItems.length +
+    " · " + tr("Hubs com amostras") + ": " + (researchQueue.sampled_hubs || 0) +
+    " · " + tr("Rotas observadas") + ": " + (researchQueue.sampled_routes || 0) +
+    " · " + tr("Cobertura parcial");
+  const researchList = $("hubResearchQueueList"); researchList.replaceChildren();
+  if (!researchItems.length && !researchBlockers.length) {
+    const item = document.createElement("li");
+    item.textContent = tr("Pesquisa ainda pendente"); researchList.append(item);
+  }
+  for (const reason of researchBlockers) {
+    const item = document.createElement("li");
+    item.textContent = String(reason).replaceAll("_", " "); researchList.append(item);
+  }
+  for (const task of researchItems) {
+    const item = document.createElement("li");
+    item.textContent = (task.hub_code || task.hub_id) + " ↔ " + task.destination_id +
+      " · " + task.model + " · " + tr("Pesquisa ainda pendente") +
+      " (" + (Array.isArray(task.pending) ? task.pending.length : 0) + ")";
+    researchList.append(item);
+  }
+  if (researchQueue.has_more === true) {
+    const item = document.createElement("li");
+    item.textContent = tr("Mais possibilidades aguardam pesquisa."); researchList.append(item);
+  }
   const hubs = Array.isArray(report.hubs) ? report.hubs : [];
   const candidates = Array.isArray(report.candidates) ? report.candidates : [];
   const modelControl = $("hubRecommendationModel");
