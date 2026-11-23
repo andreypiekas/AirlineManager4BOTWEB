@@ -27,6 +27,10 @@ DEFAULT_RISK_WEIGHT = 0.0
 DEFAULT_CONFIDENCE_WEIGHT = 0.0
 DEFAULT_DIVERSIFICATION_WEIGHT = 0.0
 _OPTIONAL_DIMENSIONS = ("risk", "confidence", "diversification")
+_CONCLUSIVE_REJECTED_STATUSES = frozenset((
+    "saldo_insuficiente", "sem_lucro", "rota_inviavel",
+    "rota_ocupada", "rota_indisponivel",
+))
 _EVIDENCE_SOURCES = {
     "risk": frozenset(("route_optimizer", "game_research")),
     "confidence": frozenset(("route_optimizer", "game_research")),
@@ -171,8 +175,15 @@ def compare_portfolio(
     conflicting = set()
     missing_evidence = Counter()
     for row in candidates:
-        if not isinstance(row, Mapping) or row.get("status") != "viavel" or row.get("pending"):
+        if not isinstance(row, Mapping):
             excluded["cenario_nao_validado"] += 1
+            blockers.append("cenarios_proprios_pendentes")
+            continue
+        if row.get("status") != "viavel" or row.get("pending") != []:
+            excluded["cenario_nao_validado"] += 1
+            if (row.get("pending") != []
+                    or row.get("status") not in _CONCLUSIVE_REJECTED_STATUSES):
+                blockers.append("cenarios_proprios_pendentes")
             continue
         investment = _number(row.get("investment"), positive=True)
         profit = _number(row.get("profit_per_day"), positive=True)
@@ -192,6 +203,7 @@ def compare_portfolio(
                 or _GAME_ID.fullmatch(origin["id"]) is None
                 or _GAME_ID.fullmatch(destination["id"]) is None):
             excluded["identidade_ou_custos_a_confirmar"] += 1
+            blockers.append("cenarios_proprios_pendentes")
             continue
         if minimum_profit is None or profit < minimum_profit:
             excluded["lucro_abaixo_do_minimo"] += 1
@@ -242,10 +254,12 @@ def compare_portfolio(
         # or evidence for one identity remove it pending fresh research.
         if identity in conflicting:
             excluded["pesquisas_conflitantes"] += 1
+            blockers.append("pesquisas_conflitantes")
         elif identity in unique and unique[identity] != item:
             conflicting.add(identity)
             del unique[identity]
             excluded["pesquisas_conflitantes"] += 2
+            blockers.append("pesquisas_conflitantes")
         elif identity not in unique:
             unique[identity] = item
 

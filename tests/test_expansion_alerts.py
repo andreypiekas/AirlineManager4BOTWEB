@@ -28,7 +28,10 @@ class Client:
 
     def send_now(self, text):
         self.calls.append(text)
-        return (self.results.pop(0), "confirmado por mock")
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return (result, "confirmado por mock")
 
 
 def prepare_alerts(monkeypatch, tmp_path, *, config=None, results=(True,)):
@@ -110,6 +113,52 @@ def test_failure_releases_claim_for_retry(monkeypatch, tmp_path):
     assert expansion_alerts.publish_expansion_alert(bot) == "delivered"
     assert expansion_alerts.publish_expansion_alert(bot) == "suppressed"
     assert bot.telegram.calls == ["Expansão segura", "Expansão segura"]
+
+
+def test_send_exception_releases_claim_for_retry_without_leaking_secrets(
+        monkeypatch, tmp_path, caplog):
+    secret = "bot123456:telegram-secret"
+    bot, _ = prepare_alerts(
+        monkeypatch, tmp_path,
+        results=(RuntimeError(f"https://api.telegram.org/{secret}/sendMessage"), True),
+    )
+
+    def proven_report(*args, **kwargs):
+        return {"profile_id": "principal", "snapshot_id": kwargs["snapshot_id"],
+                "alertable": True, "html": "Expansão segura",
+                "material": {"status": "ready", "candidates": []}}
+
+    monkeypatch.setattr(expansion_alerts, "build_expansion_report", proven_report)
+    with caplog.at_level("WARNING", logger="am4bot.telegram"):
+        assert expansion_alerts.publish_expansion_alert(bot) == "failed"
+    assert "Exceção no envio" in caplog.text
+    assert secret not in caplog.text
+    assert expansion_alerts.publish_expansion_alert(bot) == "delivered"
+    assert expansion_alerts.publish_expansion_alert(bot) == "suppressed"
+    assert bot.telegram.calls == ["Expansão segura", "Expansão segura"]
+
+
+def test_material_change_send_exception_preserves_prefix_on_retry(monkeypatch, tmp_path):
+    bot, evidence = prepare_alerts(
+        monkeypatch, tmp_path,
+        results=(True, ConnectionError("falha temporária"), True),
+    )
+
+    def proven_report(*args, **kwargs):
+        return {"profile_id": "principal", "snapshot_id": kwargs["snapshot_id"],
+                "alertable": True, "html": "Expansão segura",
+                "material": {"status": evidence["external"].get("status", "primeiro"),
+                             "candidates": []}}
+
+    monkeypatch.setattr(expansion_alerts, "build_expansion_report", proven_report)
+    assert expansion_alerts.publish_expansion_alert(bot) == "delivered"
+    evidence["external"]["status"] = "atualizado"
+    assert expansion_alerts.publish_expansion_alert(bot) == "failed"
+    assert bot.telegram.calls[1].startswith("<b>Atualização relevante na expansão</b>\n")
+    assert expansion_alerts.publish_expansion_alert(bot) == "delivered"
+    assert bot.telegram.calls[2] == bot.telegram.calls[1]
+    assert expansion_alerts.publish_expansion_alert(bot) == "suppressed"
+    assert len(bot.telegram.calls) == 3
 
 
 def test_changed_long_report_is_not_truncated_or_acknowledged(monkeypatch, tmp_path):

@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A4/A6/A7, exaustão comprovada e reenvio de alerta (G0)
+
+**Objetivo:** impedir que a comparação de oportunidades próprias marque uma pesquisa inconclusiva como esgotada e manter o fluxo de notificações de expansão recuperável após exceções de transporte.
+
+### Implementação e evidências
+
+- **A4/A6 — `src/portfolio_planner.py`:** `compare_portfolio()` inclui motivos de bloqueio quando a pesquisa de um hub próprio permanece pendente, omite a lista explícita de pendências, contém identidade/custos inválidos ou encontra resultados contraditórios para a mesma oportunidade. Somente negativas com `pending=[]` e status conclusivo (`saldo_insuficiente`, `sem_lucro`, `rota_inviavel`, `rota_ocupada`, `rota_indisponivel`) podem contribuir para uma comparação encerrada sem oportunidade. A6 só pode interpretar exaustão de hubs próprios com cobertura e evidências completas.
+- **A6 — `src/hub_expansion.py`:** observações explícitas de `purchasable=false` passam a ser persistidas por ID de aeroporto e horário, inclusive em páginas parciais e catálogos sem opção comprável. Essa evidência elimina opções positivas mais antigas, resiste a reinício e somente é revogada por uma leitura positiva estritamente posterior. Dados negativos com ID inválido impedem classificação de varredura completa. Um catálogo completo e fresco contendo apenas indisponibilidades é tratado como cobertura conhecida.
+- **A7 — `src/expansion_alerts.py`:** se `send_now()` lançar exceção, a reivindicação de deduplicação é liberada para nova tentativa, retorna `failed` e registra advertência sem incluir a exceção, que pode carregar endereço e token privado. A deduplicação ainda confirma o envio somente após resposta de sucesso do cliente.
+- **Regressões — `tests/test_portfolio_planner.py`, `tests/test_hub_expansion.py` e `tests/test_expansion_alerts.py`:** cenários próprios pendentes, omissão de `pending`, negativas conclusivas, conflito de pesquisas, atualização de disponibilidade de hubs entre páginas e reinícios, reativação após nova observação, conflito temporal e falha de Telegram seguida de reenvio e supressão após entrega, inclusive quando o conteúdo sofreu alteração material.
+
+### Verificação, limites e reversão
+
+- Testes locais de regressão aprovados, com verificação da suíte Windows, Ruff, `compileall` e `git diff --check` nesta entrega.
+- **Gate G0.** As provas são de dados e clientes simulados. Permanecem pendentes inventário, demanda, checkout e confirmação autenticados no jogo, além de homologação de alertas reais. Uma resposta perdida após entrega remota pode provocar notificação duplicada na tentativa seguinte.
+- Nenhuma compra real, envio ao Telegram, implantação, habilitação de gasto automático ou merge em `main`. PR #46 continua como rascunho, preservando a PR #44. Reversão pelo commit correspondente na branch `codex/autonomia-a0-a1-20261122` após conferir dependências.
+
 ## 2026-11-23 — Autonomia Total A2/A8, inventário inequívoco e transação simulada em duas etapas (G0)
 
 **Objetivo:** impedir que IDs contraditórios de hubs próprios alimentem a pesquisa de oportunidades e exercer a sequência de expansão hub → nova pesquisa → aeronave com reconciliação entre as etapas.

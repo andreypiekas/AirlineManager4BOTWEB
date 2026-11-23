@@ -474,6 +474,7 @@ class HubExpansionRegistry:
         if not isinstance(options, list):
             return False
         incoming = {}
+        unavailable = set()
         purchasability = {}
         incomplete = False
         for item in options:
@@ -486,8 +487,7 @@ class HubExpansionRegistry:
                 continue
             airport_id = _airport_id(item.get("id"))
             if airport_id is None:
-                if purchasable:
-                    incomplete = True
+                incomplete = True
                 continue
             if (airport_id in purchasability
                     and purchasability[airport_id] is not purchasable):
@@ -496,6 +496,7 @@ class HubExpansionRegistry:
                 return False
             purchasability[airport_id] = purchasable
             if not purchasable:
+                unavailable.add(airport_id)
                 continue
             candidate = {
                 "id": airport_id,
@@ -510,7 +511,7 @@ class HubExpansionRegistry:
             if airport_id in incoming and incoming[airport_id] != candidate:
                 return False
             incoming[airport_id] = candidate
-        if not incoming:
+        if not incoming and not unavailable:
             return False
         verified_complete = complete is True and not incomplete
         with _LOCK:
@@ -524,6 +525,13 @@ class HubExpansionRegistry:
             catalog_at = current.get("observed_at")
             if not valid_stamp(catalog_at):
                 catalog_at = 0
+            saved_unavailable = current.get("catalog_unavailable_at")
+            unavailable_at = {
+                airport_id: stamp
+                for raw_id, stamp in (saved_unavailable.items()
+                                      if isinstance(saved_unavailable, dict) else ())
+                if (airport_id := _airport_id(raw_id)) is not None and valid_stamp(stamp)
+            }
 
             if (explicit_time and observed_at < catalog_at
                     and current.get("catalog_complete") is True):
@@ -531,13 +539,33 @@ class HubExpansionRegistry:
                 # resurrected by an older page arriving out of order.
                 incoming = {airport_id: item for airport_id, item in incoming.items()
                             if airport_id in previous}
-                if not incoming:
+                unavailable.intersection_update(previous.keys() | unavailable_at.keys())
+                if not incoming and not unavailable:
                     return False
 
             # A complete scan must be newer than every previously ingested
             # page before it may discard airports absent from that scan.
             if explicit_time and observed_at <= catalog_at:
                 verified_complete = False
+
+            # Negative purchase eligibility is evidence too. A later partial
+            # page must remove an earlier positive candidate, and a delayed
+            # positive page cannot restore it after a restart.
+            for airport_id in unavailable:
+                older = previous.get(airport_id)
+                older_at = older.get("observed_at", catalog_at) if older else 0
+                if valid_stamp(older_at) and observed_at < older_at:
+                    continue
+                unavailable_at[airport_id] = max(
+                    observed_at, unavailable_at.get(airport_id, 0))
+                previous.pop(airport_id, None)
+            for airport_id in list(incoming):
+                denied_at = unavailable_at.get(airport_id)
+                if denied_at is not None:
+                    if observed_at <= denied_at:
+                        del incoming[airport_id]
+                    else:
+                        del unavailable_at[airport_id]
 
             def refresh(airport_id: str, item: dict) -> dict:
                 older = previous.get(airport_id, {})
@@ -622,6 +650,7 @@ class HubExpansionRegistry:
             current.update({"source": "game_purchase_catalog",
                             "observed_at": max(observed_at, catalog_at) if explicit_time else observed_at,
                             "catalog_complete": catalog_complete,
+                            "catalog_unavailable_at": unavailable_at,
                             "candidates": sorted(incoming.values(), key=lambda row: (row.get("code") or "", row["id"]))})
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
@@ -1003,7 +1032,9 @@ class HubExpansionRegistry:
         return {"candidates": candidates, "source": saved.get("source"),
                 "observed_at": catalog_time, "catalog_complete": saved.get("catalog_complete") is True,
                 "available_cash": available, "cash": cash_value, "reserve": reserve_value,
-                "availability_pending": not bool(stored_candidates),
+                "availability_pending": (not bool(stored_candidates)
+                                         and not (saved.get("catalog_complete") is True
+                                                  and _fresh(catalog_time, now))),
                 "demand_samples": len(demand),
                 "demand_conflicts": len(demand_conflicts),
                 "demand_fresh_samples": len(fresh_demand),

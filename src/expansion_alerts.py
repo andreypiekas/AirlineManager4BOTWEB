@@ -58,7 +58,12 @@ def publish_expansion_alert(bot) -> str:
         deduplicator.acknowledge(claim, delivered=False)
         log.warning("Recomendação de expansão excedeu o limite seguro do Telegram.")
         return "oversized"
-    delivered, _description = bot.telegram.send_now(message)
+    try:
+        delivered, _description = bot.telegram.send_now(message)
+    except Exception:
+        deduplicator.acknowledge(claim, delivered=False)
+        log.warning("Exceção no envio da recomendação de expansão ao Telegram.")
+        return "failed"
     deduplicator.acknowledge(claim, delivered=delivered)
     if delivered:
         log.info("Recomendação de expansão confirmada pelo Telegram (%s).", claim["reason"])

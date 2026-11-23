@@ -150,6 +150,49 @@ def test_unverified_engine_route_ids_and_invalid_financials_are_excluded():
     assert result["eligible_count"] == 0
     assert result["excluded"]["identidade_ou_custos_a_confirmar"] == 4
     assert result["excluded"]["cenario_nao_validado"] == 1
+    assert result["status"] == "inconclusivo"
+    assert "cenarios_proprios_pendentes" in result["blocking_reasons"]
+
+
+def test_pending_owned_scenario_cannot_certify_no_opportunity_for_expansion():
+    pending = candidate(status="dados_a_confirmar", pending=["demanda_a_confirmar"])
+    result = compare_complete(report(pending))
+
+    assert result["best"] is None
+    assert result["eligible_count"] == 0
+    assert result["status"] == "inconclusivo"
+    assert "cenarios_proprios_pendentes" in result["blocking_reasons"]
+
+    # Missing pending evidence is itself inconclusive, including a supposedly
+    # viable row without the producer's explicit empty list.
+    missing = candidate()
+    del missing["pending"]
+    result = compare_complete(report(missing))
+    assert result["best"] is None
+    assert result["status"] == "inconclusivo"
+
+
+@pytest.mark.parametrize("status", [
+    "saldo_insuficiente", "sem_lucro", "rota_inviavel",
+    "rota_ocupada", "rota_indisponivel",
+])
+def test_conclusively_rejected_owned_routes_allow_no_viable_opportunity(status):
+    result = compare_complete(report(candidate(status=status)))
+
+    assert result["status"] == "comparacao_concluida"
+    assert result["best"] is None
+    assert result["eligible_count"] == 0
+    assert result["excluded"]["cenario_nao_validado"] == 1
+
+
+def test_contradictory_owned_research_never_claims_exhaustion():
+    first = candidate(profit=120)
+    conflict = candidate(profit=500)
+    result = compare_complete(report(first, conflict))
+
+    assert result["status"] == "inconclusivo"
+    assert result["best"] is None
+    assert "pesquisas_conflitantes" in result["blocking_reasons"]
 
 
 def test_filters_minimum_profit_payback_and_deduplicates_exact_repeated_scenarios():

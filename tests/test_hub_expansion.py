@@ -214,6 +214,72 @@ def test_conflicting_duplicate_purchasability_cannot_create_candidate(
     assert not registry.path.exists()
 
 
+def test_negative_purchase_evidence_survives_partial_pages_and_restart(
+        tmp_path, monkeypatch):
+    clock = [1_900_000_000.9]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    positive_at = clock[0] - 0.8
+    denied_at = clock[0] - 0.5
+
+    assert registry.record_catalog([_candidate(), _candidate("456")],
+                                   observed_at=positive_at)
+    assert registry.record_catalog([{**_candidate(), "purchasable": False}],
+                                   observed_at=denied_at)
+    restarted = HubExpansionRegistry(registry.path)
+    assert {row["id"] for row in restarted.snapshot(now=clock[0])["candidates"]} == {"456"}
+
+    # A page captured before the denial cannot restore the airport.
+    assert restarted.record_catalog([_candidate(price=2000)],
+                                    observed_at=clock[0] - 0.6)
+    assert {row["id"] for row in restarted.snapshot(now=clock[0])["candidates"]} == {"456"}
+
+    # A verified later positive reading restores it, even after restart.
+    assert restarted.record_catalog([_candidate(price=7000)],
+                                    observed_at=clock[0] - 0.1)
+    rows = {row["id"]: row for row in registry.snapshot(now=clock[0])["candidates"]}
+    assert set(rows) == {"123", "456"}
+    assert rows["123"]["hub_price"] == 7000
+
+
+def test_negative_evidence_at_equal_timestamp_wins_until_newer_read(tmp_path, monkeypatch):
+    clock = [1_900_000_000.9]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    stamp = clock[0] - 0.6
+
+    assert registry.record_catalog([_candidate()], observed_at=stamp)
+    assert registry.record_catalog([{**_candidate(), "purchasable": False}],
+                                   observed_at=stamp)
+    assert registry.record_catalog([_candidate()], observed_at=stamp)
+    assert registry.snapshot(now=clock[0])["candidates"] == []
+    assert registry.snapshot(now=clock[0])["availability_pending"] is True
+    assert registry.record_catalog([_candidate()], observed_at=clock[0] - 0.1)
+    assert len(registry.snapshot(now=clock[0])["candidates"]) == 1
+
+
+def test_complete_catalog_with_only_unavailable_options_is_conclusive(
+        tmp_path, monkeypatch):
+    clock = [1_900_000_000.9]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()], observed_at=clock[0] - 0.8)
+    assert registry.record_catalog([{**_candidate(), "purchasable": False}],
+                                   complete=True, observed_at=clock[0] - 0.1)
+
+    result = HubExpansionRegistry(registry.path).snapshot(now=clock[0])
+    assert result["candidates"] == []
+    assert result["catalog_complete"] is True
+    assert result["availability_pending"] is False
+
+
+def test_unavailable_option_without_valid_id_blocks_complete_coverage(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([
+        _candidate(), {"id": "invalid", "purchasable": False}], complete=True)
+    assert registry.snapshot()["catalog_complete"] is False
+
+
 def test_unknown_purchasability_keeps_catalog_scan_incomplete(tmp_path):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     assert registry.record_catalog([_candidate(), _candidate("456")], complete=True)
