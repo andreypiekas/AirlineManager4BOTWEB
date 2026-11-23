@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A3, persistência temporal e quarentena de cenários (G0)
+
+**Objetivo:** impedir que pesquisas assíncronas ou páginas do jogo entregues fora de ordem substituam evidências mais recentes e que duas leituras contraditórias com o mesmo horário produzam uma recomendação de compra.
+
+### Implementação e evidência
+
+- **`src/hub_aircraft_research.py`:** o armazenamento por perfil, hub, rota não direcionada, modelo e variante explícita de motor passou a comparar o `observed_at` da pesquisa antes da substituição. Uma amostra atrasada ou com horário ausente/inválido é ignorada se existe pesquisa mais recente, sem regravar o arquivo. Leituras equivalentes do mesmo instante são idempotentes mesmo com direção invertida da rota ou diferença de maiúsculas no nome do modelo.
+- Quando duas amostras divergem em evidência de pesquisa, custos ou projeção e compartilham o timestamp mais recente, o registro conserva ambas (no máximo duas). **`rank_next_aircraft()`** já identifica `pesquisas_conflitantes` e bloqueia a recomendação. Uma nova observação cronologicamente posterior substitui o conjunto em conflito. As variantes de motor e perfis continuam isolados.
+- **`tests/test_hub_aircraft_research.py`:** regressões verificam atraso, horários ausentes/inválidos, idempotência, contradição persistida após reabrir o registro, bloqueio efetivo no ranking e liberação após nova pesquisa.
+
+### Validação, pendências e reversão
+
+- Testes direcionados `test_hub_aircraft_research.py` e `test_hub_recommendations.py` passaram. A suíte Windows `pytest tests -q --ignore=tests/test_instalacao_linux.py` concluiu com código zero. Ruff (`src`, `tests`), `compileall src` e `git diff --check` passaram em 23/11/2026. Os testes do instalador Linux permanecem para ambiente POSIX.
+- **Gate G0.** As leituras são simuladas e os cenários armazenados continuam sem coleta real completa de demanda residual, modelo, motor, custo final ou autorização de aquisição. G1–G5 seguem pendentes. Nenhuma compra, mensagem Telegram, implantação ou merge em `main` foi realizado.
+- **Risco e reversão:** registros da mesma combinação podem conter duas linhas quando existir contradição no mesmo instante. Clientes devem respeitar o bloqueio já implementado no ranking. Reverter esta entrega pela branch de autonomia caso seja necessário restaurar a política anterior de substituição. A PR #44 permanece independente.
+- **Paralelismo:** duas tentativas de mobilizar agentes para motores e cobertura da frota foram recusadas pelo limite de threads do ambiente. A implementação desta entrega foi executada pelo coordenador.
+
 ## 2026-11-23 — Autonomia Total A1/A5, correlação do checkout e recibos exclusivos (G0)
 
 **Objetivo:** reduzir o risco de confirmar uma configuração observada em painéis diferentes e de usar a mesma encomenda para conciliar duas intenções de investimento.

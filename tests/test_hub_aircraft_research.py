@@ -147,6 +147,79 @@ def test_engine_variants_remain_isolated_across_profiles_hubs_models_and_routes(
     assert second.snapshot()[0]["observed_at"] == 1_700_000_000
 
 
+def test_delayed_research_never_overwrites_newer_observations(tmp_path):
+    registry = HubAircraftResearchRegistry(tmp_path / "research.json")
+    latest = _scenario()
+    latest["observed_at"] += 10
+    latest["costs"]["aircraft_price"] = 25000
+    assert registry.record(latest)
+    original_bytes = registry.path.read_bytes()
+
+    older = _scenario()
+    older["costs"]["aircraft_price"] = 100
+    assert registry.record(older)
+    assert registry.snapshot() == [latest]
+    assert registry.path.read_bytes() == original_bytes
+
+    for invalid_stamp in (None, True, "unknown", float("nan")):
+        assert registry.record({**older, "observed_at": invalid_stamp})
+        assert registry.snapshot() == [latest]
+        assert registry.path.read_bytes() == original_bytes
+
+
+def test_identical_evidence_on_reversed_route_does_not_create_conflict(tmp_path):
+    registry = HubAircraftResearchRegistry(tmp_path / "research.json")
+    first = _scenario()
+    first["engine_id"] = "1"
+    assert registry.record(first)
+    original_bytes = registry.path.read_bytes()
+
+    equivalent = deepcopy(first)
+    equivalent["model"] = "a320"
+    equivalent["origin"], equivalent["destination"] = first["destination"], first["origin"]
+    assert registry.record(equivalent)
+    assert registry.snapshot() == [first]
+    assert registry.path.read_bytes() == original_bytes
+
+
+def test_equal_time_contradictory_research_is_quarantined_until_newer_proof(tmp_path):
+    path = tmp_path / "research.json"
+    registry = HubAircraftResearchRegistry(path)
+    first = _scenario()
+    conflicting = deepcopy(first)
+    conflicting["costs"]["aircraft_price"] = 12000
+    assert registry.record(first)
+    assert registry.record(conflicting)
+    assert len(HubAircraftResearchRegistry(path).snapshot()) == 2
+    assert registry.record(conflicting)
+    assert len(registry.snapshot()) == 2
+
+    inventory = {"source": "game_hub_select", "observed_at": 1_800_000_000,
+                 "hubs": [{"id": "123", "code": "XAP"}]}
+
+    def rank():
+        return rank_next_aircraft(
+            inventory, registry.snapshot(), route_report={"relations": []},
+            cash=30000, cash_observed_at=1_800_000_000, now=1_800_000_000)
+
+    report = rank()
+    assert report["recommendations"] == []
+    assert len(report["candidates"]) == 2
+    assert all("pesquisas_conflitantes" in row["pending"]
+               for row in report["candidates"])
+
+    newer = deepcopy(conflicting)
+    newer["observed_at"] += 1
+    assert registry.record(newer)
+    assert registry.snapshot() == [newer]
+    recovered = rank_next_aircraft(
+        {**inventory, "observed_at": newer["observed_at"]},
+        registry.snapshot(), route_report={"relations": []},
+        cash=30000, cash_observed_at=newer["observed_at"], now=newer["observed_at"])
+    assert len(recovered["recommendations"]) == 1
+    assert recovered["recommendations"][0]["investment"] == 13000
+
+
 def test_corrupt_storage_and_missing_evidence_remain_pending(tmp_path):
     storage = HubAircraftResearchRegistry(tmp_path / "research.json")
     storage.path.write_text("{broken", encoding="utf-8")

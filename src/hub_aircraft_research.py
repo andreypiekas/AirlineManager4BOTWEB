@@ -7,6 +7,7 @@ cash, route occupancy and physical constraints before recommending anything.
 from __future__ import annotations
 
 import json
+import math
 import re
 import threading
 from copy import deepcopy
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import paths
+from hub_recommendations import _RESEARCH_EVIDENCE_FIELDS
 from route_registry import endpoint, route_key
 
 
@@ -85,10 +87,48 @@ class HubAircraftResearchRegistry:
             matching = [entry for entry in scenarios if same_identity(entry)]
             if len(matching) == 1 and matching[0] == saved:
                 return True
-            scenarios = [entry for entry in scenarios if not same_identity(entry)]
+
+            incoming_stamp = self._observed_at(saved)
+            latest_stamp = max((self._observed_at(entry) for entry in matching),
+                               default=float("-inf"))
+            if incoming_stamp < latest_stamp:
+                # Delayed observations must not downgrade newer research.
+                return True
+            if matching and incoming_stamp == latest_stamp and incoming_stamp > 0:
+                latest = [entry for entry in matching
+                          if self._observed_at(entry) == latest_stamp]
+                if any(self._same_evidence(entry, saved) for entry in latest):
+                    return True
+                # Keep two contradictory latest readings. The ranking engine
+                # already quarantines equal-time conflicts until a newer read.
+                if len(latest) >= 2:
+                    return True
+                scenarios = [entry for entry in scenarios
+                             if not same_identity(entry)
+                             or self._observed_at(entry) == latest_stamp]
+            else:
+                scenarios = [entry for entry in scenarios if not same_identity(entry)]
             scenarios.append(saved)
             paths.write_atomic(self.path, json.dumps({"scenarios": scenarios}, ensure_ascii=False, indent=2))
         return True
+
+    @staticmethod
+    def _observed_at(scenario: dict) -> float:
+        stamp = scenario.get("observed_at")
+        if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+            return float("-inf")
+        try:
+            value = float(stamp)
+        except OverflowError:
+            return float("-inf")
+        return value if math.isfinite(value) and value > 0 else float("-inf")
+
+    @staticmethod
+    def _same_evidence(first: dict, second: dict) -> bool:
+        # Match the ranker's conflict contract, ignoring route direction,
+        # spelling and presentation-only changes to the same scenario.
+        return all(first.get(field) == second.get(field)
+                   for field in _RESEARCH_EVIDENCE_FIELDS)
 
     @staticmethod
     def _engine_id(scenario: dict) -> Optional[str]:
