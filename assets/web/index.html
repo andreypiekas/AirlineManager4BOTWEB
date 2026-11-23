@@ -1053,6 +1053,8 @@ const EN = {
   "última contagem desatualizada": "last count is stale",
   "Frota total no jogo": "Total fleet in game", "registros históricos de rotas": "historical route records",
   "Preços de hubs registrados": "Hub prices recorded", "Amostras de demanda": "Demand samples",
+  "Rotas com demanda contraditória": "Routes with conflicting demand",
+  "Aguardando nova leitura para liberar os dados.": "Awaiting a new read to release the evidence.",
   "recentes": "recent", "Demanda atualizada em": "Demand updated at",
   "Hubs próprios pesquisados": "Owned hubs researched",
   "tentativas inconclusivas": "inconclusive attempts",
@@ -1063,6 +1065,7 @@ const EN = {
   "última pesquisa inconclusiva": "last research inconclusive",
   "amostras verificadas": "verified samples",
   "destinos amostrados": "sampled destinations",
+  "rotas em quarentena": "quarantined routes",
   "última tentativa": "last attempt",
   "Ranking externo com evidências verificadas": "Verified external-hub ranking",
   "Varredura de hubs próprios inconclusiva": "Owned-hub scan inconclusive",
@@ -2002,6 +2005,11 @@ function renderHubExpansion(report) {
     }
     observations.push(demand + ".");
   }
+  if (Number.isSafeInteger(report.demand_conflicts) && report.demand_conflicts > 0) {
+    observations.push(tr("Rotas com demanda contraditória") + ": " +
+      nf.format(report.demand_conflicts) + ". " +
+      tr("Aguardando nova leitura para liberar os dados."));
+  }
   if (Number.isFinite(report.demand_observed_at)) {
     observations.push(tr("Demanda atualizada em") + ": " + hubDate(report.demand_observed_at) + ".");
   }
@@ -2027,6 +2035,8 @@ function renderHubExpansion(report) {
     row.textContent = "#" + hub.hub_id + " · " + status + " · " +
       tr("destinos amostrados") + ": " + nf.format(hub.sample_count || 0) + " (" +
       nf.format(hub.fresh_sample_count || 0) + " " + tr("recentes") + ")" +
+      (Number.isSafeInteger(hub.conflict_count) && hub.conflict_count > 0
+        ? " · " + tr("rotas em quarentena") + ": " + nf.format(hub.conflict_count) : "") +
       (Number.isFinite(hub.last_attempt_at) ? " · " + tr("última tentativa") +
         ": " + hubDate(hub.last_attempt_at) : "");
     progressList.append(row);

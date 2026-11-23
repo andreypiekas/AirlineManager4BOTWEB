@@ -32,6 +32,83 @@ def test_demand_is_persistent_per_origin_destination_and_survives_partial_querie
     assert registry.snapshot()["demand_samples"] == 2
 
 
+def test_demand_keeps_read_time_and_rejects_delayed_replay_per_route(tmp_path, monkeypatch):
+    clock = [1_900_000_030.75]
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    sample = {"arr_id": "3139", "distance": 2000, "y": 120, "j": 10, "f": 0}
+    assert registry.record_demand("2926", [sample], observed_at=1_900_000_020.25) == 1
+    assert registry.record_demand("2926", [
+        {**sample, "y": 140},
+        {**sample, "arr_id": "2941", "y": 900},
+    ], observed_at=1_900_000_010.5) == 1
+    rows = HubExpansionRegistry(registry.path).demand_observations({"2926"}, now=clock[0])
+    assert [(row["destination_id"], row["y"], row["observed_at"]) for row in rows] == [
+        ("2941", 900, 1_900_000_010.5), ("3139", 120, 1_900_000_020.25)]
+    original = registry.path.read_bytes()
+    assert registry.record_demand("2926", [{**sample, "y": 140}],
+                                  observed_at=1_900_000_010.5) == 0
+    assert registry.path.read_bytes() == original
+    assert registry.snapshot(now=clock[0])["demand_observed_at"] == 1_900_000_020.25
+
+
+def test_conflicting_simultaneous_demand_is_quarantined_until_newer_read(tmp_path, monkeypatch):
+    clock = [1_900_000_040.5]
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    sample = {"arr_id": "3139", "distance": 2000, "y": 120, "j": 10, "f": 0}
+    stamp = 1_900_000_035.25
+    assert registry.record_demand("2926", [sample], observed_at=stamp) == 1
+    assert registry.record_demand("2926", [{**sample, "y": 121}], observed_at=stamp) == 0
+    report = HubExpansionRegistry(registry.path).snapshot(
+        now=clock[0], owned_hub_ids={"2926"})
+    assert report["demand_samples"] == 0
+    assert report["demand_conflicts"] == 1
+    assert report["demand_hub_progress"][0]["conflict_count"] == 1
+    assert registry.demand_observations({"2926"}, now=clock[0]) == []
+    disputed = registry.path.read_bytes()
+    assert registry.record_demand("2926", [sample], observed_at=stamp) == 0
+    assert registry.path.read_bytes() == disputed
+    assert registry.record_demand("2926", [sample], observed_at=stamp - 1) == 0
+    assert registry.path.read_bytes() == disputed
+    assert registry.record_demand("2926", [{**sample, "y": 123}],
+                                  observed_at=stamp + 1) == 1
+    confirmed = HubExpansionRegistry(registry.path).snapshot(now=clock[0])
+    assert confirmed["demand_conflicts"] == 0
+    assert confirmed["demand_samples"] == 1
+    assert registry.demand_observations({"2926"}, now=clock[0])[0]["y"] == 123
+
+
+def test_persisted_conflict_takes_precedence_over_same_time_legacy_sample(
+        tmp_path, monkeypatch):
+    clock = [1_900_000_050]
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    sample = {"arr_id": "3139", "distance": 2000, "y": 120, "j": 10, "f": 0}
+    assert registry.record_demand("2926", [sample], observed_at=clock[0] - 2) == 1
+    saved = json.loads(registry.path.read_text(encoding="utf-8"))
+    saved["route_demand_conflicts"] = {
+        "2926:3139": {"observed_at": clock[0] - 2,
+                      "source": "game_route_search"}}
+    registry.path.write_text(json.dumps(saved), encoding="utf-8")
+    assert registry.demand_observations({"2926"}, now=clock[0]) == []
+    assert registry.snapshot(now=clock[0])["demand_conflicts"] == 1
+    assert registry.record_demand("2926", [sample], observed_at=clock[0] - 1) == 1
+    assert registry.snapshot(now=clock[0])["demand_conflicts"] == 0
+    assert registry.demand_observations({"2926"}, now=clock[0])[0]["y"] == 120
+
+
+@pytest.mark.parametrize("invalid", [None, True, "1900000000", float("nan"),
+                                            float("inf"), -1, 1_900_000_002,
+                                            1_900_000_000 - hub_expansion.MAX_AGE_SECONDS - 1])
+def test_demand_rejects_invalid_read_timestamp_without_writes(tmp_path, monkeypatch, invalid):
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: 1_900_000_000)
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    sample = {"arr_id": "3139", "distance": 2000, "y": 120, "j": 10, "f": 0}
+    assert registry.record_demand("2926", [sample], observed_at=invalid) == 0
+    assert not registry.path.exists()
+
+
 def test_demand_rejects_invalid_and_conflicting_evidence(tmp_path):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     sample = {"arr_id": "3139", "distance": 1992, "y": 120, "j": 106, "f": 40}
@@ -163,11 +240,13 @@ def test_verified_samples_survive_inconclusive_retry_and_expiry(tmp_path, monkey
     assert retry["demand_hub_progress"] == [
         {"hub_id": "2926", "last_attempt_at": now[0],
          "last_attempt_status": "inconclusive", "sample_count": 1,
-         "fresh_sample_count": 1, "last_sample_at": 1900000000,
+         "fresh_sample_count": 1, "conflict_count": 0,
+         "last_sample_at": 1900000000,
          "coverage": "partial"},
         {"hub_id": "2941", "last_attempt_at": None,
          "last_attempt_status": "unattempted", "sample_count": 0,
-         "fresh_sample_count": 0, "last_sample_at": None,
+         "fresh_sample_count": 0, "conflict_count": 0,
+         "last_sample_at": None,
          "coverage": "partial"},
     ]
     now[0] += hub_expansion.MAX_AGE_SECONDS + 1
@@ -636,6 +715,58 @@ def test_demand_collection_rejects_partial_or_unmatched_search(tmp_path, monkeyp
     persisted = json.loads(registry.path.read_text(encoding="utf-8"))
     assert persisted["route_demand"] == original
     assert persisted["route_demand_attempts"]["2926"]["status"] == "inconclusive"
+
+
+def test_demand_collector_persists_dom_read_time_even_when_processing_is_late(
+        tmp_path, monkeypatch):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
+
+    class Hubs:
+        def record_options(self, options):
+            return options == [{"id": "2926"}]
+
+    monkeypatch.setattr(game_observations, "HubRegistry", Hubs)
+    monkeypatch.setattr(fleet, "search_routes", lambda *_args, **_kwargs: [
+        RouteCandidate("3139", "SBL", 2000, 120, 10, 0, 5000)])
+    read_at = 1_900_000_010.125
+    clock = [read_at + 30]
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: clock[0])
+    raw = {"dep_id": "2926", "arr_id": "3139", "distance": "2000",
+           "y": "120", "j": "10", "f": "0"}
+
+    def stable_read(_bot, script, *, with_timestamp=False):
+        assert script == game_observations._VERIFIED_ROUTE_DEMAND_JS
+        assert with_timestamp
+        return ([raw], read_at)
+
+    monkeypatch.setattr(game_observations, "_stable_read", stable_read)
+
+    class Bot:
+        stopping = False
+
+        class config:
+            @staticmethod
+            def get_int(_section, _key, default):
+                return default
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            pass
+
+        def ajax(self, *_args):
+            pass
+
+        def js(self, script):
+            assert script == _HUB_OPTIONS_JS
+            return [{"id": "2926"}]
+
+    assert game_observations.collect_owned_hub_demand(Bot()) == 1
+    saved = json.loads(registry.path.read_text(encoding="utf-8"))
+    assert saved["route_demand"]["2926:3139"]["observed_at"] == read_at
+    assert saved["route_demand_attempts"]["2926"]["status"] == "inconclusive"
 
 
 def test_demand_collection_discards_unstable_reads_and_invalid_hub_selector(tmp_path, monkeypatch):

@@ -628,6 +628,10 @@ const translations = {
   'Expansão externa em avaliação': 'External expansion under evaluation',
   'Hubs próprios pesquisados': 'Owned hubs researched',
   'tentativas inconclusivas': 'inconclusive attempts',
+  'Rotas com demanda contraditória': 'Routes with conflicting demand',
+  'Aguardando nova leitura para liberar os dados.':
+    'Awaiting a new read to release the evidence.',
+  'rotas em quarentena': 'quarantined routes',
   'Cobertura de demanda parcial; respostas vazias não comprovam ausência de rotas.':
     'Partial demand coverage; empty responses do not prove there are no routes.',
   'última pesquisa inconclusiva': 'last research inconclusive',
@@ -674,10 +678,10 @@ const report = {
   candidates:[candidate], availability_pending:false, catalog_complete:true,
   available_cash:25000, cash:26000, reserve:1000,
   demand_owned_hubs_total:3, demand_owned_hubs_attempted:2,
-  demand_owned_hubs_inconclusive:1, demand_coverage:'partial',
+  demand_owned_hubs_inconclusive:1, demand_coverage:'partial', demand_conflicts:1,
   demand_hub_progress:[
     {hub_id:'2926', last_attempt_at:1800000000, last_attempt_status:'inconclusive',
-     sample_count:1, fresh_sample_count:0, coverage:'partial'},
+     sample_count:1, fresh_sample_count:0, conflict_count:1, coverage:'partial'},
     {hub_id:'2941', last_attempt_at:null, last_attempt_status:'unattempted',
      sample_count:0, fresh_sample_count:0, coverage:'partial'}],
   expansion_decision:{status:'avaliacao_expansao', owned_hubs_evaluated:2,
@@ -689,9 +693,12 @@ renderHubExpansion(report);
 assert.match($('hubExpansionScope').textContent, /Owned hubs researched: 2 \/ 3/);
 assert.match($('hubExpansionScope').textContent, /1 inconclusive attempts/);
 assert.match($('hubExpansionScope').textContent, /Partial demand coverage/);
+assert.match($('hubExpansionScope').textContent, /Routes with conflicting demand: 1/);
+assert.match($('hubExpansionScope').textContent, /Awaiting a new read to release the evidence/);
 assert.equal($('hubDemandProgressList').children.length, 2);
 assert.match($('hubDemandProgressList').children[0].textContent,
   /#2926 · last research inconclusive · sampled destinations: 1 \(0 recent\)/);
+assert.match($('hubDemandProgressList').children[0].textContent, /quarantined routes: 1/);
 assert.match($('hubDemandProgressList').children[1].textContent,
   /#2941 · research not started · sampled destinations: 0/);
 assert.match($('hubExpansionDecision').textContent, /External expansion under evaluation/);

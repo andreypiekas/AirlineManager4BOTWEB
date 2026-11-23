@@ -411,12 +411,13 @@ def collect_owned_hub_demand(bot: object) -> int:
         distance = max(300, bot.config.get_int("settings", "route_max_distance_big", 6000))
         runway = max(0, bot.config.get_int("settings", "route_min_runway", 5000))
         candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
-        rows = _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS)
+        read = _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS, with_timestamp=True)
+        rows, read_at = read if isinstance(read, tuple) and len(read) == 2 else (None, None)
         samples = _verified_demand(candidates, rows, origin)
         if not samples:
             log.debug("Pesquisa de demanda do hub %s incompleta ou sem resultados confirmados.", origin)
             return 0
-        count = registry.record_demand(origin, samples)
+        count = registry.record_demand(origin, samples, observed_at=read_at)
         log.info("Pesquisa de demanda: hub %s, %d destinos confirmados.", origin, count)
         return count
     finally:

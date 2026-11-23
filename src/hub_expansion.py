@@ -21,6 +21,7 @@ _LOCK = threading.RLock()
 _ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _ENGINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_AGE_SECONDS = 3 * 86400
+_UNSET = object()
 
 
 def _amount(value: object) -> Optional[float]:
@@ -273,7 +274,8 @@ def _stored_demand(value: object) -> dict[str, dict]:
             continue
         origin = _airport_id(row.get("origin_id"))
         timestamp = row.get("observed_at")
-        if origin is None or type(timestamp) is not int or timestamp <= 0:
+        if (origin is None or type(timestamp) not in (int, float)
+                or not math.isfinite(timestamp) or timestamp <= 0):
             continue
         sample = _demand_sample(origin, {"arr_id": row.get("destination_id"),
                                          "distance": row.get("distance_km"),
@@ -281,6 +283,36 @@ def _stored_demand(value: object) -> dict[str, dict]:
         if sample is not None and key == f"{origin}:{sample['destination_id']}":
             valid[key] = {**sample, "observed_at": timestamp}
     return valid
+
+
+def _stored_demand_conflicts(value: object) -> dict[str, dict]:
+    """Retain time-bound quarantine markers without accepting disputed demand."""
+    if not isinstance(value, dict):
+        return {}
+    conflicts = {}
+    for key, row in value.items():
+        if not isinstance(row, dict) or row.get("source") != "game_route_search":
+            continue
+        parts = key.split(":") if isinstance(key, str) else []
+        stamp = row.get("observed_at")
+        if (len(parts) != 2 or any(_airport_id(part) != part for part in parts)
+                or parts[0] == parts[1] or type(stamp) not in (int, float)
+                or not math.isfinite(stamp) or stamp <= 0):
+            continue
+        conflicts[key] = {"observed_at": stamp, "source": "game_route_search"}
+    return conflicts
+
+
+def _trusted_demand(saved: dict) -> tuple[dict[str, dict], dict[str, dict]]:
+    """A persisted conflict wins unless a strictly later reading resolved it."""
+    samples = _stored_demand(saved.get("route_demand"))
+    conflicts = _stored_demand_conflicts(saved.get("route_demand_conflicts"))
+    for key in samples.keys() & conflicts.keys():
+        if samples[key]["observed_at"] > conflicts[key]["observed_at"]:
+            conflicts.pop(key)
+        else:
+            samples.pop(key)
+    return samples, conflicts
 
 
 def _stored_demand_attempts(value: object) -> dict[str, dict]:
@@ -542,10 +574,13 @@ class HubExpansionRegistry:
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
 
-    def record_demand(self, origin_id: object, results: object) -> int:
+    def record_demand(self, origin_id: object, results: object, *,
+                      observed_at: object = _UNSET) -> int:
         """Store independently observed route demand keyed by game airport IDs.
 
         A partial search only updates the destinations it actually returned.
+        Delayed reads cannot replace newer observations. Contradictory samples
+        from the same instant quarantine that route until a later verified read.
         These samples provide demand evidence, not investment projections.
         """
         origin = _airport_id(origin_id)
@@ -563,23 +598,59 @@ class HubExpansionRegistry:
             if key in observations and observations[key] != sample:
                 return 0
             observations[key] = sample
+        now = time.time()
+        timestamp = now if observed_at is _UNSET else observed_at
+        if (type(timestamp) not in (int, float) or not math.isfinite(timestamp)
+                or timestamp <= 0 or not 0 <= now - timestamp <= MAX_AGE_SECONDS):
+            return 0
         with _LOCK:
             current = self._load()
-            previous = _stored_demand(current.get("route_demand"))
-            now = int(time.time())
-            previous.update({key: {**sample, "observed_at": now}
-                             for key, sample in observations.items()})
+            previous, conflicts = _trusted_demand(current)
+            accepted = 0
+            changed = False
+            for key, sample in observations.items():
+                prior = previous.get(key)
+                disputed = conflicts.get(key)
+                latest = max(prior["observed_at"] if prior else 0,
+                             disputed["observed_at"] if disputed else 0)
+                if timestamp < latest or (disputed and timestamp == latest):
+                    continue
+                candidate = {**sample, "observed_at": timestamp}
+                if prior and timestamp == latest and candidate != prior:
+                    previous.pop(key)
+                    conflicts[key] = {"observed_at": timestamp,
+                                      "source": "game_route_search"}
+                    changed = True
+                    continue
+                if candidate != prior:
+                    previous[key] = candidate
+                    changed = True
+                if disputed:
+                    conflicts.pop(key)
+                    changed = True
+                accepted += 1
+            if not changed and not accepted:
+                return 0
             # Keep the newest observations when a large airline searches many routes.
             if len(previous) > 5000:
                 previous = dict(sorted(previous.items(),
                                        key=lambda item: item[1].get("observed_at", 0)
                                        if isinstance(item[1], dict) else 0,
                                        reverse=True)[:5000])
+            if len(conflicts) > 5000:
+                conflicts = dict(sorted(conflicts.items(),
+                                        key=lambda item: item[1]["observed_at"],
+                                        reverse=True)[:5000])
             current["route_demand"] = previous
-            current["route_demand_last_at"] = now
-            self._write_demand_attempt(current, origin, now, "samples_observed")
+            current["route_demand_conflicts"] = conflicts
+            if accepted:
+                current["route_demand_last_at"] = max(
+                    current.get("route_demand_last_at") or 0, timestamp)
+                attempts = _stored_demand_attempts(current.get("route_demand_attempts"))
+                if (origin not in attempts or attempts[origin]["attempted_at"] <= timestamp):
+                    self._write_demand_attempt(current, origin, int(now), "samples_observed")
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
-        return len(observations)
+        return accepted
 
     @staticmethod
     def _write_demand_attempt(current: dict, origin: str, now: int, status: str) -> None:
@@ -611,9 +682,9 @@ class HubExpansionRegistry:
             return None
         with _LOCK:
             saved = self._load()
-            records = _stored_demand(saved.get("route_demand"))
+            records, _ = _trusted_demand(saved)
             attempts = _stored_demand_attempts(saved.get("route_demand_attempts"))
-        now = int(time.time())
+        now = time.time()
         last_seen = {hub: 0 for hub in hubs}
         for row in records.values():
             origin = row.get("origin_id")
@@ -636,9 +707,9 @@ class HubExpansionRegistry:
         route availability, airplane compatibility or complete hub coverage.
         """
         owned = {_airport_id(value) for value in owned_hub_ids} - {None}
-        now = int(time.time() if now is None else now)
+        now = time.time() if now is None else now
         with _LOCK:
-            samples = _stored_demand(self._load().get("route_demand"))
+            samples, _ = _trusted_demand(self._load())
         rows = [deepcopy(row) for row in samples.values()
                 if row["origin_id"] in owned
                 and 0 <= now - row["observed_at"] <= MAX_AGE_SECONDS]
@@ -650,13 +721,13 @@ class HubExpansionRegistry:
         """Evaluate evidence age, affordability and payback without game writes."""
         with _LOCK:
             saved = deepcopy(self._load())
-        now = int(time.time() if now is None else now)
+        now = time.time() if now is None else now
         cash_value = _amount(cash)
         reserve_value = _amount(reserve)
         available = max(0, cash_value - reserve_value) if cash_value is not None and reserve_value is not None else None
         catalog_time = saved.get("observed_at")
         stored_candidates = _stored_candidates(saved.get("candidates"))
-        demand = _stored_demand(saved.get("route_demand"))
+        demand, demand_conflicts = _trusted_demand(saved)
         attempts = _stored_demand_attempts(saved.get("route_demand_attempts"))
         fresh_demand = {key: item for key, item in demand.items()
                         if 0 <= now - item["observed_at"] <= MAX_AGE_SECONDS}
@@ -671,6 +742,7 @@ class HubExpansionRegistry:
                   "last_attempt_status": attempts[hub]["status"]
                   if hub in attempted_owned else "unattempted",
                   "sample_count": 0, "fresh_sample_count": 0,
+                  "conflict_count": 0,
                   "last_sample_at": None, "coverage": "partial"}
             for hub in sorted(owned, key=int)
         }
@@ -683,6 +755,10 @@ class HubExpansionRegistry:
                                         sample["observed_at"])
             if key in fresh_demand:
                 hub["fresh_sample_count"] += 1
+        for key in demand_conflicts:
+            hub = progress.get(key.split(":", 1)[0])
+            if hub is not None:
+                hub["conflict_count"] += 1
         candidates = []
         for raw in stored_candidates:
             if raw["id"] in owned:
@@ -740,6 +816,7 @@ class HubExpansionRegistry:
                 "available_cash": available, "cash": cash_value, "reserve": reserve_value,
                 "availability_pending": not bool(stored_candidates),
                 "demand_samples": len(demand),
+                "demand_conflicts": len(demand_conflicts),
                 "demand_fresh_samples": len(fresh_demand),
                 "demand_observed_at": max((item["observed_at"] for item in demand.values()), default=None),
                 "demand_owned_hubs_total": len(owned),

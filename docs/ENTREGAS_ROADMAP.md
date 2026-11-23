@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A7, proveniência temporal e quarentena da demanda (G0)
+
+**Objetivo:** impedir que leituras de pesquisa de rota processadas fora de ordem substituam demanda mais recente e tornar contradições visíveis sem alimentar o planejamento com dados disputados.
+
+### Implementação e evidências
+
+- **`src/game_observations.py`:** a pesquisa de hubs próprios encaminha o horário da segunda leitura estável do DOM à persistência, preservando a data real da observação mesmo após atraso no processamento.
+- **`src/hub_expansion.py`:** `record_demand()` aceita `observed_at` comprovado, preserva timestamps fracionários, recusa épocas inválidas/futuras/expiradas e compara a versão de cada rota antes de gravar. Uma amostra atrasada não altera destinos mais recentes, mas outros destinos legítimos de um lote parcial podem ser acrescentados. O cursor da tentativa só é marcado como observado se essa leitura não anteceder uma tentativa posterior.
+- Demandas contraditórias no **mesmo instante** entram em quarentena por rota, inclusive após reinício, e deixam de aparecer no feed e no ranking. Um registro posterior comprovado libera a rota. Dados legados com timestamps inteiros continuam válidos. Persistências com amostra e marcador conflitante são interpretadas conservadoramente.
+- **`assets/web/index.html`:** o painel de hubs próprios mostra o total de rotas com demanda contraditória e a quantidade em quarentena por hub, com tradução PT-BR/EN.
+- **`tests/test_game_observations.py` e `tests/test_hubs_dashboard_ui.py`:** cenários simulados de leituras retardadas, substituições por destino, replay obsoleto, timestamps inválidos, conflito simultâneo, reinício, resolução posterior e exibição no painel.
+
+### Validação, limites e reversão
+
+- Testes direcionados de observações, fila e painel passaram. A suíte Windows `python -m pytest tests -q --ignore=tests/test_instalacao_linux.py` concluiu com código zero. Ruff (`src`, `tests`), `compileall src` e `git diff --check` passaram. O teste de instalação Linux depende de ambiente POSIX.
+- **Gate G0, validação com fixtures.** Ainda faltam observações homologadas de demanda residual, cobertura integral por hub/rota/modelo/motor e preços finais no jogo autenticado. G1–G5 permanecem pendentes, assim como os demais requisitos de A2–A9. Demandas observadas continuam representando tráfego bruto, sem autorizar compra.
+- Sem compra real, notificação Telegram, implantação ou merge em `main`. Reversão pelo commit desta entrega na branch de autonomia, considerando commits posteriores. A PR #44 permanece independente.
+
 ## 2026-11-23 — Autonomia Total A2/A3/A7, paginação consistente das pesquisas dos hubs (G0)
 
 **Objetivo:** permitir investigar todas as combinações observadas de hub próprio × rota × modelo × variante de motor, inclusive quando o número de possibilidades ultrapassa o limite inicial de 40 itens, sem omissões nem duplicação entre páginas.
