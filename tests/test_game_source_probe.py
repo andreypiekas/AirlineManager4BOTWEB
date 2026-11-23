@@ -58,6 +58,8 @@ def test_running_bot_is_read_once_and_untrusted_fields_are_removed():
     assert report["sources"]["owned_hub_options"]["attribute_presence"]["title"] is False
     assert report["sources"]["owned_hub_options"]["attribute_presence"]["value"] is True
     assert report["sources"]["fleet_routes"]["linked_aircraft_ids"] == ["24133209"]
+    assert report["aircraft_order_hub_selection"]["selected_hub_id"] is None
+    assert report["aircraft_order_hub_selection"]["status"] == "unverified"
     assert report["status_data"]["numeric_ids"] == ["999"]
     assert report["sources"]["owned_hub_options"]["id_parseable_nodes"] is None
     assert "custom_source" not in report["sources"]
@@ -155,6 +157,10 @@ def test_malicious_response_cannot_inject_page_values_or_secrets():
                                                 "active_page_numeric": True,
                                                 "secret": secret}},
                     "status_data": {"numeric_ids": [secret, "7"]},
+                    "aircraft_order_hub_selection": {
+                        "selector_count": 1, "option_count": 1,
+                        "selected_option_count": 1, "selected_hub_id": secret,
+                        "status": "dom_consistent", "cookie": secret},
                     "secret": secret}
 
     report = probe_game_sources(Bot())
@@ -168,7 +174,92 @@ def test_malicious_response_cannot_inject_page_values_or_secrets():
     assert report["sources"]["fleet_routes"]["linked_aircraft_ids"] == ["42", "43"]
     assert report["sources"]["fleet_routes"]["linked_aircraft_ids_truncated"] is True
     assert report["sources"]["fleet_routes"]["numeric_ids"] == ["77", "78"]
+    assert report["aircraft_order_hub_selection"]["status"] == "unverified"
+    assert report["aircraft_order_hub_selection"]["selected_hub_id"] is None
     assert secret not in json.dumps(report)
+
+
+@pytest.mark.parametrize("source,expected", [
+    ({"selector_count": 1, "option_count": 3, "selected_option_count": 1,
+      "selected_hub_id": "456", "status": "dom_consistent"}, "456"),
+    ({"selector_count": 2, "option_count": 3, "selected_option_count": 1,
+      "selected_hub_id": "456", "status": "dom_consistent"}, None),
+    ({"selector_count": 1, "option_count": 3, "selected_option_count": 2,
+      "selected_hub_id": "456", "status": "dom_consistent"}, None),
+    ({"selector_count": 1, "option_count": 3, "selected_option_count": 1,
+      "selected_hub_id": "true", "status": "dom_consistent"}, None),
+])
+def test_order_hub_selection_requires_one_consistent_numeric_option(source, expected):
+    from game_source_probe import _sanitize
+
+    report = _sanitize({"schema_version": 1, "aircraft_order_hub_selection": source})
+    selection = report["aircraft_order_hub_selection"]
+    assert selection["selected_hub_id"] == expected
+    assert selection["status"] == ("dom_consistent" if expected else "unverified")
+    assert selection["read_only"] is True
+
+
+@pytest.mark.parametrize("selectors,options,expected_status,expected_id", [
+    ([{"value": "456"}], [{"value": "456", "selected": True}],
+     "dom_consistent", "456"),
+    # The selected HTML attribute can be stale; the current DOM property wins.
+    ([{"value": "456"}], [
+        {"value": "123", "selected": False, "attr_selected": True},
+        {"value": "456", "selected": True}], "dom_consistent", "456"),
+    ([{"value": "456"}], [
+        {"value": "123", "selected": True, "attr_selected": True},
+        {"value": "456", "selected": False}], "unverified", None),
+    ([{"value": "456"}], [
+        {"value": "456", "selected": True},
+        {"value": "456", "selected": False}], "unverified", None),
+    ([{"value": "456", "disabled": True}], [
+        {"value": "456", "selected": True}], "disabled", None),
+    ([{"value": "456"}], [
+        {"value": "456", "selected": True, "disabled": True}], "unverified", None),
+    ([{"value": "456"}, {"value": "456"}], [
+        {"value": "456", "selected": True}], "ambiguous", None),
+    ([{"value": "456"}], [
+        {"value": "456", "selected": False}], "unverified", None),
+    ([], [], "missing", None),
+])
+def test_order_hub_live_dom_requires_unambiguous_selection(
+        tmp_path, selectors, options, expected_status, expected_id):
+    if not shutil.which("node"):
+        pytest.skip("Node.js is required to run the embedded DOM probe")
+
+    # The mock distinguishes the live .selected property from the stale HTML
+    # attribute, which cannot be trusted for the current checkout selection.
+    fixture = json.dumps({"selectors": selectors, "options": options})
+    js = """
+const fixture = FIXTURE;
+const makeNode = item => ({
+  id: '',
+  value: item.value,
+  selected: item.selected === true,
+  disabled: item.disabled === true,
+  textContent: '',
+  hasAttribute: name => name === 'value' ||
+    (name === 'selected' && item.attr_selected === true),
+  getAttribute: name => name === 'value' ? item.value : null,
+});
+const elements = {
+  '#hubSelection': fixture.selectors.map(makeNode),
+  '#hubSelection option': fixture.options.map(makeNode),
+};
+globalThis.document = {querySelectorAll: selector => elements[selector] || []};
+globalThis.window = {statusData: null};
+console.log(JSON.stringify((new Function(PROBE))()));
+""".replace("FIXTURE", fixture).replace("PROBE", json.dumps(PROBE_JS))
+    path = tmp_path / "hub_selection.js"
+    path.write_text(js, encoding="utf-8")
+    response = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+    assert response.returncode == 0, response.stderr
+    from game_source_probe import _sanitize
+
+    selection = _sanitize(json.loads(response.stdout))["aircraft_order_hub_selection"]
+    assert selection["status"] == expected_status
+    assert selection["selected_hub_id"] == expected_id
+    assert selection["read_only"] is True
 
 
 def test_embedded_dom_probe_returns_only_allowlisted_metadata(tmp_path):
@@ -180,6 +271,8 @@ function node(attrs = {}, options = {}) {
   const entry = {
     id: attrs.id || '',
     value: attrs.value || '',
+    selected: options.selected === true,
+    disabled: options.disabled === true,
     textContent: options.text || '',
     getAttribute: name => Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null,
     hasAttribute: name => Object.prototype.hasOwnProperty.call(attrs, name),
@@ -203,7 +296,8 @@ const sourceNodes = {
   '#hubCostInfo': [node({id: 'hubCostInfo'}, {text: 'SECRET_TOKEN'})],
   '#airportInfo': [node({id: 'airportInfo'}, {text: 'SECRET_PASSWORD'})],
   '#hubList > .row[onclick]': [node({onclick: 'hub_details.php?id=2941&token=SECRET_TOKEN'})],
-  '#hubSelection option': [node({value: '456', selected: 'selected'})],
+  '#hubSelection': [node({id: 'hubSelection', value: '456'})],
+  '#hubSelection option': [node({value: '456', selected: 'selected'}, {selected: true})],
   '#acListItems .acListItem': [
     node({'data-price': '1900', 'data-range': '4700',
           onclick: "Ajax('ac_orders.php?mode=detail&id=785&token=SECRET_TOKEN')"}),
@@ -255,6 +349,10 @@ globalThis.window = Object.freeze({
     assert raw["sources"]["purchase_hub_airport_info"]["count"] == 1
     assert raw["sources"]["acquired_hub_rows"]["count"] == 1
     assert raw["sources"]["aircraft_order_hub_options"]["numeric_ids"] == ["456"]
+    assert raw["aircraft_order_hub_selection"] == {
+        "selector_count": 1, "option_count": 1, "selected_option_count": 1,
+        "selected_hub_id": "456", "status": "dom_consistent",
+    }
     assert raw["sources"]["aircraft_catalog"]["numeric_ids"] == ["785", "786"]
     assert raw["sources"]["fleet_routes"]["numeric_ids"] == ["36562620"]
     assert raw["sources"]["fleet_routes"]["linked_aircraft_ids"] == ["24133209"]

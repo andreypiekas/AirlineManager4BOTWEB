@@ -1,5 +1,20 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A1/A5, confirmação da seleção de hub na sondagem DOM (G0)
+
+**Objetivo:** obter um sinal de leitura consistente do hub selecionado no formulário de encomenda de aeronaves, para apoiar a futura pré-validação do destino de entrega do plano.
+
+### Implementação e evidência
+
+- **`src/game_source_probe.py`:** a sondagem existente da sessão Selenium, já restrita ao processo proprietário do navegador, passa a retornar `aircraft_order_hub_selection` com quantidade de seletores, opções, opções efetivamente selecionadas, estado e ID numérico do hub quando a seleção visível é consistente. Confere o valor atual de `#hubSelection` com a propriedade DOM `option.selected`, a unicidade do seletor e da opção, e a disponibilidade do controle. Seleções ausentes, duplicadas, desabilitadas, sem ID válido ou inconsistentes permanecem inconclusivas. O sanitizador Python valida os limites, elimina atributos não autorizados e mantém separadamente a evidência de `statusData`.
+- **`tests/test_game_source_probe.py`:** exercita a seleção atual, atributo HTML `selected` desatualizado, opção divergente, IDs duplicados, controles desabilitados, múltiplos seletores e respostas maliciosas. A sondagem somente lê elementos DOM e retorna um objeto limitado. O endpoint administrativo existente continua sendo a entrada autenticada para execução no trabalhador dono do Selenium.
+
+### Verificação, limites e reversão
+
+- Testes da sondagem, do fluxo no trabalhador, da API administrativa e regressões gerais no Windows, além de Ruff, compileall e `git diff --check`, são executados antes da publicação desta entrega.
+- **G0 — contrato de diagnóstico local.** As propriedades foram verificadas contra DOM simulado em Node.js. O seletor real do jogo, a atribuição de hub após troca de motor e a confirmação do destino de entrega ainda exigem observação autenticada. O campo `dom_consistent` confirma apenas a coerência da seleção presente na tela. Nenhuma compra é liberada, e a confirmação independente do pedido, do motor e do preço continua pendente.
+- Não houve compra, envio de Telegram, implantação, alteração da `main` ou da PR #44. Reverter o commit desta entrega na branch de autonomia, verificando dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A9, métricas operacionais auditáveis no painel (G0)
 
 **Objetivo:** visualizar a evolução das intenções de investimento e a cobertura da pesquisa de oportunidades por perfil, conservando como desconhecidos os resultados reais que ainda não possuem fonte autenticada independente.

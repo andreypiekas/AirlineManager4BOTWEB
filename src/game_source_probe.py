@@ -15,6 +15,9 @@ of nodes with an explicit, parseable ID. ``pagination`` records only page
 numbers supported by DOM evidence, flags conflicting observations, and reports
 which known selectors and attributes supplied numeric evidence. A loading
 indicator is reported without exposing its URL.
+``aircraft_order_hub_selection`` checks the currently selected option against
+the live ``#hubSelection`` value. This proves consistency of a visible DOM
+selection only, and cannot establish a purchase or ownership of that hub.
 The source view depends on the popup currently displayed. Missing selectors are
 expected when their corresponding game pane is closed.
 
@@ -275,6 +278,37 @@ result.pagination = {
   }
 };
 
+// The selected property reflects the live select state; the HTML 'selected'
+// attribute can remain stale after a user/script changes the current value.
+const orderHubSelectors = Array.from(document.querySelectorAll('#hubSelection'));
+const orderHubOptions = Array.from(document.querySelectorAll('#hubSelection option'));
+const orderHubSelection = {
+  selector_count: orderHubSelectors.length,
+  option_count: orderHubOptions.length,
+  selected_option_count: orderHubOptions.filter(option => option.selected === true).length,
+  selected_hub_id: null,
+  status: orderHubSelectors.length === 0 ? 'missing' :
+    orderHubSelectors.length !== 1 ? 'ambiguous' : 'unverified'
+};
+if (orderHubSelectors.length === 1) {
+  const selector = orderHubSelectors[0];
+  if (selector.disabled === true) {
+    orderHubSelection.status = 'disabled';
+  } else {
+    const chosen = String(selector.value ?? '').trim();
+    const matching = orderHubOptions.filter(option =>
+      String(option.value ?? '').trim() === chosen);
+    const selected = orderHubOptions.filter(option => option.selected === true);
+    if (isNumericId(chosen) && matching.length === 1 && selected.length === 1 &&
+        selected[0] === matching[0] && matching[0].disabled === false &&
+        selector.disabled === false) {
+      orderHubSelection.selected_hub_id = chosen;
+      orderHubSelection.status = 'dom_consistent';
+    }
+  }
+}
+result.aircraft_order_hub_selection = orderHubSelection;
+
 const hasStatus = typeof window !== 'undefined' &&
   window.statusData !== null && typeof window.statusData === 'object' &&
   !Array.isArray(window.statusData);
@@ -355,9 +389,34 @@ def _sanitize(raw: Any) -> dict:
     evidence = evidence if isinstance(evidence, dict) else {}
     current_page = _page(pagination.get("current_page"))
     total_pages = _page(pagination.get("total_pages"))
+    selection = raw.get("aircraft_order_hub_selection")
+    selection = selection if isinstance(selection, dict) else {}
+    selector_count = _count(selection.get("selector_count"))
+    option_count = _count(selection.get("option_count"))
+    selected_count = _count(selection.get("selected_option_count"))
+    hub_id = selection.get("selected_hub_id")
+    selection_status = selection.get("status")
+    if selection_status not in ("missing", "ambiguous", "disabled", "unverified",
+                                "dom_consistent"):
+        selection_status = "unverified"
+    if (selection_status != "dom_consistent" or selector_count != 1
+            or selected_count != 1
+            or option_count < 1 or type(hub_id) is not str
+            or _NUMERIC_ID.fullmatch(hub_id) is None):
+        hub_id = None
+        if selection_status == "dom_consistent":
+            selection_status = "unverified"
     return {
         "schema_version": 1,
         "sources": cleaned,
+        "aircraft_order_hub_selection": {
+            "selector_count": selector_count,
+            "option_count": option_count,
+            "selected_option_count": selected_count,
+            "selected_hub_id": hub_id,
+            "status": selection_status,
+            "read_only": True,
+        },
         "pagination": {
             "current_page": current_page,
             "total_pages": total_pages,
