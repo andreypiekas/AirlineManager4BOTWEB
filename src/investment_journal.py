@@ -443,3 +443,80 @@ class InvestmentJournal:
                  "observed_at": row["observed_at"],
                  "evidence": json.loads(row["evidence_json"]) if row["evidence_json"] else None}
                 for row in rows]
+
+    def audit_metrics(self, since: float) -> dict:
+        """Read an atomic, profile-scoped journal summary for A9 observability.
+
+        Costs remain *planned* amounts, even after a game order is confirmed.
+        Recovery durations come only from observed journal state transitions.
+        """
+        if type(since) not in (int, float) or not math.isfinite(since) or since < 0:
+            raise ValueError("Início de janela inválido.")
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            intents = conn.execute(
+                "SELECT state, created_at, updated_at, submit_attempts, plan_json "
+                "FROM intents WHERE profile_id=?",
+                (self.profile_id,),
+            ).fetchall()
+            events = conn.execute(
+                "SELECT intent_key, new_state, observed_at FROM events "
+                "WHERE profile_id=? AND observed_at>=? ORDER BY event_id",
+                (self.profile_id, since),
+            ).fetchall()
+
+        by_state = {state: 0 for state in (*_TRANSITIONS,)}
+        by_kind = {"aircraft": 0, "hub": 0}
+        pending_cost = 0
+        confirmed_planned_cost = 0
+        created_in_window = 0
+        confirmed_in_window = 0
+        failed_in_window = 0
+        submit_attempts = 0
+        for row in intents:
+            plan = json.loads(row["plan_json"])
+            state = row["state"]
+            kind = plan["kind"]
+            by_state[state] = by_state.get(state, 0) + 1
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            submit_attempts += row["submit_attempts"]
+            if state in _RESERVED_STATES:
+                pending_cost += plan["estimated_cost"]
+            if row["created_at"] >= since:
+                created_in_window += 1
+            if row["updated_at"] >= since and state == "CONFIRMED":
+                confirmed_in_window += 1
+                confirmed_planned_cost += plan["estimated_cost"]
+            if row["updated_at"] >= since and state == "FAILED":
+                failed_in_window += 1
+
+        unknown_at: dict[str, float] = {}
+        recovery_seconds: list[float] = []
+        for event in events:
+            key = event["intent_key"]
+            state = event["new_state"]
+            if state == "UNKNOWN":
+                unknown_at[key] = event["observed_at"]
+            elif state in ("CONFIRMED", "FAILED") and key in unknown_at:
+                recovery_seconds.append(max(0.0, event["observed_at"] - unknown_at.pop(key)))
+
+        return {
+            "profile_id": self.profile_id,
+            "simulation": self.simulation,
+            "source": "local_investment_journal",
+            "since": float(since),
+            "total_intents": len(intents),
+            "created_in_window": created_in_window,
+            "by_state": by_state,
+            "by_kind": by_kind,
+            "confirmed_in_window": confirmed_in_window,
+            "failed_in_window": failed_in_window,
+            "submit_attempts_total": submit_attempts,
+            "pending_planned_cost": pending_cost,
+            "confirmed_planned_cost_in_window": confirmed_planned_cost,
+            "reconciliations_from_unknown": len(recovery_seconds),
+            "mean_recovery_seconds": (
+                sum(recovery_seconds) / len(recovery_seconds) if recovery_seconds else None
+            ),
+            "last_event_at": events[-1]["observed_at"] if events else None,
+        }

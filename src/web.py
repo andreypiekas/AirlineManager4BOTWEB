@@ -47,6 +47,7 @@ from owned_hub_research_feed import build_owned_hub_research_queue
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy, MODES
 from investment_journal import InvestmentJournal
+from expansion_metrics import build_expansion_metrics
 from portfolio_planner import compare_portfolio
 from expansion_feasibility import assess_expansion
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
@@ -269,6 +270,24 @@ class WebDashboard:
             report["portfolio"]["blocking_reasons"].append("diario_indisponivel")
             report["portfolio"]["status"] = "inconclusivo"
         return report
+
+    def investment_metrics(self) -> tuple[int, dict]:
+        """Expose local investment history and proven research without game mutations."""
+        try:
+            journal = InvestmentJournal()
+            try:
+                research = self.hub_recommendations()
+            except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+                research = None
+            return HTTPStatus.OK, build_expansion_metrics(
+                journal, opportunity_report=research,
+            )
+        except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+            return HTTPStatus.SERVICE_UNAVAILABLE, {
+                "read_only": True,
+                "status": "diario_indisponivel",
+                "message": "Não foi possível auditar o diário de investimentos.",
+            }
 
     def game_source_probe(self) -> tuple[int, dict]:
         """Ask the bot worker to read its own game session during an idle wait."""
@@ -529,6 +548,9 @@ class WebDashboard:
                     return self._json(dashboard.settings())
                 if url.path == "/api/investment/policy":
                     return self._json(dashboard.investment_settings())
+                if url.path == "/api/investment/metrics":
+                    status, report = dashboard.investment_metrics()
+                    return self._json(report, status)
                 if url.path == "/api/routes":
                     return self._json(dashboard.routes())
                 if url.path == "/api/hubs":

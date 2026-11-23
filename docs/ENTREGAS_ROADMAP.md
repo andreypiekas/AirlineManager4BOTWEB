@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A9, métricas operacionais auditáveis no painel (G0)
+
+**Objetivo:** visualizar a evolução das intenções de investimento e a cobertura da pesquisa de oportunidades por perfil, conservando como desconhecidos os resultados reais que ainda não possuem fonte autenticada independente.
+
+### Implementação e evidências
+
+- **`src/investment_journal.py`:** `audit_metrics()` produz uma leitura consistente e isolada por perfil das intenções persistidas, seus estados, tipos, tentativas, custo **planejado** reservado e confirmado na janela e eventos de recuperação de estados incertos. O diário local comprova transições de intenção, mas não comprova despesa, entrega ou lucro no jogo.
+- **`src/expansion_metrics.py`:** `build_expansion_metrics()` combina o diário com a cobertura registrada pela pesquisa de hubs, total de alternativas avaliadas pelo planejador e relatórios conclusivos do contrato de calibração. Perfis diferentes e planos duplicados não contribuem para precisão financeira. Campos sem evidência conservam `null` e causas de bloqueio explícitas.
+- **`src/web.py` e `assets/web/index.html`:** `GET /api/investment/metrics` exige a autenticação existente e disponibiliza métricas somente leitura. A aba **Hubs e Aeronaves** apresenta intenções, reservas previstas, cobertura de pesquisa e precisão ainda pendente, com traduções PT-BR/inglês e apresentação por `textContent`.
+- **`tests/test_expansion_metrics.py`, `tests/test_investment_policy_web.py` e `tests/test_hubs_dashboard_ui.py`:** regressões de reinício e isolamento por perfil, janela temporal, estados incertos e reconciliação, pesquisa parcial, calibração verificada e duplicada, autenticação HTTP e renderização da interface.
+
+### Testes, limitações e reversão
+
+- Testes direcionados das métricas, journal, política HTTP e sintaxe da interface, além de Ruff, compilação Python e `git diff --check` executados localmente. A suíte Windows geral exclui o instalador específico de Linux e é conferida antes do commit.
+- **G0 — implementação local.** As métricas de submissão e de custo são obtidas exclusivamente do diário local. Não há ainda observações autenticadas de entrega, valor efetivamente desembolsado, voos individuais, razão financeira completa ou gasto evitado. Não há calibração conectada ao ciclo de produção e nenhum valor desses campos é inventado pelo painel. A cobertura de pesquisa continua dependente da coleta e homologação A1/A2/A3, portanto G1–G5 permanecem pendentes.
+- Não houve compra real, envio Telegram, implantação, merge na `main` ou alteração da PR #44. A política permanece desligada por padrão. Reverter o commit desta entrega na branch de autonomia, considerando eventuais dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A8, aquisição simulada de hub em duas etapas (G0)
 
 **Objetivo:** demonstrar, sem acessar o jogo, a reserva durável de uma intenção de compra de hub e a reconciliação independente de propriedade antes do planejamento de uma aeronave para a nova base.

@@ -690,6 +690,11 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <button id="investmentStop" type="button" data-t="Suspender novas compras de aeronaves/hubs">Suspender novas compras de aeronaves/hubs</button>
         <p id="investmentPolicyStatus" role="status" aria-live="polite"></p>
       </div>
+      <div class="hub-card hub-subsection" aria-label="Métricas de autonomia" data-t-aria-label="Métricas de autonomia">
+        <h2 data-t="Métricas de autonomia">Métricas de autonomia</h2>
+        <p id="investmentMetricsStatus" class="hub-section-note" role="status" aria-live="polite"></p>
+        <div id="investmentMetricsBody" class="hub-section-note"></div>
+      </div>
       <div class="hubs-controls">
         <label class="hubs-field"><span data-t="Buscar base ou aeronave">Buscar base ou aeronave</span>
           <input id="hubsSearch" type="search" autocomplete="off" data-t-placeholder="Código, nome, matrícula ou modelo" placeholder="Código, nome, matrícula ou modelo" aria-controls="hubsGrid hubsUnconfirmedList"></label>
@@ -916,6 +921,23 @@ const EN = {
   "Exposição estimada no diário": "Estimated ledger exposure",
   "Teto de caixa após reservas locais": "Cash upper bound after local reservations",
   "Diário de investimentos indisponível.": "Investment ledger unavailable.",
+  "Métricas de autonomia": "Autonomy metrics",
+  "Histórico local de intenções": "Local intent history",
+  "Período": "Window",
+  "dias": "days",
+  "Pedidos confirmados no diário": "Orders confirmed in ledger",
+  "Intenções em estado incerto": "Intents with uncertain outcome",
+  "Intenções falhadas": "Failed intents",
+  "Custo planejado de pedidos confirmados": "Planned cost of confirmed orders",
+  "Custo planejado reservado": "Reserved planned cost",
+  "Pesquisas por hub": "Research by hub",
+  "Cenários avaliados": "Evaluated scenarios",
+  "Precisão financeira": "Forecast accuracy",
+  "Aguardando razão financeira e histórico de voos": "Awaiting accounting ledger and flight history",
+  "Cobertura parcial dos dados de jogo": "Partial game data coverage",
+  "Sem fonte de cobertura": "No coverage source",
+  "Falha ao consultar métricas.": "Could not retrieve metrics.",
+  "Ambiente de simulação": "Simulation environment",
   "Verificações pendentes": "Pending verifications", "Verificado em": "Verified at",
   "Próximas pesquisas de aeronaves e rotas": "Next aircraft and route research",
   "Pesquisas sugeridas": "Suggested research tasks",
@@ -2264,6 +2286,7 @@ async function loadHubs() {
     $("hubsUnconfirmedList").replaceChildren();
   } finally {
     await loadInvestmentPolicy();
+    await loadInvestmentMetrics();
     await loadHubExpansion();
     await loadHubRecommendations();
     hubsLoading = false;
@@ -2313,6 +2336,44 @@ async function loadInvestmentPolicy() {
     investmentPolicyVersion = null;
     $("investmentPolicyFields").disabled = true;
     $("investmentPolicyStatus").textContent = tr("Falha ao consultar a política de investimento.");
+  }
+}
+async function loadInvestmentMetrics() {
+  const status = $("investmentMetricsStatus");
+  const body = $("investmentMetricsBody");
+  body.replaceChildren();
+  try {
+    const report = await api("/api/investment/metrics");
+    if (!report || !report.journal || !report.research_coverage) { throw new Error("Invalid metrics"); }
+    const journal = report.journal;
+    const coverage = report.research_coverage;
+    status.textContent = tr("Histórico local de intenções") + " · " +
+      tr("Período") + " " + nf.format(report.window_days) + " " + tr("dias") +
+      (report.environment === "simulation" ? " · " + tr("Ambiente de simulação") : "");
+    const rows = [
+      [tr("Histórico local de intenções"), journal.total_intents],
+      [tr("Pedidos confirmados no diário"), journal.by_state?.CONFIRMED],
+      [tr("Intenções em estado incerto"), journal.by_state?.UNKNOWN],
+      [tr("Intenções falhadas"), journal.by_state?.FAILED],
+      [tr("Custo planejado de pedidos confirmados"),
+        journal.confirmed_planned_cost_in_window == null ? null : hubMoney(journal.confirmed_planned_cost_in_window)],
+      [tr("Custo planejado reservado"),
+        journal.pending_planned_cost == null ? null : hubMoney(journal.pending_planned_cost)],
+      [tr("Pesquisas por hub"), coverage.hubs_total == null ? tr("Sem fonte de cobertura") :
+        nf.format(coverage.hubs_pesquisados) + " / " + nf.format(coverage.hubs_total) +
+        (coverage.status !== "complete" ? " · " + tr("Cobertura parcial dos dados de jogo") : "")],
+      [tr("Cenários avaliados"), report.opportunities?.evaluated_count],
+      [tr("Precisão financeira"), report.forecast?.status === "calibracao_verificada"
+        ? String(report.forecast.mean_absolute_daily_error)
+        : tr("Aguardando razão financeira e histórico de voos")],
+    ];
+    for (const [label, value] of rows) {
+      const line = document.createElement("p");
+      line.textContent = label + " · " + (value == null ? tr("Desconhecido") : value);
+      body.append(line);
+    }
+  } catch (_) {
+    status.textContent = tr("Falha ao consultar métricas.");
   }
 }
 $("investmentPolicyForm").addEventListener("submit", async event => {

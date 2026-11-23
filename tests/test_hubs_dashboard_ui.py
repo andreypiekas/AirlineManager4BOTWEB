@@ -54,6 +54,18 @@ def _page():
     return page
 
 
+def test_autonomy_metrics_have_accessible_status_and_safe_read_only_renderer():
+    html = (ROOT / "assets/web/index.html").read_text(encoding="utf-8")
+    assert 'id="investmentMetricsStatus"' in html
+    assert 'id="investmentMetricsBody"' in html
+    assert 'role="status" aria-live="polite"' in html
+    assert 'await api("/api/investment/metrics")' in html
+    assert 'await loadInvestmentMetrics()' in html
+    assert 'body.replaceChildren()' in html
+    assert 'line.textContent = label + ' in html
+    assert '"Custo planejado de pedidos confirmados": "Planned cost of confirmed orders"' in html
+
+
 def test_hubs_filters_and_sort_controls_are_labeled_and_target_the_grids():
     page = _page()
     controls = {

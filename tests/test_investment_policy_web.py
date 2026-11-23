@@ -77,6 +77,36 @@ def auth():
     return {"X-Token": TOKEN, "X-AM4": "1"}
 
 
+def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_path, monkeypatch):
+    from investment_journal import InvestmentJournal
+
+    journal = InvestmentJournal(tmp_path / "metricas.sqlite3", profile_id="principal",
+                                simulation=True)
+    journal.register({"plan_id": "pending-hub", "snapshot_id": "sha256:" + "a" * 64,
+                      "kind": "hub", "hub_id": "123", "estimated_cost": 1000})
+    monkeypatch.setattr(web_module, "InvestmentJournal", lambda: journal)
+    monkeypatch.setattr(WebDashboard, "hub_recommendations", lambda self: {
+        "research_queue": {"coverage": "partial", "has_more": False,
+                           "hub_coverage": [{"status": "nao_pesquisado", "coverage": "partial"}],
+                           "items": []},
+        "portfolio": {"status": "inconclusivo", "evaluated_count": 0,
+                      "eligible_count": 0},
+    })
+    with served(tmp_path) as (port, _config):
+        denied, _ = request(port, "GET", "/api/investment/metrics")
+        assert denied == 403
+        status, report = request(port, "GET", "/api/investment/metrics", headers=auth())
+        assert status == 200
+        assert report["read_only"] is True
+        assert report["profile_id"] == "principal"
+        assert report["environment"] == "simulation"
+        assert report["journal"]["total_intents"] == 1
+        assert report["journal"]["by_state"]["PROPOSED"] == 1
+        assert report["research_coverage"]["status"] == "partial"
+        assert report["actual_spend"] is None
+        assert journal.unresolved()["count"] == 0
+
+
 def test_policy_update_survives_reload_without_activating_legacy_or_execution(tmp_path):
     with served(tmp_path) as (port, config):
         status, initial = request(port, headers=auth())
