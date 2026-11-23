@@ -1670,6 +1670,12 @@ def order_aircraft(bot: "Bot", choice: AircraftModel, goal: bool = False) -> boo
         log_market.info("[SIMULAÇÃO] Encomendaria %s.", summary)
         bot.notify(f"🧪 SIMULAÇÃO: encomendaria {esc(summary)}.", silent=True, category="simulation")
         return True
+    # Releia a chave imediatamente antes do clique, pois o operador pode
+    # suspender a compra automática durante a pesquisa do mercado.
+    get_bool = getattr(bot.config, "get_bool", None)
+    if callable(get_bool) and not get_bool("options", "autobuy_aircraft", True):
+        log_market.warning("Encomenda de %s cancelada: compra automática desativada.", choice.name)
+        return False
     before = bot.read_money()
     bot.click_element(detail.find_element(By.XPATH, ".//*[@id='btnPurchaseIntro']"))
     response = bot.wait_text("//*[@id='orderAction']", timeout=15)

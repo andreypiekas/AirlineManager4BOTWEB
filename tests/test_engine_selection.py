@@ -307,6 +307,29 @@ def test_fluxo_de_compra_nao_aciona_confirmacao_sem_motor_verificado(monkeypatch
     assert called == []
 
 
+def test_desativar_compra_automatica_impede_clique_apos_pesquisa_do_motor(monkeypatch):
+    cfg = SimpleNamespace(
+        get=lambda *_args: "default",
+        get_bool=lambda section, key, fallback=True: False if key == "autobuy_aircraft" else fallback,
+    )
+    calls = []
+
+    class Detail:
+        def find_elements(self, *_args):
+            return []
+
+    bot = SimpleNamespace(
+        config=cfg, dry_run=False,
+        ajax=lambda *_args: Detail(),
+        js=lambda *_args: "PP-001",
+        read_money=lambda: pytest.fail("Não deve consultar saldo para submeter pedido suspenso"),
+        click_element=lambda *_args: calls.append("click"),
+    )
+    choice = fleet.AircraftModel("123", "A380-800", 15000, 940, 600, 12, 300_000_000)
+    assert fleet.order_aircraft(bot, choice) is False
+    assert calls == []
+
+
 def test_api_nao_salva_preferencia_invalida():
     class Cfg:
         def __init__(self):

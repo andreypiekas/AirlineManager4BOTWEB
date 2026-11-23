@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, política de investimento no painel A7 (G0)
+
+**Escopo:** primeira entrega de controles de investimento por perfil na aba Hubs, sem conectar o planejador à execução real, em `codex/autonomia-a0-a1-20261122`.
+
+### Implementado
+
+- `GET /api/investment/policy` apresenta modo, limites em dinheiro do jogo, preferências legadas, versão da configuração e motivos do bloqueio G0. `POST /api/investment/policy` exige perfil autenticado, cabeçalho de ação, valores inteiros e booleanos estritos, campos completos e revisão otimista para impedir sobrescrita de outra sessão. Alterações são persistidas em `[investment]` e ficam isoladas da compra legada.
+- A aba Hubs recebe formulário com habilitação de planejamento, compras independentes de aeronaves e hubs, modos somente analisar/aprovar/autônomo, tetos por compra e por dia, status do bloqueio e acesso aos demais parâmetros. O formulário suporta PT-BR/inglês, telas menores e evita converter campos numéricos vazios em gasto zero.
+- `POST /api/investment/stop` desliga planejamento e as duas novas opções de compra, além de `options.autobuy_aircraft`, sob o mesmo lock de configuração. A rotina legada `order_aircraft()` confere novamente essa última chave imediatamente antes do clique de encomenda para respeitar uma suspensão durante a pesquisa do mercado. A interrupção é persistida por perfil.
+- Testes HTTP reais validam autenticação, recusa de token na query para ações financeiras, entradas inválidas, concorrência de versão, persistência e parada. Testes de interface e de encomenda validam controles e ausência de clique após suspender compras.
+
+### Validação e próximas dependências
+
+- Validar com `python -m pytest -q --ignore=tests/test_instalacao_linux.py`, `python -m ruff check src scripts tests`, `python -m compileall -q src` e `git diff --check` em Windows. A exclusão do instalador POSIX corresponde à plataforma de execução. Testes de interface também utilizam Node.js quando disponível.
+- **Permanece G0:** opção de gasto nova não aciona o jogo mesmo quando o operador a habilita. A7 ainda requer limites de lucro/payback/quantidade, pesos configuráveis, visão financeira completa, alertas e aprovações específicas. Ausência de fontes reais A1–A6 e homologação do executor A5 bloqueiam G1–G5. O botão de suspensão cobre **novas compras de aeronaves e hubs**, incluindo o comprador legado. Outras automações de gasto têm controles na aba Parâmetros.
+- Nenhuma compra real, implantação, merge na `main` ou mudança na PR #44. Reversão por `git revert` do commit associado após conferir dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total, avaliação de expansão A6 (G0)
 
 **Escopo:** investigar novos hubs somente após demonstrar cobertura completa e recente de oportunidades nos hubs próprios, na branch `codex/autonomia-a0-a1-20261122`.

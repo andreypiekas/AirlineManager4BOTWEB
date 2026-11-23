@@ -406,6 +406,12 @@ footer strong { font-weight: 600; color: var(--aqua); }
 .hub-coverage { padding:10px 12px; background:var(--panel-hi); border-left:2px solid var(--aqua); }
 .hub-subsection { margin-top:18px; }
 .hub-subsection > h2 { margin:0; font-size:16px; text-transform:uppercase; letter-spacing:.05em; }
+.hub-policy fieldset { border:0; padding:0; margin:12px 0 0; min-width:0; }
+.hub-policy-toggles { display:flex; flex-wrap:wrap; gap:14px 24px; margin:0 0 14px; }
+.hub-policy-toggles label { display:flex; align-items:center; gap:9px; color:var(--ink); font-size:13px; }
+.hub-policy-toggles input { width:18px; height:18px; accent-color:var(--signal); }
+.hub-policy-actions { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px; }
+.hub-policy [disabled] { opacity:.55; }
 .hub-card h3 { margin:0 0 12px; font-size:19px; overflow-wrap:anywhere; }
 .hub-card .hub-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:12px 0; }
 .hub-metrics div { min-width:0; border-top:1px solid var(--border); padding-top:9px; }
@@ -627,6 +633,34 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <button id="hubsRefresh" type="button" data-t="Atualizar relatório">Atualizar relatório</button>
       </div>
       <p id="hubsScope" class="hub-section-note"></p>
+      <div class="hub-card hub-subsection hub-policy">
+        <h2 data-t="Controle de autonomia">Controle de autonomia</h2>
+        <p id="investmentPolicyGate" class="hub-section-note hub-coverage" role="status" aria-live="polite"></p>
+        <form id="investmentPolicyForm">
+          <fieldset id="investmentPolicyFields" disabled>
+            <div class="hub-policy-toggles">
+              <label><input id="investmentPlanning" type="checkbox"><span data-t="Habilitar planejamento">Habilitar planejamento</span></label>
+              <label><input id="investmentAircraft" type="checkbox"><span data-t="Comprar aeronaves pela nova política">Comprar aeronaves pela nova política</span></label>
+              <label><input id="investmentHub" type="checkbox"><span data-t="Comprar hubs pela nova política">Comprar hubs pela nova política</span></label>
+            </div>
+            <div class="hubs-controls">
+              <label class="hubs-field"><span data-t="Modo de investimento">Modo de investimento</span><select id="investmentMode">
+                <option value="analyze" data-t="Somente analisar">Somente analisar</option>
+                <option value="approval" data-t="Sugerir e pedir aprovação">Sugerir e pedir aprovação</option>
+                <option value="autonomous" data-t="Autônomo dentro dos limites">Autônomo dentro dos limites</option>
+              </select></label>
+              <label class="hubs-field"><span data-t="Máximo por compra ($ jogo)">Máximo por compra ($ jogo)</span><input id="investmentSingle" type="number" min="0" max="1000000000000000" step="1" required></label>
+              <label class="hubs-field"><span data-t="Máximo diário ($ jogo)">Máximo diário ($ jogo)</span><input id="investmentDaily" type="number" min="0" max="1000000000000000" step="1" required></label>
+            </div>
+            <p id="investmentPolicyContext" class="hub-section-note"></p>
+            <div class="hub-policy-actions">
+              <button type="submit" class="primary" data-t="Salvar política">Salvar política</button>
+            </div>
+          </fieldset>
+        </form>
+        <button id="investmentStop" type="button" data-t="Suspender novas compras de aeronaves/hubs">Suspender novas compras de aeronaves/hubs</button>
+        <p id="investmentPolicyStatus" role="status" aria-live="polite"></p>
+      </div>
       <div class="hubs-controls">
         <label class="hubs-field"><span data-t="Buscar base ou aeronave">Buscar base ou aeronave</span>
           <input id="hubsSearch" type="search" autocomplete="off" data-t-placeholder="Código, nome, matrícula ou modelo" placeholder="Código, nome, matrícula ou modelo" aria-controls="hubsGrid hubsUnconfirmedList"></label>
@@ -951,6 +985,31 @@ const EN = {
   "Saldo ainda não conferido": "Balance not checked yet",
   "Saldo conferido às {x}": "Balance verified at {x}",
   "Leitura do saldo desatualizada: {x}": "Stale balance reading: {x}",
+  "Controle de autonomia": "Autonomy controls",
+  "Habilitar planejamento": "Enable planning",
+  "Comprar aeronaves pela nova política": "Buy aircraft with new policy",
+  "Comprar hubs pela nova política": "Buy hubs with new policy",
+  "Modo de investimento": "Investment mode",
+  "Somente analisar": "Analyze only",
+  "Sugerir e pedir aprovação": "Suggest and request approval",
+  "Autônomo dentro dos limites": "Autonomous within limits",
+  "Máximo por compra ($ jogo)": "Maximum per purchase (game $)",
+  "Máximo diário ($ jogo)": "Daily maximum (game $)",
+  "Salvar política": "Save policy",
+  "Suspender novas compras de aeronaves/hubs": "Pause new aircraft/hub purchases",
+  "Política de investimento aguardando leitura.": "Waiting for investment policy.",
+  "Falha ao consultar a política de investimento.": "Could not retrieve investment policy.",
+  "Verifique os limites numéricos antes de salvar.": "Check the numeric limits before saving.",
+  "Salvando política…": "Saving policy…",
+  "Política de investimento salva.": "Investment policy saved.",
+  "Suspendendo planejamento…": "Pausing planning…",
+  "Planejamento suspenso.": "Planning paused.",
+  "Configuração indisponível. Tente atualizar o painel.": "Settings unavailable. Refresh the dashboard.",
+  "Execução de investimento bloqueada": "Investment execution blocked",
+  "Reserva operacional": "Operating reserve",
+  "Preferência de motor": "Engine preference",
+  "Compra automática legada": "Legacy automatic aircraft purchase",
+  "Ajustar outros parâmetros": "Adjust other settings",
 };
 let LANG = "pt_BR";
 const tr = (text, x) => { const s = LANG === "en" ? (EN[text] || text) : text; return x === undefined ? s : s.replace("{x}", x); };
@@ -1468,6 +1527,7 @@ let hubsLoading = false;
 let hubInventoryReport = null;
 let hubExpansionReport = null;
 let hubRecommendationsReport = null;
+let investmentPolicyVersion = null;
 window.addEventListener("hashchange", activateWorkspaceFromHash);
 activateWorkspaceFromHash();
 
@@ -1951,12 +2011,97 @@ async function loadHubs() {
     $("hubsUnconfirmed").textContent = "";
     $("hubsUnconfirmedList").replaceChildren();
   } finally {
+    await loadInvestmentPolicy();
     await loadHubExpansion();
     await loadHubRecommendations();
     hubsLoading = false;
     $("hubsRefresh").disabled = false;
   }
 }
+function renderInvestmentPolicy(report) {
+  const policy = report.policy;
+  investmentPolicyVersion = report.version;
+  $("investmentPlanning").checked = policy.planning_enabled === true;
+  $("investmentAircraft").checked = policy.auto_buy_aircraft === true;
+  $("investmentHub").checked = policy.auto_buy_hub === true;
+  $("investmentMode").value = policy.mode;
+  $("investmentSingle").value = String(policy.max_single_investment);
+  $("investmentDaily").value = String(policy.max_daily_spend);
+  $("investmentPolicyFields").disabled = false;
+  $("investmentPolicyGate").textContent = (policy.release_gate || "G0") + " · " +
+    tr("Execução de investimento bloqueada") + " · " +
+    (Array.isArray(policy.blocking_reasons) ? policy.blocking_reasons.join(", ").replaceAll("_", " ") : "");
+  $("investmentPolicyContext").replaceChildren();
+  const context = $("investmentPolicyContext");
+  const details = [
+    tr("Reserva operacional") + " " + money(report.cash_reserve),
+    tr("Preferência de motor") + " " + String(report.engine_preference || "default"),
+    tr("Compra automática legada") + " " + (policy.legacy_autobuy_aircraft ? tr("Sim") : tr("Não"))
+  ];
+  context.append(document.createTextNode(details.join(" · ") + " · "));
+  const link = document.createElement("a");
+  link.href = "#parameters";
+  link.textContent = tr("Ajustar outros parâmetros");
+  context.append(link);
+}
+async function loadInvestmentPolicy() {
+  try {
+    const report = await api("/api/investment/policy");
+    if (!report || !report.policy || !Number.isInteger(report.version)) { throw new Error("Invalid policy"); }
+    renderInvestmentPolicy(report);
+  } catch (_) {
+    investmentPolicyVersion = null;
+    $("investmentPolicyFields").disabled = true;
+    $("investmentPolicyStatus").textContent = tr("Falha ao consultar a política de investimento.");
+  }
+}
+$("investmentPolicyForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (investmentPolicyVersion === null) {
+    $("investmentPolicyStatus").textContent = tr("Configuração indisponível. Tente atualizar o painel.");
+    return;
+  }
+  const singleText = $("investmentSingle").value.trim();
+  const dailyText = $("investmentDaily").value.trim();
+  const single = Number(singleText);
+  const daily = Number(dailyText);
+  if (!singleText || !dailyText || ![single, daily].every(value => Number.isSafeInteger(value) && value >= 0 && value <= 1e15)) {
+    $("investmentPolicyStatus").textContent = tr("Verifique os limites numéricos antes de salvar.");
+    return;
+  }
+  const policy = {
+    planning_enabled: $("investmentPlanning").checked,
+    auto_buy_aircraft: $("investmentAircraft").checked,
+    auto_buy_hub: $("investmentHub").checked,
+    mode: $("investmentMode").value,
+    max_single_investment: single,
+    max_daily_spend: daily
+  };
+  $("investmentPolicyFields").disabled = true;
+  $("investmentPolicyStatus").textContent = tr("Salvando política…");
+  try {
+    const result = await api("/api/investment/policy", {policy, expected_version: investmentPolicyVersion});
+    $("investmentPolicyStatus").textContent = result.message || (result.ok ? tr("Política de investimento salva.") : tr("Falha ao consultar a política de investimento."));
+    await loadInvestmentPolicy();
+    if (result.ok) { await loadHubRecommendations(); }
+  } catch (_) {
+    $("investmentPolicyStatus").textContent = tr("Falha ao consultar a política de investimento.");
+    $("investmentPolicyFields").disabled = false;
+  }
+});
+$("investmentStop").addEventListener("click", async () => {
+  $("investmentStop").disabled = true;
+  $("investmentPolicyStatus").textContent = tr("Suspendendo planejamento…");
+  try {
+    const result = await api("/api/investment/stop", {});
+    $("investmentPolicyStatus").textContent = result.message || (result.ok ? tr("Planejamento suspenso.") : tr("Falha ao consultar a política de investimento."));
+    await loadInvestmentPolicy();
+  } catch (_) {
+    $("investmentPolicyStatus").textContent = tr("Falha ao consultar a política de investimento.");
+  } finally {
+    $("investmentStop").disabled = false;
+  }
+});
 async function loadHubRecommendations() {
   try {
     const report = await api("/api/hubs/recommendations");

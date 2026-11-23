@@ -43,7 +43,7 @@ from hub_registry import HubRegistry
 from hub_expansion import HubExpansionRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
 from hub_recommendations import rank_next_aircraft
-from investment_policy import InvestmentPolicy
+from investment_policy import InvestmentPolicy, MODES
 from investment_journal import InvestmentJournal
 from portfolio_planner import compare_portfolio
 from expansion_feasibility import assess_expansion
@@ -307,6 +307,54 @@ class WebDashboard:
                 "aircraft_options": model_names, "auto_goal_label": t(AUTO_GOAL_LABEL),
                 "lang": language()}
 
+    def investment_settings(self) -> dict:
+        """Per-profile controls for the separate, gated investment workflow."""
+        return {
+            "policy": InvestmentPolicy.from_config(self.cfg).report(),
+            "version": self.cfg.version,
+            "cash_reserve": self.cfg.get_int("settings", "cash_reserve", 0),
+            "engine_preference": self.cfg.get("settings", "engine_preference", "default"),
+        }
+
+    def update_investment_settings(self, payload: dict) -> tuple[bool, str]:
+        """Validate the entire policy before an atomic per-profile config save."""
+        fields = {"planning_enabled", "mode", "auto_buy_aircraft", "auto_buy_hub",
+                  "max_single_investment", "max_daily_spend"}
+        values = payload.get("policy")
+        version = payload.get("expected_version")
+        if (not isinstance(values, dict) or set(values) != fields
+                or type(version) is not int):
+            return False, "Política incompleta ou versão inválida. Atualize o painel."
+        for key in ("planning_enabled", "auto_buy_aircraft", "auto_buy_hub"):
+            if type(values[key]) is not bool:
+                return False, f"{key} deve ser verdadeiro ou falso."
+        if not isinstance(values["mode"], str) or values["mode"] not in MODES:
+            return False, "Modo de investimento inválido."
+        for key in ("max_single_investment", "max_daily_spend"):
+            amount = values[key]
+            if type(amount) is not int or amount < 0 or amount > 10**15:
+                return False, f"{key} deve ser um inteiro entre 0 e 10¹⁵."
+        with self.cfg._lock:
+            if version != self.cfg.version:
+                return False, "Configurações alteradas em outra sessão. Atualize antes de salvar."
+            for key in fields:
+                value = values[key]
+                self.cfg.set("investment", key, "on" if value is True else "off" if value is False else value)
+            self.cfg.save()
+        log.info("Política de investimento do perfil salva pelo painel (gate G0).")
+        return True, "Política salva. Execução de compras permanece indisponível em G0."
+
+    def stop_investment(self) -> tuple[bool, str]:
+        """Disable new investment and the existing automatic aircraft buyer."""
+        with self.cfg._lock:
+            self.cfg.set("investment", "planning_enabled", "off")
+            self.cfg.set("investment", "auto_buy_aircraft", "off")
+            self.cfg.set("investment", "auto_buy_hub", "off")
+            self.cfg.set("options", "autobuy_aircraft", "off")
+            self.cfg.save()
+        log.warning("Novas aquisições de aeronaves/hubs suspensas manualmente pelo painel.")
+        return True, "Novas compras de aeronaves e hubs suspensas, incluindo a compra automática legada."
+
     def update_settings(self, payload: dict) -> tuple[bool, str]:
         known_fields = {k for k, _ in ALL_FIELDS}
         known_switches = {k for k, _ in ALL_SWITCHES}
@@ -442,6 +490,8 @@ class WebDashboard:
                     return self._json({"lines": dashboard.buffer.since(since)})
                 if url.path == "/api/settings":
                     return self._json(dashboard.settings())
+                if url.path == "/api/investment/policy":
+                    return self._json(dashboard.investment_settings())
                 if url.path == "/api/routes":
                     return self._json(dashboard.routes())
                 if url.path == "/api/hubs":
@@ -455,8 +505,9 @@ class WebDashboard:
             def do_POST(self) -> None:  # noqa: N802 - http.server API
                 path = urlparse(self.path).path
                 admin_probe = path == "/api/admin/game-source-probe"
+                policy_action = path in ("/api/investment/policy", "/api/investment/stop")
                 if (not self._allowed(require_token=admin_probe,
-                                      allow_query_token=not admin_probe)
+                                      allow_query_token=not (admin_probe or policy_action))
                         or self.headers.get("X-AM4") != "1"):
                     return self._deny()
                 length = parse_int(self.headers.get("Content-Length", "0")) or 0
@@ -475,6 +526,12 @@ class WebDashboard:
                     return self._json(report, status)
                 if path == "/api/settings":
                     ok, message = dashboard.update_settings(payload)
+                elif path == "/api/investment/policy":
+                    ok, message = dashboard.update_investment_settings(payload)
+                elif path == "/api/investment/stop":
+                    if payload:
+                        return self._json({"ok": False, "message": "Envie um objeto JSON vazio."}, 400)
+                    ok, message = dashboard.stop_investment()
                 elif path == "/api/routes":
                     ok, message = dashboard.update_routes(payload)
                 elif path == "/api/control":

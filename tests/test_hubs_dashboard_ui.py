@@ -95,6 +95,21 @@ def test_hubs_filters_and_sort_controls_are_labeled_and_target_the_grids():
     assert '.hubs-controls { display:grid; grid-template-columns:minmax(0,1fr); }' in html
 
 
+def test_investment_policy_controls_have_labels_and_separate_endpoints():
+    page = _page()
+    for identifier in ("investmentPlanning", "investmentAircraft", "investmentHub", "investmentMode",
+                       "investmentSingle", "investmentDaily"):
+        assert page.controls[identifier]["nested_label"], identifier
+    assert {"analyze", "approval", "autonomous"} <= page.options["investmentMode"]
+    html = (ROOT / "assets/web/index.html").read_text(encoding="utf-8")
+    assert 'id="investmentPolicyFields" disabled' in html
+    assert 'id="investmentStop"' in html
+    assert '"/api/investment/policy"' in html
+    assert '"/api/investment/stop"' in html
+    assert 'expected_version: investmentPolicyVersion' in html
+    assert '"Controle de autonomia": "Autonomy controls"' in html
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not available")
 def test_hub_sorting_handles_partial_profit_data_without_changing_source(tmp_path):
     script = "\n".join(_page().scripts)
