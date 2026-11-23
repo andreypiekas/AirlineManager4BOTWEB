@@ -15,15 +15,16 @@ PAGE = ROOT / "assets/web/index.html"
 
 
 class ProbeMarkup(HTMLParser):
-    def __init__(self):
+    def __init__(self, panel_id="gameSourceProbePanel"):
         super().__init__()
+        self.panel_id = panel_id
         self.inside = False
         self.elements: dict[str, tuple[str, dict[str, str | None]]] = {}
         self.inputs: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
-        if attributes.get("id") == "gameSourceProbePanel":
+        if attributes.get("id") == self.panel_id:
             self.inside = True
         if self.inside:
             if attributes.get("id"):
@@ -71,6 +72,28 @@ def test_diagnostic_is_accessible_collapsed_and_without_secret_fields():
     assert "if (gameSourceProbeReport)" in script
 
 
+def test_flight_history_probe_has_explicit_id_and_no_automatic_requests():
+    html = PAGE.read_text(encoding="utf-8")
+    parser = ProbeMarkup("flightHistoryProbePanel")
+    parser.feed(html)
+    panel = parser.elements["flightHistoryProbePanel"][1]
+    input_tag, aircraft_input = parser.elements["flightHistoryAircraftId"]
+    button_tag, button = parser.elements["flightHistoryProbeRun"]
+    status_tag, status = parser.elements["flightHistoryProbeStatus"]
+    assert "open" not in panel
+    assert input_tag == "input" and aircraft_input["maxlength"] == "14"
+    assert aircraft_input["pattern"] == "[1-9][0-9]{0,13}"
+    assert button_tag == "button" and button["aria-controls"] == "flightHistoryProbeResults"
+    assert status_tag == "p" and status["role"] == "status"
+    assert "hidden" in parser.elements["flightHistoryProbeResults"][1]
+    script = page_script()
+    assert 'api("/api/admin/flight-history-probe", {aircraft_id: aircraftId}, true)' in script
+    assert "setInterval(runFlightHistoryProbe" not in script
+    assert "setTimeout(runFlightHistoryProbe" not in script
+    assert '"Diagnóstico do histórico de voos": "Flight history diagnostics"' in html
+    assert "if (flightHistoryProbeReport)" in script
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js not available")
 def test_probe_js_syntax_and_manual_runtime_safety(tmp_path):
     script = page_script()
@@ -86,6 +109,10 @@ def test_probe_js_syntax_and_manual_runtime_safety(tmp_path):
     probe = script[
         script.index("// ------------------------------------------------------------------ manual, read-only game source diagnostics"):
         script.index("// ------------------------------------------------------------------ end manual game source diagnostics")
+    ]
+    flight_probe = script[
+        script.index("// ------------------------------------------------------------------ on-demand, read-only flight history structure"):
+        script.index("// ------------------------------------------------------------------ end flight history structure diagnostics")
     ]
     harness = r"""
 const assert = require('node:assert/strict');
@@ -112,7 +139,9 @@ const translations = {
   'IDs distintos': 'Unique IDs', 'Com ID': 'With ID',
   'Página': 'Page', 'de': 'of', 'Estado do jogo': 'Game state',
   'Verificação concluída.': 'Check completed.',
-  'Bases adquiridas no seletor': 'Owned hubs in selector'
+  'Bases adquiridas no seletor': 'Owned hubs in selector',
+  'Linhas encontradas': 'Rows found', 'ID da aeronave': 'Aircraft ID',
+  'Controles de paginação': 'Pagination controls'
 };
 let lang = 'pt_BR';
 const tr = text => lang === 'en' ? (translations[text] || text) : text;
@@ -122,7 +151,7 @@ const fetch = (path, options) => new Promise((resolve, reject) => {
 });
 const response = (status, data) => ({status, ok: status >= 200 && status < 300,
                                     json: async () => data});
-""" + api + probe + r"""
+""" + api + probe + flight_probe + r"""
 const allText = element => [element.textContent,
   ...element.children.flatMap(child => [allText(child)])].join(' ');
 (async () => {
@@ -203,6 +232,67 @@ const allText = element => [element.textContent,
   assert.equal($('gameSourceProbeStatus').textContent,
     'Não foi possível verificar as fontes do jogo.');
   assert.equal($('gameSourceProbeRun').disabled, false);
+
+  $('flightHistoryAircraftId').value = '00';
+  const beforeValidation = requests.length;
+  await runFlightHistoryProbe();
+  assert.equal(requests.length, beforeValidation);
+  assert.equal($('flightHistoryProbeStatus').dataset.state, 'error');
+  $('flightHistoryAircraftId').value = '42';
+  const pendingFlight = runFlightHistoryProbe();
+  assert.equal($('flightHistoryProbeRun').disabled, true);
+  assert.equal($('flightHistoryAircraftId').disabled, true);
+  assert.equal($('flightHistoryProbePanel').attributes['aria-busy'], 'true');
+  await runFlightHistoryProbe();
+  assert.equal(requests.length, beforeValidation + 1);
+  assert.equal(requests.at(-1).path, '/api/admin/flight-history-probe');
+  assert.deepEqual(requests.at(-1).options, {
+    method: 'POST', headers: {'Content-Type': 'application/json', 'X-AM4': '1'},
+    body: '{"aircraft_id":"42"}'
+  });
+  const history = {
+    schema_version: 1, aircraft_id: '42', status: 'inspected', read_only: true,
+    flight_identity_verified: false, complete_history_verified: false,
+    financial_ledger_verified: false, row_count: 4, four_column_rows: 3,
+    numeric_cost_rows: 2, currency_revenue_rows: 1,
+    id_candidates: {data_flight_id: {rows: 4, distinct: 3},
+      data_id: {rows: 0, distinct: 0}, dom_id: {rows: 1, distinct: 1}},
+    absolute_time_sources: {time_datetime: 4, data_completed_at: 0, data_timestamp: 0},
+    pagination_controls_present: false, possible_truncation: false,
+    arbitrary_token: privateValue
+  };
+  requests.at(-1).resolve(response(200, {ok: true, report: history}));
+  await pendingFlight;
+  assert.equal($('flightHistoryProbeResults').hidden, false);
+  assert.equal($('flightHistoryProbeRun').disabled, false);
+  assert.equal($('flightHistoryAircraftId').disabled, false);
+  assert.equal($('flightHistoryProbePanel').attributes['aria-busy'], undefined);
+  assert.match(allText($('flightHistoryProbeMetrics')), /3 \/ 4/);
+  assert.doesNotMatch(allText($('flightHistoryProbeMetrics')), /PASSWORD_TOKEN|<img/);
+  lang = 'en';
+  renderFlightHistoryProbe(history);
+  assert.match(allText($('flightHistoryProbeMetrics')), /3 \/ 4/);
+  assert.match(allText($('flightHistoryProbeMetrics')), /Rows found/);
+  assert.match($('flightHistoryProbeSummary').textContent, /Aircraft ID 42/);
+  lang = 'pt_BR';
+
+  const wrongAircraft = runFlightHistoryProbe();
+  requests.at(-1).resolve(response(200, {ok: true, report: {...history, aircraft_id: '43'}}));
+  await wrongAircraft;
+  assert.equal($('flightHistoryProbeResults').hidden, true);
+  assert.equal($('flightHistoryProbeStatus').dataset.state, 'error');
+
+  const flightBusy = runFlightHistoryProbe();
+  requests.at(-1).resolve(response(409, {ok: false, message: privateValue}));
+  await flightBusy;
+  assert.equal($('flightHistoryProbeStatus').textContent, 'O jogo está ocupado. Tente novamente.');
+  assert.equal($('flightHistoryProbeResults').hidden, true);
+
+  const flightOffline = runFlightHistoryProbe();
+  requests.at(-1).reject(new Error(privateValue));
+  await flightOffline;
+  assert.equal($('flightHistoryProbeStatus').textContent, 'Histórico sem resultado confiável.');
+  assert.equal($('flightHistoryProbeRun').disabled, false);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
     runtime_script = tmp_path / "probe_ui.js"

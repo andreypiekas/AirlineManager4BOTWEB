@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 import json
+import threading
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ import economy
 import engine_catalog
 import hub_expansion
 import hub_registry
+import owned_hub_research_ingestion as ingestion
 import paths
 import route_registry
 from hub_recommendations import rank_next_aircraft
@@ -239,3 +241,86 @@ def test_research_layout_tracks_hub_code_and_catalogue_labels():
     market["models"][0]["name"] = "A320 Updated"
     renamed_model = build_owned_hub_research_queue(inventory, routes, market, now=NOW)
     assert renamed_model["layout_fingerprint"] != baseline["layout_fingerprint"]
+
+
+def test_record_queue_rejects_page_from_superseded_pagination_state(tmp_path):
+    inventory, routes, old_market = _inputs()
+    new_market = deepcopy(old_market)
+    new_market["models"][1] = {"id": 33, "name": "A319", "range": 5000,
+                               "capacity": 150, "price": 1_400_000}
+    new_market["observed_at"] += 10
+    old_page = build_owned_hub_research_queue(
+        inventory, routes, old_market, now=NOW + 10, max_items=1,
+    )
+    new_page = build_owned_hub_research_queue(
+        inventory, routes, new_market, now=NOW + 10, max_items=1,
+    )
+    registry = OwnedHubResearchInputsRegistry(tmp_path / "research.json")
+    initial_state = registry.pagination_state()
+
+    assert registry.record_queue(new_page, now=NOW + 10, expected_state=initial_state) == 1
+    assert registry.record_queue(old_page, now=NOW + 10, expected_state=initial_state) == 0
+    assert registry.pagination_state() == (
+        1, new_page["snapshot_fingerprint"], new_page["layout_fingerprint"],
+    )
+    assert [row["model"] for row in registry.snapshot(now=NOW + 10)] == ["A319"]
+
+
+def test_inflight_old_ingestion_cannot_replace_newer_snapshot(tmp_path, monkeypatch):
+    observed_at = int(time.time()) - 20
+    old_inputs = _inputs(observed_at)
+    new_inputs = deepcopy(old_inputs)
+    new_inputs[2]["models"][1] = {"id": 33, "name": "A319", "range": 5000,
+                                  "capacity": 150, "price": 1_400_000}
+    new_inputs[2]["observed_at"] += 10
+
+    def inputs():
+        return old_inputs if threading.current_thread().name == "older-ingestion" else new_inputs
+
+    monkeypatch.setattr(paths, "current", lambda: SimpleNamespace(data=tmp_path))
+    monkeypatch.setattr(route_registry, "RouteRegistry", lambda: SimpleNamespace(
+        snapshot=lambda: {"relations": []}))
+    monkeypatch.setattr(hub_registry, "HubRegistry", lambda: SimpleNamespace(
+        snapshot=lambda _routes: inputs()[0]))
+    monkeypatch.setattr(hub_expansion, "HubExpansionRegistry", lambda: SimpleNamespace(
+        demand_research_snapshot=lambda _hubs: {"samples": inputs()[1], "hub_progress": []}))
+    monkeypatch.setattr(engine_catalog, "EngineCatalogRegistry", lambda: SimpleNamespace(
+        snapshot=lambda: {}))
+    monkeypatch.setattr(economy, "load_market_evidence", lambda: inputs()[2])
+
+    older_ready = threading.Event()
+    newer_committed = threading.Event()
+    original_build = ingestion.build_owned_hub_research_queue
+
+    def delayed_build(*args, **kwargs):
+        if threading.current_thread().name == "older-ingestion" and not older_ready.is_set():
+            older_ready.set()
+            if not newer_committed.wait(5):
+                raise TimeoutError("Newer ingestion did not finish")
+        return original_build(*args, **kwargs)
+
+    monkeypatch.setattr(ingestion, "build_owned_hub_research_queue", delayed_build)
+    results = {}
+
+    def run(name):
+        try:
+            results[name] = ingest_owned_hub_research_inputs(per_cycle=1)
+        except Exception as exc:  # Ensure exceptions in worker threads fail this test.
+            results[name] = exc
+        finally:
+            if name == "newer-ingestion":
+                newer_committed.set()
+
+    older = threading.Thread(target=run, args=("older-ingestion",), name="older-ingestion")
+    newer = threading.Thread(target=run, args=("newer-ingestion",), name="newer-ingestion")
+    older.start()
+    assert older_ready.wait(5)
+    newer.start()
+    older.join(10)
+    newer.join(10)
+
+    assert not older.is_alive() and not newer.is_alive()
+    assert results == {"newer-ingestion": 1, "older-ingestion": 0}
+    saved = json.loads((tmp_path / "owned_hub_research_inputs.json").read_text(encoding="utf-8"))
+    assert [row["model"] for row in saved["items"]] == ["A319"]
+    assert saved["items"][0]["research_evidence"]["model"]["observed_at"] == observed_at + 10

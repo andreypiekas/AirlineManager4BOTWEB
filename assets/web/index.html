@@ -796,6 +796,21 @@ footer strong { font-weight: 600; color: var(--aqua); }
           <p id="gameSourceProbeEvidence" class="hub-section-note"></p>
         </div>
       </details>
+      <details class="hub-card hub-subsection hub-probe" id="flightHistoryProbePanel">
+        <summary data-t="Diagnóstico do histórico de voos">Diagnóstico do histórico de voos</summary>
+        <p class="hub-section-note" data-t="Inspeção estrutural de uma aeronave, somente leitura. Os resultados ainda não homologam o histórico financeiro.">Inspeção estrutural de uma aeronave, somente leitura. Os resultados ainda não homologam o histórico financeiro.</p>
+        <div class="hub-probe-actions">
+          <label class="hubs-field" for="flightHistoryAircraftId"><span data-t="ID da aeronave">ID da aeronave</span>
+            <input id="flightHistoryAircraftId" type="text" inputmode="numeric" maxlength="14" pattern="[1-9][0-9]{0,13}" autocomplete="off" placeholder="12345678" aria-controls="flightHistoryProbeResults"></label>
+          <button id="flightHistoryProbeRun" type="button" class="primary" aria-controls="flightHistoryProbeResults" data-t="Consultar histórico">Consultar histórico</button>
+          <p id="flightHistoryProbeStatus" role="status" aria-live="polite" aria-atomic="true" data-t="Informe o ID da aeronave para consultar.">Informe o ID da aeronave para consultar.</p>
+        </div>
+        <div id="flightHistoryProbeResults" hidden aria-label="Estrutura do histórico de voos" data-t-aria-label="Estrutura do histórico de voos">
+          <p id="flightHistoryProbeSummary" class="hub-section-note hub-coverage"></p>
+          <dl id="flightHistoryProbeMetrics" class="hub-probe-grid"></dl>
+          <p class="hub-section-note" data-t="Identidade, cobertura e valores financeiros pendentes de homologação. Nenhuma decisão de investimento utilizará este diagnóstico.">Identidade, cobertura e valores financeiros pendentes de homologação. Nenhuma decisão de investimento utilizará este diagnóstico.</p>
+        </div>
+      </details>
     </section>
   </main>
 </div>
@@ -842,6 +857,32 @@ const EN = {
   "Consulta manual somente de leitura da tela atual do jogo. Nenhuma operação será executada no jogo.":
     "Manual read-only check of the current game screen. No game operations will be performed.",
   "Verificar fontes agora": "Check sources now", "Resultado do diagnóstico": "Diagnostic results",
+  "Diagnóstico do histórico de voos": "Flight history diagnostics",
+  "Inspeção estrutural de uma aeronave, somente leitura. Os resultados ainda não homologam o histórico financeiro.":
+    "Read-only structural inspection of one aircraft. Results do not yet validate financial history.",
+  "ID da aeronave": "Aircraft ID", "Consultar histórico": "Inspect history",
+  "Informe o ID da aeronave para consultar.": "Enter an aircraft ID to inspect.",
+  "Estrutura do histórico de voos": "Flight history structure",
+  "Identidade, cobertura e valores financeiros pendentes de homologação. Nenhuma decisão de investimento utilizará este diagnóstico.":
+    "Identity, coverage and financial values await validation. This diagnostic cannot authorize investments.",
+  "ID inválido. Use até 14 dígitos, sem zero inicial.": "Invalid ID. Use up to 14 digits without a leading zero.",
+  "Consultando estrutura do histórico…": "Checking flight history structure…",
+  "Estrutura consultada.": "Structure inspected.",
+  "Histórico ausente na resposta do jogo.": "History missing from game response.",
+  "Falha ao ler a página de histórico.": "Could not read the history page.",
+  "Histórico sem resultado confiável.": "No reliable history result.",
+  "Linhas encontradas": "Rows found", "Linhas com quatro colunas": "Rows with four columns",
+  "Linhas com custo numérico": "Rows with numeric costs",
+  "Linhas com receita monetária": "Rows with currency revenue",
+  "IDs de voo em atributos": "Flight IDs in attributes",
+  "IDs de linha em atributos": "Row IDs in attributes",
+  "IDs de linha no DOM": "DOM row IDs",
+  "Datas absolutas no elemento time": "Absolute timestamps in time element",
+  "Datas absolutas de conclusão": "Absolute completion timestamps",
+  "Datas absolutas em atributos": "Absolute timestamps in attributes",
+  "Controles de paginação": "Pagination controls",
+  "Possível histórico truncado": "History may be truncated",
+  "Sim": "Yes", "Não": "No",
   "Aguardando verificação manual.": "Waiting for a manual check.",
   "Consultando fontes da tela atual…": "Checking sources on the current screen…",
   "Verificação concluída.": "Check completed.",
@@ -1260,6 +1301,15 @@ function setLanguage(lang) {
     showGameSourceProbeStatus(gameSourceProbeFailure, "error");
   } else if (gameSourceProbeLoading) {
     showGameSourceProbeStatus("Consultando fontes da tela atual…", "pending");
+  }
+  if (flightHistoryProbeReport) {
+    renderFlightHistoryProbe(flightHistoryProbeReport);
+    showFlightHistoryProbeStatus(flightHistoryProbeReport.status === "inspected" ?
+      "Estrutura consultada." : "Histórico sem resultado confiável.", "success");
+  } else if (flightHistoryProbeFailure) {
+    showFlightHistoryProbeStatus(flightHistoryProbeFailure, "error");
+  } else if (flightHistoryProbeLoading) {
+    showFlightHistoryProbeStatus("Consultando estrutura do histórico…", "pending");
   }
   return true;
 }
@@ -3018,6 +3068,122 @@ async function runGameSourceProbe() {
 }
 $("gameSourceProbeRun").addEventListener("click", runGameSourceProbe);
 // ------------------------------------------------------------------ end manual game source diagnostics
+
+// ------------------------------------------------------------------ on-demand, read-only flight history structure
+let flightHistoryProbeReport = null;
+let flightHistoryProbeFailure = null;
+let flightHistoryProbeLoading = false;
+const flightHistoryMetrics = [
+  ["row_count", "Linhas encontradas"],
+  ["four_column_rows", "Linhas com quatro colunas"],
+  ["numeric_cost_rows", "Linhas com custo numérico"],
+  ["currency_revenue_rows", "Linhas com receita monetária"],
+];
+const flightHistoryIdMetrics = [
+  ["data_flight_id", "IDs de voo em atributos"],
+  ["data_id", "IDs de linha em atributos"],
+  ["dom_id", "IDs de linha no DOM"],
+];
+const flightHistoryTimeMetrics = [
+  ["time_datetime", "Datas absolutas no elemento time"],
+  ["data_completed_at", "Datas absolutas de conclusão"],
+  ["data_timestamp", "Datas absolutas em atributos"],
+];
+
+function showFlightHistoryProbeStatus(message, state) {
+  const element = $("flightHistoryProbeStatus");
+  element.removeAttribute("data-t");
+  element.dataset.state = state;
+  element.textContent = tr(message);
+}
+
+function renderFlightHistoryProbe(report) {
+  if (!report || report.schema_version !== 1 || !/^[1-9][0-9]{0,13}$/.test(report.aircraft_id || "") ||
+      !["inspected", "missing_history", "http_error", "timeout", "fetch_error"].includes(report.status) ||
+      !report.id_candidates || typeof report.id_candidates !== "object" ||
+      !report.absolute_time_sources || typeof report.absolute_time_sources !== "object" ||
+      report.read_only !== true || report.flight_identity_verified !== false ||
+      report.complete_history_verified !== false || report.financial_ledger_verified !== false) {
+    throw new Error("Invalid flight history diagnostic response");
+  }
+  const metrics = $("flightHistoryProbeMetrics");
+  metrics.replaceChildren();
+  const addMetric = (label, value) => {
+    const item = document.createElement("div");
+    const name = document.createElement("dt");
+    name.textContent = tr(label);
+    const content = document.createElement("dd");
+    content.textContent = value;
+    item.append(name, content);
+    metrics.append(item);
+  };
+  for (const [key, label] of flightHistoryMetrics) {
+    addMetric(label, String(gameSourceSafeCount(report[key])));
+  }
+  for (const [key, label] of flightHistoryIdMetrics) {
+    const candidate = report.id_candidates[key] || {};
+    addMetric(label, String(gameSourceSafeCount(candidate.distinct)) + " / " +
+      String(gameSourceSafeCount(candidate.rows)));
+  }
+  for (const [key, label] of flightHistoryTimeMetrics) {
+    addMetric(label, String(gameSourceSafeCount(report.absolute_time_sources[key])));
+  }
+  addMetric("Controles de paginação", tr(report.pagination_controls_present === true ? "Sim" : "Não"));
+  addMetric("Possível histórico truncado", tr(report.possible_truncation === true ? "Sim" : "Não"));
+  $("flightHistoryProbeSummary").textContent = tr("ID da aeronave") + " " + report.aircraft_id + " · " +
+    tr(report.status === "inspected" ? "Estrutura consultada." :
+      report.status === "missing_history" ? "Histórico ausente na resposta do jogo." :
+      "Falha ao ler a página de histórico.");
+  $("flightHistoryProbeResults").hidden = false;
+}
+
+async function runFlightHistoryProbe() {
+  if (flightHistoryProbeLoading) { return; }
+  const aircraftId = $("flightHistoryAircraftId").value.trim();
+  if (!/^[1-9][0-9]{0,13}$/.test(aircraftId)) {
+    flightHistoryProbeFailure = "ID inválido. Use até 14 dígitos, sem zero inicial.";
+    $("flightHistoryProbeResults").hidden = true;
+    showFlightHistoryProbeStatus(flightHistoryProbeFailure, "error");
+    return;
+  }
+  flightHistoryProbeLoading = true;
+  flightHistoryProbeReport = null;
+  flightHistoryProbeFailure = null;
+  $("flightHistoryProbeRun").disabled = true;
+  $("flightHistoryAircraftId").disabled = true;
+  $("flightHistoryProbePanel").setAttribute("aria-busy", "true");
+  $("flightHistoryProbeResults").hidden = true;
+  showFlightHistoryProbeStatus("Consultando estrutura do histórico…", "pending");
+  try {
+    const {status, data} = await api("/api/admin/flight-history-probe", {aircraft_id: aircraftId}, true);
+    if (status < 200 || status >= 300 || data?.ok !== true) {
+      flightHistoryProbeFailure = gameSourceProbeError(status);
+      showFlightHistoryProbeStatus(flightHistoryProbeFailure, "error");
+      return;
+    }
+    if (!data.report || data.report.aircraft_id !== aircraftId) {
+      throw new Error("Mismatched aircraft ID");
+    }
+    renderFlightHistoryProbe(data.report);
+    flightHistoryProbeReport = data.report;
+    showFlightHistoryProbeStatus(data.report.status === "inspected" ?
+      "Estrutura consultada." : "Histórico sem resultado confiável.", "success");
+  } catch (_) {
+    flightHistoryProbeFailure = "Histórico sem resultado confiável.";
+    $("flightHistoryProbeResults").hidden = true;
+    showFlightHistoryProbeStatus(flightHistoryProbeFailure, "error");
+  } finally {
+    flightHistoryProbeLoading = false;
+    $("flightHistoryProbeRun").disabled = false;
+    $("flightHistoryAircraftId").disabled = false;
+    $("flightHistoryProbePanel").removeAttribute("aria-busy");
+  }
+}
+$("flightHistoryProbeRun").addEventListener("click", runFlightHistoryProbe);
+$("flightHistoryAircraftId").addEventListener("keydown", event => {
+  if (event.key === "Enter") { event.preventDefault(); runFlightHistoryProbe(); }
+});
+// ------------------------------------------------------------------ end flight history structure diagnostics
 
 let routeReport = null;
 let lastRouteFetch = 0;

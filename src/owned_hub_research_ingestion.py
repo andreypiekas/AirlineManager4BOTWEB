@@ -175,7 +175,8 @@ class OwnedHubResearchInputsRegistry:
             and _evidence_current(row, now)
         ]) if isinstance(rows, list) else []
 
-    def record_queue(self, page: dict, *, now: Optional[float] = None) -> int:
+    def record_queue(self, page: dict, *, now: Optional[float] = None,
+                     expected_state: tuple[int, str | None, str | None] | None = None) -> int:
         """Commit one bounded research page and its progress atomically."""
         now = time.time() if now is None else now
         if (not isinstance(page, dict) or page.get("source") != "derived_research_queue"
@@ -190,6 +191,17 @@ class OwnedHubResearchInputsRegistry:
         converted = [row for row in converted if row is not None]
         with _LOCK:
             saved = self._load()
+            if expected_state is not None:
+                cursor = saved.get("next_offset")
+                current_state = (
+                    cursor if type(cursor) is int and cursor >= 0 else 0,
+                    _fingerprint(saved.get("snapshot_fingerprint")),
+                    _fingerprint(saved.get("layout_fingerprint")),
+                )
+                # Another ingestion has committed since this page started reading.
+                # Its snapshot and cursor take precedence over an in-flight page.
+                if current_state != expected_state:
+                    return 0
             old = saved.get("items")
             records = {}
             # A changed hub/route/model/engine set invalidates all accumulated
@@ -236,6 +248,8 @@ def ingest_owned_hub_research_inputs(*, per_cycle: int = 40) -> int:
     from hub_registry import HubRegistry
     from route_registry import RouteRegistry
 
+    registry = OwnedHubResearchInputsRegistry()
+    cursor, previous_fingerprint, previous_layout = registry.pagination_state()
     routes = RouteRegistry().snapshot()
     inventory = HubRegistry().snapshot(routes)
     hubs = {row["id"] for row in inventory.get("hubs", [])
@@ -248,8 +262,6 @@ def ingest_owned_hub_research_inputs(*, per_cycle: int = 40) -> int:
     first = build_owned_hub_research_queue(
         inventory, demand["samples"], market, **parameters,
     )
-    registry = OwnedHubResearchInputsRegistry()
-    cursor, previous_fingerprint, previous_layout = registry.pagination_state()
     if cursor and cursor < first["total_candidates"]:
         # Reading a fresh price or a new demand sample changes the evidence
         # fingerprint every cycle. Continue fairly when candidate ordering is
@@ -265,4 +277,6 @@ def ingest_owned_hub_research_inputs(*, per_cycle: int = 40) -> int:
         )
     else:
         page = first
-    return registry.record_queue(page)
+    return registry.record_queue(
+        page, expected_state=(cursor, previous_fingerprint, previous_layout),
+    )

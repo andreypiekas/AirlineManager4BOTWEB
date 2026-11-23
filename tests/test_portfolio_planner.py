@@ -601,6 +601,7 @@ def test_a4_a3_blocked_stale_conflicting_and_foreign_evaluations_are_excluded():
     conflicting = deepcopy(evaluated)
     conflicting["components"]["daily_net_profit_estimate"] = 300
     conflicting["components"]["payback_days"] = round(1000 / 300, 2)
+    conflicting["components"]["roi_365d_percent"] = 10950.0
     conflict = a4_compare(evaluated, conflicting)
     assert conflict["best"] is None
     assert conflict["excluded"]["avaliacao_a3_invalida_ou_conflitante"] == 2
@@ -716,7 +717,9 @@ def test_a4_missing_roi_or_invalid_evaluations_format_never_concludes():
     invalid_roi = a4_evaluation()
     invalid_roi["components"]["roi_365d_percent"] = None
     result = a4_compare(invalid_roi)
-    assert "economia_a3_a_confirmar" in result["blocking_reasons"]
+    assert result["best"] is None
+    assert result["decision"] == "nao_comprar"
+    assert "avaliacoes_a3_invalidas_ou_conflitantes" in result["blocking_reasons"]
 
     invalid = compare_audited_portfolio(
         {"not": "a sequence"}, profile_id=PROFILE, snapshot_id=SNAPSHOT,

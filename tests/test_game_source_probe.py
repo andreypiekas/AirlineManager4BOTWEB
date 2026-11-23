@@ -7,7 +7,13 @@ from html.parser import HTMLParser
 
 import pytest
 
-from game_source_probe import PROBE_JS, SAMPLE_LIMIT, probe_game_sources
+from game_source_probe import (
+    FLIGHT_HISTORY_PROBE_JS,
+    PROBE_JS,
+    SAMPLE_LIMIT,
+    probe_flight_history_structure,
+    probe_game_sources,
+)
 
 
 def test_running_bot_is_read_once_and_untrusted_fields_are_removed():
@@ -113,6 +119,180 @@ def test_bad_session_or_driver_response_fails_explicitly():
     with pytest.raises(ValueError, match="Unexpected DOM probe"):
         probe_game_sources(type("Bot", (), {"js": lambda self, _: {
             "schema_version": True, "sources": {}}})())
+
+
+@pytest.mark.parametrize("invalid", ["0", "-1", "12?token=secret", "1" * 15, " 42", True, None])
+def test_history_probe_rejects_invalid_ids_before_accessing_session(invalid):
+    class Driver:
+        def execute_async_script(self, *_):
+            pytest.fail("Invalid IDs must never trigger an HTTP request")
+
+    with pytest.raises(ValueError, match="numeric aircraft ID"):
+        probe_flight_history_structure(Driver(), invalid)
+
+
+def test_history_probe_requires_async_driver_and_uses_existing_session():
+    with pytest.raises(TypeError, match="async session"):
+        probe_flight_history_structure(object(), "42")
+
+    class Driver:
+        def __init__(self):
+            self.calls = []
+
+        def execute_async_script(self, script, aircraft_id):
+            self.calls.append((script, aircraft_id))
+            return {
+                "schema_version": 1, "aircraft_id": aircraft_id,
+                "status": "missing_history", "history_present": False,
+                "secret": "TOKEN_SHOULD_NOT_LEAK",
+            }
+
+    driver = Driver()
+    session = type("Session", (), {"driver": driver})()
+    report = probe_flight_history_structure(session, 42)
+    assert driver.calls == [(FLIGHT_HISTORY_PROBE_JS, "42")]
+    assert report["status"] == "missing_history"
+    assert report["row_count"] == 0
+    assert report["flight_identity_verified"] is False
+    assert report["complete_history_verified"] is False
+    assert report["financial_ledger_verified"] is False
+    assert "TOKEN_" not in json.dumps(report)
+
+
+def test_history_probe_sanitizes_hostile_counts_and_unverified_claims():
+    from game_source_probe import _sanitize_flight_history
+
+    secret = "SECRET_TOKEN_PASSWORD"
+    raw = {
+        "schema_version": 1, "aircraft_id": "456", "status": "inspected",
+        "history_present": True, "row_count": 3, "four_column_rows": 999,
+        "numeric_cost_rows": True, "currency_revenue_rows": 4,
+        "id_candidates": {
+            "data_flight_id": {"rows": 3, "distinct": 2, "duplicates": 0,
+                               "id_values": [secret]},
+            "data_id": {"rows": 1000, "distinct": 999},
+            "foreign_candidate": {"rows": 2, "secret": secret},
+        },
+        "absolute_time_sources": {"time_datetime": True, "data_timestamp": 100,
+                                  "external": secret},
+        "pagination_controls_present": True,
+        "flight_identity_verified": True, "complete_history_verified": True,
+        "financial_ledger_verified": True, "raw_html": secret,
+    }
+    cleaned = _sanitize_flight_history(raw, "456")
+    assert cleaned["four_column_rows"] == 3
+    assert cleaned["numeric_cost_rows"] == 0
+    assert cleaned["currency_revenue_rows"] == 3
+    assert cleaned["id_candidates"]["data_flight_id"] == {
+        "rows": 3, "distinct": 2, "duplicates": 1,
+    }
+    assert cleaned["id_candidates"]["data_id"]["distinct"] == 3
+    assert cleaned["absolute_time_sources"] == {
+        "time_datetime": 0, "data_completed_at": 0, "data_timestamp": 3,
+    }
+    assert cleaned["pagination_controls_present"] is True
+    assert cleaned["flight_identity_verified"] is False
+    assert cleaned["complete_history_verified"] is False
+    assert cleaned["financial_ledger_verified"] is False
+    assert secret not in json.dumps(cleaned)
+    with pytest.raises(ValueError, match="Unexpected flight-history"):
+        _sanitize_flight_history({**raw, "aircraft_id": "789"}, "456")
+    with pytest.raises(ValueError, match="Unexpected flight-history"):
+        _sanitize_flight_history({**raw, "schema_version": True}, "456")
+
+
+@pytest.mark.parametrize("scenario,expected_status", [
+    ("history", "inspected"),
+    ("twenty", "inspected"),
+    ("missing", "missing_history"),
+    ("http_error", "http_error"),
+    ("fetch_error", "fetch_error"),
+    ("timeout", "timeout"),
+])
+def test_history_probe_executes_read_only_get_and_limits_output(
+        tmp_path, scenario, expected_status):
+    if not shutil.which("node"):
+        pytest.skip("Node.js is required to validate the history probe")
+
+    mock = r"""
+const scenario = SCENARIO;
+const secret = 'PRIVATE_PASSWORD_TOKEN_999';
+const node = (attrs = {}, text = '', query = {}) => ({
+  textContent: text,
+  getAttribute: name => Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null,
+  querySelector: selector => query[selector] || null,
+  querySelectorAll: selector => query[selector] || [],
+});
+const createRow = (number, duplicate = false) => {
+  const attrs = {
+    'data-flight-id': duplicate ? '1001' : String(1001 + number),
+    'data-id': String(2001 + number),
+    'id': String(3001 + number),
+    'data-completed-at': '2026-11-22T10:00:00-03:00',
+    'data-timestamp': '2026-11-22 10:00:00',
+  };
+  const time = node({datetime: number === 1 ? 'yesterday' : '2026-11-22T13:00:00Z'});
+  const cells = [node({}, 'route ' + secret), node({}, '123 CO2'),
+                 node({}, '456 fuel'), node({}, '$ 1,250 ' + secret)];
+  return node(attrs, secret, {'time[datetime]': time, ':scope > .col-3': cells});
+};
+const rows = scenario === 'twenty' ?
+  Array.from({length: 20}, (_, i) => createRow(i)) :
+  [createRow(0), createRow(1, true), createRow(2)];
+class DOMParser {
+  parseFromString() {
+    return {querySelectorAll: selector => {
+      if (selector === '#flight-history') return scenario === 'missing' ? [] : [node()];
+      if (selector === '#flight-history > .row') return rows;
+      if (selector === '#flight-history .pagination, #flight-history [data-page]') {
+        return scenario === 'twenty' ? [node()] : [];
+      }
+      return [];
+    }};
+  }
+}
+globalThis.DOMParser = DOMParser;
+globalThis.fetch = async (url, options) => {
+  if (url !== 'fleet_details.php?id=456' || options.credentials !== 'same-origin' ||
+      !options.signal) throw Error('unexpected request');
+  if (scenario === 'fetch_error') throw Error('network failure');
+  if (scenario === 'timeout') throw {name: 'AbortError'};
+  return {ok: scenario !== 'http_error', text: async () => '<html>' + secret + '</html>'};
+};
+const run = (script, aircraftId) => new Promise(resolve => {
+  new Function(script)(aircraftId, resolve);
+});
+run(PROBE, '456').then(value => console.log(JSON.stringify(value)));
+""".replace("SCENARIO", json.dumps(scenario)).replace(
+        "PROBE", json.dumps(FLIGHT_HISTORY_PROBE_JS))
+    source = tmp_path / "history_probe.js"
+    source.write_text(mock, encoding="utf-8")
+    output = subprocess.run(["node", str(source)], capture_output=True, text=True, timeout=15)
+    assert output.returncode == 0, output.stderr
+    assert "PRIVATE_" not in output.stdout
+    assert "1250" not in output.stdout
+    from game_source_probe import _sanitize_flight_history
+
+    report = _sanitize_flight_history(json.loads(output.stdout), "456")
+    assert report["status"] == expected_status
+    if scenario in ("history", "twenty"):
+        expected_count = 20 if scenario == "twenty" else 3
+        assert report["row_count"] == expected_count
+        assert report["four_column_rows"] == expected_count
+        assert report["numeric_cost_rows"] == expected_count
+        assert report["currency_revenue_rows"] == expected_count
+        assert report["absolute_time_sources"]["data_completed_at"] == expected_count
+        assert report["absolute_time_sources"]["data_timestamp"] == 0
+        assert report["absolute_time_sources"]["time_datetime"] == expected_count - 1
+        assert report["id_candidates"]["data_flight_id"]["duplicates"] == (
+            1 if scenario == "history" else 0)
+        assert report["possible_truncation"] is (scenario == "twenty")
+        assert report["pagination_controls_present"] is (scenario == "twenty")
+    else:
+        assert report["row_count"] == 0
+        assert not report["history_present"]
+    assert report["read_only"] is True
+    assert report["flight_identity_verified"] is False
 
 
 def test_counts_are_bounded_and_boolean_fields_reject_strings():

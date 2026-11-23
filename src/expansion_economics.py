@@ -421,16 +421,28 @@ def rank_expansion_economics(evaluations: Sequence[Mapping[str, Any]]) -> dict[s
         components = row.get("components") or {}
         costs = row.get("capital_costs") or {}
         if (not isinstance(identity, Mapping) or not isinstance(layout, Mapping)
+                or not isinstance(components, Mapping) or not isinstance(costs, Mapping)
                 or any(not isinstance(identity.get(key), str) or not identity[key] for key in _IDENTITY)
                 or not all(type(layout.get(key)) is int and layout[key] >= 0 for key in _CLASSES)
                 or _decimal(components.get("daily_net_profit_estimate"), minimum=Decimal("0.000001")) is None
                 or _decimal(costs.get("total_investment"), minimum=Decimal("0.000001")) is None
-                or _decimal(components.get("payback_days"), minimum=Decimal("0.000001")) is None):
+                or _decimal(components.get("payback_days"), minimum=Decimal("0.000001")) is None
+                or _decimal(components.get("roi_365d_percent")) is None):
             excluded += 1
             continue
         expected_payback = (Decimal(str(costs["total_investment"]))
                             / Decimal(str(components["daily_net_profit_estimate"])))
         if abs(expected_payback - Decimal(str(components["payback_days"]))) > Decimal("0.011"):
+            excluded += 1
+            continue
+        try:
+            expected_roi = (Decimal(str(components["daily_net_profit_estimate"]))
+                            * Decimal("36500") / Decimal(str(costs["total_investment"])))
+            rounded_roi = expected_roi.quantize(_CENT, rounding=ROUND_HALF_UP)
+        except (InvalidOperation, OverflowError, ZeroDivisionError):
+            excluded += 1
+            continue
+        if Decimal(str(components["roi_365d_percent"])) != rounded_roi:
             excluded += 1
             continue
         key = tuple(identity[key] for key in _IDENTITY) + tuple(layout[key] for key in _CLASSES)

@@ -1,5 +1,24 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A1/A2/A3/A7/A9, validações conservadoras e diagnóstico de histórico (G0)
+
+**Objetivo:** fortalecer a consistência de escolhas e registros de investimento e disponibilizar uma sondagem manual, somente leitura, da estrutura do histórico de voos. Entrega incremental vinculada a `docs/ROADMAP_AUTONOMIA_TOTAL.md`.
+
+### Implementação
+
+- **A1 — `src/engine_selection.py`:** após a troca de variante, a preferência é resolvida novamente sobre o conjunto relido no jogo. Mudança de identificador, velocidade ou consumo da opção efetivamente escolhida bloqueia a confirmação da configuração. Ampliados os testes de reconstrução de opções e alteração da preferência durante a leitura.
+- **A2 — `src/owned_hub_research_ingestion.py`:** a persistência de uma página de pesquisa usa comparação de cursor, fingerprint do snapshot e fingerprint do catálogo sob lock. Um resultado calculado antes de outra ingestão ter avançado ou trocado o catálogo é descartado, evitando que a gravação concorrente substitua estado mais recente. Foram incluídos testes de corrida, recuperação e continuidade.
+- **A3 — `src/expansion_economics.py`:** o ranking auditável rejeita custos ou componentes malformados e resultados em que ROI anual informado diverge do ROI recalculado com lucro diário e investimento total. Os testes cobrem divergência, alteração adversarial e desempates.
+- **A9 — `src/game_source_probe.py` e `src/bot.py`:** consulta manual da estrutura de `fleet_details.php` por ID positivo explícito. A sessão Selenium continua restrita ao worker do bot, e a consulta compartilha a fila com o diagnóstico já existente, respeitando a janela ociosa. São retornadas somente contagens e indicadores sanitizados sobre linhas, candidatos a identificador, timestamps e possível paginação. Os indicadores `flight_identity_verified`, `complete_history_verified` e `financial_ledger_verified` permanecem falsos: o diagnóstico **não é** uma fonte contábil nem comprova completude para calibração.
+- **A7 — `src/web.py` e `assets/web/index.html`:** endpoint `POST /api/admin/flight-history-probe`, com autorização existente, `X-AM4`, corpo JSON estrito e bloqueio de token por URL. A nova seção colapsada do painel recebe um ID explícito, mostra o relatório sanitizado em português/inglês e não faz consultas automáticas. O DOM utiliza `textContent` para dados variáveis.
+- **Qualidade — `tests/test_engine_selection.py`, `tests/test_owned_hub_research_ingestion.py`, `tests/test_expansion_economics.py`, `tests/test_game_source_probe.py`, `tests/test_bot_game_source_probe.py`, `tests/test_game_source_probe_web.py`, `tests/test_game_source_probe_ui.py`:** testes de contratos, concorrência, erros, permissões, restrição do worker, sanitização do HTML, interação e tradução de interface.
+
+### Verificação e limites
+
+- Testes direcionados dos sete módulos de regressão aprovados durante o desenvolvimento. Ruff (`src` e `tests`), compilação Python e `git diff --check` aprovados nesta rodada; a suíte Windows geral foi executada separadamente, excluindo apenas o teste do instalador que depende de permissões POSIX.
+- **Gate G0 com fixtures/DOM simulado.** Não houve validação com histórico real autenticado, nem prova de IDs únicos de voo, timestamps absolutos, paginação exaustiva ou custos financeiros conciliáveis. Portanto A9 ainda não pode recalibrar previsões automaticamente. Permanecem pendentes os aceites completos de A1–A9 e gates G1–G5, incluindo seleção final do motor, base/hub de entrega, demanda, cobertura, executor idempotente e política de gasto em ambiente real.
+- Nenhuma compra no jogo, alteração de configuração de investimento, mensagem Telegram, implantação no servidor ou merge em `main`. A PR #44 permanece separada. Para reverter, inspecionar as dependências da branch e reverter o commit desta entrega. Se a consulta falhar, o painel mantém a falha visível e nenhum diagnóstico autoriza gastos.
+
 ## 2026-11-23 — Autonomia Total A2, invalidação de candidatos de catálogos anteriores (G0)
 
 **Objetivo:** impedir que a pesquisa paginada mantenha candidatos removidos do catálogo de aeronaves, motores, hubs ou destinos após uma alteração estrutural, mesmo enquanto a evidência antiga ainda esteja dentro do prazo de validade.

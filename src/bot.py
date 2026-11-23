@@ -62,6 +62,7 @@ log_telegram = logging.getLogger("am4bot.telegram")
 # Fuel and CO2 prices change every 30 minutes: buy at most once per price window.
 PRICE_WINDOW_SECONDS = 1800
 PROBE_MIN_IDLE_SECONDS = 5.0
+FLIGHT_HISTORY_MIN_IDLE_SECONDS = 8.0
 
 COUNTER_KEYS = ("fuel_bought", "fuel_spent", "co2_bought", "co2_spent", "departures", "routes", "aircraft", "repairs", "checks",
                 "hangar", "campaigns", "campaign_spent", "seats", "seats_spent", "mods", "mods_spent")
@@ -143,6 +144,7 @@ class Bot:
         self._wake = threading.Event()
         self._probe_condition = threading.Condition()
         self._probe_request: Optional[Future] = None
+        self._probe_aircraft_id: Optional[str] = None
         self._probe_ready = False
         self._thread: Optional[threading.Thread] = None
         self.history = PriceHistory()
@@ -194,6 +196,15 @@ class Bot:
         HTTP threads never read Selenium. A busy cycle, unavailable session,
         concurrent request or expired wait returns a generic status immediately.
         """
+        return self._request_diagnostic_probe(None, timeout)
+
+    def request_flight_history_probe(self, aircraft_id: str, timeout: float = 9.0) -> tuple[str, Optional[dict]]:
+        """Read structural flight-history evidence for one explicit aircraft ID."""
+        if type(aircraft_id) is not str or re.fullmatch(r"[1-9][0-9]{0,13}", aircraft_id) is None:
+            raise ValueError("Invalid aircraft ID")
+        return self._request_diagnostic_probe(aircraft_id, timeout)
+
+    def _request_diagnostic_probe(self, aircraft_id: Optional[str], timeout: float) -> tuple[str, Optional[dict]]:
         if threading.current_thread() is self._thread:
             return "busy", None
         with self._probe_condition:
@@ -204,6 +215,7 @@ class Bot:
                 return "busy", None
             request = Future()
             self._probe_request = request
+            self._probe_aircraft_id = aircraft_id
             self._probe_condition.notify_all()
         try:
             return request.result(timeout=timeout)
@@ -211,28 +223,33 @@ class Bot:
             request.cancel()
             return "timeout", None
 
-    def _execute_game_source_probe(self, request: Future) -> None:
+    def _execute_game_source_probe(self, request: Future, aircraft_id: Optional[str] = None) -> None:
         """Run the diagnostic on the Selenium-owning worker thread only."""
         outcome: tuple[str, Optional[dict]] = ("unavailable", None)
         try:
             if (threading.current_thread() is self._thread and not self._stop.is_set()
                     and not self._wake.is_set() and self.driver is not None
                     and self.state == BotState.RUNNING and self._is_logged_in(timeout=0)):
-                from game_source_probe import probe_game_sources
+                if aircraft_id is not None:
+                    from game_source_probe import probe_flight_history_structure
 
-                report = probe_game_sources(self)
-                sources = report.get("sources", {})
-                if (getattr(self.config, "get_bool", lambda *_args: False)(
-                        "options", "collect_market_observations")
-                        and sources.get("purchase_hub_cost", {}).get("count")
-                        and sources.get("purchase_hub_airport_info", {}).get("count")
-                        and sources.get("purchase_hub_selector", {}).get("count")):
-                    from game_observations import collect_visible_hub_price
+                    report = probe_flight_history_structure(self, aircraft_id)
+                else:
+                    from game_source_probe import probe_game_sources
 
-                    try:
-                        collect_visible_hub_price(self)
-                    except Exception:  # noqa: BLE001 - keep the sanitized diagnostic available
-                        log.debug("Preço de compra não confirmado durante diagnóstico.")
+                    report = probe_game_sources(self)
+                    sources = report.get("sources", {})
+                    if (getattr(self.config, "get_bool", lambda *_args: False)(
+                            "options", "collect_market_observations")
+                            and sources.get("purchase_hub_cost", {}).get("count")
+                            and sources.get("purchase_hub_airport_info", {}).get("count")
+                            and sources.get("purchase_hub_selector", {}).get("count")):
+                        from game_observations import collect_visible_hub_price
+
+                        try:
+                            collect_visible_hub_price(self)
+                        except Exception:  # noqa: BLE001 - keep the sanitized diagnostic available
+                            log.debug("Preço de compra não confirmado durante diagnóstico.")
                 outcome = ("ok", report)
         except Exception:
             # Driver exceptions sometimes embed the page URL, cookie or session ID.
@@ -725,6 +742,7 @@ class Bot:
                 if self._wake.is_set() or time.monotonic() >= deadline:
                     break
                 request = None
+                aircraft_id = None
                 with self._probe_condition:
                     if self._probe_request is None and not self._wake.is_set() and not self._stop.is_set():
                         remaining = max(0.0, min(deadline, next_cash_check) - time.monotonic())
@@ -734,16 +752,21 @@ class Bot:
                     if self._probe_request is not None:
                         queued = self._probe_request
                         self._probe_request = None
+                        queued_aircraft_id = getattr(self, "_probe_aircraft_id", None)
+                        self._probe_aircraft_id = None
                         if queued.set_running_or_notify_cancel():
                             # Leave the scheduled cycle and cash sync their time window.
-                            if min(deadline, next_cash_check) - time.monotonic() < PROBE_MIN_IDLE_SECONDS:
+                            minimum_idle = (FLIGHT_HISTORY_MIN_IDLE_SECONDS if queued_aircraft_id is not None
+                                            else PROBE_MIN_IDLE_SECONDS)
+                            if min(deadline, next_cash_check) - time.monotonic() < minimum_idle:
                                 queued.set_result(("busy", None))
                             else:
                                 self._probe_ready = False
                                 request = queued
+                                aircraft_id = queued_aircraft_id
                 if request is not None:
                     try:
-                        self._execute_game_source_probe(request)
+                        self._execute_game_source_probe(request, aircraft_id)
                     finally:
                         with self._probe_condition:
                             self._probe_ready = True
@@ -768,6 +791,7 @@ class Bot:
                 self._probe_ready = False
                 pending = self._probe_request
                 self._probe_request = None
+                self._probe_aircraft_id = None
                 if pending is not None and pending.set_running_or_notify_cancel():
                     pending.set_result(("busy", None))
             self._wake.clear()

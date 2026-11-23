@@ -327,5 +327,14 @@ def prepare_engine(bot: "Bot", preference: str) -> str | None:
         raise EngineSelectionError("Nome ou disponibilidade dos motores mudou após a seleção.")
     if after.selected_engine_id != choice.value:
         raise EngineSelectionError("O jogo não confirmou o motor solicitado; compra cancelada.")
+    _, confirmed_choice = choose_engine(new_groups, preference)
+    if confirmed_choice.value != choice.value:
+        raise EngineSelectionError(
+            "A preferência de motorização passou a indicar outra variante após a seleção; compra bloqueada."
+        )
+    if (confirmed_choice.speed, confirmed_choice.fuel) != (choice.speed, choice.fuel):
+        raise EngineSelectionError(
+            "Métricas de velocidade ou consumo da variante escolhida mudaram após a seleção; compra bloqueada."
+        )
     log.info("Motor confirmado no formulário de compra: %s.", choice.label)
     return choice.label

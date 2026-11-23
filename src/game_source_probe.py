@@ -23,6 +23,11 @@ price fields and engine controls inside ``#acModel``. Candidate counts are
 diagnostic only: they never verify the final price for a selected motor.
 ``model_hub_correlated`` requires a single, idle aircraft detail panel that
 actually contains the selected hub control. It only describes one DOM snapshot.
+``probe_flight_history_structure(session, aircraft_id)`` is a separate, explicit
+read-only GET of one aircraft's details through the session owner. It returns
+only structural counts and availability hints for A9 calibration research.
+No flight IDs, dates, revenues, costs, or HTML leave the browser. The probe
+cannot establish complete history, unique flights, or verified ledger costs.
 The source view depends on the popup currently displayed. Missing selectors are
 expected when their corresponding game pane is closed.
 
@@ -412,6 +417,101 @@ return result;
 """
 
 
+# The legacy financial reader fetches the same aircraft-details fragment.
+# This diagnostic keeps the response entirely inside the authenticated browser
+# and returns counts of candidate evidence, never individual flight records.
+FLIGHT_HISTORY_PROBE_JS = r"""
+const aircraftId = String(arguments[0] ?? '');
+const done = arguments[arguments.length - 1];
+const numericId = value => /^[1-9][0-9]{0,13}$/.test(String(value ?? ''));
+const absoluteTime = value => {
+  const text = String(value ?? '').trim();
+  if (/^[0-9]{10}(?:[0-9]{3})?$/.test(text)) {
+    const timestamp = Number(text) * (text.length === 10 ? 1000 : 1);
+    return timestamp >= 946684800000 && timestamp < 4102444800000;
+  }
+  return /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/i.test(text)
+    && Number.isFinite(Date.parse(text));
+};
+const newReport = status => ({
+  schema_version: 1, status, aircraft_id: aircraftId,
+  history_present: false, row_count: 0, four_column_rows: 0,
+  numeric_cost_rows: 0, currency_revenue_rows: 0,
+  id_candidates: Object.fromEntries(['data_flight_id', 'data_id', 'dom_id']
+    .map(key => [key, {rows: 0, distinct: 0, duplicates: 0}])),
+  absolute_time_sources: {time_datetime: 0, data_completed_at: 0, data_timestamp: 0},
+  pagination_controls_present: false
+});
+const inspect = html => {
+  const report = newReport('inspected');
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  report.history_present = doc.querySelectorAll('#flight-history').length === 1;
+  if (!report.history_present) {
+    report.status = 'missing_history';
+    return report;
+  }
+  const rows = Array.from(doc.querySelectorAll('#flight-history > .row'));
+  report.row_count = rows.length;
+  report.pagination_controls_present =
+    doc.querySelectorAll('#flight-history .pagination, #flight-history [data-page]').length > 0;
+  const ids = {data_flight_id: new Set(), data_id: new Set(), dom_id: new Set()};
+  for (const row of rows) {
+    const values = {
+      data_flight_id: row.getAttribute('data-flight-id'),
+      data_id: row.getAttribute('data-id'),
+      dom_id: row.getAttribute('id')
+    };
+    for (const [key, value] of Object.entries(values)) {
+      if (!numericId(value)) continue;
+      report.id_candidates[key].rows++;
+      ids[key].add(String(value));
+    }
+    const time = row.querySelector('time[datetime]');
+    if (time && absoluteTime(time.getAttribute('datetime'))) {
+      report.absolute_time_sources.time_datetime++;
+    }
+    if (absoluteTime(row.getAttribute('data-completed-at'))) {
+      report.absolute_time_sources.data_completed_at++;
+    }
+    if (absoluteTime(row.getAttribute('data-timestamp'))) {
+      report.absolute_time_sources.data_timestamp++;
+    }
+    const cells = Array.from(row.querySelectorAll(':scope > .col-3'));
+    if (cells.length !== 4) continue;
+    report.four_column_rows++;
+    const looksNumeric = value => /[0-9]/.test(String(value || ''));
+    if (looksNumeric(cells[1].textContent) && looksNumeric(cells[2].textContent)) {
+      report.numeric_cost_rows++;
+    }
+    if (/(?:US\s*\$|USD\s*|\$)\s*[0-9]/i.test(String(cells[3].textContent || ''))) {
+      report.currency_revenue_rows++;
+    }
+  }
+  for (const [key, values] of Object.entries(ids)) {
+    report.id_candidates[key].distinct = values.size;
+    report.id_candidates[key].duplicates = report.id_candidates[key].rows - values.size;
+  }
+  return report;
+};
+(async () => {
+  if (!numericId(aircraftId)) return newReport('invalid_id');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch('fleet_details.php?id=' + aircraftId, {
+      credentials: 'same-origin', signal: controller.signal
+    });
+    if (!response.ok) return newReport('http_error');
+    return inspect(await response.text());
+  } catch (error) {
+    return newReport(error && error.name === 'AbortError' ? 'timeout' : 'fetch_error');
+  } finally {
+    clearTimeout(timeout);
+  }
+})().then(done, () => done(newReport('fetch_error')));
+"""
+
+
 def _count(value: Any) -> int:
     return value if type(value) is int and 0 <= value <= _MAX_COUNT else 0
 
@@ -585,3 +685,70 @@ def probe_game_sources(session: Any) -> dict:
     if not callable(execute):
         raise TypeError("Expected an existing Bot or Selenium WebDriver session")
     return _sanitize(execute(PROBE_JS))
+
+
+_FLIGHT_ID_CANDIDATES = ("data_flight_id", "data_id", "dom_id")
+_FLIGHT_TIME_SOURCES = ("time_datetime", "data_completed_at", "data_timestamp")
+_FLIGHT_STATUSES = {"inspected", "missing_history", "http_error", "timeout", "fetch_error"}
+
+
+def _sanitize_flight_history(raw: Any, aircraft_id: str) -> dict:
+    """Keep only bounded structural signals, even if the driver is compromised."""
+    if (not isinstance(raw, dict) or type(raw.get("schema_version")) is not int
+            or raw["schema_version"] != 1 or raw.get("aircraft_id") != aircraft_id):
+        raise ValueError("Unexpected flight-history probe response")
+    status = raw.get("status")
+    if status not in _FLIGHT_STATUSES:
+        status = "fetch_error"
+    present = status == "inspected" and raw.get("history_present") is True
+    if status == "inspected" and not present:
+        status = "missing_history"
+    count = _count(raw.get("row_count")) if present else 0
+    candidates = raw.get("id_candidates")
+    candidates = candidates if isinstance(candidates, dict) else {}
+    ids = {}
+    for key in _FLIGHT_ID_CANDIDATES:
+        entry = candidates.get(key)
+        entry = entry if isinstance(entry, dict) else {}
+        rows = min(count, _count(entry.get("rows")))
+        distinct = min(rows, _count(entry.get("distinct")))
+        # Duplicate counts are derived from rows and distinct IDs, never trusted.
+        ids[key] = {"rows": rows, "distinct": distinct,
+                    "duplicates": rows - distinct}
+    times = raw.get("absolute_time_sources")
+    times = times if isinstance(times, dict) else {}
+    return {
+        "schema_version": 1, "aircraft_id": aircraft_id,
+        "status": status, "history_present": present, "row_count": count,
+        "four_column_rows": min(count, _count(raw.get("four_column_rows"))),
+        "numeric_cost_rows": min(count, _count(raw.get("numeric_cost_rows"))),
+        "currency_revenue_rows": min(count, _count(raw.get("currency_revenue_rows"))),
+        "id_candidates": ids,
+        "absolute_time_sources": {
+            key: min(count, _count(times.get(key))) for key in _FLIGHT_TIME_SOURCES
+        },
+        "pagination_controls_present": present and raw.get("pagination_controls_present") is True,
+        "possible_truncation": count >= 20,
+        "flight_identity_verified": False,
+        "complete_history_verified": False,
+        "financial_ledger_verified": False,
+        "read_only": True,
+    }
+
+
+def probe_flight_history_structure(session: Any, aircraft_id: str | int) -> dict:
+    """Inspect one aircraft's history through the authenticated Selenium owner.
+
+    Performs one read-only GET for ``fleet_details.php``. Results are
+    diagnostics for source research only, never accounting evidence for A9.
+    """
+    if type(aircraft_id) not in (str, int) or not _NUMERIC_ID.fullmatch(str(aircraft_id)):
+        raise ValueError("Expected a positive numeric aircraft ID")
+    driver = getattr(session, "driver", session)
+    execute = getattr(driver, "execute_async_script", None)
+    if not callable(execute):
+        raise TypeError("Expected an existing Selenium WebDriver async session")
+    normalized_id = str(aircraft_id)
+    return _sanitize_flight_history(
+        execute(FLIGHT_HISTORY_PROBE_JS, normalized_id), normalized_id
+    )

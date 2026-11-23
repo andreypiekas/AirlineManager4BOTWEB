@@ -10,6 +10,7 @@ assets/web/index.html and a JSON API:
 * POST /api/control           {"action": "start" | "stop" | "run_now" | "quit"}  (quit: stop the bot and close
                               the program; used by scripts/web_parar.ps1)
 * POST /api/admin/game-source-probe  authorized, read-only snapshot of the active game's DOM
+* POST /api/admin/flight-history-probe  authorized, read-only structural history for one aircraft
 
 Safety: by default it only listens on 127.0.0.1. To open it to the local network ([web] host = 0.0.0.0)
 a token is required ([web] token in config/secrets.ini); without one the server stays on 127.0.0.1.
@@ -23,6 +24,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import sqlite3
 import socket
 import threading
@@ -350,8 +352,16 @@ class WebDashboard:
 
     def game_source_probe(self) -> tuple[int, dict]:
         """Ask the bot worker to read its own game session during an idle wait."""
+        return self._admin_probe_result(self.bot.request_game_source_probe)
+
+    def flight_history_probe(self, aircraft_id: str) -> tuple[int, dict]:
+        """Inspect one aircraft's history through the existing Selenium owner."""
+        return self._admin_probe_result(lambda: self.bot.request_flight_history_probe(aircraft_id))
+
+    @staticmethod
+    def _admin_probe_result(request: Callable[[], tuple[str, Optional[dict]]]) -> tuple[int, dict]:
         try:
-            result, report = self.bot.request_game_source_probe()
+            result, report = request()
             if result == "ok" and isinstance(report, dict):
                 return HTTPStatus.OK, {"ok": True, "report": report}
             if result == "busy":
@@ -633,7 +643,7 @@ class WebDashboard:
 
             def do_POST(self) -> None:  # noqa: N802 - http.server API
                 path = urlparse(self.path).path
-                admin_probe = path == "/api/admin/game-source-probe"
+                admin_probe = path in ("/api/admin/game-source-probe", "/api/admin/flight-history-probe")
                 policy_action = path in ("/api/investment/policy", "/api/investment/stop")
                 if (not self._allowed(require_token=admin_probe,
                                       allow_query_token=not (admin_probe or policy_action))
@@ -649,9 +659,16 @@ class WebDashboard:
                 if not isinstance(payload, dict):
                     return self._json({"ok": False, "message": "JSON inválido."}, 400)
                 if admin_probe:
-                    if payload:
-                        return self._json({"ok": False, "message": "Envie um objeto JSON vazio."}, 400)
-                    status, report = dashboard.game_source_probe()
+                    if path == "/api/admin/game-source-probe":
+                        if payload:
+                            return self._json({"ok": False, "message": "Envie um objeto JSON vazio."}, 400)
+                        status, report = dashboard.game_source_probe()
+                    else:
+                        aircraft_id = payload.get("aircraft_id")
+                        if (set(payload) != {"aircraft_id"} or type(aircraft_id) is not str
+                                or re.fullmatch(r"[1-9][0-9]{0,13}", aircraft_id) is None):
+                            return self._json({"ok": False, "message": "Informe um ID de aeronave válido."}, 400)
+                        status, report = dashboard.flight_history_probe(aircraft_id)
                     return self._json(report, status)
                 if path == "/api/settings":
                     ok, message = dashboard.update_settings(payload)

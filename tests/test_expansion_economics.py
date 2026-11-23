@@ -298,11 +298,43 @@ def test_global_ranking_deduplicates_and_blocks_contradictory_same_identity():
     assert best["read_only"] and best["execution_available"] is False
 
     conflict = deepcopy(original)
-    conflict["components"]["daily_net_profit_estimate"] += 5
+    conflict["economics_id"] += "-conflicting"
     result = rank_expansion_economics([original, conflict, alternate])
     assert result["conflicting_identities"] == 1
     assert result["excluded_count"] == 2
     assert result["best"] == alternate
+
+
+@pytest.mark.parametrize("corrupt", [
+    lambda row: row["components"].update(roi_365d_percent=float("inf")),
+    lambda row: row["components"].update(roi_365d_percent=float("nan")),
+    lambda row: row["components"].update(roi_365d_percent=-1),
+    lambda row: row.update(components="invalid"),
+    lambda row: row.update(capital_costs=["invalid"]),
+])
+def test_ranking_rejects_invalid_financial_rows_without_poisoning_valid_identity(corrupt):
+    valid = evaluate(fixture())
+    invalid = deepcopy(valid)
+    corrupt(invalid)
+
+    result = rank_expansion_economics([invalid, valid, deepcopy(valid)])
+    assert result["best"] == valid
+    assert result["alternatives"] == [valid]
+    assert result["excluded_count"] == 1
+    assert result["conflicting_identities"] == 0
+
+
+@pytest.mark.parametrize("change", [0.01, 1.0, 50.0])
+def test_ranking_rejects_financially_inconsistent_roi(change):
+    valid = evaluate(fixture())
+    inconsistent = deepcopy(valid)
+    inconsistent["components"]["roi_365d_percent"] += change
+
+    result = rank_expansion_economics([inconsistent, valid])
+    assert result["best"] == valid
+    assert result["alternatives"] == [valid]
+    assert result["excluded_count"] == 1
+    assert result["conflicting_identities"] == 0
 
 
 def test_ranking_across_hubs_routes_and_models_uses_same_contract():

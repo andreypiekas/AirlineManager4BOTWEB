@@ -178,6 +178,122 @@ def test_revalidacao_bloqueia_formulario_alterado_apos_ajax(change, reason):
         engine_selection.prepare_engine(Bot(), "name:Trent 972")
 
 
+@pytest.mark.parametrize("metric", ["speed", "fuel"])
+@pytest.mark.parametrize(
+    "before_value,after_value,blocked",
+    [
+        (945, 946, True),
+        (945, None, True),
+        (945, 0, True),
+        (None, 945, True),
+        (None, None, False),
+    ],
+)
+def test_revalidacao_confere_metricas_da_variante_escolhida_apos_ajax(
+    metric, before_value, after_value, blocked
+):
+    before = engines()
+    before[0]["options"][2][metric] = before_value
+    after = deepcopy(before)
+    after[0]["options"][2][metric] = after_value
+    for option in after[0]["options"]:
+        option["selected"] = option["value"] == "3"
+    after[0]["selectedValue"] = "3"
+    reads = 0
+
+    class Bot:
+        dry_run = False
+
+        def js(self, script, *args):
+            nonlocal reads
+            if args:
+                return args == ("select", "acEngine", "3")
+            reads += 1
+            return deepcopy(before if reads == 1 else after)
+
+        def pause(self, *_):
+            pass
+
+    if blocked:
+        with pytest.raises(engine_selection.EngineSelectionError, match="Métricas"):
+            engine_selection.prepare_engine(Bot(), "name:Trent 972")
+    else:
+        assert engine_selection.prepare_engine(Bot(), "name:Trent 972") == "RR Trent 972"
+
+
+@pytest.mark.parametrize(
+    "preference,selected_id,index,metric,before_value,after_value",
+    [
+        ("fastest", "3", 2, "speed", 945, 946),
+        ("fastest", "3", 2, "fuel", 12.8, 12.9),
+        ("economical", "1", 0, "speed", 905, 906),
+        ("economical", "1", 0, "fuel", 12.1, 12.2),
+    ],
+)
+def test_revalidacao_confere_metricas_da_variante_escolhida_por_preferencia(
+    preference, selected_id, index, metric, before_value, after_value
+):
+    before = engines()
+    before[0]["options"][index][metric] = before_value
+    after = deepcopy(before)
+    after[0]["options"][index][metric] = after_value
+    for option in after[0]["options"]:
+        option["selected"] = option["value"] == selected_id
+    after[0]["selectedValue"] = selected_id
+    reads = 0
+
+    class Bot:
+        dry_run = False
+
+        def js(self, script, *args):
+            nonlocal reads
+            if args:
+                return args == ("select", "acEngine", selected_id)
+            reads += 1
+            return deepcopy(before if reads == 1 else after)
+
+        def pause(self, *_):
+            pass
+
+    with pytest.raises(engine_selection.EngineSelectionError, match="Métricas"):
+        engine_selection.prepare_engine(Bot(), preference)
+
+
+@pytest.mark.parametrize(
+    "preference,selected_id,index,metric,changed_value",
+    [
+        ("fastest", "3", 2, "speed", 800),
+        ("economical", "1", 0, "fuel", 13.0),
+    ],
+)
+def test_revalidacao_recalcula_preferencia_de_motor_apos_ajax(
+    preference, selected_id, index, metric, changed_value
+):
+    before = engines()
+    after = deepcopy(before)
+    after[0]["options"][index][metric] = changed_value
+    for option in after[0]["options"]:
+        option["selected"] = option["value"] == selected_id
+    after[0]["selectedValue"] = selected_id
+    reads = 0
+
+    class Bot:
+        dry_run = False
+
+        def js(self, script, *args):
+            nonlocal reads
+            if args:
+                return args == ("select", "acEngine", selected_id)
+            reads += 1
+            return deepcopy(before if reads == 1 else after)
+
+        def pause(self, *_):
+            pass
+
+    with pytest.raises(engine_selection.EngineSelectionError, match="preferência"):
+        engine_selection.prepare_engine(Bot(), preference)
+
+
 @pytest.mark.parametrize("pref,expected", [
     ("name:Trent 972", "RR Trent 972"),
     ("name:rr TRENT 972", "RR Trent 972"),
@@ -269,7 +385,7 @@ def test_simulacao_nunca_seleciona_nem_compra():
 
         def js(self, script, *args):
             calls.append(args)
-            return engines()
+            return engines(speed=False, fuel=False)
 
         def pause(self, *_):
             pytest.fail("Simulação não deve aguardar após selecionar o motor")
@@ -277,6 +393,20 @@ def test_simulacao_nunca_seleciona_nem_compra():
     assert engine_selection.prepare_engine(Bot(), "name:Trent 972") == "RR Trent 972"
     assert len(calls) == 1
     assert calls[0] == ()
+
+
+def test_padrao_aceita_metricas_nao_expostas_pelo_dom():
+    groups = engines(selected="2")
+    for option in groups[0]["options"]:
+        option["speed"] = None
+        option["fuel"] = None
+
+    class Bot:
+        def js(self, script, *args):
+            assert script == engine_selection._ENGINE_OPTIONS_JS and not args
+            return deepcopy(groups)
+
+    assert engine_selection.prepare_engine(Bot(), "default") == "GP7270"
 
 
 @pytest.mark.parametrize("groups,expected", [

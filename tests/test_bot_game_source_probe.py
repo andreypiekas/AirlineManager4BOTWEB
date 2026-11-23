@@ -12,6 +12,7 @@ from bot import Bot, BotState
 class Driver:
     def __init__(self):
         self.calls: list[int] = []
+        self.history_calls: list[tuple[int, str]] = []
         self.started = threading.Event()
         self.release = threading.Event()
         self.release.set()
@@ -22,6 +23,14 @@ class Driver:
         self.started.set()
         assert self.release.wait(3)
         return {"schema_version": 1, "sources": {}, "pagination": {}, "status_data": {}}
+
+    def execute_async_script(self, script, aircraft_id):
+        assert "fleet_details.php?id=" in script
+        self.history_calls.append((threading.get_ident(), aircraft_id))
+        self.started.set()
+        assert self.release.wait(3)
+        return {"schema_version": 1, "aircraft_id": aircraft_id, "status": "missing_history",
+                "history_present": False, "password": "HIDDEN_SECRET"}
 
 
 def make_bot():
@@ -94,6 +103,63 @@ def test_probe_executes_on_worker_without_ending_sleep_early():
         assert bot.next_cycle_at == next_cycle
         assert bot.cash_reads == 0
         assert bot._thread.is_alive()
+
+
+def test_flight_history_probe_uses_worker_and_returns_only_structural_data():
+    bot = make_bot()
+    with running_worker(bot):
+        wait_until_idle(bot)
+        scheduled = bot.next_cycle_at
+        status, report = bot.request_flight_history_probe("42")
+        assert status == "ok"
+        assert bot.driver.history_calls == [(bot._thread.ident, "42")]
+        assert bot.login_threads == [bot._thread.ident]
+        assert report["aircraft_id"] == "42"
+        assert report["complete_history_verified"] is False
+        assert report["financial_ledger_verified"] is False
+        assert "HIDDEN_SECRET" not in str(report)
+        assert bot.next_cycle_at == scheduled
+        assert bot.request_game_source_probe(timeout=2)[0] == "ok"
+
+
+def test_flight_history_probe_validates_id_and_recovers_after_timeout():
+    bot = make_bot()
+    for invalid in ("", "0", "1;2", " 123", "1" * 15):
+        try:
+            bot.request_flight_history_probe(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid aircraft ID was accepted")
+    assert not bot.driver.history_calls
+    bot.driver.release.clear()
+    with running_worker(bot):
+        wait_until_idle(bot)
+        assert bot.request_flight_history_probe("77", timeout=0.1) == ("timeout", None)
+        assert bot.driver.history_calls == [(bot._thread.ident, "77")]
+        assert bot.request_game_source_probe(timeout=0.1) == ("busy", None)
+        bot.driver.release.set()
+        wait_until_idle(bot)
+        assert bot.request_game_source_probe(timeout=2)[0] == "ok"
+
+
+def test_flight_history_probe_and_game_source_probe_share_queue():
+    bot = make_bot()
+    bot.driver.release.clear()
+    results = []
+    with running_worker(bot):
+        wait_until_idle(bot)
+        caller = threading.Thread(target=lambda: results.append(
+            bot.request_flight_history_probe("314", timeout=2)), daemon=True)
+        caller.start()
+        assert bot.driver.started.wait(2)
+        assert bot.request_game_source_probe(timeout=0.1) == ("busy", None)
+        assert bot.request_flight_history_probe("315", timeout=0.1) == ("busy", None)
+        bot.driver.release.set()
+        caller.join(timeout=3)
+        assert not caller.is_alive()
+        assert results[0][0] == "ok"
+        assert bot.driver.history_calls == [(bot._thread.ident, "314")]
 
 
 def test_request_during_active_cycle_rejects_without_touching_driver():
