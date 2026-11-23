@@ -2,6 +2,7 @@
 import json
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -408,6 +409,54 @@ def test_price_collection_requires_identical_correlated_reads(tmp_path, monkeypa
     assert registry.snapshot()["candidates"][0]["hub_price"] == 11472000
 
 
+def test_both_hub_price_collectors_preserve_dom_read_time(tmp_path, monkeypatch):
+    clock = [1_900_000_000.9]
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
+    observed_at = clock[0] - 0.7
+    old_price = {"id": "2941", "name": "Florianópolis", "code": "FLN",
+                 "hub_price": 5000, "hub_points": 0, "purchasable": True}
+
+    def read(_bot, script, *, with_timestamp=False):
+        if script == game_observations._HUB_AIRPORT_OPTIONS_JS:
+            assert not with_timestamp
+            return ["2941"]
+        assert script == game_observations._SELECTED_HUB_PRICE_JS and with_timestamp
+        return old_price, observed_at
+
+    monkeypatch.setattr(game_observations, "_stable_read", read)
+    assert game_observations.collect_visible_hub_price(object())
+    first = registry.snapshot(now=clock[0])["candidates"][0]
+    assert first["hub_price_observed_at"] == observed_at
+    assert first["observed_at"] == observed_at
+
+    assert registry.record_catalog([{**old_price, "hub_price": 7000}],
+                                   observed_at=clock[0] - 0.2)
+
+    class Bot:
+        stopping = False
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            pass
+
+        def js(self, script, *args):
+            if script == game_observations._HUB_COUNTRIES_JS:
+                return ["Brazil"]
+            if script in (game_observations._SELECT_MARKET_COUNTRY_JS,
+                          game_observations._SELECT_MARKET_AIRPORT_JS):
+                return True
+            raise AssertionError("unexpected browser operation")
+
+    assert game_observations.collect_hub_market_prices(Bot(), per_cycle=1) == 1
+    after = registry.snapshot(now=clock[0])["candidates"][0]
+    assert after["hub_price"] == 7000
+    assert after["hub_price_observed_at"] == clock[0] - 0.2
+
+
 @pytest.mark.skipif(not shutil.which("node"), reason="Node.js indisponível")
 def test_country_change_does_not_reuse_stale_airports_from_previous_country():
     js = r"""
@@ -476,13 +525,16 @@ def test_failed_hub_price_is_retried_without_repeating_every_airport(tmp_path, m
                 return True
             raise AssertionError("unexpected browser operation")
 
-    def stable_read(bot, script):
+    def stable_read(bot, script, *, with_timestamp=False):
         if script == game_observations._HUB_AIRPORT_OPTIONS_JS:
+            assert not with_timestamp
             return bot.js(script)
+        assert with_timestamp
         if not obtainable[bot.airport]:
             return None
-        return {"id": bot.airport, "name": bot.airport, "code": "",
-                "purchasable": True, "hub_price": 5000, "hub_points": 20}
+        return ({"id": bot.airport, "name": bot.airport, "code": "",
+                 "purchasable": True, "hub_price": 5000, "hub_points": 20},
+                now[0])
 
     monkeypatch.setattr(game_observations, "_stable_read", stable_read)
     first = Bot()
@@ -538,10 +590,13 @@ def test_hub_price_waits_for_ajax_before_advancing_airport(tmp_path, monkeypatch
                 return True
             raise AssertionError("Unrecognized game operation")
 
-    def read(_bot, script):
+    def read(_bot, script, *, with_timestamp=False):
         if script == game_observations._HUB_AIRPORT_OPTIONS_JS:
+            assert not with_timestamp
             return ["2966"]
-        return next(price_reads)
+        assert with_timestamp
+        observed = next(price_reads)
+        return (observed, time.time()) if observed is not None else None
 
     monkeypatch.setattr(game_observations, "_stable_read", read)
     bot = Bot()
@@ -576,12 +631,15 @@ def test_price_read_failure_cannot_refresh_stored_observation(tmp_path, monkeypa
 def test_market_price_scan_resumes_per_profile_and_never_purchases(tmp_path, monkeypatch):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
-    def observe(bot, script):
+    def observe(bot, script, *, with_timestamp=False):
         if script == game_observations._HUB_AIRPORT_OPTIONS_JS:
+            assert not with_timestamp
             return bot.js(script)
+        assert with_timestamp
+        if bot.airport == "2941":
+            return None
         return ({"id": bot.airport, "name": f"Airport {bot.airport}", "code": "",
-                 "hub_price": int(bot.airport) * 1000, "purchasable": True}
-                if bot.airport != "2941" else None)
+                 "hub_price": int(bot.airport) * 1000, "purchasable": True}, time.time())
 
     monkeypatch.setattr(game_observations, "_stable_read", observe)
 

@@ -262,9 +262,11 @@ def _verified_demand(candidates: list, rows: object, origin: str) -> list[dict]:
 
 def collect_visible_hub_price(bot: object) -> bool:
     """Persist a selected hub price only after stable, correlated game reads."""
-    observation = _stable_read(bot, _SELECTED_HUB_PRICE_JS)
-    return (isinstance(observation, dict) and
-            HubExpansionRegistry().record_catalog([observation], complete=False))
+    reading = _stable_read(bot, _SELECTED_HUB_PRICE_JS, with_timestamp=True)
+    return (isinstance(reading, tuple) and len(reading) == 2
+            and isinstance(reading[0], dict)
+            and HubExpansionRegistry().record_catalog(
+                [reading[0]], complete=False, observed_at=reading[1]))
 
 
 def _wait_airport_options(bot: object) -> list[str]:
@@ -298,21 +300,26 @@ def collect_hub_market_prices(bot: object, *, per_cycle: int = 3) -> int:
         attempts += 1
         visited.add((country, airport_id))
         observation = None
+        observed_at = None
         if bot.js(_SELECT_MARKET_AIRPORT_JS, airport_id):
             # AJAX replaces #airportInfo after the change event. A first
             # empty read returns immediately, so poll before switching to the
             # next airport or we would keep reading the preceding airport.
             for _ in range(20):
-                value = _stable_read(bot, _SELECTED_HUB_PRICE_JS)
-                if isinstance(value, dict) and value.get("id") == airport_id:
-                    observation = value
+                reading = _stable_read(bot, _SELECTED_HUB_PRICE_JS,
+                                       with_timestamp=True)
+                if (isinstance(reading, tuple) and len(reading) == 2
+                        and isinstance(reading[0], dict)
+                        and reading[0].get("id") == airport_id):
+                    observation, observed_at = reading
                     break
                 if getattr(bot, "stopping", False):
                     break
                 stop = getattr(bot, "_stop", None)
                 if (stop.wait(0.2) if stop is not None else threading.Event().wait(0.2)):
                     break
-        recorded = bool(observation and registry.record_catalog([observation], complete=False))
+        recorded = bool(observation and registry.record_catalog(
+            [observation], complete=False, observed_at=observed_at))
         registry.record_catalog_attempt(country, airport_id, success=recorded)
         if recorded:
             collected += 1

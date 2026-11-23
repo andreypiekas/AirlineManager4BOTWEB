@@ -70,7 +70,8 @@ def _engine_id(value: object) -> Optional[str]:
 
 
 def _fresh(stamp: object, now: int) -> bool:
-    return type(stamp) is int and 0 <= now - stamp <= MAX_AGE_SECONDS
+    return (type(stamp) in (int, float) and 0 < stamp <= now
+            and now - stamp <= MAX_AGE_SECONDS)
 
 
 def _scenario_identity(scenario: dict) -> tuple:
@@ -132,6 +133,10 @@ def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
                      else scenario.get("profit_per_day"))
 
     pending = []
+    if candidate.get("hub_price_conflict_at") is not None:
+        pending.append("preco_hub_conflitante")
+    if candidate.get("hub_points_conflict_at") is not None:
+        pending.append("pontos_hub_conflitantes")
     if not price_fresh or _amount(candidate.get("hub_price")) is None:
         pending.append("preco_hub_a_confirmar")
     if candidate.get("hub_points") is None:
@@ -410,12 +415,18 @@ class HubExpansionRegistry:
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
 
-    def record_catalog(self, options: object, *, complete: bool = False) -> bool:
+    def record_catalog(self, options: object, *, complete: bool = False,
+                       observed_at: Optional[float] = None) -> bool:
         """Persist a game-confirmed purchasable catalog or partial page.
 
         Missing and empty responses cannot erase previous observations.
         A partial page merges by airport ID instead of dropping unseen pages.
         """
+        explicit_time = observed_at is not None
+        now = time.time()
+        if (explicit_time and (type(observed_at) not in (int, float)
+                               or not _fresh(observed_at, now))):
+            return False
         if not isinstance(options, list):
             return False
         incoming = {}
@@ -448,11 +459,74 @@ class HubExpansionRegistry:
         verified_complete = complete is True and not incomplete
         with _LOCK:
             current = self._load()
-            observed_at = int(time.time())
+            observed_at = observed_at if explicit_time else int(time.time())
             previous = {c["id"]: c for c in _stored_candidates(current.get("candidates"))}
+
+            def valid_stamp(value: object) -> bool:
+                return type(value) in (int, float) and 0 < value <= now
+
+            catalog_at = current.get("observed_at")
+            if not valid_stamp(catalog_at):
+                catalog_at = 0
+
+            if (explicit_time and observed_at < catalog_at
+                    and current.get("catalog_complete") is True):
+                # Airports absent from a later complete scan cannot be
+                # resurrected by an older page arriving out of order.
+                incoming = {airport_id: item for airport_id, item in incoming.items()
+                            if airport_id in previous}
+                if not incoming:
+                    return False
+
+            # A complete scan must be newer than every previously ingested
+            # page before it may discard airports absent from that scan.
+            if explicit_time and observed_at <= catalog_at:
+                verified_complete = False
 
             def refresh(airport_id: str, item: dict) -> dict:
                 older = previous.get(airport_id, {})
+                if explicit_time and older:
+                    older_at = older.get("observed_at", catalog_at)
+                    if not valid_stamp(older_at):
+                        older_at = catalog_at
+                    # Name and airport identity come from the newest page,
+                    # while each price/points observation has its own clock.
+                    result = {**older, **item, "observed_at": max(observed_at, older_at)}
+                    if observed_at < older_at:
+                        result["name"] = older.get("name")
+                        result["code"] = older.get("code")
+                    for field in ("hub_price", "hub_points"):
+                        stamp_key = f"{field}_observed_at"
+                        conflict_key = f"{field}_conflict_at"
+                        former_at = older.get(stamp_key)
+                        if former_at is None:
+                            former_at = older.get("observed_at", catalog_at)
+                        conflict_at = older.get(conflict_key)
+                        incoming_value = item.get(field)
+                        if incoming_value is None:
+                            result[field] = older.get(field)
+                            result[stamp_key] = older.get(stamp_key, former_at)
+                            if conflict_key in older:
+                                result[conflict_key] = conflict_at
+                            continue
+                        if valid_stamp(conflict_at) and observed_at <= conflict_at:
+                            result[field] = None
+                            result[stamp_key] = None
+                            result[conflict_key] = conflict_at
+                        elif valid_stamp(former_at) and observed_at < former_at:
+                            result[field] = older.get(field)
+                            result[stamp_key] = former_at
+                        elif (observed_at == former_at and older.get(field) != incoming_value):
+                            # Simultaneous contradictory observations cannot
+                            # support a purchase, even after a process restart.
+                            result[field] = None
+                            result[stamp_key] = None
+                            result[conflict_key] = observed_at
+                        else:
+                            result[field] = incoming_value
+                            result[stamp_key] = observed_at
+                            result.pop(conflict_key, None)
+                    return result
                 result = {**older, **item, "observed_at": observed_at}
                 if item["hub_price"] is not None:
                     result["hub_price_observed_at"] = observed_at
@@ -483,8 +557,15 @@ class HubExpansionRegistry:
             else:
                 incoming = {airport_id: refresh(airport_id, item)
                             for airport_id, item in incoming.items()}
-            current.update({"source": "game_purchase_catalog", "observed_at": observed_at,
-                            "catalog_complete": verified_complete,
+            # A delayed page cannot roll the catalog clock backward or
+            # revoke an independently newer complete scan.
+            if explicit_time and observed_at < catalog_at:
+                catalog_complete = current.get("catalog_complete") is True
+            else:
+                catalog_complete = verified_complete
+            current.update({"source": "game_purchase_catalog",
+                            "observed_at": max(observed_at, catalog_at) if explicit_time else observed_at,
+                            "catalog_complete": catalog_complete,
                             "candidates": sorted(incoming.values(), key=lambda row: (row.get("code") or "", row["id"]))})
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
@@ -787,7 +868,9 @@ class HubExpansionRegistry:
         for raw in stored_candidates:
             if raw["id"] in owned:
                 continue
-            row = {k: raw.get(k) for k in ("id", "name", "code", "hub_price", "hub_points")}
+            row = {k: raw.get(k) for k in (
+                "id", "name", "code", "hub_price", "hub_points",
+                "hub_price_conflict_at", "hub_points_conflict_at")}
             row_time = raw.get("observed_at", catalog_time)
             price_time = raw.get("hub_price_observed_at")
             if price_time is None:
@@ -825,7 +908,10 @@ class HubExpansionRegistry:
                 "payback_days": best["payback_days"] if best else None,
                 "engine_id": best["engine_id"] if best else None,
                 "status": best["status"] if best else "dados_a_confirmar",
-                "pending": best["pending"] if best else ["pesquisa_externa_a_confirmar"],
+                "pending": best["pending"] if best else [
+                    *(["preco_hub_conflitante"] if raw.get("hub_price_conflict_at") is not None else []),
+                    *(["pontos_hub_conflitantes"] if raw.get("hub_points_conflict_at") is not None else []),
+                    "pesquisa_externa_a_confirmar"],
                 "ranking_conclusive": best["ranking_conclusive"] if best else False,
                 "purchase_evidence": best["purchase_evidence"] if best else False,
                 "cost_breakdown": best["cost_breakdown"] if best else None,

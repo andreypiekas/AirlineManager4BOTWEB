@@ -202,6 +202,128 @@ def test_conflicting_catalog_duplicates_cannot_replace_verified_evidence(tmp_pat
     assert rows[0]["hub_price"] == 8000
 
 
+def test_catalog_preserves_subsecond_read_time_and_rejects_delayed_replays(tmp_path, monkeypatch):
+    clock = [1_900_000_000.9]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate(price=5000)], observed_at=clock[0] - 0.7)
+    assert registry.record_catalog([_candidate(price=7000)], observed_at=clock[0] - 0.2)
+    assert registry.record_catalog([_candidate(price=6000)], observed_at=clock[0] - 0.4)
+
+    row = registry.snapshot(now=clock[0])["candidates"][0]
+    assert row["hub_price"] == 7000
+    assert row["observed_at"] == clock[0] - 0.2
+    assert row["hub_price_observed_at"] == clock[0] - 0.2
+    assert registry.snapshot(now=clock[0])["observed_at"] == clock[0] - 0.2
+    assert HubExpansionRegistry(registry.path).snapshot(now=clock[0])["candidates"][0]["hub_price"] == 7000
+
+
+def test_catalog_equal_time_price_and_points_conflicts_need_new_evidence(tmp_path, monkeypatch):
+    clock = [1_900_000_000.9]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    stamp = clock[0] - 0.6
+    assert registry.record_catalog([{**_candidate(price=5000), "hub_points": 20}],
+                                   observed_at=stamp)
+    assert registry.record_research("123", _research())
+    assert registry.record_catalog([{**_candidate(price=8000), "hub_points": 30}],
+                                   observed_at=stamp)
+
+    row = HubExpansionRegistry(registry.path).snapshot(cash=50000, now=clock[0])["candidates"][0]
+    assert row["hub_price"] is None and row["hub_points"] is None
+    assert row["status"] == "dados_a_confirmar"
+    assert {"preco_hub_conflitante", "pontos_hub_conflitantes"} <= set(row["pending"])
+    saved = json.loads(registry.path.read_text(encoding="utf-8"))["candidates"][0]
+    assert saved["hub_price_conflict_at"] == stamp
+    assert saved["hub_points_conflict_at"] == stamp
+    assert registry.record_catalog([{**_candidate(price=8000), "hub_points": 30}],
+                                   observed_at=stamp)
+    assert registry.snapshot(now=clock[0])["candidates"][0]["hub_price"] is None
+
+    assert registry.record_catalog([{**_candidate(price=8000), "hub_points": 0}],
+                                   observed_at=clock[0] - 0.1)
+    recovered = registry.snapshot(cash=50000, now=clock[0])["candidates"][0]
+    assert recovered["hub_price"] == 8000 and recovered["hub_points"] == 0
+    assert recovered["status"] == "viavel"
+    persisted = json.loads(registry.path.read_text(encoding="utf-8"))["candidates"][0]
+    assert "hub_price_conflict_at" not in persisted
+    assert "hub_points_conflict_at" not in persisted
+
+
+def test_catalog_reconciles_price_and_points_using_independent_clocks(tmp_path, monkeypatch):
+    clock = [1_900_000_000.9]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    early = clock[0] - 0.8
+    points_at = clock[0] - 0.1
+    price_at = clock[0] - 0.3
+
+    assert registry.record_catalog([{**_candidate(price=5000), "hub_points": 10}],
+                                   observed_at=early)
+    assert registry.record_catalog([{**_candidate(price=None), "hub_points": 20}],
+                                   observed_at=points_at)
+    price_only = _candidate(price=7000)
+    del price_only["hub_points"]
+    assert registry.record_catalog([price_only], observed_at=price_at)
+
+    row = registry.snapshot(now=clock[0])["candidates"][0]
+    assert row["hub_price"] == 7000
+    assert row["hub_points"] == 20
+    assert row["hub_price_observed_at"] == price_at
+    assert row["hub_points_observed_at"] == points_at
+    assert row["observed_at"] == points_at
+
+
+def test_delayed_complete_hub_scan_keeps_newer_airports_and_completion(tmp_path, monkeypatch):
+    clock = [1_900_000_000.9]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()], complete=True,
+                                   observed_at=clock[0] - 0.7)
+    assert registry.record_catalog([_candidate("456", 8000)], observed_at=clock[0] - 0.2)
+    assert registry.record_catalog([_candidate(price=4000)], complete=True,
+                                   observed_at=clock[0] - 0.5)
+    snapshot = registry.snapshot(now=clock[0])
+    assert {row["id"] for row in snapshot["candidates"]} == {"123", "456"}
+    assert snapshot["catalog_complete"] is False
+    assert {row["id"]: row["hub_price"] for row in snapshot["candidates"]} == {
+        "123": 4000, "456": 8000}
+    assert snapshot["observed_at"] == clock[0] - 0.2
+
+    assert registry.record_catalog([_candidate("456", 7000)], complete=True,
+                                   observed_at=clock[0] - 0.1)
+    after = registry.snapshot(now=clock[0])
+    assert after["catalog_complete"] is True
+    assert [(row["id"], row["hub_price"]) for row in after["candidates"]] == [("456", 7000)]
+
+
+def test_stale_partial_page_cannot_restore_airport_removed_by_newer_complete_scan(tmp_path, monkeypatch):
+    clock = [1_900_000_000.9]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate(), _candidate("456")],
+                                   observed_at=clock[0] - 0.7)
+    assert registry.record_catalog([_candidate("456", 7000)], complete=True,
+                                   observed_at=clock[0] - 0.2)
+    before = registry.path.read_bytes()
+
+    assert not registry.record_catalog([_candidate(price=9000)],
+                                       observed_at=clock[0] - 0.4)
+    assert registry.path.read_bytes() == before
+    snapshot = registry.snapshot(now=clock[0])
+    assert snapshot["catalog_complete"] is True
+    assert [item["id"] for item in snapshot["candidates"]] == ["456"]
+
+
+@pytest.mark.parametrize("stamp", [True, 0, -1, float("nan"), float("inf"),
+                                      1_900_000_001, 1_900_000_000 - MAX_AGE_SECONDS - 1])
+def test_catalog_rejects_invalid_or_outdated_read_timestamps(tmp_path, monkeypatch, stamp):
+    monkeypatch.setattr("hub_expansion.time.time", lambda: 1_900_000_000)
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert not registry.record_catalog([_candidate()], observed_at=stamp)
+    assert not registry.path.exists()
+
+
 def test_partial_catalog_cannot_be_mistaken_for_complete_scan(tmp_path):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     assert registry.record_catalog([_candidate(), _candidate("456")], complete=True)

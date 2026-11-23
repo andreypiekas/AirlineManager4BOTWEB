@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2, proveniência e quarentena do preço dos hubs (G0)
+
+**Objetivo:** impedir que preços e pontos lidos antes de uma atualização do jogo substituam evidências mais recentes, preservando a rastreabilidade individual de cada campo e a cobertura real do catálogo.
+
+### Implementação e evidências
+
+- **`src/game_observations.py`:** a consulta do hub selecionado e a varredura incremental dos aeroportos encaminham o horário da segunda leitura estável do DOM. O horário registrado representa a coleta, inclusive quando o processamento posterior sofre atraso.
+- **`src/hub_expansion.py`:** o catálogo aceita horários numéricos fracionários válidos e rejeita timestamps inválidos, futuros ou expirados. Preço e pontos possuem versões temporais independentes, protegidas contra respostas fora de ordem. Dados antigos podem atualizar um campo ainda mais antigo sem reduzir a validade de outro já atualizado.
+- Contradições de preço ou pontos observadas no **mesmo instante** são colocadas em quarentena persistente. O ranking sinaliza os motivos `preco_hub_conflitante` e `pontos_hub_conflitantes` e mantém a compra inelegível até leitura comprovadamente posterior.
+- Uma varredura completa atrasada não descarta aeroportos encontrados depois dela nem reivindica cobertura total. Uma página antiga também não restaura aeroportos excluídos por varredura completa mais nova. Os registros legados conservam a interface anterior.
+- **`tests/test_hub_expansion.py` e `tests/test_game_observations.py`:** simulam ordem temporal, precisão subsegundo, conflitos e recuperação após reinício, independência de preço/pontos, timestamps inválidos, cobertura de varreduras completas e passagem do horário real pelos dois coletores.
+
+### Validação, pendências e reversão
+
+- Testes direcionados de catálogo e observações, suíte Windows `python -m pytest tests -q --ignore=tests/test_instalacao_linux.py`, Ruff (`src`, `tests`), compilação de `src` e `git diff --check` foram executados. O teste de instalação Linux exige ambiente POSIX.
+- **Gate G0, somente fixtures e verificações locais.** A homologação autenticada de preços, pontos, rotas, demanda residual, motor final e custos permanece pendente. As fases A2–A9 e gates G1–G5 não estão concluídos. As mudanças não habilitam compra real.
+- Sem execução de compra, mensagens Telegram, deploy no servidor ou merge na `main`. Reversão pelo commit desta entrega na branch de autonomia, conferidas as dependências. A PR #44 permanece independente.
+
 ## 2026-11-23 — Autonomia Total A2/A7, pesquisas inconclusivas e timestamps precisos (G0)
 
 **Objetivo:** fazer as observações reais de demanda com precisão subsegundo chegarem à fila de investigação e explicitar por hub pesquisas sem resultado ou com demanda contraditória.
