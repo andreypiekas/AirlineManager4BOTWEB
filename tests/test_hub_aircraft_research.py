@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 
+import pytest
 import web
 from hub_aircraft_research import HubAircraftResearchRegistry
 from hub_recommendations import rank_next_aircraft
@@ -42,6 +44,107 @@ def test_research_registry_is_isolated_and_idempotent(tmp_path):
     detached = first.snapshot()
     detached[0]["costs"]["aircraft_price"] = 0
     assert first.snapshot()[0]["costs"]["aircraft_price"] == 10000
+
+
+def test_legacy_migration_keeps_unidentified_engine_alongside_explicit_variants(tmp_path):
+    registry = HubAircraftResearchRegistry(tmp_path / "old-profile.json")
+    legacy = _scenario()
+    legacy["observed_at"] = 1_700_000_000
+    legacy["financial"]["observed_at"] = 1_700_000_001
+    legacy["costs"]["observed_at"] = 1_700_000_002
+    registry.path.write_text(json.dumps({"scenarios": [legacy]}), encoding="utf-8")
+
+    for engine_id in ("1", "2"):
+        observation = _scenario()
+        observation["engine_id"] = engine_id
+        observation["observed_at"] = 1_800_000_000 + int(engine_id)
+        observation["financial"]["observed_at"] += int(engine_id)
+        observation["costs"]["observed_at"] += int(engine_id)
+        assert registry.record(observation)
+
+    rows = registry.snapshot()
+    assert len(rows) == 3
+    assert rows[0] == legacy
+    assert "engine_id" not in rows[0]
+    assert {row["engine_id"] for row in rows[1:]} == {"1", "2"}
+    assert [row["observed_at"] for row in rows] == [1_700_000_000, 1_800_000_001, 1_800_000_002]
+    assert {row["engine_id"]: row["financial"]["observed_at"] for row in rows[1:]} == {
+        "1": 1_800_000_001, "2": 1_800_000_002}
+    assert {row["engine_id"]: row["costs"]["observed_at"] for row in rows[1:]} == {
+        "1": 1_800_000_001, "2": 1_800_000_002}
+
+    newer_legacy = deepcopy(legacy)
+    newer_legacy["observed_at"] += 10
+    assert registry.record(newer_legacy)
+    rows = registry.snapshot()
+    assert len(rows) == 3
+    assert [row for row in rows if "engine_id" not in row] == [newer_legacy]
+    assert {row["engine_id"] for row in rows if "engine_id" in row} == {"1", "2"}
+
+
+def test_engine_variants_deduplicate_by_id_with_reverse_routes(tmp_path):
+    registry = HubAircraftResearchRegistry(tmp_path / "research.json")
+    first = {**_scenario(), "engine_id": 1, "engine_name": "CFM56"}
+    second = {**_scenario(), "engine_id": "2", "engine_name": "IAE V2500"}
+    second["financial"] = {"source": "route_optimizer", "observed_at": 1_800_000_004,
+                           "profit_per_day": 4000}
+    assert registry.record(first)
+    assert registry.record(second)
+
+    refreshed = deepcopy(first)
+    refreshed["engine_id"] = "1"
+    refreshed["model"] = "a320"
+    refreshed["origin"], refreshed["destination"] = first["destination"], first["origin"]
+    refreshed["observed_at"] += 15
+    refreshed["costs"]["observed_at"] += 15
+    assert registry.record(refreshed)
+    rows = registry.snapshot()
+    assert len(rows) == 2
+    assert {row["engine_id"] for row in rows} == {"1", "2"}
+    assert next(row for row in rows if row["engine_id"] == "1") == refreshed
+    assert next(row for row in rows if row["engine_id"] == "2") == second
+
+    before = registry.path.read_bytes()
+    assert registry.record(refreshed)
+    assert registry.path.read_bytes() == before
+    assert len(registry.snapshot()) == 2
+
+
+@pytest.mark.parametrize("engine_id", [None, "", "   ", True, False, 1.5, -1,
+                                      [], {}, "CFM 56", "motor/1", "é", "x" * 65])
+def test_invalid_explicit_engine_id_is_rejected_without_mutating_storage(tmp_path, engine_id):
+    registry = HubAircraftResearchRegistry(tmp_path / "research.json")
+    assert registry.record(_scenario())
+    before = registry.path.read_bytes()
+    assert not registry.record({**_scenario(), "engine_id": engine_id})
+    assert registry.path.read_bytes() == before
+
+
+def test_engine_identifiers_are_explicit_and_preserve_distinct_values(tmp_path):
+    registry = HubAircraftResearchRegistry(tmp_path / "research.json")
+    for engine_id in ("0", "01", 1, "CFM56-5B", "cfm56-5b"):
+        assert registry.record({**_scenario(), "engine_id": engine_id})
+    assert {row["engine_id"] for row in registry.snapshot()} == {
+        "0", "01", "1", "CFM56-5B", "cfm56-5b"}
+    assert len(registry.snapshot()) == 5
+
+
+def test_engine_variants_remain_isolated_across_profiles_hubs_models_and_routes(tmp_path):
+    first = HubAircraftResearchRegistry(tmp_path / "first-profile.json")
+    second = HubAircraftResearchRegistry(tmp_path / "second-profile.json")
+    assert first.record({**_scenario(), "engine_id": "1"})
+    assert first.record({**_scenario(), "engine_id": "2"})
+    assert first.record({**_scenario(hub="789"), "engine_id": "1"})
+    assert first.record({**_scenario(destination="789"), "engine_id": "1"})
+    assert first.record({**_scenario(), "model": "B737", "engine_id": "1"})
+    assert second.record({**_scenario(), "engine_id": "1", "observed_at": 1_700_000_000})
+
+    assert len(first.snapshot()) == 5
+    assert len(second.snapshot()) == 1
+    assert second.snapshot()[0]["observed_at"] == 1_700_000_000
+    assert first.record({**_scenario(), "engine_id": "2", "observed_at": 1_800_000_009})
+    assert len(first.snapshot()) == 5
+    assert second.snapshot()[0]["observed_at"] == 1_700_000_000
 
 
 def test_corrupt_storage_and_missing_evidence_remain_pending(tmp_path):
