@@ -41,6 +41,7 @@ from i18n import language, t, tip
 from route_registry import RouteRegistry, endpoint
 from hub_registry import HubRegistry
 from hub_expansion import HubExpansionRegistry
+from engine_catalog import EngineCatalogRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
 from owned_hub_research_feed import build_owned_hub_research_queue
 from hub_recommendations import rank_next_aircraft
@@ -231,6 +232,7 @@ class WebDashboard:
             inventory,
             HubExpansionRegistry().demand_observations(owned_ids),
             load_market_evidence(),
+            engines=EngineCatalogRegistry().snapshot(),
         )
         investment_policy = InvestmentPolicy.from_config(self.cfg)
         report["investment_policy"] = investment_policy.report()

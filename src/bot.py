@@ -615,6 +615,12 @@ class Bot:
             from game_observations import collect_owned_hub_demand
 
             self._guard(lambda: collect_owned_hub_demand(self), "coletar demanda dos hubs")
+        if opt("collect_engine_catalog"):
+            from game_observations import collect_aircraft_engine_catalog
+
+            self._guard(lambda: collect_aircraft_engine_catalog(
+                self, per_cycle=max(1, min(10, self.config.get_int("settings", "engine_models_per_cycle", 2)))),
+                "pesquisar motores de aeronaves")
         if opt("auto_depart"):
             self._guard(self._depart_all, "decolar aeronaves")
         else:

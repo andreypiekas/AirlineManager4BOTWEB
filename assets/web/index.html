@@ -902,6 +902,7 @@ const EN = {
   "Rotas observadas": "Observed routes",
   "Cobertura parcial": "Partial coverage",
   "Pesquisa ainda pendente": "Research pending",
+  "Indisponível": "Unavailable",
   "Mais possibilidades aguardam pesquisa.": "Additional possibilities await research.",
   "Nenhum cenário pesquisado para esta base.": "No researched scenario for this hub.",
   "Não foi possível consultar recomendações.": "Could not load recommendations.",
@@ -1987,8 +1988,10 @@ function renderHubRecommendations(report) {
   }
   for (const task of researchItems) {
     const item = document.createElement("li");
+    const engine = task.engine_id ? " · " + (task.engine_label || task.engine_id) +
+      (task.engine_available === false ? " (" + tr("Indisponível") + ")" : "") : "";
     item.textContent = (task.hub_code || task.hub_id) + " ↔ " + task.destination_id +
-      " · " + task.model + " · " + tr("Pesquisa ainda pendente") +
+      " · " + task.model + engine + " · " + tr("Pesquisa ainda pendente") +
       " (" + (Array.isArray(task.pending) ? task.pending.length : 0) + ")";
     researchList.append(item);
   }

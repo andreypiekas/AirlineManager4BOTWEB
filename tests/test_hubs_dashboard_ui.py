@@ -252,6 +252,7 @@ const translations = {
   'Rotas observadas': 'Observed routes',
   'Cobertura parcial': 'Partial coverage',
   'Pesquisa ainda pendente': 'Research pending',
+  'Indisponível': 'Unavailable',
   'Mais possibilidades aguardam pesquisa.': 'Additional possibilities await research.',
   'Nenhuma recomendação corresponde ao modelo selecionado.':
     'No recommendations match the selected model.',
@@ -303,6 +304,12 @@ assert.equal($('hubResearchQueueList').children[0].textContent,
   'AAA ↔ 2 · <script>unsafe</script> · Research pending (1)');
 assert.equal($('hubResearchQueueList').children[1].textContent,
   'Additional possibilities await research.');
+report.research_queue.items[0].engine_id = '2';
+report.research_queue.items[0].engine_label = '<img src=x onerror=alert(1)>';
+report.research_queue.items[0].engine_available = false;
+renderHubRecommendations(report);
+assert.equal($('hubResearchQueueList').children[0].textContent,
+  'AAA ↔ 2 · <script>unsafe</script> · <img src=x onerror=alert(1)> (Unavailable) · Research pending (1)');
 assert.deepEqual($('hubRecommendationModel').children.map(option => option.value), ['', 'A320', 'B737']);
 assert.equal($('hubRecommendationModel').children[0].textContent, 'All models');
 assert.equal($('hubRecommendationsCount').textContent, 'Recommendations shown: 2 / 2');

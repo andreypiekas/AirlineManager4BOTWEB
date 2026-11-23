@@ -58,6 +58,8 @@ HELP: dict[str, str] = {
     "aircraft_model": "Modelo fixo usado somente quando Economizar para uma aeronave desejada estiver desativado. Deixe vazio para comprar a aeronave mais rentável.",
     "engine_preference": "Padrão do jogo mantém o comportamento anterior. Escolha motor específico, mais rápido ou mais econômico para validar a motorização antes de comprar. Se não for possível confirmar a seleção, a compra será bloqueada.",
     "aircraft_max_price": "Limite de preço sem meta definida; zero remove o limite.",
+    "engine_models_per_cycle": "Quantidade de modelos consultados no formulário de compra em cada ciclo para identificar variantes de motor. A consulta não escolhe motor nem compra aeronaves. O preço final ainda exige confirmação.",
+    "collect_engine_catalog": "Pesquisa variantes de motor nos formulários reais de compra, apenas para alimentar análises. Desligada por padrão. Não altera escolhas do formulário nem envia pedidos.",
     "auto_depart": "Decola as aeronaves disponíveis em cada ciclo, independentemente da opção Criar rotas para aeronaves estacionadas.",
     "block_duplicate_departures": "DESATIVADO (padrão): as rotas já existentes podem decolar, mesmo repetidas; proibir novas rotas duplicadas continua funcionando. ATIVADO: bloqueia Decolar todas quando houver duplicidades conhecidas e tenta despacho individual seguro, se habilitado.",
     "selective_depart": "Com duplicidades proibidas, tenta decolar somente aeronaves aprovadas e com um controle individual explícito no jogo. Nunca envia Decolar todas nessa situação; se o jogo não oferecer esse comando, não decola nenhuma por segurança.",
@@ -190,6 +192,8 @@ HELP_EN = {
                    "the goal: that way the goal comes sooner. Off, it only saves.",
     "aircraft_model": "Without a goal: always buys this model instead of the most profitable one.",
     "aircraft_max_price": "Without a goal: never buys aircraft more expensive than this. 0 = no limit.",
+    "engine_models_per_cycle": "Aircraft models inspected per cycle to discover engine variants from the game's order detail screen. This read-only check does not select an engine or buy aircraft. Final prices still require verification.",
+    "collect_engine_catalog": "Reads engine variants from aircraft order forms for research only. Off by default. It does not change selections or submit any orders.",
     # ---- options
     "auto_depart": "Departs ready aircraft each cycle, independently of automatic route creation.",
     "block_duplicate_departures": "OFF (default): existing aircraft depart even if their routes are duplicated; creation policy is separate. ON: blocks Depart All on known duplicate routes and attempts safe selective dispatch if enabled.",

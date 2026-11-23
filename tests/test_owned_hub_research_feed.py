@@ -91,6 +91,57 @@ def test_research_queue_is_hub_balanced_with_evidence_and_cannot_purchase():
         assert "cobertura_da_frota_a_confirmar" in row["pending"]
 
 
+def _engines(*, observed_at=NOW, model="A320", engine_id="1"):
+    return {"source": "game_aircraft_order_detail", "models": {"11": {
+        "source": "game_aircraft_order_detail", "model_id": "11", "model": model,
+        "observed_at": observed_at, "engine_prices_verified": False,
+        "model_detail_identity_verified": False,
+        "variants": [
+            {"engine_id": engine_id, "label": "Trent <prova>", "available": True,
+             "selected": True, "speed": 905, "fuel": 12.1},
+            {"engine_id": "2", "label": "Motor indisponível", "available": False,
+             "selected": False, "speed": None, "fuel": None},
+        ],
+    }}}
+
+
+def test_research_queue_schedules_distinct_engine_variants_across_owned_hubs():
+    rows = build_owned_hub_research_queue(
+        _inventory(), [_sample(), _sample("2941", "3139")],
+        _market(models=[{"id": 11, "name": "A320", "range": 6000,
+                         "capacity": 180, "price": 1700000}]),
+        engines=_engines(), now=NOW, max_items=4)
+    assert [row["hub_id"] for row in rows["items"]] == ["2926", "2941", "2926", "2941"]
+    assert [row["engine_id"] for row in rows["items"]] == ["1", "1", "2", "2"]
+    assert rows["has_more"] is False
+    for row in rows["items"]:
+        assert row["evidence"]["engine"]["source"] == "game_aircraft_order_detail"
+        assert row["engine_label"]
+        assert row["final_aircraft_price"] is None
+        assert row["purchase_eligible"] is False
+        assert "motor_a_pesquisar" not in row["pending"]
+        assert "preco_final_motor_a_confirmar" in row["pending"]
+        assert "identidade_modelo_detalhe_a_confirmar" in row["pending"]
+        if row["engine_id"] == "2":
+            assert "motor_indisponivel" in row["pending"]
+
+
+@pytest.mark.parametrize("engines", [
+    _engines(observed_at=NOW - 4 * 86400),
+    _engines(observed_at=NOW + 1),
+    _engines(model="B737"),
+    _engines(engine_id="../../bad"),
+    {},
+])
+def test_engine_evidence_rejected_when_stale_future_mismatched_or_invalid(engines):
+    result = build_owned_hub_research_queue(
+        _inventory(), [_sample()], _market(), engines=engines, now=NOW)
+    assert result["items"]
+    assert result["items"][0]["engine_id"] is None
+    assert "motor_a_pesquisar" in result["items"][0]["pending"]
+    assert result["items"][0]["evidence"]["engine"] is None
+
+
 @pytest.mark.parametrize("inventory, samples, market, blocker", [
     (_inventory(observed_at=NOW - 4 * 86400), [_sample()], _market(),
      "inventario_hubs_desatualizado"),

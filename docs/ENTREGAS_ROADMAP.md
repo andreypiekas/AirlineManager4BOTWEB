@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, catálogo incremental de variantes de motor A1/A2/A3 (G0)
+
+**Objetivo:** alimentar a fila de pesquisa dos hubs próprios com opções de motores observadas no formulário de cada modelo, sem inferir preço de aquisição e sem executar compras.
+
+### Implementação
+
+- Novo `EngineCatalogRegistry` por perfil, em `engine_catalog.json`, com validação de IDs e seleção, persistência atômica, validade de três dias e rotação incremental entre modelos, inclusive após tentativas inconclusivas.
+- `collect_aircraft_engine_catalog()` consulta até `engine_models_per_cycle` modelos por ciclo na sessão Selenium já utilizada pelo bot. A leitura de modelos e motores é repetida para evitar registrar DOM instável. O processo abre as telas existentes de pesquisa e detalhe, lê `select`/`radio` e encerra o popup. Nenhuma opção de motor é selecionada e nenhum pedido é enviado.
+- `build_owned_hub_research_queue()` combina hubs próprios, destinos, modelos e variantes observadas. Cada tarefa expõe ID e nome do motor, disponibilidade, velocidade/consumo quando informados e pendências individuais. Evidência vencida, conflitante ou ausente resulta em pesquisa pendente. Todos os cenários permanecem `purchase_eligible=false`.
+- `GET /api/hubs/recommendations` utiliza o catálogo por perfil. O painel mostra as variantes e seu estado de disponibilidade, com texto protegido e tradução PT-BR/inglês.
+- A coleta usa o interruptor independente `collect_engine_catalog=off` por padrão. O limite pode ser configurado na aba Aeronaves de 1 a 10 modelos por ciclo, com valor padrão 2. Testes cobrem estrutura de seleção, disponibilidade, dados inválidos, idempotência da consulta, rotação, preservação do histórico, perfis e apresentação do painel.
+
+### Testes, limites e reversão
+
+- Validação local em Windows com `python -m pytest -q --ignore=tests/test_instalacao_linux.py`, `python -m ruff check src scripts tests`, `python -m compileall -q src scripts` e `git diff --check`. Testes do instalador Linux continuam separados para execução POSIX.
+- **G0, implementação local testada.** O AJAX de detalhe do modelo é conhecido no código existente, mas ainda falta confirmar em sessão autenticada a identidade exibida no formulário, múltiplos motores por modelo e a forma de obter o preço final após a escolha. Os campos `model_detail_identity_verified=false` e `engine_prices_verified=false` registram essas limitações. Faltam igualmente prova da demanda residual, custos completos, associação de base e cobertura conclusiva da frota para avançar A3–A9.
+- Não houve compra no jogo, implantação, notificação externa, merge na `main` ou alteração da PR #44. A nova política de investimento segue desligada. Caso seja necessário reverter, usar `git revert` no commit desta entrega após conferir dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total, fila observável de pesquisa por hub próprio A2/A3 (G0)
 
 **Escopo:** transformar observações já disponíveis de hubs próprios, destinos pesquisados e catálogo de aeronaves em uma fila reproduzível de combinações para pesquisa posterior, com limites explícitos de evidência.

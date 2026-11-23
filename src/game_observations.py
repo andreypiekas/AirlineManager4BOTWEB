@@ -8,6 +8,8 @@ import threading
 
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
+from engine_catalog import EngineCatalogRegistry
+from engine_selection import EngineSelectionError, _ENGINE_OPTIONS_JS, parse_engine_catalog
 
 log = logging.getLogger("am4bot.observations")
 
@@ -397,5 +399,53 @@ def collect_owned_hub_demand(bot: object) -> int:
         count = registry.record_demand(origin, samples)
         log.info("Pesquisa de demanda: hub %s, %d destinos confirmados.", origin, count)
         return count
+    finally:
+        bot.close_popup(quiet=True)
+
+
+def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
+    """Inspect a bounded number of model detail screens without choosing or buying.
+
+    The model list and each engine form are stable double reads. The AJAX target
+    is cleared by bot.ajax(), so an old model's form cannot pass as a new one.
+    Model ID correspondence and final engine prices still require verification
+    from the actual order form before any investment is authorized.
+    """
+    from fleet import _MODELS_JS
+
+    if getattr(bot, "stopping", False) or type(per_cycle) is not int or per_cycle < 1:
+        return 0
+    registry = EngineCatalogRegistry()
+    collected = 0
+    bot.open_popup("routes_main.php", "Routes", "nav_routes")
+    try:
+        bot.ajax("ac_orders.php?first=true", "routeAction")
+        raw_models = _stable_read(bot, _MODELS_JS)
+        if not isinstance(raw_models, list):
+            return 0
+        models = [{"id": row.get("id"), "name": row.get("name")}
+                  for row in raw_models if isinstance(row, dict)]
+        for model in registry.next_models(models, per_cycle=per_cycle):
+            if getattr(bot, "stopping", False):
+                break
+            model_id, name = model["id"], model["name"]
+            registry.record_attempt(model_id, name)
+            try:
+                bot.ajax(f"ac_orders.php?mode=detail&id={model_id}&charter=0", "acModel")
+                groups = _stable_read(bot, _ENGINE_OPTIONS_JS)
+                catalog = parse_engine_catalog(groups)
+            except EngineSelectionError as exc:
+                log.info("Motor de %s (%s): pesquisa inconclusiva (%s).", name, model_id, exc)
+                continue
+            except Exception:
+                log.warning("Motor de %s (%s): formulário indisponível no jogo.", name, model_id)
+                continue
+            if registry.record(model_id, name, catalog):
+                collected += 1
+            else:
+                log.info("Motor de %s (%s): dados do formulário inconsistentes.", name, model_id)
+        if collected:
+            log.info("Pesquisa de motores: %d modelos atualizados no catálogo local.", collected)
+        return collected
     finally:
         bot.close_popup(quiet=True)
