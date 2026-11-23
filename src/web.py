@@ -50,6 +50,9 @@ from investment_policy import InvestmentPolicy, MODES
 from investment_journal import InvestmentJournal
 from expansion_metrics import build_expansion_metrics
 from portfolio_planner import compare_portfolio
+from portfolio_planner import compare_audited_portfolio
+from expansion_economics import rank_expansion_economics
+from audited_economics_registry import AuditedEconomicsRegistry
 from expansion_feasibility import assess_expansion
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
@@ -301,6 +304,49 @@ class WebDashboard:
                 "status": "diario_indisponivel",
                 "message": "Não foi possível auditar o diário de investimentos.",
             }
+
+    def audited_expansion(self) -> dict:
+        """Expose A3/A4 accounting from independently stored game evidence."""
+        record = AuditedEconomicsRegistry().snapshot()
+        policy = InvestmentPolicy.from_config(self.cfg)
+        proof = record["portfolio_evidence"]
+        evaluations = record["evaluations"]
+        portfolio = compare_audited_portfolio(
+            evaluations,
+            profile_id=paths.current().label,
+            snapshot_id=record["snapshot_id"] or "",
+            controls=proof.get("controls"),
+            hub_capacity=proof.get("hub_capacity"),
+            confidence_evidence=proof.get("confidence_evidence"),
+            diversification_evidence=proof.get("diversification_evidence"),
+            fleet_coverage_verified=proof.get("fleet_coverage_verified") is True,
+            research_coverage_verified=proof.get("research_coverage_verified") is True,
+            commitments_verified=proof.get("commitments_verified") is True,
+            max_single_investment=(policy.max_single_investment
+                                   if policy.enabled and policy.max_single_investment > 0 else None),
+            min_daily_profit=policy.min_daily_profit,
+            max_payback_days=policy.max_payback_days or None,
+            profit_weight=policy.profit_weight,
+            efficiency_weight=policy.efficiency_weight,
+            risk_weight=policy.risk_weight,
+            confidence_weight=policy.confidence_weight,
+            diversification_weight=policy.diversification_weight,
+            policy_valid=policy.valid and policy.enabled,
+        )
+        if record["status"] == "registro_invalido":
+            portfolio["blocking_reasons"].append("registro_a3_invalido")
+            portfolio["status"] = "inconclusivo"
+            portfolio["decision"] = "nao_comprar"
+        ranking = rank_expansion_economics(evaluations)
+        return {
+            "status": record["status"], "snapshot_id": record["snapshot_id"],
+            "profile_id": paths.current().label,
+            "evaluation_count": len(evaluations),
+            "evaluations": evaluations,
+            "a3_ranking": ranking,
+            "portfolio": portfolio,
+            "read_only": True, "execution_available": False,
+        }
 
     def game_source_probe(self) -> tuple[int, dict]:
         """Ask the bot worker to read its own game session during an idle wait."""
@@ -564,6 +610,8 @@ class WebDashboard:
                 if url.path == "/api/investment/metrics":
                     status, report = dashboard.investment_metrics()
                     return self._json(report, status)
+                if url.path == "/api/investment/audited-expansion":
+                    return self._json(dashboard.audited_expansion())
                 if url.path == "/api/routes":
                     return self._json(dashboard.routes())
                 if url.path == "/api/hubs":

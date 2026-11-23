@@ -714,6 +714,7 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <h2 data-t="Próxima aeronave por base">Próxima aeronave por base</h2>
         <p id="hubRecommendationsStatus" role="status" aria-live="polite"></p>
         <p id="hubRecommendationsScope" class="hub-section-note"></p>
+        <p id="hubAuditedExpansion" class="hub-section-note" role="status" aria-live="polite"></p>
         <div class="hubs-controls">
           <label class="hubs-field"><span data-t="Filtrar por modelo">Filtrar por modelo</span>
             <select id="hubRecommendationModel" aria-controls="hubRecommendationsGrid">
@@ -2110,6 +2111,17 @@ function renderHubExpansion(report) {
 }
 function renderHubRecommendations(report) {
   const grid = $("hubRecommendationsGrid"); grid.replaceChildren();
+  const audited = report.audited_expansion;
+  const auditedBest = audited?.portfolio?.best;
+  const auditCount = Number.isSafeInteger(audited?.evaluation_count) ? audited.evaluation_count : 0;
+  $("hubAuditedExpansion").textContent = auditedBest
+    ? tr("A3/A4 auditado") + " · " + auditCount + " " + tr("avaliações") + " · " +
+      tr("Melhor alternativa") + " " + auditedBest.hub_id + " / " +
+      auditedBest.identity.model_id + " / " + auditedBest.identity.engine_id + " · " +
+      hubMoney(auditedBest.profit_per_day) + "/" + tr("dia") + " · " +
+      (audited.portfolio.decision === "nao_comprar" ? tr("Compra bloqueada") : tr("Somente análise"))
+    : tr("A3/A4 auditado") + " · " + auditCount + " " + tr("avaliações") + " · " +
+      tr("Sem proposta com evidências completas") + " · " + tr("Compra bloqueada");
   const researchQueue = report.research_queue || {};
   const researchItems = Array.isArray(researchQueue.items) ? researchQueue.items : [];
   const researchBlockers = Array.isArray(researchQueue.blocking_reasons) ? researchQueue.blocking_reasons : [];
@@ -2503,12 +2515,16 @@ async function loadHubRecommendations() {
     const query = researchPageOffset > 0 && researchPageFingerprint
       ? "?research_offset=" + researchPageOffset +
         "&research_snapshot=" + encodeURIComponent(researchPageFingerprint) : "";
-    const report = await api("/api/hubs/recommendations" + query);
+    const [report, audited] = await Promise.all([
+      api("/api/hubs/recommendations" + query),
+      api("/api/investment/audited-expansion").catch(() => null),
+    ]);
     if (requestSequence !== researchRequestSequence) { return; }
     if (!report || !Array.isArray(report.hubs) || !Array.isArray(report.candidates)) {
       throw new Error("Invalid recommendations response");
     }
     hubRecommendationsReport = report;
+    report.audited_expansion = audited;
     const page = report.research_queue || {};
     researchPageOffset = Number.isSafeInteger(page.offset) ? page.offset : 0;
     researchPageFingerprint = typeof page.snapshot_fingerprint === "string"
@@ -2519,6 +2535,7 @@ async function loadHubRecommendations() {
     hubRecommendationsReport = null;
     $("hubRecommendationsStatus").textContent = tr("Não foi possível consultar recomendações.");
     $("hubRecommendationsScope").textContent = "";
+    $("hubAuditedExpansion").textContent = "";
     $("hubRecommendationsCount").textContent = "";
     $("hubRecommendationsGrid").replaceChildren();
     $("hubResearchPrev").disabled = true;

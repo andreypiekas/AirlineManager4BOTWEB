@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A3/A4/A7, registro auditável de oportunidades (G0)
+
+**Objetivo:** persistir evidências financeiras por perfil e apresentar no painel o planejamento global sem revalidar artificialmente observações vencidas.
+
+### Implementação
+
+- **`src/audited_economics_registry.py`:** registro atômico `audited_expansion.json` por perfil, com `snapshot_id`, evidência de cenário, motor, rota, custos e margem utilizados por `evaluate_expansion_economics`. Cada leitura recalcula a avaliação com o horário corrente, mantendo bloqueios por expiração. Casos conflitantes permanecem auditáveis e inelegíveis; conteúdo adulterado e perfis divergentes são recusados.
+- **`src/audited_economics_registry.py`:** evidências independentes de caixa, compromissos, cobertura e capacidade do hub podem ser associadas ao mesmo snapshot de A3. A4 revalida a origem e os identificadores desses controles antes de classificar propostas.
+- **`src/web.py`:** novo `GET /api/investment/audited-expansion`, protegido pela autenticação existente, expõe avaliações, ranking A3, análise de portfólio A4 e motivos para `nao_comprar`, com `read_only=true` e `execution_available=false`.
+- **`assets/web/index.html`:** seção **Próxima aeronave por base** apresenta resumo A3/A4, melhor combinação hub/modelo/motor/lucro quando houver evidência suficiente e aviso de compra bloqueada quando inconclusiva.
+- **`tests/test_audited_economics_registry.py`:** oito cenários de idempotência, expiração, conflito, armazenamento inválido, isolamento entre perfis, vínculos de cobertura, autenticação HTTP e bloqueio conservador.
+
+### Verificação, limites e reversão
+
+- Suíte Windows `rtk bypass python -m pytest tests -q --ignore=tests/test_instalacao_linux.py` aprovada (saída final 100%, código 0). `python -m ruff check src tests` e `python -m compileall -q src` aprovados. Testes direcionados do painel e economia também aprovados.
+- **Gate G0 com fixtures.** O registro ainda precisa de produtor autenticado de cenários completos, inclusive demanda residual, preço final por variante de motor, cobertura conclusiva e compromissos. O endpoint começa sem oportunidades aprovadas até que essas provas existam. A2–A9 e G1–G5 seguem pendentes, respeitados os seus critérios integrais.
+- Não houve compra real, chamada de Telegram, implantação no servidor nem merge em `main`. Reverter o commit desta entrega na branch de autonomia após examinar dependências, mantendo a PR #44 separada. Não habilitar execução de investimentos a partir desta consulta.
+
 ## 2026-11-23 — Autonomia Total A2, rotação contínua com evidências renovadas (G0)
 
 **Objetivo:** evitar que as leituras periódicas de preço, demanda ou motores reiniciem indefinidamente a pesquisa de um catálogo grande e impeçam a avaliação dos candidatos posteriores.
