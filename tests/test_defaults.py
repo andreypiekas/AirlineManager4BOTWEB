@@ -26,6 +26,14 @@ def test_option_fallbacks_agree_with_defaults_ini(defaults):
         assert defaults.getboolean("options", key) is value, key
 
 
+def test_nova_politica_de_investimento_inicia_desligada(defaults):
+    assert not defaults.getboolean("investment", "planning_enabled")
+    assert not defaults.getboolean("investment", "auto_buy_aircraft")
+    assert not defaults.getboolean("investment", "auto_buy_hub")
+    assert defaults.get("investment", "mode") == "analyze"
+    assert defaults.getboolean("options", "autobuy_aircraft")
+
+
 def test_no_personal_data_in_defaults(defaults):
     assert defaults.get("web", "remote_instances").strip() == ""
     assert defaults.get("web", "host") == "127.0.0.1"

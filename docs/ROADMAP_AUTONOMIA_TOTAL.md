@@ -2,7 +2,7 @@
 
 **Criado em:** 22/11/2026  
 **Base de análise:** main, commit cd15a32af2a9ed7c10a78017ce0f90c09b439216  
-**Estado deste documento:** proposta técnica; não representa funcionalidades já executadas, validadas em jogo ou implantadas.  
+**Estado deste documento:** planejamento com implementação incremental em andamento. Entregas, testes e pendências de homologação são registrados em [ENTREGAS_ROADMAP.md](ENTREGAS_ROADMAP.md).
 **Relação:** complementa [ROADMAP_HUBS_AERONAVES.md](ROADMAP_HUBS_AERONAVES.md), [ENTREGAS_ROADMAP.md](ENTREGAS_ROADMAP.md) e o trabalho em andamento na PR #44. Não substitui nem considera homologadas as pendências dessa PR.
 
 ## 1. Visão e regra central

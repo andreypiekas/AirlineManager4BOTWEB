@@ -42,6 +42,7 @@ from hub_registry import HubRegistry
 from hub_expansion import HubExpansionRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
 from hub_recommendations import rank_next_aircraft
+from investment_policy import InvestmentPolicy
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
 if TYPE_CHECKING:
@@ -196,7 +197,7 @@ class WebDashboard:
         """Rank proven research for owned hubs using independent cached reads."""
         routes = self.routes()
         cash, observed_at = recent_verified_money(self.bot, load_state())
-        return rank_next_aircraft(
+        report = rank_next_aircraft(
             HubRegistry().snapshot(routes),
             HubAircraftResearchRegistry().snapshot(),
             route_report=routes,
@@ -204,6 +205,8 @@ class WebDashboard:
             cash_observed_at=observed_at,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
         )
+        report["investment_policy"] = InvestmentPolicy.from_config(self.cfg).report()
+        return report
 
     def game_source_probe(self) -> tuple[int, dict]:
         """Ask the bot worker to read its own game session during an idle wait."""

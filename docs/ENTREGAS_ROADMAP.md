@@ -1,5 +1,30 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-22 — Autonomia Total, primeira onda A0/A1/A2/A3 (G0)
+
+**Escopo:** implementação incremental do `ROADMAP_AUTONOMIA_TOTAL.md` em `codex/autonomia-a0-a1-20261122`, preservando a `main` e a PR #44.
+
+### Implementado
+
+- **Contrato A0:** `src/opportunity_models.py` define a versão 1 da proposta de investimento somente leitura, com identidade de perfil e snapshot, hash reproduzível, cobertura comprovada por escopo, origem e prazo das evidências, IDs de hub/rota/modelo/motor, custos explícitos e motivos estruturados de bloqueio. Dados desconhecidos permanecem ausentes e impedem o estado `suggested`. Mesmo uma proposta sugerida retorna `approved=false` e não possui caminho de execução.
+- **Política A0:** `src/investment_policy.py` expõe separadamente os modos `analyze`, `approval` e `autonomous`, limites por aquisição/dia e os interruptores independentes de aeronave e hub. As novas opções `[investment]` começam desativadas. `GET /api/hubs/recommendations` informa a política e mantém `execution_available=false` no gate G0. A antiga opção `[options] autobuy_aircraft` conserva seu valor e fluxo anteriores.
+- **Motores A1:** `src/engine_selection.py` disponibiliza inventário somente leitura das variantes reais que o HTML explicita em `select` ou `radio`, identificadas pelo valor da opção, nome, disponibilidade, seleção e métricas observadas. A seleção explícita é revalidada após o evento de mudança, inclusive quando o DOM foi recriado. Divergências, opções desabilitadas, seletor ambíguo ou métricas ausentes causam bloqueio.
+- **Pesquisa A2:** `src/hub_aircraft_research.py` distingue a mesma aeronave/rota/hub por `engine_id`, preserva os registros legados sem identificador, rejeita IDs malformados e mantém persistência isolada por perfil.
+- **Ranking A3 inicial:** `src/hub_recommendations.py` avalia motores diferentes como candidatos independentes, com desempate estável. Uma variante explicitamente identificada só pode ser elegível quando o lucro e o preço final da aeronave estão vinculados ao mesmo `engine_id`, com confirmação de que o preço inclui o motor. Dados de outro motor não habilitam recomendação. O painel mostra a variante e informa que a nova política permanece em análise.
+
+### Evidência, testes e limitações
+
+- Os cenários dos testes são **simulados**. Nenhum novo modelo/motor/preço, hub de entrega ou compra foi homologado nesta onda em uma sessão autenticada do jogo. Nenhuma compra real, implantação ou alteração na `main` foi executada.
+- Os testes dirigidos cobrem contrato de evidência, custos desconhecidos, vínculos entre motor/modelo e snapshot, registros por perfil, catálogo, troca de motor e inconsistências pós-AJAX, ranking e política desligada. `python -m ruff check src scripts tests`, `python -m compileall -q src scripts` e `git diff --check` passaram no Windows. A suíte completa Windows foi executada com exclusão do teste de instalação dependente de permissões POSIX em `tests/test_instalacao_linux.py`.
+- A pesquisa atual ainda depende de captura comprovada de demanda residual, cobertura completa da frota e preço específico de cada motor. Não há seleção/validação real do hub de entrega `#hubSelection`, re-leitura de preço pós-AJAX ou confirmação de compra por identificadores independentes.
+- A seleção de motor `default` do comprador legado permanece como antes, sem o contrato novo de pré-compra. Uma mudança nesse caminho exige validação do DOM e proteção de preço/hub para não introduzir regressão no comportamento que já está em produção.
+- A transição G0→G1 depende de observações reais e recentes por modelo/motor/hub/rota. A0/A1/A2/A3 têm **implementação parcial testada localmente**, sem status de homologação ou implantação. O próximo bloco independente compreende integração dos leitores autenticados, geração de oportunidades verificáveis, orçamento de caixa e seleção de hub antes da compra.
+
+### Rastreabilidade e reversão
+
+- Branch de integração `codex/autonomia-a0-a1-20261122`. Commits de módulos incorporados `c678175` (motores), `0f62592` (pesquisa por motor) e `17482ad` (contrato de oportunidade). Demais ajustes de política, ranking, painel e testes acompanham o commit de integração.
+- A reversão desta onda é feita por `git revert` dos commits da branch, após revisar dependências. Os dados existentes permanecem legíveis e as novas flags estão desligadas por padrão. PR #44 continua independente, sujeita a revisão antes de qualquer merge.
+
 ## 2026-11-21 — Visão geral operacional e registros compactos
 
 ### Implementado

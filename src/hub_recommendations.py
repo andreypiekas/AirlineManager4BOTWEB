@@ -51,7 +51,7 @@ _HUB_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _FINANCIAL_SOURCES = {"route_optimizer", "game_research"}
 _COST_SOURCES = {"game_market", "game_research"}
 _RESEARCH_EVIDENCE_FIELDS = (
-    "source", "observed_at", "distance_km", "range_km", "runway_m",
+    "source", "observed_at", "engine_id", "engine_label", "distance_km", "range_km", "runway_m",
     "required_runway_m", "demand_remaining", "demand_verified",
     "range_verified", "runway_verified", "route_feasible", "route_available",
     "stopover", "financial", "costs",
@@ -112,6 +112,7 @@ def _ordering(row: dict) -> tuple:
     return (-profit if profit is not None else float("inf"),
             row["investment"] if row["investment"] is not None else float("inf"),
             row["hub_code"], row["hub_id"], row["model"].casefold(),
+            row["engine_id"] or "", row["engine_label"] or "",
             row["route_key"] or "", -(_number(row.get("observed_at")) or 0),
             row["model"],
             *(row[side][field] for side in ("origin", "destination")
@@ -180,6 +181,14 @@ def rank_next_aircraft(
         aircraft_model = str(scenario.get("model") or "").strip()
         if model is not None and aircraft_model.casefold() != model.strip().casefold():
             continue
+        # A propulsion variant is an independent investment alternative.
+        # Older research without an engine_id retains its original grouping.
+        engine_id = scenario.get("engine_id")
+        engine_id = engine_id.strip() if isinstance(engine_id, str) else None
+        engine_id = engine_id or None
+        engine_label = scenario.get("engine_label")
+        engine_label = engine_label.strip() if isinstance(engine_label, str) else None
+        engine_label = engine_label or None
         origin = _endpoint(scenario.get("origin"))
         destination = _endpoint(scenario.get("destination"))
         key = route_key(origin, destination)
@@ -204,6 +213,14 @@ def rank_next_aircraft(
                 and _recent(costs.get("observed_at"), now, MAX_AGE_SECONDS)
                 and investment is not None):
             missing.append("custos_a_confirmar")
+        if engine_id is not None:
+            # A model's base price and a projection for another propulsion
+            # variant cannot authorize a recommendation for this engine.
+            if (costs.get("engine_id") != engine_id
+                    or costs.get("aircraft_price_includes_engine") is not True):
+                missing.append("preco_motor_a_confirmar")
+            if financial.get("engine_id") != engine_id:
+                missing.append("lucro_motor_a_confirmar")
         if not aircraft_model:
             missing.append("modelo_a_confirmar")
         if not (key and (origin["id"] == hub_id or destination["id"] == hub_id)
@@ -288,7 +305,8 @@ def rank_next_aircraft(
                        and profit > 0 else None)
         candidate = {
             "hub_id": hub_id, "hub_code": hub["code"], "hub_name": hub["name"],
-            "model": aircraft_model, "route_key": key,
+            "model": aircraft_model, "engine_id": engine_id, "engine_label": engine_label,
+            "route_key": key,
             "origin": origin, "destination": destination,
             "observed_at": _number(scenario.get("observed_at")),
             "profit_per_day": round(profit, 2) if profit is not None else None,
@@ -300,7 +318,7 @@ def rank_next_aircraft(
         }
         candidates.append(candidate)
         if key and aircraft_model:
-            identity = (hub_id, aircraft_model.casefold(), key)
+            identity = (hub_id, aircraft_model.casefold(), key, engine_id)
             observations_by_route.setdefault(identity, []).append((candidate, scenario))
 
     # A later game observation replaces an earlier one for the same hub,

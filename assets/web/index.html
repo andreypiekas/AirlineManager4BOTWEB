@@ -831,6 +831,7 @@ const EN = {
   "Recomendação disponível": "Recommendation available", "Rota ocupada": "Route occupied",
   "Rota indisponível": "Route unavailable", "Rota inviável": "Infeasible route",
   "Lucro adicional estimado/dia": "Estimated added profit/day", "Rota sugerida": "Suggested route",
+  "Motor pesquisado": "Researched engine", "Somente análise de investimentos": "Investment analysis only",
   "Verificações pendentes": "Pending verifications", "Verificado em": "Verified at",
   "Nenhum cenário pesquisado para esta base.": "No researched scenario for this hub.",
   "Não foi possível consultar recomendações.": "Could not load recommendations.",
@@ -1760,7 +1761,8 @@ function renderHubRecommendations(report) {
   $("hubRecommendationsCount").textContent = tr("Recomendações exibidas") + ": " + rows.length + " / " + hubs.length;
   const approved = Array.isArray(report.recommendations) ? report.recommendations.length : 0;
   $("hubRecommendationsStatus").textContent = tr("Cenários aprovados") + ": " + approved +
-    " · " + tr("Bases analisadas") + ": " + hubs.length;
+    " · " + tr("Bases analisadas") + ": " + hubs.length +
+    (report.investment_policy?.execution_available === false ? " · " + tr("Somente análise de investimentos") : "");
   $("hubRecommendationsScope").textContent =
     (candidates.length ? "" : tr("Aguardando pesquisa de demanda, custos e rotas no jogo.") + " ") +
     (report.cash_observed_at ? tr("Saldo conferido em") + ": " + hubDate(report.cash_observed_at) + "."
@@ -1779,6 +1781,10 @@ function renderHubRecommendations(report) {
     if (candidate) {
       const route = airportLabel(candidate.origin) + " ↔ " + airportLabel(candidate.destination);
       addHubMetric(metrics, "Modelo pesquisado", candidate.model || tr("Sem dados"));
+      if (candidate.engine_id) {
+        addHubMetric(metrics, "Motor pesquisado", candidate.engine_label
+          ? candidate.engine_label + " (" + candidate.engine_id + ")" : candidate.engine_id);
+      }
       addHubMetric(metrics, "Rota sugerida", route);
       addHubMetric(metrics, "Lucro adicional estimado/dia", hubMoney(candidate.profit_per_day));
       addHubMetric(metrics, "Investimento inicial", hubMoney(candidate.investment));

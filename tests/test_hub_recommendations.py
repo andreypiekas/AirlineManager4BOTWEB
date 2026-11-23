@@ -86,6 +86,48 @@ def test_ranks_best_viable_candidate_per_hub_in_deterministic_order():
     assert first["hubs"][0]["scenario_count"] == 2
 
 
+def test_variantes_de_motor_sao_oportunidades_independentes():
+    motor_a = _scenario(
+        engine_id="engine-1", engine_label="Trent 970",
+        financial={"source": "route_optimizer", "observed_at": NOW,
+                   "profit_per_day": 2000, "engine_id": "engine-1"},
+        costs={"source": "game_market", "observed_at": NOW,
+               "aircraft_price": 10000, "route_fee": 1000, "hangar_price": 0,
+               "engine_id": "engine-1", "aircraft_price_includes_engine": True},
+    )
+    motor_b = _scenario(
+        engine_id="engine-2", engine_label="Trent 972",
+        financial={"source": "route_optimizer", "observed_at": NOW,
+                   "profit_per_day": 2800, "engine_id": "engine-2"},
+        costs={"source": "game_market", "observed_at": NOW,
+               "aircraft_price": 12000, "route_fee": 1000, "hangar_price": 0,
+               "engine_id": "engine-2", "aircraft_price_includes_engine": True},
+    )
+    ranked = _rank(scenarios=[motor_a, motor_b])
+    assert len(ranked["candidates"]) == 2
+    assert all(item["status"] == "viavel" for item in ranked["candidates"])
+    assert ranked["recommendations"][0]["engine_id"] == "engine-2"
+    assert ranked == _rank(scenarios=[motor_b, motor_a])
+
+
+def test_variacao_de_motor_sem_preco_final_e_lucro_vinculados_fica_pendente():
+    unknown_price = _scenario(engine_id="engine-2", engine_label="Trent 972")
+    wrong_engine = _scenario(
+        engine_id="engine-1", engine_label="Trent 970",
+        costs={"source": "game_market", "observed_at": NOW,
+               "aircraft_price": 10000, "route_fee": 1000, "hangar_price": 0,
+               "engine_id": "engine-2", "aircraft_price_includes_engine": True},
+        financial={"source": "route_optimizer", "observed_at": NOW,
+                   "profit_per_day": 2500, "engine_id": "engine-2"},
+    )
+    report = _rank(scenarios=[unknown_price, wrong_engine])
+    assert report["recommendations"] == []
+    for row in report["candidates"]:
+        assert row["status"] == "dados_a_confirmar"
+        assert "preco_motor_a_confirmar" in row["pending"]
+        assert "lucro_motor_a_confirmar" in row["pending"]
+
+
 def test_newer_observation_supersedes_older_profitable_route_even_if_reversed():
     older = _scenario(
         observed_at=NOW - 120,
