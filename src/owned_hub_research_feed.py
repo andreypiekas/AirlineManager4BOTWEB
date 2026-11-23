@@ -157,11 +157,17 @@ def build_owned_hub_research_queue(
                     and _fresh(market.get("observed_at"), now))
 
     hubs = {}
+    conflicted_hub_ids = set()
     for raw in inventory.get("hubs", []) if isinstance(inventory.get("hubs"), list) else []:
         if isinstance(raw, dict) and isinstance(raw.get("id"), str):
             hub_id = raw["id"]
             if _GAME_ID.fullmatch(hub_id):
-                hubs[hub_id] = {"id": hub_id, "code": str(raw.get("code") or "")}
+                hub = {"id": hub_id, "code": str(raw.get("code") or "")}
+                if hub_id in hubs and hubs[hub_id] != hub:
+                    conflicted_hub_ids.add(hub_id)
+                hubs[hub_id] = hub
+    for hub_id in conflicted_hub_ids:
+        hubs.pop(hub_id)
 
     models = _models(market.get("models")) if market_fresh else []
     # A route is one research subject, even when cache migration or a partial
@@ -225,6 +231,8 @@ def build_owned_hub_research_queue(
     blockers = []
     if not inventory_fresh:
         blockers.append("inventario_hubs_desatualizado")
+    if conflicted_hub_ids:
+        blockers.append("inventario_hubs_conflitante")
     if not market_fresh:
         blockers.append("catalogo_aeronaves_desatualizado")
     if not models:

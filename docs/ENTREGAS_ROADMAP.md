@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A8, inventário inequívoco e transação simulada em duas etapas (G0)
+
+**Objetivo:** impedir que IDs contraditórios de hubs próprios alimentem a pesquisa de oportunidades e exercer a sequência de expansão hub → nova pesquisa → aeronave com reconciliação entre as etapas.
+
+### Implementação e evidências
+
+- **A2 — `src/owned_hub_research_feed.py`:** a fila detecta o mesmo ID de hub próprio associado a códigos divergentes dentro de um inventário, descarta essa identidade e registra `inventario_hubs_conflitante`. A pesquisa fica bloqueada até um inventário coerente, inclusive quando há outros hubs válidos. Repetições idênticas de ID/código continuam permitidas.
+- **A8 — `src/hub_purchase.py`:** `SimulatedExpansionCoordinator` utiliza o mesmo `InvestmentJournal` e a política de investimento nas duas fases. A compra simulada do hub segue a confirmação independente existente. Uma chamada posterior de aquisição simulada de aeronave exige uma intenção de hub já `CONFIRMED`, pesquisa com novo `snapshot_id`, prova atual de propriedade vinculada ao perfil e ao hub e checkout de aeronave revalidado pelo executor A5. A intenção de hub sobrevive ao reinício, sem reenviar a aquisição.
+- **Testes — `tests/test_owned_hub_research_feed.py` e `tests/test_hub_purchase.py`:** conflitos de identidade e invalidação do cursor, duplicatas benignas, bloqueio da segunda fase após timeout e com snapshot antigo, aprovação separada, reinício idempotente e recusa de aeronave depois da compra confirmada do hub.
+
+### Verificação, limites e reversão
+
+- A suíte Windows completa (`python -m pytest -q tests --ignore=tests/test_instalacao_linux.py`) terminou com código 0, excluindo apenas o teste de instalador que depende de permissões POSIX. Testes dirigidos de A8 (16), Ruff em `src`/`tests`, `compileall src` e `git diff --check` também aprovados.
+- Gate **G0**. A orquestração usa gateways SQLite simulados e exige prova explícita de posse e nova observação. A homologação autenticada da compra de hub, confirmação da propriedade, pesquisa pós-compra e configuração da aeronave ainda é necessária antes de qualquer gasto real ou autonomia G3–G5.
+- Nenhuma compra real, Telegram, implantação, alteração de configuração produtiva ou merge na `main`. A PR #44 segue separada. Reverter o commit desta entrega na branch `codex/autonomia-a0-a1-20261122` após verificar dependências. Os registros de simulação são isolados por perfil e a [PR de acompanhamento #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46) permanece em rascunho.
+
 ## 2026-11-23 — Autonomia Total A1/A4/A5/A6/A7, prévia de aquisição e integridade de catálogo (G0)
 
 **Objetivo:** conectar a melhor oportunidade global auditada aos contratos de intenção e pré-compra, distinguindo o preço de aeronave + motor das despesas futuras que consomem o orçamento total.

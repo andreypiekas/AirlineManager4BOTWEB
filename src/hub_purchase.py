@@ -13,7 +13,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from uuid import uuid4
 
-from investment_executor import SimulatedProcessCrash
+from investment_executor import (
+    SimulatedAircraftGateway,
+    SimulatedInvestmentExecutor,
+    SimulatedProcessCrash,
+)
 from investment_journal import InvestmentJournal
 from investment_policy import InvestmentPolicy
 
@@ -294,3 +298,40 @@ def validate_aircraft_after_hub(hub_intent: Mapping, aircraft_plan: Mapping,
             or ownership.get("observed_at", 0) < hub_intent.get("updated_at", now)):
         reasons.append("posse_atualizada_ainda_nao_comprovada")
     return {"ready": not reasons, "reasons": reasons, "simulated": True}
+
+
+class SimulatedExpansionCoordinator:
+    """Keep the two purchases in one profile journal across process restarts.
+
+    Phase two must be called with a *new* observed snapshot after the first
+    purchase is confirmed. Its aircraft checkout is independently revalidated
+    by the existing simulator immediately before submission.
+    """
+
+    def __init__(self, journal: InvestmentJournal, policy: InvestmentPolicy):
+        self.journal = journal
+        self.hubs = SimulatedHubExecutor(journal, policy)
+        self.aircraft = SimulatedInvestmentExecutor(journal, policy)
+
+    def acquire_hub(self, plan: Mapping, gateway: SimulatedHubGateway, *,
+                    approved: bool = False, reserve: int = 0) -> dict:
+        return {**self.hubs.run(plan, gateway, approved=approved, reserve=reserve),
+                "stage": "hub"}
+
+    def acquire_aircraft(self, hub_intent_key: str, plan: Mapping,
+                         ownership: Mapping, gateway: SimulatedAircraftGateway, *,
+                         approved: bool = False, reserve: int = 0) -> dict:
+        """Advance only after independently verified ownership and new research."""
+        hub_intent = self.journal.get(hub_intent_key)
+        if hub_intent is None or hub_intent.get("kind") != "hub":
+            return {"state": "BLOCKED", "stage": "aircraft", "simulated": True,
+                    "reasons": ["hub_sem_intencao_confirmada"]}
+        if not isinstance(plan, Mapping) or not isinstance(ownership, Mapping):
+            return {"state": "BLOCKED", "stage": "aircraft", "simulated": True,
+                    "reasons": ["plano_ou_posse_invalidos"]}
+        gate = validate_aircraft_after_hub(hub_intent, plan, ownership)
+        if not gate["ready"]:
+            return {"state": "BLOCKED", "stage": "aircraft", "simulated": True,
+                    "reasons": gate["reasons"]}
+        result = self.aircraft.run(plan, gateway, approved=approved, reserve=reserve)
+        return {**result, "stage": "aircraft", "hub_intent_key": hub_intent_key}

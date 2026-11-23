@@ -373,6 +373,40 @@ def test_conflicting_latest_samples_are_quarantined_without_blocking_other_hubs(
         assert report["hub_coverage"][1]["conflicted_routes"] == 0
 
 
+@pytest.mark.parametrize("codes", [("XAP", "DTW"), ("DTW", "XAP")])
+def test_conflicting_owned_hub_identity_invalidates_pending_research(codes):
+    samples = [_sample(), _sample("2941", "3140")]
+    baseline = build_owned_hub_research_queue(
+        _inventory(), samples, _market(), now=NOW, max_items=1,
+    )
+    inventory = _inventory()
+    inventory["hubs"] = [
+        {"id": "2926", "code": code} for code in codes
+    ] + [{"id": "2941", "code": "GRU"}]
+
+    report = build_owned_hub_research_queue(
+        inventory, samples, _market(), now=NOW, max_items=1,
+        offset=1, expected_fingerprint=baseline["snapshot_fingerprint"],
+    )
+    assert "inventario_hubs_conflitante" in report["blocking_reasons"]
+    assert report["items"] == []
+    assert report["total_candidates"] == 0
+    assert report["cursor_reset"] is True
+    assert report["purchase_eligible"] is False
+
+
+def test_repeated_identical_owned_hub_identity_remains_usable():
+    inventory = _inventory()
+    inventory["hubs"].append(deepcopy(inventory["hubs"][0]))
+    report = build_owned_hub_research_queue(
+        inventory, [_sample()], _market(), now=NOW,
+    )
+    assert report["blocking_reasons"] == []
+    assert report["owned_hubs"] == 2
+    assert report["sampled_routes"] == 1
+    assert len(report["items"]) == 2
+
+
 def test_newer_observation_resolves_previous_conflict_without_fallback():
     older = _sample(observed_at=NOW - 240)
     first = _sample(observed_at=NOW - 120)

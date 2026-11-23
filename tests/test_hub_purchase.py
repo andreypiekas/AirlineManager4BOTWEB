@@ -11,11 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import investment_journal  # noqa: E402
 from hub_purchase import (  # noqa: E402
+    SimulatedExpansionCoordinator,
     SimulatedHubExecutor,
     SimulatedHubGateway,
     validate_aircraft_after_hub,
     validate_hub_preflight,
 )
+from investment_executor import SimulatedAircraftGateway  # noqa: E402
 from investment_journal import InvestmentJournal  # noqa: E402
 from investment_policy import InvestmentPolicy  # noqa: E402
 
@@ -66,6 +68,113 @@ def _ownership(intent):
             "profile_id": "main", "snapshot_id": NEW_SNAPSHOT,
             "hub_id": "123", "after_owned": True, "coverage_complete": True,
             "observed_at": time.time()}
+
+
+def _aircraft_checkout():
+    return {"source": "simulation_checkout", "simulated": True,
+            "profile_id": "main", "snapshot_id": NEW_SNAPSHOT,
+            "observed_at": time.time(), "hub_selection_id": "123",
+            "origin_id": "123", "destination_id": "456", "model_id": "A380-800",
+            "engine_selected_id": "EA1", "hub_selection_confirmed": True,
+            "model_available": True, "engine_available": True,
+            "route_available": True, "route_feasible": True,
+            "demand_verified": True, "capacity_available": True,
+            "price_includes_engine": True, "checkout_cost": 30000,
+            "cash": 100000, "commitments_verified": True,
+            "pending_commitments": 2000}
+
+
+def test_two_stage_coordinator_revalidates_new_snapshot_and_never_resubmits(tmp_path):
+    journal = InvestmentJournal(tmp_path / "journal.sqlite3", profile_id="main",
+                                simulation=True)
+    coordinator = SimulatedExpansionCoordinator(journal, _policy())
+    hub_gateway = SimulatedHubGateway(_checkout(), ownership_store=tmp_path / "owned.sqlite3")
+    aircraft_gateway = SimulatedAircraftGateway(
+        _aircraft_checkout(), order_store=tmp_path / "orders.sqlite3"
+    )
+    aircraft_plan = {**_aircraft_plan(), "estimated_cost": 30000}
+
+    hub_result = coordinator.acquire_hub(_plan(), hub_gateway, approved=True)
+    assert hub_result["state"] == "CONFIRMED"
+    assert hub_result["stage"] == "hub"
+    hub_intent = journal.get(hub_result["intent_key"])
+
+    wrong_snapshot = coordinator.acquire_aircraft(
+        hub_result["intent_key"], {**aircraft_plan, "snapshot_id": SNAPSHOT},
+        _ownership(hub_intent), aircraft_gateway, approved=True,
+    )
+    assert wrong_snapshot["state"] == "BLOCKED"
+    assert aircraft_gateway.submit_calls == 0
+
+    unapproved = coordinator.acquire_aircraft(
+        hub_result["intent_key"], aircraft_plan, _ownership(hub_intent),
+        aircraft_gateway,
+    )
+    assert unapproved["state"] == "BLOCKED"
+    assert aircraft_gateway.submit_calls == 0
+
+    result = coordinator.acquire_aircraft(
+        hub_result["intent_key"], aircraft_plan, _ownership(hub_intent),
+        aircraft_gateway, approved=True,
+    )
+    assert result["state"] == "CONFIRMED"
+    assert result["hub_intent_key"] == hub_result["intent_key"]
+    assert result["stage"] == "aircraft"
+    assert journal.get(result["intent_key"])["submit_attempts"] == 1
+
+    restarted = SimulatedExpansionCoordinator(
+        InvestmentJournal(tmp_path / "journal.sqlite3", profile_id="main",
+                          simulation=True), _policy(),
+    )
+    repeat = restarted.acquire_aircraft(
+        hub_result["intent_key"], aircraft_plan, _ownership(hub_intent),
+        aircraft_gateway, approved=True,
+    )
+    assert repeat["state"] == "CONFIRMED"
+    assert hub_gateway.submit_calls == aircraft_gateway.submit_calls == 1
+
+
+def test_two_stage_coordinator_blocks_unknown_hub_and_keeps_hub_after_aircraft_refusal(
+    tmp_path,
+):
+    journal = InvestmentJournal(tmp_path / "journal.sqlite3", profile_id="main",
+                                simulation=True)
+    coordinator = SimulatedExpansionCoordinator(journal, _policy())
+    hub_gateway = SimulatedHubGateway(
+        _checkout(), outcome="timeout", ownership_store=tmp_path / "owned.sqlite3"
+    )
+    aircraft_gateway = SimulatedAircraftGateway(
+        _aircraft_checkout(), outcome="refused", order_store=tmp_path / "orders.sqlite3"
+    )
+    aircraft_plan = {**_aircraft_plan(), "estimated_cost": 30000}
+
+    unknown = coordinator.acquire_hub(_plan(), hub_gateway, approved=True)
+    assert unknown["state"] == "UNKNOWN"
+    blocked = coordinator.acquire_aircraft(
+        unknown["intent_key"], aircraft_plan, _ownership(journal.get(unknown["intent_key"])),
+        aircraft_gateway, approved=True,
+    )
+    assert blocked["state"] == "BLOCKED"
+    assert aircraft_gateway.submit_calls == 0
+
+    independent_hub_reader = SimulatedHubGateway(
+        _checkout(), ownership_store=tmp_path / "owned.sqlite3"
+    )
+    assert coordinator.hubs.reconcile(
+        unknown["intent_key"], independent_hub_reader,
+    )["state"] == "CONFIRMED"
+    result = coordinator.acquire_aircraft(
+        unknown["intent_key"], aircraft_plan, _ownership(journal.get(unknown["intent_key"])),
+        aircraft_gateway, approved=True,
+    )
+    assert result["state"] == "FAILED"
+    assert aircraft_gateway.submit_calls == 1
+    assert hub_gateway.submit_calls == 1
+    assert independent_hub_reader.read_checkout()["before_owned"] is True
+    assert coordinator.acquire_hub(
+        _plan(), independent_hub_reader, approved=True,
+    )["state"] == "CONFIRMED"
+    assert independent_hub_reader.submit_calls == 0
 
 
 def test_simulated_hub_requires_explicit_approval_and_proven_ownership(tmp_path):
