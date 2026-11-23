@@ -18,6 +18,9 @@ indicator is reported without exposing its URL.
 ``aircraft_order_hub_selection`` checks the currently selected option against
 the live ``#hubSelection`` value. This proves consistency of a visible DOM
 selection only, and cannot establish a purchase or ownership of that hub.
+``aircraft_checkout_diagnostics`` reports the structural location of possible
+price fields and engine controls inside ``#acModel``. Candidate counts are
+diagnostic only: they never verify the final price for a selected motor.
 The source view depends on the popup currently displayed. Missing selectors are
 expected when their corresponding game pane is closed.
 
@@ -55,6 +58,34 @@ _PAGINATION_EVIDENCE = (
     "total_pages_route_count_numeric",
     "loading_indicator_present",
 )
+
+# Structural leads for inspecting the actual aircraft checkout DOM. The game
+# has not yet supplied an authenticated, verified final-price selector. These
+# fixed selectors expose counts and currency-shape flags, never text or prices.
+_CHECKOUT_PRICE_CANDIDATES = (
+    ("data_price", "#acModel [data-price]"),
+    ("data_final_price", "#acModel [data-final-price]"),
+    ("data_total_price", "#acModel [data-total-price]"),
+    ("id_price", "#acModel [id*='price' i]"),
+    ("id_cost", "#acModel [id*='cost' i]"),
+    ("class_price", "#acModel [class*='price' i]"),
+    ("class_cost", "#acModel [class*='cost' i]"),
+)
+
+_CHECKOUT_CONTROL_SELECTORS = {
+    "all_selects": "#acModel select",
+    "all_radios": "#acModel input[type='radio']",
+    "engine_named_selects": (
+        "#acModel select[name*='engine' i], #acModel select[id*='engine' i], "
+        "#acModel select[name*='motor' i], #acModel select[id*='motor' i]"
+    ),
+    "engine_named_radios": (
+        "#acModel input[type='radio'][name*='engine' i], "
+        "#acModel input[type='radio'][name*='motor' i]"
+    ),
+    "purchase_buttons": "#acModel #btnPurchaseIntro",
+    "insufficient_balance_warnings": "#acModel #accountLow",
+}
 
 # Only these literal selectors and attribute *names* may appear in the result.
 # Attribute values are examined exclusively to extract strictly numeric IDs.
@@ -122,7 +153,9 @@ _SOURCES = (
 
 # This script is intentionally self-contained and uses only synchronous DOM reads.
 # It never serializes source nodes, arbitrary attribute values or global objects.
-PROBE_JS = "const specs = " + json.dumps(_SOURCES) + ";\n" + r"""
+PROBE_JS = ("const specs = " + json.dumps(_SOURCES) + ";\n"
+            + "const checkoutPriceSpecs = " + json.dumps(_CHECKOUT_PRICE_CANDIDATES) + ";\n"
+            + "const checkoutControlSpecs = " + json.dumps(_CHECKOUT_CONTROL_SELECTORS) + ";\n") + r"""
 const sampleLimit = 40;
 const isNumericId = value => /^[1-9][0-9]{0,13}$/.test(String(value ?? '').trim());
 const pageNumber = value => {
@@ -309,6 +342,44 @@ if (orderHubSelectors.length === 1) {
 }
 result.aircraft_order_hub_selection = orderHubSelection;
 
+// Snapshot only structural clues for the unverified final-price field.
+// Never emit checkout text, attributes, registration, or potential balances.
+const checkoutPanels = Array.from(document.querySelectorAll('#acModel'));
+const checkoutModelId = checkoutPanels.length === 1 ?
+  safeAttribute(checkoutPanels[0], 'data-model-id') : null;
+const checkoutControls = {};
+for (const [key, selector] of Object.entries(checkoutControlSpecs)) {
+  checkoutControls[key] = document.querySelectorAll(selector).length;
+}
+const checkoutPrices = {};
+for (const [key, selector] of checkoutPriceSpecs) {
+  const nodes = Array.from(document.querySelectorAll(selector));
+  let currencyTextNodes = 0;
+  let numericPriceAttributeNodes = 0;
+  for (const node of nodes) {
+    const text = String(node.textContent || '').slice(0, 256);
+    if (/(?:US\s*\$|USD\s*|\$)\s*[1-9][0-9,.]{0,14}/i.test(text)) {
+      currencyTextNodes++;
+    }
+    if (['data-price', 'data-final-price', 'data-total-price'].some(name =>
+      isNumericId(safeAttribute(node, name)))) {
+      numericPriceAttributeNodes++;
+    }
+  }
+  checkoutPrices[key] = {
+    count: nodes.length,
+    currency_text_nodes: currencyTextNodes,
+    numeric_price_attribute_nodes: numericPriceAttributeNodes
+  };
+}
+result.aircraft_checkout_diagnostics = {
+  detail_panel_count: checkoutPanels.length,
+  detail_model_id: isNumericId(checkoutModelId) ?
+    String(checkoutModelId).trim() : null,
+  controls: checkoutControls,
+  price_candidates: checkoutPrices
+};
+
 const hasStatus = typeof window !== 'undefined' &&
   window.statusData !== null && typeof window.statusData === 'object' &&
   !Array.isArray(window.statusData);
@@ -406,6 +477,29 @@ def _sanitize(raw: Any) -> dict:
         hub_id = None
         if selection_status == "dom_consistent":
             selection_status = "unverified"
+    checkout = raw.get("aircraft_checkout_diagnostics")
+    checkout = checkout if isinstance(checkout, dict) else {}
+    detail_panel_count = _count(checkout.get("detail_panel_count"))
+    detail_model_id = checkout.get("detail_model_id")
+    if (detail_panel_count != 1 or type(detail_model_id) is not str
+            or _NUMERIC_ID.fullmatch(detail_model_id) is None):
+        detail_model_id = None
+    checkout_controls = checkout.get("controls")
+    checkout_controls = checkout_controls if isinstance(checkout_controls, dict) else {}
+    checkout_prices = checkout.get("price_candidates")
+    checkout_prices = checkout_prices if isinstance(checkout_prices, dict) else {}
+    price_candidates = {}
+    for key, selector in _CHECKOUT_PRICE_CANDIDATES:
+        candidate = checkout_prices.get(key)
+        candidate = candidate if isinstance(candidate, dict) else {}
+        count = _count(candidate.get("count"))
+        price_candidates[key] = {
+            "selector": selector,
+            "count": count,
+            "currency_text_nodes": min(count, _count(candidate.get("currency_text_nodes"))),
+            "numeric_price_attribute_nodes": min(
+                count, _count(candidate.get("numeric_price_attribute_nodes"))),
+        }
     return {
         "schema_version": 1,
         "sources": cleaned,
@@ -415,6 +509,15 @@ def _sanitize(raw: Any) -> dict:
             "selected_option_count": selected_count,
             "selected_hub_id": hub_id,
             "status": selection_status,
+            "read_only": True,
+        },
+        "aircraft_checkout_diagnostics": {
+            "detail_panel_count": detail_panel_count,
+            "detail_model_id": detail_model_id,
+            "controls": {key: _count(checkout_controls.get(key))
+                         for key in _CHECKOUT_CONTROL_SELECTORS},
+            "price_candidates": price_candidates,
+            "price_verified": False,
             "read_only": True,
         },
         "pagination": {

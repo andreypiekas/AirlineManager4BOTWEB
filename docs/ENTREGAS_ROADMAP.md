@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A1/A5, diagnóstico estrutural do checkout de aeronaves (G0)
+
+**Objetivo:** localizar com segurança possíveis fontes do preço final e da configuração de motor no formulário de encomenda, facilitando a homologação da etapa que ainda impede uma compra baseada em plano.
+
+### Implementação e evidência
+
+- **`src/game_source_probe.py`:** a sondagem administrativa de somente leitura do DOM passa a incluir `aircraft_checkout_diagnostics`. O retorno identifica o número de painéis `#acModel`, o ID numérico explícito do modelo quando o painel é único, contagens de `select`/`radio`, controles com nome relacionado a motor, botão de compra e alerta de saldo. Registra também contagens de nós com atributos `data-price`, `data-final-price`, `data-total-price` ou identificadores/classes que mencionem preço/custo, além da presença de formato de moeda e de atributos de preço estritamente numéricos.
+- A observação inspeciona apenas a tela já aberta pelo processo proprietário do Selenium. Valores monetários, etiquetas livres, matrícula, HTML, credenciais, cookies e demais atributos não são retornados. O sanitizador Python aplica uma lista fixa de campos e seletores, limita contagens e força `price_verified=false` inclusive em respostas adulteradas.
+- **`tests/test_game_source_probe.py`:** regressões executam o JavaScript sobre um DOM de exemplo em Node.js com candidatos de preço, seletores de motor, texto confidencial simulado e campos de identificação. Testes adicionais rejeitam IDs contraditórios, números inválidos, valores arbitrários e tentativas de injetar campos extras na resposta.
+
+### Verificação, pendências e reversão
+
+- Testes direcionados, suíte Windows, Ruff, compilação e `git diff --check` são validados no ambiente local antes do commit desta entrega.
+- **G0 — instrumento de diagnóstico testado com dados simulados.** Seletores de preço são hipóteses estruturais a confirmar em sessão autenticada. Contagens de candidatos e indicadores de moeda não certificam preço final nem vínculo ao motor selecionado. É necessário comparar a configuração real antes/depois da seleção, revalidar o checkout e cruzar modelo, motor, hub, caixa e pedido com observações independentes. G1–G5 continuam pendentes.
+- Nenhum pedido, clique de compra, implantação, notificação Telegram ou merge foi executado. `main` e PR #44 permanecem preservadas. Reversão pelo commit desta entrega na branch de autonomia, observando dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A1/A5, confirmação da seleção de hub na sondagem DOM (G0)
 
 **Objetivo:** obter um sinal de leitura consistente do hub selecionado no formulário de encomenda de aeronaves, para apoiar a futura pré-validação do destino de entrega do plano.

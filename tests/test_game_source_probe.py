@@ -138,6 +138,102 @@ def test_counts_are_bounded_and_boolean_fields_reject_strings():
     assert report["status_data"]["count"] == 0
 
 
+def test_checkout_diagnostics_reject_untrusted_values_and_never_verify_price():
+    from game_source_probe import _sanitize
+
+    secret = "SECRET_PASSWORD_COOKIE_123"
+    report = _sanitize({
+        "schema_version": 1,
+        "aircraft_checkout_diagnostics": {
+            "detail_panel_count": 2,
+            "detail_model_id": "123",
+            "controls": {"all_selects": True, "all_radios": 2,
+                         "purchase_buttons": 10**30, "injected": secret},
+            "price_candidates": {
+                "data_price": {"count": 1, "currency_text_nodes": 999,
+                               "numeric_price_attribute_nodes": 2,
+                               "text": secret, "amount": 3000000},
+                "id_price": {"count": -1, "currency_text_nodes": True},
+                "unknown": {"count": 10, "value": secret},
+            },
+            "price_verified": True,
+            "raw_html": secret,
+        },
+    })
+    checkout = report["aircraft_checkout_diagnostics"]
+    assert checkout["detail_model_id"] is None
+    assert checkout["controls"]["all_selects"] == 0
+    assert checkout["controls"]["all_radios"] == 2
+    assert checkout["controls"]["purchase_buttons"] == 0
+    assert "injected" not in checkout["controls"]
+    assert checkout["price_candidates"]["data_price"]["count"] == 1
+    assert checkout["price_candidates"]["data_price"]["currency_text_nodes"] == 1
+    assert checkout["price_candidates"]["data_price"]["numeric_price_attribute_nodes"] == 1
+    assert checkout["price_candidates"]["id_price"]["count"] == 0
+    assert "unknown" not in checkout["price_candidates"]
+    assert checkout["price_verified"] is False
+    assert checkout["read_only"] is True
+    assert secret not in json.dumps(report)
+
+
+def test_checkout_diagnostics_dom_probe_identifies_price_shapes_without_values(tmp_path):
+    if not shutil.which("node"):
+        pytest.skip("Node.js is required to validate checkout DOM diagnostics")
+
+    mock = r"""
+const secret = 'SECRET_PASSWORD_TOKEN';
+const node = (attrs = {}, content = '') => ({
+  textContent: content,
+  getAttribute: key => Object.prototype.hasOwnProperty.call(attrs, key) ? attrs[key] : null,
+  hasAttribute: key => Object.prototype.hasOwnProperty.call(attrs, key),
+});
+const priceNode = node({'data-price':'3500000'}, 'US$ 3,500,000 ' + secret);
+const finalNode = node({'data-final-price':secret}, 'USD 4,000,000 ' + secret);
+const identity = node({'data-model-id':'785'}, secret);
+const elements = {
+  '#acModel': [identity],
+  '#acModel select': [node(), node()],
+  "#acModel input[type='radio']": [node()],
+  "#acModel select[name*='engine' i], #acModel select[id*='engine' i], #acModel select[name*='motor' i], #acModel select[id*='motor' i]": [node()],
+  "#acModel input[type='radio'][name*='engine' i], #acModel input[type='radio'][name*='motor' i]": [node()],
+  '#acModel #btnPurchaseIntro': [node()],
+  '#acModel #accountLow': [node()],
+  '#acModel [data-price]': [priceNode],
+  '#acModel [data-final-price]': [finalNode],
+  "#acModel [id*='price' i]": [priceNode, finalNode],
+};
+globalThis.document = {querySelectorAll: selector => elements[selector] || []};
+globalThis.window = {statusData: null};
+"""
+    path = tmp_path / "checkout_probe.js"
+    path.write_text(mock + "\nconsole.log(JSON.stringify((new Function(" +
+                    json.dumps(PROBE_JS) + "))()));\n", encoding="utf-8")
+    response = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+    assert response.returncode == 0, response.stderr
+    assert "SECRET_" not in response.stdout
+    assert "3500000" not in response.stdout
+    assert "4000000" not in response.stdout
+    from game_source_probe import _sanitize
+
+    checkout = _sanitize(json.loads(response.stdout))["aircraft_checkout_diagnostics"]
+    assert checkout["detail_panel_count"] == 1
+    assert checkout["detail_model_id"] == "785"
+    assert checkout["controls"] == {
+        "all_selects": 2, "all_radios": 1, "engine_named_selects": 1,
+        "engine_named_radios": 1, "purchase_buttons": 1,
+        "insufficient_balance_warnings": 1,
+    }
+    assert checkout["price_candidates"]["data_price"] == {
+        "selector": "#acModel [data-price]", "count": 1,
+        "currency_text_nodes": 1, "numeric_price_attribute_nodes": 1,
+    }
+    assert checkout["price_candidates"]["data_final_price"][
+        "numeric_price_attribute_nodes"] == 0
+    assert checkout["price_candidates"]["id_price"]["count"] == 2
+    assert checkout["price_candidates"]["id_price"]["currency_text_nodes"] == 2
+    assert checkout["price_verified"] is False
+
+
 def test_malicious_response_cannot_inject_page_values_or_secrets():
     secret = "PASSWORD_COOKIE_TOKEN"
 
