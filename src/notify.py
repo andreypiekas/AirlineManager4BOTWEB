@@ -52,11 +52,11 @@ class Telegram:
             self._worker = threading.Thread(target=self._run, name="telegram", daemon=True)
             self._worker.start()
 
-    def send_now(self, text: str) -> tuple[bool, str]:
-        """Send synchronously and return (ok, description). Used by the GUI test button."""
+    def send_now(self, text: str, silent: bool = False) -> tuple[bool, str]:
+        """Send synchronously and return actual (ok, description) for delivery acknowledgement."""
         if not self.enabled:
             return False, "token ou chat_id ausente em config/secrets.ini"
-        return self._post(text, silent=False)
+        return self._post(text, silent=silent)
 
     # ------------------------------------------------------------------ internals
     def _run(self) -> None:

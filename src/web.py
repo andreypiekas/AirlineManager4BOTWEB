@@ -185,9 +185,11 @@ class WebDashboard:
         report["fleet_counts"] = fleet_summary(self.bot.stats())
         return report
 
-    def hub_expansion(self) -> dict:
+    def hub_expansion(self, *, owned_inventory: dict | None = None,
+                      owned_research: dict | None = None) -> dict:
         """Compare candidate hubs against a recently verified balance."""
-        owned_inventory = self.hubs()
+        if owned_inventory is None:
+            owned_inventory = self.hubs()
         owned = {hub["id"] for hub in owned_inventory["hubs"]}
         cash, observed_at = recent_verified_money(self.bot, load_state())
         report = HubExpansionRegistry().snapshot(
@@ -196,8 +198,9 @@ class WebDashboard:
             owned_hub_ids=owned,
         )
         report["cash_observed_at"] = observed_at
-        recommendations_reader = getattr(self, "hub_recommendations", None)
-        owned_research = recommendations_reader() if callable(recommendations_reader) else {}
+        if owned_research is None:
+            recommendations_reader = getattr(self, "hub_recommendations", None)
+            owned_research = recommendations_reader() if callable(recommendations_reader) else {}
         report["expansion_decision"] = assess_expansion(
             owned_inventory,
             owned_research,

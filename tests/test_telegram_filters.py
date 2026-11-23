@@ -17,7 +17,7 @@ from web import WebDashboard
 ROOT = Path(__file__).resolve().parents[1]
 CATEGORIES = {
     "errors", "status", "daily", "departures", "fuel", "co2", "routes", "aircraft",
-    "maintenance", "hangar", "workshop", "marketing", "checklist", "simulation",
+    "maintenance", "hangar", "workshop", "marketing", "checklist", "simulation", "expansion",
 }
 
 
@@ -148,7 +148,7 @@ def test_todas_as_categorias_sao_exibidas_na_aba_telegram():
     tabs = [name for name, *_ in TABS]
     assert tabs == ["Mercado", "Frota", "Aeronaves", "Opções", "Telegram"]
     switches = dict(TELEGRAM_SWITCHES)
-    assert len(switches) == 15
+    assert len(switches) == 16
     assert set(switches) == {"telegram"} | {f"telegram_{c}" for c in CATEGORIES}
     assert TELEGRAM_FIELDS == [("summary_hour", "Horário do resumo diário (0-23)")]
     assert "summary_hour" in dict(ALL_FIELDS)
@@ -159,7 +159,7 @@ def test_default_de_instalacoes_anteriores_preservado():
     ini = ConfigParser()
     ini.read(ROOT / "config/defaults.ini", encoding="utf-8")
     for key, _label in TELEGRAM_SWITCHES:
-        assert ini.getboolean("options", key)
+        assert ini.getboolean("options", key) is (key != "telegram_expansion")
     assert ini.get("settings", "summary_hour") == "9"
 
 

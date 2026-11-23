@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, avisos de expansão A6 no ciclo (G0)
+
+**Escopo:** integrar ao ciclo do bot o relatório conservador de expansão para novos hubs, com envio condicional pelo Telegram e controle durável de duplicidade por perfil.
+
+### Implementado
+
+- Novo interruptor `telegram_expansion=off` em `[options]`, disponível no painel de configurações Telegram e nas ajudas PT-BR/inglês. Exige também `planning_enabled` e Telegram geral habilitados. O ciclo reutiliza os relatórios existentes de hubs próprios, pesquisa e expansão, evitando uma segunda leitura desnecessária dos mesmos snapshots.
+- `src/expansion_alerts.py` compõe o hash do snapshot de evidências e usa a verificação A6 de `build_expansion_report`. Pesquisa incompleta, cobertura parcial ou falta de recomendação comprovada não geram mensagem. A deduplicação persistida em SQLite registra tentativas, respeita alterações materiais e cooldown e só confirma a entrega após retorno positivo do cliente Telegram.
+- Mensagens incluem o perfil quando aplicável. Antes do envio, a integração confere o limite de 4.000 caracteres imposto pelo cliente existente. Uma atualização que ultrapassa o limite permanece sem confirmação e não é enviada truncada, preservando integridade de custos e tags HTML.
+- `Telegram.send_now()` aceita `silent` opcional e mantém o comportamento público anterior por padrão. Falha de envio não bloqueia as demais rotinas do ciclo.
+
+### Evidência e dependências
+
+- Validação com mocks de relatórios e Telegram, incluindo flags desligadas, cobertura inconclusiva, deduplicação, alteração material, falha seguida de nova tentativa, isolamento de perfil, atualização grande e compatibilidade de `send_now`. A suíte de testes Windows excluindo apenas `tests/test_instalacao_linux.py`, Ruff e compilação foram executadas com sucesso.
+- **Estado G0, implementação testada localmente.** Não houve envio a Telegram real, homologação de pesquisas completas no jogo, compra de aeronave ou hub, implantação no servidor, alteração da `main` ou da PR #44. Se uma mensagem alcançar a API, mas o cliente perder a resposta, a nova tentativa pode repetir o aviso. A confirmação de entrega é a resposta observada do Telegram, sem garantia de entrega exatamente uma vez.
+- A6 depende da comprovação de cobertura de todos os hubs próprios e cenários externos completos por hub, modelo, motor, rota e custos. A coleta atual de demanda e preços não produz sozinha esses cenários. A flag permanece desligada, com reversão possível pelo `git revert` do commit desta entrega após conferir alterações posteriores.
+
 ## 2026-11-23 — Autonomia Total, limites adicionais A7 e pontuação global A4 (G0)
 
 **Escopo:** completar a configuração de critérios de rentabilidade e de priorização de compras no painel Hubs e ampliar a reserva de intenções no executor fictício.

@@ -631,6 +631,11 @@ class Bot:
             self._guard(self._check_market, "verificar o mercado de combustível / CO₂")
         if opt("auto_checklist"):
             self._guard(lambda: check_checklist(self), "verificar a lista de tarefas")
+        if (self.config.get_bool("investment", "planning_enabled")
+                and opt("telegram_expansion")):
+            from expansion_alerts import publish_expansion_alert
+
+            self._guard(lambda: publish_expansion_alert(self), "enviar recomendações de expansão")
         self._guard(self._maybe_daily_summary, "enviar o resumo diário")
 
     def _guard(self, action: Callable[[], None], what: str) -> None:
