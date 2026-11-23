@@ -111,6 +111,73 @@ def test_demand_rotates_to_least_recent_owned_hub(tmp_path, monkeypatch):
     assert registry.next_demand_origin(["2941", "2926"]) == "2941"
 
 
+def test_inconclusive_attempts_rotate_and_persist_across_restart(tmp_path, monkeypatch):
+    now = [1900000000]
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: now[0])
+    path = tmp_path / "expansion.json"
+    registry = HubExpansionRegistry(path)
+    hubs = ["2941", "2926", "3139"]
+    assert registry.next_demand_origin(hubs) == "2926"
+    assert registry.record_demand_attempt("2926")
+    assert registry.next_demand_origin(hubs) == "2941"
+    assert registry.record_demand_attempt("2941")
+    assert HubExpansionRegistry(path).next_demand_origin(hubs) == "3139"
+    assert registry.record_demand_attempt("3139")
+    # Equal timestamps use a persistent sequence to avoid starving later hubs.
+    assert HubExpansionRegistry(path).next_demand_origin(hubs) == "2926"
+    assert registry.record_demand_attempt("2926")
+    assert HubExpansionRegistry(path).next_demand_origin(hubs) == "2941"
+
+    report = HubExpansionRegistry(path).snapshot(owned_hub_ids=set(hubs), now=now[0])
+    assert report["demand_owned_hubs_total"] == 3
+    assert report["demand_owned_hubs_attempted"] == 3
+    assert report["demand_owned_hubs_inconclusive"] == 3
+    assert report["demand_samples"] == 0
+    assert report["demand_coverage"] == "partial"
+    assert "route_demand" not in json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_verified_samples_survive_inconclusive_retry_and_expiry(tmp_path, monkeypatch):
+    now = [1900000000]
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: now[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_demand_attempt("2926")
+    assert registry.record_demand("2926", [{
+        "arr_id": "3139", "distance": 2000, "y": 10, "j": 1, "f": 0,
+    }]) == 1
+    first = registry.snapshot(now=now[0], owned_hub_ids={"2926", "2941"})
+    assert first["demand_owned_hubs_with_samples"] == 1
+    assert first["demand_owned_hubs_fresh_samples"] == 1
+    assert first["demand_owned_hubs_inconclusive"] == 0
+    now[0] += 20
+    assert registry.record_demand_attempt("2926")
+    retry = registry.snapshot(now=now[0], owned_hub_ids={"2926", "2941"})
+    assert retry["demand_samples"] == 1
+    assert retry["demand_owned_hubs_inconclusive"] == 1
+    assert retry["demand_owned_hubs_attempted"] == 1
+    now[0] += hub_expansion.MAX_AGE_SECONDS + 1
+    expired = HubExpansionRegistry(registry.path).snapshot(
+        now=now[0], owned_hub_ids={"2926", "2941"})
+    assert expired["demand_fresh_samples"] == 0
+    assert expired["demand_owned_hubs_fresh_samples"] == 0
+    assert expired["demand_owned_hubs_attempted"] == 1
+    assert expired["demand_coverage"] == "partial"
+
+
+def test_invalid_attempt_and_corrupt_legacy_cursor_do_not_claim_coverage(tmp_path):
+    path = tmp_path / "expansion.json"
+    registry = HubExpansionRegistry(path)
+    assert not registry.record_demand_attempt("invalid")
+    assert not path.exists()
+    path.write_text(json.dumps({"route_demand_attempts": {
+        "2926": {"attempted_at": True, "status": "samples_observed", "sequence": 1},
+        "2941": {"attempted_at": 1900000000, "status": "complete", "sequence": 2},
+    }}), encoding="utf-8")
+    report = registry.snapshot(now=1900000000, owned_hub_ids={"2926", "2941"})
+    assert report["demand_owned_hubs_attempted"] == 0
+    assert report["demand_coverage"] == "partial"
+
+
 @pytest.mark.skipif(not shutil.which("node"), reason="Node.js indisponível")
 def test_price_script_requires_matching_selected_airport_and_explicit_dollars():
     js = r"""
@@ -545,11 +612,13 @@ def test_demand_collection_rejects_partial_or_unmatched_search(tmp_path, monkeyp
     assert game_observations.collect_owned_hub_demand(verified) == 1
     assert requested == [("2926", 6000, 5000, False)]
     assert verified.closed
-    original = registry.path.read_bytes()
+    original = json.loads(registry.path.read_text(encoding="utf-8"))["route_demand"]
     changed = Bot([[{**raw, **raw_change}], [{**raw, **raw_change}]])
     assert game_observations.collect_owned_hub_demand(changed) == 0
     assert changed.closed
-    assert registry.path.read_bytes() == original
+    persisted = json.loads(registry.path.read_text(encoding="utf-8"))
+    assert persisted["route_demand"] == original
+    assert persisted["route_demand_attempts"]["2926"]["status"] == "inconclusive"
 
 
 def test_demand_collection_discards_unstable_reads_and_invalid_hub_selector(tmp_path, monkeypatch):
@@ -595,7 +664,60 @@ def test_demand_collection_discards_unstable_reads_and_invalid_hub_selector(tmp_
         [{"id": "2926"}], [[raw], [{**raw, "y": "4"}]])) == 0
     assert game_observations.collect_owned_hub_demand(Bot(
         [{"id": "INVALID"}], [[raw], [raw]])) == 0
-    assert not registry.path.exists()
+    persisted = json.loads(registry.path.read_text(encoding="utf-8"))
+    assert "route_demand" not in persisted
+    assert set(persisted["route_demand_attempts"]) == {"2926"}
+    assert persisted["route_demand_attempts"]["2926"]["status"] == "inconclusive"
+
+
+def test_demand_search_interruption_rotates_to_next_owned_hub(tmp_path, monkeypatch):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
+
+    class Hubs:
+        def record_options(self, options):
+            return options == [{"id": "2926"}, {"id": "2941"}]
+
+    monkeypatch.setattr(game_observations, "HubRegistry", Hubs)
+
+    def interrupted_search(*_args, **_kwargs):
+        raise RuntimeError("research interrupted")
+
+    monkeypatch.setattr(fleet, "search_routes", interrupted_search)
+
+    class Bot:
+        stopping = False
+        closed = False
+
+        class config:
+            @staticmethod
+            def get_int(_section, _key, default):
+                return default
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            self.closed = True
+
+        def ajax(self, *_args):
+            pass
+
+        def js(self, script):
+            assert script == _HUB_OPTIONS_JS
+            return [{"id": "2926"}, {"id": "2941"}]
+
+    bot = Bot()
+    with pytest.raises(RuntimeError, match="research interrupted"):
+        game_observations.collect_owned_hub_demand(bot)
+
+    assert bot.closed
+    assert registry.next_demand_origin(["2926", "2941"]) == "2941"
+    report = registry.snapshot(owned_hub_ids={"2926", "2941"})
+    assert report["demand_owned_hubs_attempted"] == 1
+    assert report["demand_owned_hubs_inconclusive"] == 1
+    assert report["demand_coverage"] == "partial"
+    assert "route_demand" not in json.loads(registry.path.read_text(encoding="utf-8"))
 
 
 class PaginatedBot:

@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, rotação resiliente de demanda dos hubs próprios A2 (G0)
+
+**Escopo:** corrigir a pesquisa incremental dos hubs próprios para que respostas inconclusivas ou interrupções no Selenium não mantenham o mesmo hub como prioridade indefinidamente.
+
+### Implementado
+
+- `src/hub_expansion.py` persiste um cursor de pesquisa por hub em `route_demand_attempts`, com horário, sequência monotônica e situação `inconclusive` ou `samples_observed`. O cursor é gravado antes da consulta AJAX e o sucesso posterior atualiza o mesmo registro de forma atômica. A rotação considera a tentativa mais recente e as amostras verificadas antigas, com desempate determinístico mesmo em ciclos executados no mesmo segundo. Registros legados continuam legíveis.
+- `src/game_observations.py` reutiliza o registro para selecionar e pesquisar um hub por ciclo. Pesquisa vazia, DOM instável, inconsistência entre consulta e resultado ou exceção mantêm as amostras verificadas anteriores e avançam o cursor. Nenhuma ausência de resultado é convertida em demanda zero.
+- O snapshot de expansão informa quantidade de hubs próprios, hubs tentados, tentativas inconclusivas, hubs com amostras e amostras recentes. O painel Hubs apresenta o progresso e avisa que a **cobertura de demanda continua parcial**, inclusive após consultar todos os hubs uma vez. As traduções PT-BR/inglês foram adicionadas.
+- Testes exercitam alternância e persistência após reinício, empates de horário, expiração e preservação de amostras, dados de cursor inválidos, pesquisa inconclusiva, interrupção da pesquisa e renderização do painel.
+
+### Validação e limites
+
+- Testes direcionados de `test_game_observations.py`, `test_hub_expansion.py` e `test_hubs_dashboard_ui.py` aprovados em Windows. A suíte completa para Windows, Ruff, compilação e `git diff --check` acompanham o commit desta entrega.
+- **Estado G0 — implementado e testado localmente, não homologado no jogo.** A alternância corrige a justiça do agendamento, mas ainda falta comprovar que cada consulta cobre todas as rotas relevantes do hub, que a leitura dos hubs externos é possível e que existe uma varredura conclusiva no mesmo snapshot. `demand_coverage` permanece `partial` e não autoriza recomendar ausência de oportunidades nem executar compras.
+- Não houve compras reais, envio a Telegram, implantação, merge na `main` nem alteração da PR #44. As novas flags de investimento permanecem desligadas. Arquivos desta entrega: `src/hub_expansion.py`, `src/game_observations.py`, `assets/web/index.html`, `tests/test_game_observations.py`, `tests/test_hubs_dashboard_ui.py` e este histórico. Reversão por `git revert` do commit associado, após conferir dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total, avisos de expansão A6 no ciclo (G0)
 
 **Escopo:** integrar ao ciclo do bot o relatório conservador de expansão para novos hubs, com envio condicional pelo Telegram e controle durável de duplicidade por perfil.

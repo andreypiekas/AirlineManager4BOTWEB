@@ -283,6 +283,22 @@ def _stored_demand(value: object) -> dict[str, dict]:
     return valid
 
 
+def _stored_demand_attempts(value: object) -> dict[str, dict]:
+    """Recover valid research cursor entries, including inconclusive reads."""
+    if not isinstance(value, dict):
+        return {}
+    attempts = {}
+    for key, raw in value.items():
+        if (_airport_id(key) != key or not isinstance(raw, dict)
+                or type(raw.get("attempted_at")) is not int or raw["attempted_at"] <= 0
+                or raw.get("status") not in ("inconclusive", "samples_observed")
+                or type(raw.get("sequence")) is not int or raw["sequence"] <= 0):
+            continue
+        attempts[key] = {"attempted_at": raw["attempted_at"],
+                         "status": raw["status"], "sequence": raw["sequence"]}
+    return attempts
+
+
 class HubExpansionRegistry:
     def __init__(self, path: Optional[Path] = None):
         self.path = Path(path) if path is not None else paths.current().data / "hub_expansion.json"
@@ -561,16 +577,42 @@ class HubExpansionRegistry:
                                        reverse=True)[:5000])
             current["route_demand"] = previous
             current["route_demand_last_at"] = now
+            self._write_demand_attempt(current, origin, now, "samples_observed")
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return len(observations)
 
+    @staticmethod
+    def _write_demand_attempt(current: dict, origin: str, now: int, status: str) -> None:
+        """Update the per-hub research cursor in the same atomic JSON write."""
+        attempts = _stored_demand_attempts(current.get("route_demand_attempts"))
+        sequence = max((entry["sequence"] for entry in attempts.values()), default=0) + 1
+        attempts[origin] = {"attempted_at": now, "status": status, "sequence": sequence}
+        current["route_demand_attempts"] = attempts
+
+    def record_demand_attempt(self, origin_id: object) -> bool:
+        """Persist an inconclusive attempt before search, even if Selenium fails.
+
+        This is scheduling evidence only. It never implies zero demand or
+        completed coverage, and verified samples are preserved independently.
+        """
+        origin = _airport_id(origin_id)
+        if origin is None:
+            return False
+        with _LOCK:
+            current = self._load()
+            self._write_demand_attempt(current, origin, int(time.time()), "inconclusive")
+            paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
+        return True
+
     def next_demand_origin(self, owned_ids: list[str]) -> Optional[str]:
-        """Rotate research toward the owned hub least recently sampled."""
+        """Rotate on attempted research, even when a hub has no valid results."""
         hubs = sorted({_airport_id(value) for value in owned_ids} - {None}, key=int)
         if not hubs:
             return None
         with _LOCK:
-            records = _stored_demand(self._load().get("route_demand"))
+            saved = self._load()
+            records = _stored_demand(saved.get("route_demand"))
+            attempts = _stored_demand_attempts(saved.get("route_demand_attempts"))
         now = int(time.time())
         last_seen = {hub: 0 for hub in hubs}
         for row in records.values():
@@ -578,7 +620,13 @@ class HubExpansionRegistry:
             when = row.get("observed_at")
             if origin in last_seen and when <= now:
                 last_seen[origin] = max(last_seen[origin], when)
-        return min(hubs, key=lambda hub: (last_seen[hub], int(hub)))
+        sequences = {hub: 0 for hub in hubs}
+        for hub in hubs:
+            attempt = attempts.get(hub)
+            if attempt and attempt["attempted_at"] <= now:
+                last_seen[hub] = max(last_seen[hub], attempt["attempted_at"])
+                sequences[hub] = attempt["sequence"]
+        return min(hubs, key=lambda hub: (last_seen[hub], sequences[hub], int(hub)))
 
     def snapshot(self, *, cash: object = None, reserve: object = 0,
                  now: Optional[int] = None, owned_hub_ids: Optional[set[str]] = None) -> dict:
@@ -592,9 +640,14 @@ class HubExpansionRegistry:
         catalog_time = saved.get("observed_at")
         stored_candidates = _stored_candidates(saved.get("candidates"))
         demand = _stored_demand(saved.get("route_demand"))
+        attempts = _stored_demand_attempts(saved.get("route_demand_attempts"))
         fresh_demand = {key: item for key, item in demand.items()
                         if 0 <= now - item["observed_at"] <= MAX_AGE_SECONDS}
-        owned = {_airport_id(value) for value in (owned_hub_ids or set())}
+        owned = {_airport_id(value) for value in (owned_hub_ids or set())} - {None}
+        attempted_owned = {hub for hub in owned if hub in attempts and
+                           0 <= now - attempts[hub]["attempted_at"]}
+        sampled_owned = {item["origin_id"] for item in demand.values()} & owned
+        fresh_sampled_owned = {item["origin_id"] for item in fresh_demand.values()} & owned
         candidates = []
         for raw in stored_candidates:
             if raw["id"] in owned:
@@ -653,4 +706,13 @@ class HubExpansionRegistry:
                 "availability_pending": not bool(stored_candidates),
                 "demand_samples": len(demand),
                 "demand_fresh_samples": len(fresh_demand),
-                "demand_observed_at": max((item["observed_at"] for item in demand.values()), default=None)}
+                "demand_observed_at": max((item["observed_at"] for item in demand.values()), default=None),
+                "demand_owned_hubs_total": len(owned),
+                "demand_owned_hubs_attempted": len(attempted_owned),
+                "demand_owned_hubs_inconclusive": sum(
+                    attempts[hub]["status"] == "inconclusive" for hub in attempted_owned),
+                "demand_owned_hubs_with_samples": len(sampled_owned),
+                "demand_owned_hubs_fresh_samples": len(fresh_sampled_owned),
+                "demand_last_attempt_at": max(
+                    (attempts[hub]["attempted_at"] for hub in attempted_owned), default=None),
+                "demand_coverage": "partial"}

@@ -945,6 +945,10 @@ const EN = {
   "Frota total no jogo": "Total fleet in game", "registros históricos de rotas": "historical route records",
   "Preços de hubs registrados": "Hub prices recorded", "Amostras de demanda": "Demand samples",
   "recentes": "recent", "Demanda atualizada em": "Demand updated at",
+  "Hubs próprios pesquisados": "Owned hubs researched",
+  "tentativas inconclusivas": "inconclusive attempts",
+  "Cobertura de demanda parcial; respostas vazias não comprovam ausência de rotas.":
+    "Partial demand coverage; empty responses do not prove there are no routes.",
   "Ranking externo com evidências verificadas": "Verified external-hub ranking",
   "Varredura de hubs próprios inconclusiva": "Owned-hub scan inconclusive",
   "Priorizar oportunidades nos hubs próprios": "Prioritize opportunities at owned hubs",
@@ -1847,6 +1851,14 @@ function renderHubExpansion(report) {
   }
   if (Number.isFinite(report.demand_observed_at)) {
     observations.push(tr("Demanda atualizada em") + ": " + hubDate(report.demand_observed_at) + ".");
+  }
+  if (Number.isSafeInteger(report.demand_owned_hubs_total)) {
+    observations.push(tr("Hubs próprios pesquisados") + ": " +
+      nf.format(report.demand_owned_hubs_attempted || 0) + " / " +
+      nf.format(report.demand_owned_hubs_total) + " (" +
+      nf.format(report.demand_owned_hubs_inconclusive || 0) + " " +
+      tr("tentativas inconclusivas") + "). " +
+      tr("Cobertura de demanda parcial; respostas vazias não comprovam ausência de rotas."));
   }
   $("hubExpansionScope").textContent += " " + observations.join(" ");
   const verified = allCandidates.filter(hub =>

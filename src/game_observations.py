@@ -379,9 +379,13 @@ def collect_owned_hub_demand(bot: object) -> int:
         if not HubRegistry().record_options(options):
             return 0
         ids = [str(option.get("id")) for option in options if isinstance(option, dict)]
-        origin = HubExpansionRegistry().next_demand_origin(ids)
+        registry = HubExpansionRegistry()
+        origin = registry.next_demand_origin(ids)
         if origin is None:
             return 0
+        # Reserve the rotation cursor before making AJAX requests. An empty,
+        # inconsistent or interrupted response must not starve the next hub.
+        registry.record_demand_attempt(origin)
         distance = max(300, bot.config.get_int("settings", "route_max_distance_big", 6000))
         runway = max(0, bot.config.get_int("settings", "route_min_runway", 5000))
         candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
@@ -390,7 +394,7 @@ def collect_owned_hub_demand(bot: object) -> int:
         if not samples:
             log.debug("Pesquisa de demanda do hub %s incompleta ou sem resultados confirmados.", origin)
             return 0
-        count = HubExpansionRegistry().record_demand(origin, samples)
+        count = registry.record_demand(origin, samples)
         log.info("Pesquisa de demanda: hub %s, %d destinos confirmados.", origin, count)
         return count
     finally:

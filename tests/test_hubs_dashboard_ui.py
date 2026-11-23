@@ -91,6 +91,8 @@ def test_hubs_filters_and_sort_controls_are_labeled_and_target_the_grids():
     assert '"Amostras de demanda": "Demand samples"' in html
     assert 'report.demand_fresh_samples' in html
     assert 'report.demand_observed_at' in html
+    assert 'report.demand_owned_hubs_attempted' in html
+    assert 'report.demand_owned_hubs_inconclusive' in html
     assert 'nf.format(pricedHubs)' in html
     assert '.hubs-controls { display:grid; grid-template-columns:minmax(0,1fr); }' in html
 
@@ -351,6 +353,10 @@ const translations = {
   'Varredura de hubs próprios inconclusiva': 'Owned-hub scan inconclusive',
   'Priorizar oportunidades nos hubs próprios': 'Prioritize owned hubs',
   'Expansão externa em avaliação': 'External expansion under evaluation',
+  'Hubs próprios pesquisados': 'Owned hubs researched',
+  'tentativas inconclusivas': 'inconclusive attempts',
+  'Cobertura de demanda parcial; respostas vazias não comprovam ausência de rotas.':
+    'Partial demand coverage; empty responses do not prove there are no routes.',
   'Somente análise. Nenhuma compra autorizada.': 'Read-only. No purchases authorized.'
 };
 const tr = text => translations[text] || text;
@@ -389,12 +395,17 @@ const candidate = {
 const report = {
   candidates:[candidate], availability_pending:false, catalog_complete:true,
   available_cash:25000, cash:26000, reserve:1000,
+  demand_owned_hubs_total:3, demand_owned_hubs_attempted:2,
+  demand_owned_hubs_inconclusive:1, demand_coverage:'partial',
   expansion_decision:{status:'avaliacao_expansao', owned_hubs_evaluated:2,
     external_pending_count:0, blocking_reasons:[], top_three:[candidate]}
 };
 const labels = metrics => Object.fromEntries(metrics.children.map(item =>
   [item.children[0].textContent, item.children[1].textContent]));
 renderHubExpansion(report);
+assert.match($('hubExpansionScope').textContent, /Owned hubs researched: 2 \/ 3/);
+assert.match($('hubExpansionScope').textContent, /1 inconclusive attempts/);
+assert.match($('hubExpansionScope').textContent, /Partial demand coverage/);
 assert.match($('hubExpansionDecision').textContent, /External expansion under evaluation/);
 assert.match($('hubExpansionDecision').textContent, /Read-only/);
 assert.equal($('hubExpansionRanking').children.length, 1);
