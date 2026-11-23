@@ -31,6 +31,14 @@ def test_nova_politica_de_investimento_inicia_desligada(defaults):
     assert not defaults.getboolean("investment", "auto_buy_aircraft")
     assert not defaults.getboolean("investment", "auto_buy_hub")
     assert defaults.get("investment", "mode") == "analyze"
+    assert defaults.getint("investment", "max_acquisitions_per_day") == 0
+    assert defaults.getint("investment", "min_daily_profit") == 0
+    assert defaults.getint("investment", "max_payback_days") == 0
+    assert defaults.getint("investment", "profit_weight") == 60
+    assert defaults.getint("investment", "efficiency_weight") == 40
+    assert defaults.getint("investment", "risk_weight") == 0
+    assert defaults.getint("investment", "confidence_weight") == 0
+    assert defaults.getint("investment", "diversification_weight") == 0
     assert defaults.getboolean("options", "autobuy_aircraft")
 
 

@@ -13,6 +13,7 @@ from config import AppConfig
 from conftest import ROOT
 from investment_policy import InvestmentPolicy
 from web import WebDashboard
+import web as web_module
 
 
 TOKEN = "test-web-investment-token"
@@ -23,6 +24,14 @@ POLICY = {
     "auto_buy_hub": True,
     "max_single_investment": 100_000,
     "max_daily_spend": 250_000,
+    "max_acquisitions_per_day": 3,
+    "min_daily_profit": 1500,
+    "max_payback_days": 730,
+    "profit_weight": 20,
+    "efficiency_weight": 40,
+    "risk_weight": 20,
+    "confidence_weight": 10,
+    "diversification_weight": 10,
 }
 
 
@@ -100,6 +109,18 @@ def test_policy_update_survives_reload_without_activating_legacy_or_execution(tm
     {"max_single_investment": -1},
     {"max_daily_spend": 1.5},
     {"max_daily_spend": 10**16},
+    {"max_acquisitions_per_day": -1},
+    {"max_acquisitions_per_day": 101},
+    {"max_acquisitions_per_day": True},
+    {"min_daily_profit": -100},
+    {"max_payback_days": 3651},
+    {"profit_weight": -1},
+    {"efficiency_weight": 101},
+    {"risk_weight": True},
+    {"confidence_weight": 0.5},
+    {"diversification_weight": 101},
+    {"profit_weight": 0, "efficiency_weight": 0, "risk_weight": 0,
+     "confidence_weight": 0, "diversification_weight": 0},
     {"extra": "unexpected"},
 ])
 def test_invalid_payload_is_rejected_before_any_mutation(tmp_path, invalid):
@@ -153,3 +174,86 @@ def test_stop_does_not_accept_payload(tmp_path):
         status, response = request(port, "POST", "/api/investment/stop", {"planning_enabled": True}, auth())
         assert status == 400 and response["ok"] is False
         assert config.get_bool("investment", "planning_enabled") is False
+
+
+def test_recommendations_use_saved_weights_and_reject_unverified_dimensions(tmp_path, monkeypatch):
+    with served(tmp_path) as (_, config):
+        config.set("investment", "planning_enabled", "on")
+        config.set("investment", "profit_weight", 0)
+        config.set("investment", "efficiency_weight", 0)
+        config.set("investment", "risk_weight", 100)
+
+        class EmptySource:
+            def snapshot(self, *args, **kwargs):
+                return {}
+
+        class EmptyJournal:
+            def unresolved(self):
+                return {"intents": [], "count": 0, "estimated_exposure": 0}
+
+        candidate = {
+            "hub_id": "123", "route_key": "ids:123|456", "model": "A320",
+            "engine_id": "1", "origin": {"id": "123"}, "destination": {"id": "456"},
+            "investment": 1000, "profit_per_day": 100,
+            "status": "viavel", "pending": [],
+        }
+        monkeypatch.setattr(web_module, "HubRegistry", EmptySource)
+        monkeypatch.setattr(web_module, "HubAircraftResearchRegistry", EmptySource)
+        monkeypatch.setattr(web_module, "InvestmentJournal", EmptyJournal)
+        monkeypatch.setattr(web_module, "recent_verified_money", lambda *args: (10000, 1800000000))
+        monkeypatch.setattr(web_module, "load_state", lambda: {})
+        monkeypatch.setattr(web_module, "rank_next_aircraft", lambda *args, **kwargs: {
+            "candidates": [candidate], "partial_fleet": False, "available_cash": 10000,
+        })
+        dashboard = WebDashboard(object(), config, object(), start_bot=lambda: None)
+        monkeypatch.setattr(dashboard, "routes", lambda: {})
+
+        risk_report = dashboard.hub_recommendations()["portfolio"]
+        assert risk_report["criteria"]["risk_weight"] == 100
+        assert risk_report["best"] is None
+        assert risk_report["missing_ranking_evidence"] == {"risk": 1}
+
+        config.set("investment", "risk_weight", 0)
+        config.set("investment", "profit_weight", 60)
+        config.set("investment", "efficiency_weight", 40)
+        safe_report = dashboard.hub_recommendations()["portfolio"]
+        assert safe_report["criteria"]["profit_weight"] == 60
+        assert safe_report["best"]["hub_id"] == "123"
+        assert safe_report["execution_available"] is False
+
+        config.set("investment", "max_acquisitions_per_day", "invalido")
+        invalid_report = dashboard.hub_recommendations()["portfolio"]
+        assert invalid_report["status"] == "inconclusivo"
+        assert "politica_invalida" in invalid_report["blocking_reasons"]
+
+
+def test_local_journal_reservations_reduce_candidate_budget(tmp_path, monkeypatch):
+    with served(tmp_path) as (_, config):
+        class EmptySource:
+            def snapshot(self, *args, **kwargs):
+                return {}
+
+        class ReservedJournal:
+            def unresolved(self):
+                return {"intents": [], "count": 1, "estimated_exposure": 9000}
+
+        monkeypatch.setattr(web_module, "HubRegistry", EmptySource)
+        monkeypatch.setattr(web_module, "HubAircraftResearchRegistry", EmptySource)
+        monkeypatch.setattr(web_module, "InvestmentJournal", ReservedJournal)
+        monkeypatch.setattr(web_module, "recent_verified_money", lambda *args: (10000, 1800000000))
+        monkeypatch.setattr(web_module, "load_state", lambda: {})
+        monkeypatch.setattr(web_module, "rank_next_aircraft", lambda *args, **kwargs: {
+            "partial_fleet": False, "available_cash": 10000,
+            "candidates": [{"hub_id": "123", "route_key": "ids:123|456", "model": "A320",
+                            "engine_id": "1", "origin": {"id": "123"},
+                            "destination": {"id": "456"}, "investment": 2000,
+                            "profit_per_day": 100, "status": "viavel", "pending": []}],
+        })
+        dashboard = WebDashboard(object(), config, object(), start_bot=lambda: None)
+        monkeypatch.setattr(dashboard, "routes", lambda: {})
+
+        result = dashboard.hub_recommendations()["portfolio"]
+        assert result["known_local_commitments"] == 9000
+        assert result["budget_upper_bound"] == 1000
+        assert result["best"] is None
+        assert result["excluded"]["caixa_apos_reservas_locais_insuficiente"] == 1

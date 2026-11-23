@@ -222,12 +222,6 @@ class WebDashboard:
         )
         investment_policy = InvestmentPolicy.from_config(self.cfg)
         report["investment_policy"] = investment_policy.report()
-        report["portfolio"] = compare_portfolio(
-            report,
-            max_single_investment=(investment_policy.max_single_investment
-                                   if investment_policy.enabled and investment_policy.max_single_investment > 0
-                                   else None),
-        )
         try:
             report["investment_journal"] = {
                 **InvestmentJournal().unresolved(),
@@ -240,6 +234,26 @@ class WebDashboard:
                 "read_only": True, "execution_available": False,
                 "blocking_reasons": ["diario_indisponivel"],
             }
+        report["portfolio"] = compare_portfolio(
+            report,
+            known_local_commitments=report["investment_journal"]["estimated_exposure"],
+            max_single_investment=(investment_policy.max_single_investment
+                                   if investment_policy.enabled and investment_policy.max_single_investment > 0
+                                   else None),
+            min_daily_profit=investment_policy.min_daily_profit if investment_policy.enabled else 0,
+            max_payback_days=(investment_policy.max_payback_days
+                              if investment_policy.enabled and investment_policy.max_payback_days > 0
+                              else None),
+            profit_weight=investment_policy.profit_weight,
+            efficiency_weight=investment_policy.efficiency_weight,
+            risk_weight=investment_policy.risk_weight,
+            confidence_weight=investment_policy.confidence_weight,
+            diversification_weight=investment_policy.diversification_weight,
+            policy_valid=investment_policy.valid,
+        )
+        if report["investment_journal"]["estimated_exposure"] is None:
+            report["portfolio"]["blocking_reasons"].append("diario_indisponivel")
+            report["portfolio"]["status"] = "inconclusivo"
         return report
 
     def game_source_probe(self) -> tuple[int, dict]:
@@ -319,7 +333,9 @@ class WebDashboard:
     def update_investment_settings(self, payload: dict) -> tuple[bool, str]:
         """Validate the entire policy before an atomic per-profile config save."""
         fields = {"planning_enabled", "mode", "auto_buy_aircraft", "auto_buy_hub",
-                  "max_single_investment", "max_daily_spend"}
+                  "max_single_investment", "max_daily_spend", "max_acquisitions_per_day",
+                  "min_daily_profit", "max_payback_days", "profit_weight", "efficiency_weight",
+                  "risk_weight", "confidence_weight", "diversification_weight"}
         values = payload.get("policy")
         version = payload.get("expected_version")
         if (not isinstance(values, dict) or set(values) != fields
@@ -330,10 +346,17 @@ class WebDashboard:
                 return False, f"{key} deve ser verdadeiro ou falso."
         if not isinstance(values["mode"], str) or values["mode"] not in MODES:
             return False, "Modo de investimento inválido."
-        for key in ("max_single_investment", "max_daily_spend"):
+        for key, upper in (("max_single_investment", 10**15), ("max_daily_spend", 10**15),
+                           ("max_acquisitions_per_day", 100), ("min_daily_profit", 10**15),
+                           ("max_payback_days", 3650), ("profit_weight", 100),
+                           ("efficiency_weight", 100), ("risk_weight", 100),
+                           ("confidence_weight", 100), ("diversification_weight", 100)):
             amount = values[key]
-            if type(amount) is not int or amount < 0 or amount > 10**15:
-                return False, f"{key} deve ser um inteiro entre 0 e 10¹⁵."
+            if type(amount) is not int or amount < 0 or amount > upper:
+                return False, f"{key} deve ser um inteiro entre 0 e {upper}."
+        if not any(values[key] for key in ("profit_weight", "efficiency_weight", "risk_weight",
+                                               "confidence_weight", "diversification_weight")):
+            return False, "Configure pelo menos um peso positivo para o ranking."
         with self.cfg._lock:
             if version != self.cfg.version:
                 return False, "Configurações alteradas em outra sessão. Atualize antes de salvar."

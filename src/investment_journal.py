@@ -365,6 +365,20 @@ class InvestmentJournal:
         return sum(json.loads(row["plan_json"])["estimated_cost"] for row in rows
                    if row["intent_key"] != exclude_intent_key)
 
+    def acquisition_count_since(self, since: float, *, exclude_intent_key: str | None = None) -> int:
+        """Count current reservations and confirmed orders within the window, per profile."""
+        if type(since) not in (int, float) or not math.isfinite(since):
+            raise ValueError("Início de janela inválido.")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS total FROM intents WHERE profile_id=? "
+                "AND (? IS NULL OR intent_key<>?) "
+                "AND (state IN ('APPROVED','PRECHECKED','SUBMITTED','UNKNOWN') "
+                "OR (state='CONFIRMED' AND updated_at>=?))",
+                (self.profile_id, exclude_intent_key, exclude_intent_key, since),
+            ).fetchone()
+        return row["total"]
+
     def recover_submitted(self) -> int:
         """On restart, quarantine any in-flight request without retrying it."""
         stamp = time.time()

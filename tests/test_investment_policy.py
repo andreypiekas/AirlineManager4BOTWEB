@@ -32,6 +32,7 @@ def test_modo_autonomo_configurado_segue_bloqueado_no_gate_g0():
         ("investment", "auto_buy_hub"): True,
         ("investment", "max_single_investment"): "100000",
         ("investment", "max_daily_spend"): "200000",
+        ("investment", "max_acquisitions_per_day"): "5",
     })
     state = InvestmentPolicy.from_config(config).report()
     assert state["auto_buy_hub"] is True
@@ -50,3 +51,43 @@ def test_configuracao_invalida_bloqueia_fluxo():
     assert state["mode"] == "analyze"
     assert state["max_single_investment"] == 0
     assert "politica_invalida" in state["blocking_reasons"]
+
+
+def test_limite_de_aquisicoes_e_criterios_invalidos_falham_fechados():
+    config = Config({
+        ("investment", "planning_enabled"): True,
+        ("investment", "max_acquisitions_per_day"): "101",
+        ("investment", "max_payback_days"): "infinito",
+    })
+    state = InvestmentPolicy.from_config(config).report()
+    assert state["max_acquisitions_per_day"] == 0
+    assert state["max_payback_days"] == 0
+    assert "politica_invalida" in state["blocking_reasons"]
+
+
+def test_pesos_legados_e_configuracao_do_ranking_por_perfil():
+    defaults = InvestmentPolicy.from_config(Config()).report()
+    assert (defaults["profit_weight"], defaults["efficiency_weight"]) == (60, 40)
+    assert (defaults["risk_weight"], defaults["confidence_weight"],
+            defaults["diversification_weight"]) == (0, 0, 0)
+
+    custom = Config({
+        ("investment", "profit_weight"): "0",
+        ("investment", "efficiency_weight"): "0",
+        ("investment", "risk_weight"): "100",
+    })
+    report = InvestmentPolicy.from_config(custom).report()
+    assert report["risk_weight"] == 100
+    assert "politica_invalida" not in report["blocking_reasons"]
+
+
+def test_pesos_incorretos_bloqueiam_politica():
+    invalid = Config({
+        ("investment", "profit_weight"): "0",
+        ("investment", "efficiency_weight"): "0",
+        ("investment", "risk_weight"): "0",
+    })
+    assert "politica_invalida" in InvestmentPolicy.from_config(invalid).report()["blocking_reasons"]
+
+    non_ascii = Config({("investment", "profit_weight"): "９０"})
+    assert "politica_invalida" in InvestmentPolicy.from_config(non_ascii).report()["blocking_reasons"]

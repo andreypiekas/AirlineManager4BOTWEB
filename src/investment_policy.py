@@ -20,6 +20,14 @@ class InvestmentPolicy:
     auto_buy_hub: bool = False
     max_single_investment: int = 0
     max_daily_spend: int = 0
+    max_acquisitions_per_day: int = 0
+    min_daily_profit: int = 0
+    max_payback_days: int = 0
+    profit_weight: int = 60
+    efficiency_weight: int = 40
+    risk_weight: int = 0
+    confidence_weight: int = 0
+    diversification_weight: int = 0
     valid: bool = True
     legacy_autobuy_aircraft: bool = False
 
@@ -38,13 +46,20 @@ class InvestmentPolicy:
         mode = read("mode", "analyze")
         valid = mode in MODES
         limits = []
-        for key in ("max_single_investment", "max_daily_spend"):
-            raw = read(key, "0").strip()
-            if not raw.isdecimal():
+        bounds = (("max_single_investment", 10**15, 0), ("max_daily_spend", 10**15, 0),
+                  ("max_acquisitions_per_day", 100, 0), ("min_daily_profit", 10**15, 0),
+                  ("max_payback_days", 3650, 0), ("profit_weight", 100, 60),
+                  ("efficiency_weight", 100, 40), ("risk_weight", 100, 0),
+                  ("confidence_weight", 100, 0), ("diversification_weight", 100, 0))
+        for key, upper, fallback in bounds:
+            raw = read(key, str(fallback)).strip()
+            if not raw.isascii() or not raw.isdecimal() or len(raw) > 16 or int(raw) > upper:
                 valid = False
                 limits.append(0)
             else:
                 limits.append(int(raw))
+        if not any(limits[5:]):
+            valid = False
 
         return cls(
             enabled=enabled("planning_enabled"),
@@ -53,6 +68,14 @@ class InvestmentPolicy:
             auto_buy_hub=enabled("auto_buy_hub"),
             max_single_investment=limits[0],
             max_daily_spend=limits[1],
+            max_acquisitions_per_day=limits[2],
+            min_daily_profit=limits[3],
+            max_payback_days=limits[4],
+            profit_weight=limits[5],
+            efficiency_weight=limits[6],
+            risk_weight=limits[7],
+            confidence_weight=limits[8],
+            diversification_weight=limits[9],
             valid=valid,
             legacy_autobuy_aircraft=enabled("autobuy_aircraft", "options"),
         )
@@ -68,6 +91,7 @@ class InvestmentPolicy:
             reasons.append("modo_somente_analise")
         if self.mode == "autonomous" and (
             not self.max_single_investment or not self.max_daily_spend
+            or not self.max_acquisitions_per_day
         ):
             reasons.append("limites_de_gasto_a_configurar")
         reasons.append("executor_aguarda_homologacao")
@@ -78,6 +102,14 @@ class InvestmentPolicy:
             "auto_buy_hub": self.auto_buy_hub,
             "max_single_investment": self.max_single_investment,
             "max_daily_spend": self.max_daily_spend,
+            "max_acquisitions_per_day": self.max_acquisitions_per_day,
+            "min_daily_profit": self.min_daily_profit,
+            "max_payback_days": self.max_payback_days,
+            "profit_weight": self.profit_weight,
+            "efficiency_weight": self.efficiency_weight,
+            "risk_weight": self.risk_weight,
+            "confidence_weight": self.confidence_weight,
+            "diversification_weight": self.diversification_weight,
             "legacy_autobuy_aircraft": self.legacy_autobuy_aircraft,
             "execution_available": False,
             "release_gate": "G0",

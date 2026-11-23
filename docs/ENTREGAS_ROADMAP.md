@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total, limites adicionais A7 e pontuação global A4 (G0)
+
+**Escopo:** completar a configuração de critérios de rentabilidade e de priorização de compras no painel Hubs e ampliar a reserva de intenções no executor fictício.
+
+### Implementado
+
+- Política `[investment]` por perfil com quantidade máxima de aquisições em 24 horas, lucro diário mínimo e payback máximo. Os números têm limites e validação estrita no arquivo de configuração, na API de gravação e no formulário Hubs, com traduções PT-BR/inglês. Zero nos critérios de lucro e payback significa ausência do filtro; zero na quantidade máxima impede a execução simulada.
+- Pesos individuais de lucro absoluto, eficiência de capital, risco, confiança e diversificação configuráveis e persistidos por perfil. Defaults 60/40/0/0/0 preservam a classificação anterior. O comparador global expõe contribuições de pontuação e só utiliza risco/confiança/diversificação quando há evidência normalizada, recente, vinculada à mesma origem, hub e, quando pertinente, rota, modelo e motor. Evidência opcional ausente exclui o candidato afetado e mantém a comparação inconclusiva.
+- A consulta de recomendações aplica os critérios salvos. Configuração inválida é explicitamente sinalizada na comparação como `politica_invalida`. Cenários duplicados com observações contraditórias são descartados de forma conservadora.
+- O diário de intenções calcula aquisições reservadas e confirmadas por perfil. O executor **simulado** barra uma nova intenção quando o limite de aquisições ou de gasto da janela de 24 horas foi atingido, inclusive com reservas ainda abertas.
+- O ranking de A4 incorpora a exposição das intenções abertas do diário como obrigação local conhecida. Cenários acima do caixa restante após essas reservas são excluídos. O relatório e o painel expõem somente um **teto superior** de caixa, mantendo a conciliação de outras compras, entregas e compromissos do jogo como pendente. Falha na leitura do diário é sinalizada ao planejador.
+- Testes ampliados para leitura de defaults, configuração HTTP e formulário, critérios globais, prova de métricas opcionais e limitação de aquisições fictícias.
+
+### Validação e dependências
+
+- Validados em Windows em 23/11/2026: `rtk bypass python -m pytest -q --ignore=tests/test_instalacao_linux.py` (100%, exit code 0), `python -m ruff check src scripts tests`, `python -m compileall -q src scripts` e `git diff --check` (todos com exit code 0). O teste do instalador POSIX foi excluído apenas por incompatibilidade de plataforma. O executor permanece fictício, o portfólio permanece somente leitura e o gate de liberação segue em **G0**.
+- Não existe ainda uma fonte real homologada que forneça índices de risco, confiança e diversificação. Pesos positivos nesses critérios deixam candidatos sem evidência pendentes. Continuam necessárias a auditoria completa dos hubs próprios e da frota, cálculo econômico comprovado, seleção autenticada de motor e `#hubSelection`, reconciliação com compras do jogo, aprovação e envio pelo Telegram, compra efetiva de aeronave e de hub e calibração A9. Não houve compra, implantação ou merge na `main`.
+
 ## 2026-11-23 — Autonomia Total, política de investimento no painel A7 (G0)
 
 **Escopo:** primeira entrega de controles de investimento por perfil na aba Hubs, sem conectar o planejador à execução real, em `codex/autonomia-a0-a1-20261122`.
@@ -14,7 +32,7 @@
 ### Validação e próximas dependências
 
 - Validar com `python -m pytest -q --ignore=tests/test_instalacao_linux.py`, `python -m ruff check src scripts tests`, `python -m compileall -q src` e `git diff --check` em Windows. A exclusão do instalador POSIX corresponde à plataforma de execução. Testes de interface também utilizam Node.js quando disponível.
-- **Permanece G0:** opção de gasto nova não aciona o jogo mesmo quando o operador a habilita. A7 ainda requer limites de lucro/payback/quantidade, pesos configuráveis, visão financeira completa, alertas e aprovações específicas. Ausência de fontes reais A1–A6 e homologação do executor A5 bloqueiam G1–G5. O botão de suspensão cobre **novas compras de aeronaves e hubs**, incluindo o comprador legado. Outras automações de gasto têm controles na aba Parâmetros.
+- **Permanece G0:** opção de gasto nova não aciona o jogo mesmo quando o operador a habilita. A7 ainda requer visão financeira completa, alertas e aprovações específicas. Ausência de fontes reais A1–A6 e homologação do executor A5 bloqueiam G1–G5. O botão de suspensão cobre **novas compras de aeronaves e hubs**, incluindo o comprador legado. Outras automações de gasto têm controles na aba Parâmetros.
 - Nenhuma compra real, implantação, merge na `main` ou mudança na PR #44. Reversão por `git revert` do commit associado após conferir dependências posteriores.
 
 ## 2026-11-23 — Autonomia Total, avaliação de expansão A6 (G0)

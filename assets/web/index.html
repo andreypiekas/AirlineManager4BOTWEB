@@ -651,6 +651,17 @@ footer strong { font-weight: 600; color: var(--aqua); }
               </select></label>
               <label class="hubs-field"><span data-t="Máximo por compra ($ jogo)">Máximo por compra ($ jogo)</span><input id="investmentSingle" type="number" min="0" max="1000000000000000" step="1" required></label>
               <label class="hubs-field"><span data-t="Máximo diário ($ jogo)">Máximo diário ($ jogo)</span><input id="investmentDaily" type="number" min="0" max="1000000000000000" step="1" required></label>
+              <label class="hubs-field"><span data-t="Máximo de aquisições em 24h">Máximo de aquisições em 24h</span><input id="investmentCount" type="number" min="0" max="100" step="1" required></label>
+              <label class="hubs-field"><span data-t="Lucro diário mínimo ($ jogo)">Lucro diário mínimo ($ jogo)</span><input id="investmentMinProfit" type="number" min="0" max="1000000000000000" step="1" required></label>
+              <label class="hubs-field"><span data-t="Payback máximo em dias (0 = livre)">Payback máximo em dias (0 = livre)</span><input id="investmentPayback" type="number" min="0" max="3650" step="1" required></label>
+            </div>
+            <p class="hub-section-note" data-t="Pesos relativos do ranking. Critérios sem evidência verificada tornam a comparação inconclusiva.">Pesos relativos do ranking. Critérios sem evidência verificada tornam a comparação inconclusiva.</p>
+            <div class="hubs-controls">
+              <label class="hubs-field"><span data-t="Peso do lucro">Peso do lucro</span><input id="investmentProfitWeight" type="number" min="0" max="100" step="1" required></label>
+              <label class="hubs-field"><span data-t="Peso da eficiência do capital">Peso da eficiência do capital</span><input id="investmentEfficiencyWeight" type="number" min="0" max="100" step="1" required></label>
+              <label class="hubs-field"><span data-t="Peso do risco">Peso do risco</span><input id="investmentRiskWeight" type="number" min="0" max="100" step="1" required></label>
+              <label class="hubs-field"><span data-t="Peso da confiança dos dados">Peso da confiança dos dados</span><input id="investmentConfidenceWeight" type="number" min="0" max="100" step="1" required></label>
+              <label class="hubs-field"><span data-t="Peso da diversificação">Peso da diversificação</span><input id="investmentDiversificationWeight" type="number" min="0" max="100" step="1" required></label>
             </div>
             <p id="investmentPolicyContext" class="hub-section-note"></p>
             <div class="hub-policy-actions">
@@ -873,6 +884,7 @@ const EN = {
   "Conclusão do planejamento pendente.": "Planning conclusion pending.",
   "Intenções de compra em aberto": "Open purchase intents",
   "Exposição estimada no diário": "Estimated ledger exposure",
+  "Teto de caixa após reservas locais": "Cash upper bound after local reservations",
   "Diário de investimentos indisponível.": "Investment ledger unavailable.",
   "Verificações pendentes": "Pending verifications", "Verificado em": "Verified at",
   "Nenhum cenário pesquisado para esta base.": "No researched scenario for this hub.",
@@ -995,6 +1007,16 @@ const EN = {
   "Autônomo dentro dos limites": "Autonomous within limits",
   "Máximo por compra ($ jogo)": "Maximum per purchase (game $)",
   "Máximo diário ($ jogo)": "Daily maximum (game $)",
+  "Máximo de aquisições em 24h": "Maximum acquisitions per 24h",
+  "Lucro diário mínimo ($ jogo)": "Minimum daily profit (game $)",
+  "Payback máximo em dias (0 = livre)": "Maximum payback days (0 = no limit)",
+  "Pesos relativos do ranking. Critérios sem evidência verificada tornam a comparação inconclusiva.": "Relative ranking weights. Criteria without verified evidence make the comparison inconclusive.",
+  "Peso do lucro": "Profit weight",
+  "Peso da eficiência do capital": "Capital efficiency weight",
+  "Peso do risco": "Risk weight",
+  "Peso da confiança dos dados": "Data confidence weight",
+  "Peso da diversificação": "Diversification weight",
+  "Configure pelo menos um peso positivo para o ranking.": "Set at least one positive ranking weight.",
   "Salvar política": "Save policy",
   "Suspender novas compras de aeronaves/hubs": "Pause new aircraft/hub purchases",
   "Política de investimento aguardando leitura.": "Waiting for investment policy.",
@@ -1931,6 +1953,11 @@ function renderHubRecommendations(report) {
     $("hubRecommendationsScope").textContent += " " + comparison +
       (report.portfolio.status === "inconclusivo"
         ? " " + tr("Conclusão do planejamento pendente.") : "");
+    if (Number.isFinite(report.portfolio.budget_upper_bound)) {
+      $("hubRecommendationsScope").textContent += " " +
+        tr("Teto de caixa após reservas locais") + ": " +
+        hubMoney(report.portfolio.budget_upper_bound) + ".";
+    }
   }
   if (report.investment_journal) {
     const journal = report.investment_journal;
@@ -2027,6 +2054,14 @@ function renderInvestmentPolicy(report) {
   $("investmentMode").value = policy.mode;
   $("investmentSingle").value = String(policy.max_single_investment);
   $("investmentDaily").value = String(policy.max_daily_spend);
+  $("investmentCount").value = String(policy.max_acquisitions_per_day);
+  $("investmentMinProfit").value = String(policy.min_daily_profit);
+  $("investmentPayback").value = String(policy.max_payback_days);
+  $("investmentProfitWeight").value = String(policy.profit_weight);
+  $("investmentEfficiencyWeight").value = String(policy.efficiency_weight);
+  $("investmentRiskWeight").value = String(policy.risk_weight);
+  $("investmentConfidenceWeight").value = String(policy.confidence_weight);
+  $("investmentDiversificationWeight").value = String(policy.diversification_weight);
   $("investmentPolicyFields").disabled = false;
   $("investmentPolicyGate").textContent = (policy.release_gate || "G0") + " · " +
     tr("Execução de investimento bloqueada") + " · " +
@@ -2061,12 +2096,26 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
     $("investmentPolicyStatus").textContent = tr("Configuração indisponível. Tente atualizar o painel.");
     return;
   }
-  const singleText = $("investmentSingle").value.trim();
-  const dailyText = $("investmentDaily").value.trim();
-  const single = Number(singleText);
-  const daily = Number(dailyText);
-  if (!singleText || !dailyText || ![single, daily].every(value => Number.isSafeInteger(value) && value >= 0 && value <= 1e15)) {
+  const amounts = [
+    [$("investmentSingle").value.trim(), 1e15],
+    [$("investmentDaily").value.trim(), 1e15],
+    [$("investmentCount").value.trim(), 100],
+    [$("investmentMinProfit").value.trim(), 1e15],
+    [$("investmentPayback").value.trim(), 3650],
+    [$("investmentProfitWeight").value.trim(), 100],
+    [$("investmentEfficiencyWeight").value.trim(), 100],
+    [$("investmentRiskWeight").value.trim(), 100],
+    [$("investmentConfidenceWeight").value.trim(), 100],
+    [$("investmentDiversificationWeight").value.trim(), 100]
+  ];
+  if (!amounts.every(([text, limit]) => text !== "" && /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) && Number(text) <= limit)) {
     $("investmentPolicyStatus").textContent = tr("Verifique os limites numéricos antes de salvar.");
+    return;
+  }
+  const [single, daily, count, minProfit, maxPayback, profitWeight,
+    efficiencyWeight, riskWeight, confidenceWeight, diversificationWeight] = amounts.map(([text]) => Number(text));
+  if (profitWeight + efficiencyWeight + riskWeight + confidenceWeight + diversificationWeight === 0) {
+    $("investmentPolicyStatus").textContent = tr("Configure pelo menos um peso positivo para o ranking.");
     return;
   }
   const policy = {
@@ -2075,7 +2124,15 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
     auto_buy_hub: $("investmentHub").checked,
     mode: $("investmentMode").value,
     max_single_investment: single,
-    max_daily_spend: daily
+    max_daily_spend: daily,
+    max_acquisitions_per_day: count,
+    min_daily_profit: minProfit,
+    max_payback_days: maxPayback,
+    profit_weight: profitWeight,
+    efficiency_weight: efficiencyWeight,
+    risk_weight: riskWeight,
+    confidence_weight: confidenceWeight,
+    diversification_weight: diversificationWeight
   };
   $("investmentPolicyFields").disabled = true;
   $("investmentPolicyStatus").textContent = tr("Salvando política…");

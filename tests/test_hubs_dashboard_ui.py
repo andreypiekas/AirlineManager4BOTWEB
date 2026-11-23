@@ -98,7 +98,12 @@ def test_hubs_filters_and_sort_controls_are_labeled_and_target_the_grids():
 def test_investment_policy_controls_have_labels_and_separate_endpoints():
     page = _page()
     for identifier in ("investmentPlanning", "investmentAircraft", "investmentHub", "investmentMode",
-                       "investmentSingle", "investmentDaily"):
+                       "investmentSingle", "investmentDaily", "investmentCount",
+                       "investmentMinProfit", "investmentPayback"):
+        assert page.controls[identifier]["nested_label"], identifier
+    for identifier in ("investmentProfitWeight", "investmentEfficiencyWeight",
+                       "investmentRiskWeight", "investmentConfidenceWeight",
+                       "investmentDiversificationWeight"):
         assert page.controls[identifier]["nested_label"], identifier
     assert {"analyze", "approval", "autonomous"} <= page.options["investmentMode"]
     html = (ROOT / "assets/web/index.html").read_text(encoding="utf-8")
@@ -234,6 +239,7 @@ const translations = {
   'Conclusão do planejamento pendente.': 'Planning conclusion pending.',
   'Intenções de compra em aberto': 'Open purchase intents',
   'Exposição estimada no diário': 'Estimated ledger exposure',
+  'Teto de caixa após reservas locais': 'Cash upper bound after local reservations',
   'Diário de investimentos indisponível.': 'Investment ledger unavailable.',
   'Nenhum cenário global comparável.': 'No globally comparable scenario.',
   'Saldo a confirmar.': 'Cash balance pending verification.',
@@ -288,9 +294,12 @@ assert.match($('hubRecommendationsScope').textContent,
   /Top globally compared scenario: AAA · A320 \/ 2/);
 assert.match($('hubRecommendationsScope').textContent, /Planning conclusion pending/);
 report.investment_journal = {count:2, estimated_exposure:15500};
+report.portfolio.budget_upper_bound = 4500;
 renderHubRecommendations(report);
 assert.match($('hubRecommendationsScope').textContent,
   /Open purchase intents: 2 · Estimated ledger exposure: \$15500/);
+assert.match($('hubRecommendationsScope').textContent,
+  /Cash upper bound after local reservations: \$4500/);
 report.investment_journal = {count:null, estimated_exposure:null};
 renderHubRecommendations(report);
 assert.match($('hubRecommendationsScope').textContent, /Investment ledger unavailable/);

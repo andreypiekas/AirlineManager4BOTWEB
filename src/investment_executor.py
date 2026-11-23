@@ -159,6 +159,8 @@ class SimulatedInvestmentExecutor:
             reasons.append("limite_por_compra")
         if self.policy.max_daily_spend <= 0:
             reasons.append("limite_de_24h_nao_configurado")
+        if self.policy.max_acquisitions_per_day <= 0:
+            reasons.append("maximo_de_aquisicoes_nao_configurado")
         return reasons
 
     def run(self, plan: Mapping, gateway: SimulatedAircraftGateway, *,
@@ -193,6 +195,11 @@ class SimulatedInvestmentExecutor:
             if occupied + intent["estimated_cost"] > self.policy.max_daily_spend:
                 return {"state": "BLOCKED", "intent_key": key,
                         "reasons": ["limite_de_24h"], "simulated": True}
+            if self.journal.acquisition_count_since(
+                time.time() - 86400, exclude_intent_key=key
+            ) >= self.policy.max_acquisitions_per_day:
+                return {"state": "BLOCKED", "intent_key": key,
+                        "reasons": ["limite_de_aquisicoes_em_24h"], "simulated": True}
 
             if intent["state"] == "PROPOSED":
                 self.journal.transition(key, "PROPOSED", "APPROVED")
