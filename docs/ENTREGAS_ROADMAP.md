@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A5/A8, recuperação comprovada de executor após encerramento do processo (G0)
+
+**Objetivo:** permitir a conciliação segura de uma compra simulada após a morte do processo que detinha o bloqueio do perfil, preservando o diário de intenção e a regra de tentativa única.
+
+### Implementação e evidências
+
+- **`src/investment_journal.py`:** cada novo bloqueio de executor armazena PID e hostname. `release_stale_executor()` usa a API de processos do sistema operacional e libera, em transação SQLite, somente um bloqueio do mesmo host cujo processo comprovadamente terminou. Um processo vivo, PID inacessível, host diferente ou registro legado sem metadados mantém a exclusividade. A migração das duas colunas ocorre sob `BEGIN IMMEDIATE` para evitar corrida entre inicializações concorrentes.
+- **`src/investment_executor.py` e `src/hub_purchase.py`:** os executores simulados tentam recuperar bloqueio obsoleto antes de adquirir exclusividade para iniciar ou conciliar uma intenção. Compras já marcadas `SUBMITTED`/`UNKNOWN` continuam sendo resolvidas exclusivamente por consulta independente ao pedido/posse persistido, sem nova submissão.
+- **`tests/test_investment_journal.py`, `tests/test_investment_executor.py` e `tests/test_hub_purchase.py`:** verificam processo vivo versus encerrado, recuperação após término real de subprocesso, host diferente, migração concorrente do schema legado, reinício com pedido simulado persistido e confirmação sem repetição da compra.
+
+### Verificação, limitações e reversão
+
+- Testes direcionados, suíte Windows sem o teste de instalação Linux específico de permissões POSIX, Ruff, `compileall` e `git diff --check` executados nesta entrega. A prova de término do subprocesso utiliza o sistema operacional do executor local; gateway e pedidos são simulados.
+- **Gate G0.** A recuperação automática exige o mesmo hostname e metadados de processo. PID reutilizado, PID inacessível, mudança de host e bloqueios de versões antigas permanecem conservadoramente retidos para recuperação explícita. A simulação não comprova seletores, pedidos ou propriedade do jogo real. A5 e A8 ainda dependem de reconciliação autenticada, verificação da configuração final e homologação para liberar qualquer gasto. Gates G1–G5 pendentes.
+- Sem alteração de configuração de produção, compra no jogo, Telegram, implantação ou merge na `main`. Branch `codex/autonomia-a0-a1-20261122`, preservando a PR #44. A reversão exige inspecionar os usos do diário e reverter o commit correspondente. Novas colunas opcionais do SQLite podem permanecer após a reversão sem afetar leitores legados.
+
 ## 2026-11-23 — Autonomia Total A8, bloqueio de recompra de hub no simulador (G0)
 
 **Objetivo:** garantir que uma segunda intenção, outro processo ou uma retomada após falha não consiga registrar novamente a aquisição de um hub já reservado como adquirido no armazenamento simulado.

@@ -1,11 +1,17 @@
 """Crash-safe simulated acquisition intents. No game or Selenium calls."""
 from __future__ import annotations
 
+import socket
+import sqlite3
+import subprocess
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
+import investment_journal
 from investment_journal import IntentConflict, InvestmentJournal
 
 
@@ -269,3 +275,82 @@ def test_confirmed_purchase_receipt_cannot_be_reused_after_restart(tmp_path):
     assert restarted.transition(second_key, "UNKNOWN", "CONFIRMED",
                                 confirmation={**reused_receipt, "purchase_id": "98766"})
     assert restarted.get(second_key)["state"] == "CONFIRMED"
+
+
+def test_stale_executor_guard_requires_proof_that_owner_process_is_gone(tmp_path, monkeypatch):
+    ledger = journal(tmp_path)
+    assert ledger.acquire_executor("owner-123")
+
+    monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: True)
+    assert not ledger.release_stale_executor()
+    assert ledger.executor_busy()
+
+    monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: False)
+    assert ledger.release_stale_executor()
+    assert not ledger.executor_busy()
+
+
+def test_stale_guard_recovers_after_actual_owner_process_exit(tmp_path):
+    path = tmp_path / "owner-exit.sqlite3"
+    child_code = (
+        "import sys; "
+        "sys.path.insert(0, sys.argv[1]); "
+        "from investment_journal import InvestmentJournal; "
+        "ledger = InvestmentJournal(sys.argv[2], profile_id='principal'); "
+        "assert ledger.acquire_executor('child-worker')"
+    )
+    subprocess.run(
+        [sys.executable, "-c", child_code,
+         str(Path(__file__).resolve().parents[1] / "src"), str(path)],
+        check=True,
+    )
+    restarted = InvestmentJournal(path, profile_id="principal")
+    assert restarted.executor_busy()
+    assert restarted.release_stale_executor()
+    assert restarted.acquire_executor("recovered-worker")
+    assert restarted.release_executor("recovered-worker")
+
+
+def test_stale_executor_guard_from_another_host_remains_locked(tmp_path, monkeypatch):
+    ledger = journal(tmp_path)
+    assert ledger.acquire_executor("owner-123")
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE executor_guards SET owner_host=? WHERE profile_id=?",
+            (f"{socket.gethostname()}-another-host", ledger.profile_id),
+        )
+        conn.commit()
+    monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: False)
+    assert not ledger.release_stale_executor()
+    assert ledger.executor_busy()
+
+
+def test_existing_journal_guard_schema_is_migrated_without_releasing_legacy_owner(tmp_path):
+    path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE executor_guards (profile_id TEXT PRIMARY KEY, "
+            "owner_token TEXT NOT NULL, acquired_at REAL NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO executor_guards VALUES (?, ?, ?)",
+            ("principal", "old-worker", time.time()),
+        )
+
+    # Simultaneous initialization must not race to add the same columns.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        journals = list(pool.map(
+            lambda _: InvestmentJournal(path, profile_id="principal"), range(4)
+        ))
+
+    assert all(ledger.executor_busy() for ledger in journals)
+    assert not journals[0].release_stale_executor()
+    assert journals[0].release_executor("old-worker")
+    assert journals[0].acquire_executor("new-worker")
+    with sqlite3.connect(path) as conn:
+        columns = {item[1] for item in conn.execute("PRAGMA table_info(executor_guards)")}
+        owner = conn.execute(
+            "SELECT owner_pid, owner_host FROM executor_guards WHERE profile_id='principal'"
+        ).fetchone()
+    assert {"owner_pid", "owner_host"}.issubset(columns)
+    assert owner == (investment_journal.os.getpid(), socket.gethostname())

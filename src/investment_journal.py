@@ -10,8 +10,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
+import socket
 import time
 from collections.abc import Mapping
 from contextlib import closing
@@ -48,6 +50,40 @@ def _game_id(value: object) -> bool:
 def _choice_id(value: object) -> bool:
     return (isinstance(value, str) and _CHOICE_ID.fullmatch(value) is not None
             and value.casefold() not in ("unknown", "default", "inferred", "null"))
+
+
+def _process_is_running(pid: object) -> bool:
+    """Return True unless the local OS proves that a process has exited."""
+    if type(pid) is not int or pid <= 0:
+        return True
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return ctypes.get_last_error() != 87
+        try:
+            exit_code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return True
+            return exit_code.value == 259
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def _validated_plan(plan: Mapping) -> dict:
@@ -131,10 +167,21 @@ class InvestmentJournal:
                 CREATE TABLE IF NOT EXISTS executor_guards (
                     profile_id TEXT PRIMARY KEY,
                     owner_token TEXT NOT NULL,
-                    acquired_at REAL NOT NULL
+                    acquired_at REAL NOT NULL,
+                    owner_pid INTEGER,
+                    owner_host TEXT
                 );
             """)
+            # Serialize schema migration across executors starting with the
+            # same journal, including installations created before PID fields.
             conn.execute("BEGIN IMMEDIATE")
+            guard_columns = {row["name"] for row in conn.execute(
+                "PRAGMA table_info(executor_guards)"
+            )}
+            if "owner_pid" not in guard_columns:
+                conn.execute("ALTER TABLE executor_guards ADD COLUMN owner_pid INTEGER")
+            if "owner_host" not in guard_columns:
+                conn.execute("ALTER TABLE executor_guards ADD COLUMN owner_host TEXT")
             environment = "simulation" if self.simulation else "game"
             row = conn.execute("SELECT environment FROM journal_environment").fetchone()
             if row is None:
@@ -308,8 +355,10 @@ class InvestmentJournal:
         with self._connect() as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             result = conn.execute(
-                "INSERT OR IGNORE INTO executor_guards (profile_id, owner_token, acquired_at) "
-                "VALUES (?, ?, ?)", (self.profile_id, owner_token, time.time()),
+                "INSERT OR IGNORE INTO executor_guards "
+                "(profile_id, owner_token, acquired_at, owner_pid, owner_host) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (self.profile_id, owner_token, time.time(), os.getpid(), socket.gethostname()),
             )
             return result.rowcount == 1
 
@@ -329,6 +378,33 @@ class InvestmentJournal:
                 "SELECT 1 FROM executor_guards WHERE profile_id=?",
                 (self.profile_id,),
             ).fetchone() is not None
+
+    def release_stale_executor(self) -> bool:
+        """Release a guard only when its same-host owner process is proven gone.
+
+        Older guards without process metadata and guards owned by another host
+        remain locked for explicit recovery. An inaccessible or ambiguous PID
+        is treated as alive.
+        """
+        with self._connect() as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            guard = conn.execute(
+                "SELECT owner_token, owner_pid, owner_host FROM executor_guards "
+                "WHERE profile_id=?",
+                (self.profile_id,),
+            ).fetchone()
+            if guard is None:
+                return False
+            if (guard["owner_host"] != socket.gethostname()
+                    or type(guard["owner_pid"]) is not int
+                    or _process_is_running(guard["owner_pid"])):
+                return False
+            return conn.execute(
+                "DELETE FROM executor_guards WHERE profile_id=? AND owner_token=? "
+                "AND owner_pid=? AND owner_host=?",
+                (self.profile_id, guard["owner_token"], guard["owner_pid"],
+                 guard["owner_host"]),
+            ).rowcount == 1
 
     def claim_submission(self, intent_key: str, owner_token: str) -> bool:
         """Claim one submission only under the profile lock and no unknown orders."""

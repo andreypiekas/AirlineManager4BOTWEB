@@ -8,6 +8,7 @@ from threading import Event
 
 import pytest
 
+import investment_journal
 from investment_executor import SimulatedAircraftGateway, SimulatedInvestmentExecutor
 from investment_journal import InvestmentJournal
 from investment_policy import InvestmentPolicy
@@ -157,6 +158,27 @@ def test_crash_requires_explicit_guard_recovery_and_preserves_one_shot(tmp_path)
     assert gateway.submit_calls == 1
     assert independent_reader.submit_calls == 0
     assert restarted.journal.get(result["intent_key"])["submit_attempts"] == 1
+    assert not restarted.journal.executor_busy()
+
+
+def test_restart_reconciles_after_os_proves_previous_executor_exited(tmp_path, monkeypatch):
+    order_store = tmp_path / "fake_order_book.sqlite3"
+    worker = executor(tmp_path)
+    crashed = worker.run(
+        plan(), SimulatedAircraftGateway(checkout(), outcome="crash", order_store=order_store),
+    )
+    assert crashed["state"] == "SUBMITTED"
+
+    restarted = executor(tmp_path)
+    monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: False)
+    reader = SimulatedAircraftGateway(
+        checkout(), outcome="confirmed", order_store=order_store,
+    )
+    reconciled = restarted.reconcile(crashed["intent_key"], reader)
+
+    assert reconciled["state"] == "CONFIRMED"
+    assert reader.submit_calls == 0
+    assert restarted.journal.get(crashed["intent_key"])["submit_attempts"] == 1
     assert not restarted.journal.executor_busy()
 
 

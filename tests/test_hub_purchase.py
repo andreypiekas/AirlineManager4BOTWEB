@@ -9,6 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import investment_journal  # noqa: E402
 from hub_purchase import (  # noqa: E402
     SimulatedHubExecutor,
     SimulatedHubGateway,
@@ -125,6 +126,25 @@ def test_timeout_and_restart_never_repurchase_hub(tmp_path, outcome):
     assert reconciled["state"] == "CONFIRMED"
     assert reopened_gateway.submit_calls == 0
     assert journal.get(first["intent_key"])["state"] == "CONFIRMED"
+
+
+def test_hub_restart_reconciles_stale_guard_without_repeating_order(tmp_path, monkeypatch):
+    journal, executor, gateway = _env(tmp_path, outcome="crash")
+    first = executor.run(_plan(), gateway, approved=True)
+    assert first["state"] == "SUBMITTED"
+
+    restarted = SimulatedHubExecutor(
+        InvestmentJournal(tmp_path / "journal.sqlite3", profile_id="main",
+                          simulation=True), _policy())
+    monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: False)
+    reader = SimulatedHubGateway(_checkout(), outcome="confirmed",
+                                 ownership_store=tmp_path / "owned.sqlite3")
+    result = restarted.reconcile(first["intent_key"], reader)
+
+    assert result["state"] == "CONFIRMED"
+    assert reader.submit_calls == 0
+    assert journal.get(first["intent_key"])["submit_attempts"] == 1
+    assert not journal.executor_busy()
 
 
 def test_refused_hub_purchase_recorded_as_failure_without_repeat(tmp_path):

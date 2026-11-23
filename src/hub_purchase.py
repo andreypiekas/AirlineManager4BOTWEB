@@ -174,6 +174,7 @@ class SimulatedHubExecutor:
         reasons = self._policy_reasons(plan, approved)
         if reasons:
             return {"state": "BLOCKED", "reasons": reasons, "simulated": True}
+        self.journal.release_stale_executor()
         owner = uuid4().hex
         if not self.journal.acquire_executor(owner):
             return {"state": "BLOCKED", "reasons": ["executor_ocupado"], "simulated": True}
@@ -249,10 +250,12 @@ class SimulatedHubExecutor:
             raise TypeError("Exige gateway de hub simulado.")
         if self.journal.get(key) is None:
             raise KeyError("Intenção não encontrada.")
-        if (stopped_owner_token is not None
-                and not self.journal.release_executor(stopped_owner_token)):
-            return {"state": "BLOCKED", "reasons": ["executor_anterior_incerto"],
-                    "simulated": True}
+        if stopped_owner_token is not None:
+            if not self.journal.release_executor(stopped_owner_token):
+                return {"state": "BLOCKED", "reasons": ["executor_anterior_incerto"],
+                        "simulated": True}
+        else:
+            self.journal.release_stale_executor()
         owner = uuid4().hex
         if not self.journal.acquire_executor(owner):
             return {"state": "BLOCKED", "reasons": ["executor_ocupado"], "simulated": True}

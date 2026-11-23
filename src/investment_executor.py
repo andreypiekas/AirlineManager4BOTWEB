@@ -174,6 +174,7 @@ class SimulatedInvestmentExecutor:
         if reasons:
             return {"state": "BLOCKED", "reasons": reasons, "simulated": True}
 
+        self.journal.release_stale_executor()
         owner = uuid4().hex
         if not self.journal.acquire_executor(owner):
             return {"state": "BLOCKED", "reasons": ["executor_ocupado"],
@@ -262,9 +263,12 @@ class SimulatedInvestmentExecutor:
             raise TypeError("Somente o gateway de simulação é aceito.")
         if self.journal.get(key) is None:
             raise KeyError("Intenção não encontrada no perfil.")
-        if stopped_owner_token is not None and not self.journal.release_executor(stopped_owner_token):
-            return {"state": "BLOCKED", "reasons": ["executor_anterior_nao_identificado"],
-                    "simulated": True}
+        if stopped_owner_token is not None:
+            if not self.journal.release_executor(stopped_owner_token):
+                return {"state": "BLOCKED", "reasons": ["executor_anterior_nao_identificado"],
+                        "simulated": True}
+        else:
+            self.journal.release_stale_executor()
         owner = uuid4().hex
         if not self.journal.acquire_executor(owner):
             return {"state": "BLOCKED", "reasons": ["executor_ocupado"],
