@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, sensibilidade e recuperação indicativa de capital (G0)
+
+- A pesquisa por combinação de hub, rota, motor e layout simula cada variável de stress isoladamente: preço de combustível +20%, CO₂ +20%, ocupação -10% e demanda -10%, além do stress combinado. Cada comparação preserva a configuração Y/J/F e a margem, com as mesmas hipóteses de rotação e tarifas. Quando disponível, a reserva condicional de A-check também é aplicada às contribuições comparadas.
+- Com preço observado da variante e subtotal de capital disponível (aeronave, hangar e hub quando aplicável), cada layout apresenta dias indicativos para recuperar esse subtotal e a contribuição anual em percentual do subtotal nos cenários base e stress. Contribuição não positiva não gera prazo de recuperação. A validade é limitada pela primeira evidência a expirar. A simulação é reproduzível na captura histórica e permanece inelegível para compra. Não calcula payback ou ROI auditados, pois taxa da rota, preço final, demanda residual e demais despesas ainda não estão confirmados.
+- Validação Windows: 175 testes direcionados e suíte com 1.999 aprovados, 1 ignorado e nenhuma falha; instalação Linux excluída. Ruff e git diff --check aprovados. Nenhuma transação real executada. A avaliação auditada e homologação das fases restantes continuam pendentes.
+
 ## 2026-11-24 — Autonomia Total A3, correlação histórica de cotações de rota (G0)
 
 - A reprodução da pesquisa por snapshot agora associa as cotações nativas capturadas por perfil, origem, destino, direção, distância e identidade da escala. O painel PT/EN apresenta quantidade, intervalos de taxa, tarifas Y/J/F e ocupação, com validade calculada pela observação mais antiga. Os identificadores privados das aeronaves não são expostos na pesquisa.

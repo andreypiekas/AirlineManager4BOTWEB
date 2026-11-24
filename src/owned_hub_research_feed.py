@@ -18,7 +18,7 @@ from engine_detail import validate_metrics
 from fleet_commitment_observations import MAX_AGE as FLEET_MAX_AGE, SOURCE as FLEET_SOURCE, _hangar
 from route_detail_evidence import current_detail
 from market import recent_market_quotes
-from research_economics_preview import research_economics_preview, research_mode
+from research_economics_preview import attach_capital_recovery_preview, research_economics_preview, research_mode
 from research_physical_feasibility import assess_direct_route
 from research_route_occupancy import FleetRouteOccupancy
 from stopover_research import select_current_stopover
@@ -614,6 +614,9 @@ def _build_hub_research_queue(
                                                   market["observed_at"] + MAX_EVIDENCE_AGE)
                     if occupancy:
                         economics["expires_at"] = min(economics["expires_at"], occupancy["expires_at"])
+                capital = _capital_quote_preview(
+                    model, variant, market["observed_at"], hangar_quote, preview if external else None)
+                attach_capital_recovery_preview(economics, capital, now=now)
                 queue.append({
                     "hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
                     "destination_id": sample["destination_id"],
@@ -639,8 +642,7 @@ def _build_hub_research_queue(
                     "physical_feasibility": physical,
                     **({"stopover_research": stopover} if stopover else {}),
                     "final_aircraft_price": None,
-                    "capital_quote_preview": _capital_quote_preview(
-                        model, variant, market["observed_at"], hangar_quote, preview if external else None),
+                    "capital_quote_preview": capital,
                     **({"external_cost_preview": preview} if external else {}),
                     "economics_preview": economics,
                     "daily_net_profit": None, "status": "pesquisa_pendente",

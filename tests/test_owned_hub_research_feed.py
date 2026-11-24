@@ -1138,9 +1138,53 @@ def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress()
         assert base["projected_contribution_per_day"] == pytest.approx(
             base["revenue_per_day"] - base["fuel_cost_per_day"] - base["co2_cost_per_day"] - base["margin_per_day"], abs=.03)
         assert stress["projected_contribution_per_day"] < base["projected_contribution_per_day"]
+        sensitivity = row["sensitivity"]
+        assert set(sensitivity) == {"fuel_price", "co2_price", "occupancy", "demand"}
+        assert sensitivity["fuel_price"]["fuel_cost_per_day"] == pytest.approx(base["fuel_cost_per_day"] * 1.2, abs=.02)
+        assert sensitivity["fuel_price"]["revenue_per_day"] == base["revenue_per_day"]
+        assert sensitivity["co2_price"]["co2_cost_per_day"] == pytest.approx(base["co2_cost_per_day"] * 1.2, abs=.02)
+        assert sensitivity["co2_price"]["fuel_cost_per_day"] == base["fuel_cost_per_day"]
+        assert all(base["projected_contribution_per_day"] >= scenario["projected_contribution_per_day"] >=
+                   stress["projected_contribution_per_day"] for scenario in sensitivity.values())
+        assert "capital_recovery_preview" not in row
         for key, amount in stress["passengers_per_day"].items():
             assert amount <= row["layout"][key] * .72 * stress["departures_per_day"] + .02
     assert set(first["excluded_costs"]) == {"maintenance", "a_check", "other_recurring", "capex"}
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_capital_recovery_uses_observed_variant_and_hangar_subtotal(check):
+    inventory, engines = _inventory(), _preview_engines()
+    inventory["fleet_commitment_observations"] = {
+        "source": "game_hangar_and_fleet_status", "status": "partial", "observed_at": NOW - 850,
+        "passenger_hangar": {"capacity": 2, "occupied": 2, "free": 0,
+                             "upgrade_quotes": {"1": {"cost": 200000, "duration_seconds": 60}}},
+    }
+    metrics = {"displayed_cost_usd": 1800000}
+    if check:
+        metrics.update(a_check_cost_usd=2341, maintenance_interval_hours=400)
+    engines["models"]["11"]["variant_details"] = {"1": {"observed_at": NOW, "metrics": metrics}}
+    page = build_owned_hub_research_queue(inventory, [_sample()], _market(), engines=engines,
+                                         now=NOW, operating_market_stats=_preview_stats())
+    rows = {row["engine_id"]: row for row in page["items"]}
+    item = rows["1"]
+    quote = item["capital_quote_preview"]
+    assert quote["displayed_subtotal"] == 2000000
+    assert all(quote[key] is None for key in ("route_fee", "total_investment", "payback_days", "roi"))
+    assert item["daily_net_profit"] is None and item["purchase_eligible"] is False
+    key = "conditional_contribution_after_a_check_per_day" if check else "projected_contribution_per_day"
+    for row in item["economics_preview"]["layouts"]:
+        recovery = row["capital_recovery_preview"]
+        assert recovery["purchase_eligible"] is False
+        assert recovery["expires_at"] == NOW + 50
+        assert recovery["contribution_basis"] == key
+        assert recovery["displayed_subtotal"] == 2000000
+        for scenario in ("base", "stress"):
+            contribution = row[scenario][key]
+            assert recovery[scenario]["subtotal_recovery_days"] == (
+                round(2000000 / contribution, 2) if contribution > 0 else None)
+            assert recovery[scenario]["annual_contribution_to_subtotal_pct"] == round(contribution * 36500 / 2000000, 2)
+    assert all("capital_recovery_preview" not in row for row in rows["3"]["economics_preview"]["layouts"])
 
 
 @pytest.mark.parametrize("mode,speed_multiplier", [("fácil", 1.5), ("realista", 1.0)])

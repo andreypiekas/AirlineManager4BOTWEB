@@ -1371,6 +1371,11 @@ const EN = {
   "Relógio de manutenção a confirmar; aplicada a maior reserva": "Maintenance clock unverified; larger reserve applied",
   "Após reserva adicional A-check (base / stress)": "After additional A-check reserve (base / stress)",
   "Custos excluídos da contribuição original": "Costs excluded from original contribution",
+  "Sensibilidade isolada (combustível / CO₂ / ocupação / demanda)": "Individual sensitivity (fuel / CO₂ / occupancy / demand)",
+  "Recuperação do subtotal indicativo (base / stress)": "Indicative subtotal recovery (base / stress)",
+  "Contribuição anual / subtotal (base / stress)": "Annual contribution / subtotal (base / stress)",
+  "Simulação parcial: taxa da rota e despesas não confirmadas; sem payback ou ROI auditado": "Partial simulation: unverified route fee and expenses; no audited payback or ROI",
+  "Sem recuperação projetada": "No projected recovery",
   "Cotações nativas de aeronaves existentes": "Native quotes for existing aircraft",
   "Referência histórica, sem preço para nova aeronave": "Historical reference, no price for a new aircraft",
   "Taxa de rota observada (intervalo)": "Observed route fee (range)",
@@ -2123,6 +2128,26 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
       addHubMetric(metrics, tr("Após reserva adicional A-check (base / stress)") + " · " + layout,
         hubMoney(row.base.conditional_contribution_after_a_check_per_day) + " / " +
         hubMoney(row.stress.conditional_contribution_after_a_check_per_day));
+    }
+    if (row.sensitivity) {
+      const key = hasCheck ? "conditional_contribution_after_a_check_per_day" : "projected_contribution_per_day";
+      addHubMetric(metrics, tr("Sensibilidade isolada (combustível / CO₂ / ocupação / demanda)") + " · " + layout,
+        ["fuel_price", "co2_price", "occupancy", "demand"].map(name => hubMoney(row.sensitivity[name]?.[key])).join(" / "));
+    }
+    const recovery = row.capital_recovery_preview;
+    if (recovery?.source === "displayed_subtotal_what_if_v1" && recovery.purchase_eligible === false &&
+        Number.isFinite(recovery.expires_at) && now < recovery.expires_at &&
+        Number.isFinite(recovery.displayed_subtotal) && recovery.displayed_subtotal > 0 &&
+        recovery.contribution_basis === (hasCheck ? "conditional_contribution_after_a_check_per_day" : "projected_contribution_per_day")) {
+      const days = scenario => Number.isFinite(scenario?.subtotal_recovery_days) && scenario.subtotal_recovery_days >= 0
+        ? nf.format(scenario.subtotal_recovery_days) + " " + tr("dias") : tr("Sem recuperação projetada");
+      const ratio = scenario => Number.isFinite(scenario?.annual_contribution_to_subtotal_pct)
+        ? nf.format(scenario.annual_contribution_to_subtotal_pct) + "%" : tr("Não verificado");
+      addHubMetric(metrics, tr("Recuperação do subtotal indicativo (base / stress)") + " · " + layout,
+        days(recovery.base) + " / " + days(recovery.stress));
+      addHubMetric(metrics, tr("Contribuição anual / subtotal (base / stress)") + " · " + layout,
+        ratio(recovery.base) + " / " + ratio(recovery.stress));
+      addHubMetric(metrics, "Investimento final a confirmar", tr("Simulação parcial: taxa da rota e despesas não confirmadas; sem payback ou ROI auditado"));
     }
   }
   if (hasCheck) {

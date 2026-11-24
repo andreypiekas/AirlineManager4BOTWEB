@@ -1,7 +1,7 @@
 """Explicit what-if scenarios for pending research; never purchase evidence."""
 from __future__ import annotations
 
-from math import ceil
+from math import ceil, isfinite
 from types import SimpleNamespace
 
 from expansion_economics import DEFAULT_STRESS
@@ -15,6 +15,31 @@ def research_mode(stats: object, now: float) -> str | None:
         return None
     return next((mode.key for mode in (EASY, REALISM)
                  if mode.label == getattr(stats, "mode", None)), None)
+
+
+def attach_capital_recovery_preview(economics, capital, *, now):
+    """Compare recovery of the displayed subtotal under explicitly partial assumptions."""
+    if not economics or not capital or capital.get("aircraft_price_source") != "observed_variant":
+        return
+    subtotal = capital.get("displayed_subtotal")
+    expiry = min(economics["expires_at"], capital["expires_at"])
+    if type(subtotal) not in (int, float) or not isfinite(subtotal) or subtotal <= 0 or now >= expiry:
+        return
+    contribution_key = ("conditional_contribution_after_a_check_per_day"
+                        if economics.get("a_check_projection") else "projected_contribution_per_day")
+    for row in economics["layouts"]:
+        scenarios = {}
+        for name in ("base", "stress"):
+            contribution = row[name][contribution_key]
+            scenarios[name] = {
+                "subtotal_recovery_days": round(subtotal / contribution, 2) if contribution > 0 else None,
+                "annual_contribution_to_subtotal_pct": round(contribution * 36500 / subtotal, 2),
+            }
+        row["capital_recovery_preview"] = {
+            "source": "displayed_subtotal_what_if_v1", "purchase_eligible": False,
+            "expires_at": expiry, "displayed_subtotal": subtotal,
+            "contribution_basis": contribution_key, **scenarios,
+        }
 
 
 def optimal_layout(capacity, demand, fares, passengers_per_seat, *, margin, co2_per_passenger):
@@ -154,13 +179,25 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
             return
         if not any(base.layout):
             return
-        stressed = estimate_route(stressed_candidate, seats=capacity, model=spec, mode=mode,
-                                  load_factor=load * stress["occupancy"], fuel_price=fuel * stress["fuel_price"],
-                                  co2_price=co2 * stress["co2_price"], premium=True, prices=fares,
+        def scenario(route=candidate, *, occupancy=load, fuel_price=fuel, co2_price=co2):
+            return estimate_route(route, seats=capacity, model=spec, mode=mode,
+                                  load_factor=occupancy, fuel_price=fuel_price,
+                                  co2_price=co2_price, premium=True, prices=fares,
                                   fixed_layout=base.layout, co2_kg_per_pax_km=co2_rate, extra_stops=extra_stops)
+
+        stressed = scenario(stressed_candidate, occupancy=load * stress["occupancy"],
+                            fuel_price=fuel * stress["fuel_price"], co2_price=co2 * stress["co2_price"])
         if stressed is not None:
+            sensitivities = {
+                "fuel_price": scenario(fuel_price=fuel * stress["fuel_price"]),
+                "co2_price": scenario(co2_price=co2 * stress["co2_price"]),
+                "occupancy": scenario(occupancy=load * stress["occupancy"]),
+                "demand": scenario(stressed_candidate),
+            }
             layouts.append({"layout": layout, "strategies": [strategy],
-                            "base": serialize(base), "stress": serialize(stressed)})
+                            "base": serialize(base), "stress": serialize(stressed),
+                            "sensitivity": {key: serialize(result) if result is not None else None
+                                            for key, result in sensitivities.items()}})
 
     def estimate(premium, fixed_layout=None):
         return estimate_route(candidate, seats=capacity, model=spec, mode=mode, load_factor=load,

@@ -373,6 +373,12 @@ const translations = {
   'Relógio de manutenção a confirmar; aplicada a maior reserva': 'Maintenance clock unverified; larger reserve applied',
   'Após reserva adicional A-check (base / stress)': 'After additional A-check reserve (base / stress)',
   'Custos excluídos da contribuição original': 'Costs excluded from original contribution',
+  'dias': 'days',
+  'Sem recuperação projetada': 'No projected recovery',
+  'Sensibilidade isolada (combustível / CO₂ / ocupação / demanda)': 'Individual sensitivity (fuel / CO₂ / occupancy / demand)',
+  'Recuperação do subtotal indicativo (base / stress)': 'Indicative subtotal recovery (base / stress)',
+  'Contribuição anual / subtotal (base / stress)': 'Annual contribution / subtotal (base / stress)',
+  'Simulação parcial: taxa da rota e despesas não confirmadas; sem payback ou ROI auditado': 'Partial simulation: unverified route fee and expenses; no audited payback or ROI',
   'Pesquisa ainda pendente': 'Research pending',
   'Indisponível': 'Unavailable',
   'Mais possibilidades aguardam pesquisa.': 'Additional possibilities await research.',
@@ -546,6 +552,17 @@ const preview = {source:'route_optimizer_what_if_v1', purchase_eligible:false,
 appendResearchEconomicsPreview(previewMetrics, {economics_preview:preview});
 assert.equal(previewMetrics.children.length, 4);
 assert.equal(previewMetrics.children[1].children[1].textContent, '$120 / $-20');
+const recoveryMetrics = document.createElement('div');
+appendResearchEconomicsPreview(recoveryMetrics, {economics_preview:{...preview, layouts:[{...preview.layouts[0],
+  sensitivity:Object.fromEntries(['fuel_price','co2_price','occupancy','demand'].map((key,i)=>[key,{projected_contribution_per_day:110-i}])),
+  capital_recovery_preview:{source:'displayed_subtotal_what_if_v1',purchase_eligible:false,expires_at:marketNow+50,
+    displayed_subtotal:1200,contribution_basis:'projected_contribution_per_day',
+    base:{subtotal_recovery_days:10,annual_contribution_to_subtotal_pct:3650},
+    stress:{subtotal_recovery_days:null,annual_contribution_to_subtotal_pct:-608.33}}}]}});
+assert.equal(recoveryMetrics.children[2].children[1].textContent, '$110 / $109 / $108 / $107');
+assert.equal(recoveryMetrics.children[3].children[1].textContent, '10 days / No projected recovery');
+assert.equal(recoveryMetrics.children[4].children[1].textContent, '3,650% / -608.33%');
+assert.match(recoveryMetrics.children[5].children[1].textContent, /no audited payback or ROI/);
 const checkMetrics = document.createElement('div');
 appendResearchEconomicsPreview(checkMetrics, {economics_preview:{...preview,
   a_check_projection:{source:'observed_variant',cost_usd:2341,interval_hours:400,
