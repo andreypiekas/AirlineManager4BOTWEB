@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 
 import investment_daily
+import pytest
 from investment_journal import InvestmentJournal
 
 
@@ -104,6 +105,43 @@ def test_once_per_day_survives_restart_and_reports_unknowns(monkeypatch, tmp_pat
     assert restarted.telegram.calls == []
     assert investment_daily.publish_investment_daily(restarted, now=_timestamp(24)) == "delivered"
     assert len(restarted.telegram.calls) == 1
+
+
+@pytest.mark.parametrize("age,dry_run,visible", [(0, False, True), (901, False, False), (0, True, False)])
+def test_daily_financial_history_and_portfolio_blockers(monkeypatch, tmp_path, age, dry_run, visible):
+    from finance_observations import SOURCE
+
+    now = _timestamp()
+    bot = prepare(monkeypatch, tmp_path, planning=True, dry_run=dry_run)
+
+    class ObservedDashboard(Dashboard):
+        def hub_recommendations(self):
+            report = super().hub_recommendations()
+            report["portfolio"]["blocking_reasons"] = [
+                "hangar_sem_vaga", "pedidos_pendentes_a_conciliar", "hangar_sem_vaga",
+                "future_unknown_code",
+            ]
+            report["finance_observations"] = {
+                "status": "observed", "source": SOURCE, "observed_at": now - age,
+                "summary": {"window_hours": 24, "income": 1000, "expenses": 1500,
+                            "result": -500, "fuel_expenses": 100, "quota_expenses": 50,
+                            "route_fees": 200, "aircraft_orders": 900, "hubs": 0,
+                            "ticket_income": 1000},
+            }
+            return report
+
+    monkeypatch.setattr(investment_daily, "WebDashboard", ObservedDashboard)
+    assert investment_daily.publish_investment_daily(bot, now=now) == "delivered"
+    message = bot.telegram.calls[0]
+    assert ("Histórico financeiro da companhia" in message) is visible
+    assert ("resultado $-500" in message) is visible
+    assert ("encomendas $900" in message) is visible
+    assert ("sem conciliação dos pedidos ou compromissos futuros" in message) is visible
+    assert "sem comprovação independente" in message
+    assert message.count("hangar sem vaga") == 1
+    assert "pedidos e compromissos a conciliar" in message
+    assert "1 outro impedimento no planejador" in message
+    assert "future_unknown_code" not in message
 
 
 def test_send_failed_or_exception_can_retry_without_secret_in_log(monkeypatch, tmp_path, caplog):

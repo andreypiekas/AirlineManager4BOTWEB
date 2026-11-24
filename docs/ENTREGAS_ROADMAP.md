@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A9, histórico financeiro e impedimentos no Telegram (G0)
+
+- A inspeção autenticada e somente leitura de Finances > History encontrou uma tabela de 30 registros recentes, com três colunas (tempo relativo, descrição e valor), sem links de detalhe ou identificador de encomenda nas linhas. A consulta mostrou despesas de cotas de CO₂ e A-check, além de receitas de voos. Não foi possível comprovar conciliação individual das encomendas, saldo futuro a pagar ou cobertura de todas as obrigações por essa tela. A seleção de Expenses não apresentou uma lista separada confirmável nessa inspeção. A tela de rotas foi restaurada. Nenhuma transação do jogo foi executada.
+- O resumo diário optativo de investimentos passou a incluir receitas, despesas, resultado e despesas históricas com encomendas de aeronaves e hubs, a partir do resumo nativo validado das últimas 24 horas. A informação é omitida quando a evidência está expirada ou em simulação. Os valores agregados não certificam pagamentos individuais, compromissos futuros ou lucro de uma rota.
+- As métricas agora preservam os códigos de impedimento do comparador global, deduplicados. O Telegram traduz os impedimentos conhecidos, incluindo falta de vaga no hangar, divergências da frota, pedidos a conciliar e evidências de ranking pendentes. Códigos futuros desconhecidos são contabilizados sem reproduzir texto arbitrário na mensagem. O relatório continua separado do executor de compras.
+- Validação Windows: 1.854 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). 32 testes direcionados aprovados, incluindo a expiração financeira, simulação e motivos do planejador. Ruff, compilação Python e `git diff --check` aprovados. O envio real do Telegram não foi acionado durante os testes.
+- Permanecem pendentes a fonte financeira de compromissos incrementais, a coleta autenticada integrada, a economia completa por rota e motor e as demais fases do roadmap. G0 continua ativo.
+
 ## 2026-11-24 — Autonomia Total A4/A7, conciliação de identidades da frota (G0)
 
 - A consulta autenticada e somente leitura do inventário por modelo encontrou 223 aeronaves distintas (120, 37 e 66 nas três listas) e os sete identificadores observados em Pending coincidiram com os identificadores dos controles nativos de detalhe do inventário (duas entregas e cinco manutenções). Nenhum identificador individual foi registrado neste documento.

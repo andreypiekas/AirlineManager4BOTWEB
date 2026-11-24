@@ -41,6 +41,7 @@ def build_expansion_metrics(
                 "research_tasks_shown": None, "has_more_tasks": None}
     opportunities = {"evaluated_count": None, "eligible_count": None,
                      "source": None, "status": "sem_fonte"}
+    portfolio_blockers = None
     company_finance = {"status": "unverified", "historical_only": True, "summary": None}
     if isinstance(opportunity_report, Mapping):
         finance = opportunity_report.get("finance_observations")
@@ -81,6 +82,9 @@ def build_expansion_metrics(
                     "evaluated_count": evaluated, "eligible_count": eligible,
                     "source": "portfolio_planner", "status": portfolio.get("status"),
                 }
+                blockers = portfolio.get("blocking_reasons")
+                if isinstance(blockers, list) and all(isinstance(reason, str) for reason in blockers):
+                    portfolio_blockers = list(dict.fromkeys(blockers))
 
     forecast = {"status": "sem_historico_verificado", "plans": 0,
                 "complete_days": None, "independent_flights": None,
@@ -137,6 +141,7 @@ def build_expansion_metrics(
         "journal": audit,
         "research_coverage": coverage,
         "opportunities": opportunities,
+        "portfolio_blocking_reasons": portfolio_blockers,
         "forecast": forecast,
         "company_finance_24h": company_finance,
         "actual_spend": None,

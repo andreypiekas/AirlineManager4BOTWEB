@@ -17,6 +17,32 @@ log = logging.getLogger("am4bot.telegram")
 
 _CLAIM_LEASE_SECONDS = 300
 
+_PORTFOLIO_BLOCKER_LABELS = {
+    "politica_invalida": "política inválida",
+    "cobertura_frota_a_confirmar": "cobertura da frota a confirmar",
+    "cobertura_pesquisa_a_confirmar": "cobertura das pesquisas a confirmar",
+    "pedidos_pendentes_a_conciliar": "pedidos e compromissos a conciliar",
+    "vagas_hangar_a_confirmar": "vagas de hangar a confirmar",
+    "hangar_sem_vaga": "hangar sem vaga",
+    "aeronaves_sem_rota_a_resolver": "aeronaves sem rota a resolver",
+    "contagens_frota_divergentes": "contagens da frota divergentes",
+    "aeronaves_sem_rota_a_confirmar": "aeronaves sem rota a confirmar",
+    "identidades_frota_divergentes": "identidades da frota divergentes",
+    "identidades_frota_a_confirmar": "identidades da frota a confirmar",
+    "saldo_disponivel_a_confirmar": "saldo disponível a confirmar",
+    "compromissos_invalidos": "compromissos inválidos",
+    "reservas_locais_invalidas": "reservas locais inválidas",
+    "limites_periodo_invalidos": "limites de gasto do período inválidos",
+    "uso_periodo_a_confirmar": "gastos e aquisições do período a confirmar",
+    "criterios_planejamento_invalidos": "critérios de planejamento inválidos",
+    "cenarios_proprios_pendentes": "cenários de hubs próprios pendentes",
+    "pesquisas_conflitantes": "pesquisas conflitantes",
+    "diario_indisponivel": "diário de investimentos indisponível",
+    "evidencia_risk_a_confirmar": "evidência de risco a confirmar",
+    "evidencia_confidence_a_confirmar": "evidência de confiabilidade a confirmar",
+    "evidencia_diversification_a_confirmar": "evidência de diversificação a confirmar",
+}
+
 
 class DailyInvestmentDelivery:
     """Reserve one daily send per profile and acknowledge Telegram delivery."""
@@ -124,6 +150,15 @@ def format_investment_daily(metrics: dict, *, date_label: str, planning_enabled:
     elif (coverage_status == "complete" and opportunities["eligible_count"] == 0
           and opportunities["status"] == "conclusivo"):
         reasons.append("nenhuma oportunidade elegível na avaliação")
+    portfolio_blockers = metrics.get("portfolio_blocking_reasons")
+    if portfolio_blockers is not None:
+        reasons.extend(_PORTFOLIO_BLOCKER_LABELS[code] for code in portfolio_blockers
+                       if code in _PORTFOLIO_BLOCKER_LABELS)
+        other_count = sum(code not in _PORTFOLIO_BLOCKER_LABELS for code in portfolio_blockers)
+        if other_count == 1:
+            reasons.append("1 outro impedimento no planejador")
+        elif other_count:
+            reasons.append(f"{other_count} outros impedimentos no planejador")
     if not reasons:
         reasons.append("investimento depende da política e da revalidação antes da compra")
 
@@ -162,6 +197,15 @@ def format_investment_daily(metrics: dict, *, date_label: str, planning_enabled:
         "⚙️ Compra automática legada de aeronaves: "
         f"{'ATIVA' if legacy_autobuy_aircraft else 'desativada'} (fluxo independente).",
     ]
+    finance = metrics.get("company_finance_24h", {})
+    if not is_simulation and finance.get("status") == "observed" and finance.get("summary"):
+        summary = finance["summary"]
+        lines.insert(4, "💰 <b>Histórico financeiro da companhia (últimas 24h)</b>: "
+                     f"receitas ${summary['income']:,}; despesas ${summary['expenses']:,}; "
+                     f"resultado ${summary['result']:,}. "
+                     f"Despesas históricas com encomendas ${summary['aircraft_orders']:,} "
+                     f"e hubs ${summary['hubs']:,}. "
+                     "Valores agregados, sem conciliação dos pedidos ou compromissos futuros.")
     if journal["by_state"].get("UNKNOWN", 0):
         lines.append(f"⚠️ Pedidos aguardando conciliação: {journal['by_state']['UNKNOWN']}.")
     if journal["failed_in_window"]:
