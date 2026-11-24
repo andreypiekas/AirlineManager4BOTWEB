@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A2/A3/A7, escalas exploratórias no ranking persistido (G0)
+
+- O ranking de hubs próprios reconsulta o registro independente de escalas por perfil. Candidatos de pesquisa derivados exibem aeroporto intermediário, trechos e pistas quando a evidência corresponde à rota e à variante atuais. O seletor de evidência é compartilhado com as filas de hubs próprios e externos.
+- A prova perde validade após expiração, atualização dos dados da rota ou do motor, nova tentativa de escala inconclusiva ou divergência entre provas atuais. A divergência entre a pista observada no detalhe direto e a pesquisa também suprime a evidência. Nenhum diagnóstico transitório é promovido a cenário de viabilidade persistido.
+- A escala exploratória continua com elegibilidade de compra e regras do jogo não verificadas. O ranking mantém a pendência de confirmação dos trechos, sem atribuir rentabilidade nem emitir recomendação de compra a partir dessa observação. Permanecem pendentes a homologação autenticada da identidade dos modelos, regras de escala, custos integrais e cobertura global.
+- Validação Windows: suíte ampla com 1.759 testes aprovados e 1 ignorado, excluído `tests/test_instalacao_linux.py` (POSIX). Após os ajustes finais de consistência, 212 testes direcionados aprovados, incluindo integração entre registro, ingestão, ranking, filas e interface, isolamento por variante, expiração e divergências. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A2/A3/A7, pesquisa exploratória de escalas por variante (G0)
 
 - O ciclo de planejamento pesquisa escalas para combinações de hub, rota, modelo e motor com alcance direto insuficiente e dimensões da variante correlacionadas. A busca usa duas leituras estáveis do mapa do jogo e compara a distância direta com a pesquisa da rota antes de consultar os detalhes de cada trecho. As duas respostas de cada trecho precisam concordar, inclusive quanto à identidade dos aeroportos, unidade de pista e comprimento da pista intermediária observado pelos dois lados.

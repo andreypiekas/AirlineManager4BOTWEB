@@ -47,6 +47,7 @@ from research_physical_feasibility import assess_direct_route
 from research_route_occupancy import FleetRouteOccupancy
 from route_detail_evidence import current_detail
 from route_registry import endpoint, route_key
+from stopover_research import select_current_stopover
 
 
 MAX_AGE_SECONDS = 3 * 86400
@@ -110,30 +111,38 @@ def _ordering(row: dict) -> tuple:
             tuple(row["pending"]))
 
 
-def _current_physical(scenario, aircraft_model, engine_id, detail, engines, now):
+def _current_physical(scenario, aircraft_model, engine_id, origin, destination, detail, engines, now):
     """Recompute screening from independent observations, never a saved verdict."""
     model_id = scenario.get("model_id")
     if not isinstance(model_id, str) or not model_id or not engine_id or not aircraft_model:
-        return None, False
+        return None, False, None
     stamp = scenario.get("observed_at")
     if scenario.get("source") == "derived_research_queue":
         evidence = scenario.get("research_evidence")
         route = evidence.get("route") if isinstance(evidence, dict) else None
         if not isinstance(route, dict) or route.get("source") != "game_route_search":
-            return None, False
+            return None, False, None
         stamp = route.get("observed_at")
     elif scenario.get("source") != "game_research":
-        return None, False
+        return None, False, None
     distance = _number(scenario.get("distance_km"), positive=True)
     if distance is None or distance > 25000 or not _recent(stamp, now, MAX_AGE_SECONDS):
-        return None, False
+        return None, False, None
     variants, evidence = engine_variants(engines, {"id": model_id, "name": aircraft_model}, now)
     variant = next((item for item in variants if item["engine_id"] == engine_id), None)
     unavailable = bool(evidence and evidence["model_detail_identity_verified"]
                        and variant is not None and not variant["engine_available"])
-    return assess_direct_route({"distance_km": distance, "observed_at": stamp,
-                                "route_detail": detail}, variant, evidence,
-                               max_evidence_age=MAX_AGE_SECONDS), unavailable
+    sample = {"distance_km": distance, "observed_at": stamp, "route_detail": detail}
+    physical = assess_direct_route(sample, variant, evidence, max_evidence_age=MAX_AGE_SECONDS)
+    stopover = None
+    if scenario.get("source") == "derived_research_queue":
+        sample.update(origin_id=origin["id"], destination_id=destination["id"],
+                      destination_runway_ft=scenario.get("destination_runway_ft"),
+                      stopover_research=scenario.get("stopover_research"))
+        # Preserve contradictory direct evidence for the stopover validator.
+        sample["route_detail"] = scenario.get("route_detail")
+        stopover = select_current_stopover(sample, {"id": model_id}, variant, now)
+    return physical, unavailable, stopover
 
 
 def _physical_pending(physical, stopover, origin, destination):
@@ -248,8 +257,8 @@ def rank_next_aircraft(
                 scenario.get("origin"), scenario.get("destination"), route_detail)
             if legacy_occupancy and legacy_occupancy["game_count_disagrees"]:
                 occupancy["game_count_disagrees"] = True
-        physical, engine_unavailable = _current_physical(
-            scenario, aircraft_model, engine_id, independent_detail, engines, now)
+        physical, engine_unavailable, stopover_research = _current_physical(
+            scenario, aircraft_model, engine_id, origin, destination, independent_detail, engines, now)
         financial = scenario.get("financial") if isinstance(scenario.get("financial"), dict) else {}
         costs = scenario.get("costs") if isinstance(scenario.get("costs"), dict) else {}
         profit = _profit(financial.get("profit_per_day"))
@@ -400,6 +409,8 @@ def rank_next_aircraft(
             candidate["fleet_occupancy"] = occupancy
         if physical is not None:
             candidate["physical_feasibility"] = physical
+        if stopover_research is not None:
+            candidate["stopover_research"] = stopover_research
         if scenario.get("event_demand_boosted") is True:
             candidate["event_demand_boosted"] = True
         if scenario.get("source") == "derived_research_queue":

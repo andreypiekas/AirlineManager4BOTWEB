@@ -20,6 +20,7 @@ import paths
 from owned_hub_research_feed import MAX_EVIDENCE_AGE, build_owned_hub_research_queue
 from route_registry import endpoint, route_key
 from route_detail_evidence import RouteDetailRegistry, current_detail
+from stopover_research import StopoverResearchRegistry
 
 
 _LOCK = threading.RLock()
@@ -197,11 +198,16 @@ class OwnedHubResearchInputsRegistry:
              "destination_runway_ft": row.get("destination_runway_ft")}
             for row in result
         ], now=now)
+        stopovers = StopoverResearchRegistry(self.path.with_name("hub_expansion_stopovers.json"))
+        live = stopovers.enrich(live, now)
         for row, sample in zip(result, live):
             if sample.get("route_detail"):
                 row["route_detail"] = sample["route_detail"]
             else:
                 row.pop("route_detail", None)
+            row.pop("stopover_research", None)
+            if sample.get("stopover_research"):
+                row["stopover_research"] = sample["stopover_research"]
         return result
 
     def record_queue(self, page: dict, *, now: Optional[float] = None,

@@ -20,7 +20,7 @@ from market import recent_market_quotes
 from research_economics_preview import research_economics_preview, research_mode
 from research_physical_feasibility import assess_direct_route
 from research_route_occupancy import FleetRouteOccupancy
-from stopover_research import current_stopover, subject_for
+from stopover_research import select_current_stopover
 
 MAX_EVIDENCE_AGE = 3 * 86400
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
@@ -351,7 +351,9 @@ def _build_hub_research_queue(
                                 expected_runway=sample.get("destination_runway_ft"))
         if detail:
             sample["route_detail"] = detail
-        if isinstance(row.get("stopover_research"), list):
+        raw_detail = current_detail(row.get("route_detail"), origin, destination, now)
+        if (isinstance(row.get("stopover_research"), list)
+                and row.get("route_detail_conflict") is not True and (not raw_detail or detail)):
             sample["stopover_research"] = [proof for proof in row["stopover_research"]
                                            if isinstance(proof, dict)]
         occupancy = fleet_occupancy.evidence(origin, destination, detail)
@@ -509,9 +511,7 @@ def _build_hub_research_queue(
                            if item != "motor_a_pesquisar" or variant is None]
                 physical = assess_direct_route(sample, variant, engine_evidence,
                                                max_evidence_age=MAX_EVIDENCE_AGE)
-                subject = subject_for(sample, model, variant, now)
-                stopover = next((proof for raw in sample.get("stopover_research", [])
-                                 if (proof := current_stopover(raw, subject, sample, now))), None)
+                stopover = select_current_stopover(sample, model, variant, now)
                 if "short" in (physical["checks"]["origin_runway"],
                                physical["checks"]["destination_runway"]):
                     pending.append("pista_observada_insuficiente")

@@ -158,10 +158,15 @@ class RouteDetailRegistry:
             origin, dest = sample.get("origin_id"), sample.get("destination_id")
             record = records.get(_key(origin, dest), {})
             proof = current_detail(record.get("detail") if isinstance(record, dict) else None,
-                                   origin, dest, now, expected_runway=sample.get("destination_runway_ft"))
-            row = {key: value for key, value in sample.items() if key != "route_detail"}
+                                   origin, dest, now)
+            row = {key: value for key, value in sample.items()
+                   if key not in ("route_detail", "route_detail_conflict")}
             if proof:
-                row["route_detail"] = proof
+                expected = sample.get("destination_runway_ft")
+                if expected is not None and expected != proof["destination_runway_ft"]:
+                    row["route_detail_conflict"] = True
+                else:
+                    row["route_detail"] = proof
             result.append(row)
         return result
 

@@ -77,10 +77,12 @@ def subject_for(sample, model, variant, now):
 
 
 def current_stopover(raw, subject, sample, now):
-    if (not isinstance(raw, dict) or not subject or raw.get("source") != SOURCE
+    if (not isinstance(raw, dict) or not subject or sample.get("route_detail_conflict") is True
+            or raw.get("source") != SOURCE
             or any(raw.get(key) != value for key, value in subject.items())
             or raw.get("purchase_eligible") is not False or raw.get("game_rules_verified") is not False
-            or not _positive(raw.get("observed_at")) or not 0 <= now - raw["observed_at"] <= MAX_AGE):
+            or not _positive(raw.get("observed_at")) or not 0 <= now - raw["observed_at"] <= MAX_AGE
+            or raw["observed_at"] < max(subject["engine_observed_at"], subject["route_observed_at"])):
         return None
     stop = raw.get("stop_id")
     if not _airport(stop) or stop in (subject["origin_id"], subject["destination_id"]):
@@ -107,6 +109,19 @@ def current_stopover(raw, subject, sample, now):
             "first_km": first, "second_km": second,
             **{key: raw[key] for key in runway_keys},
             "purchase_eligible": False, "game_rules_verified": False}
+
+
+def select_current_stopover(sample, model, variant, now):
+    """Select a uniquely consistent proof for the current route and engine."""
+    subject = subject_for(sample, model, variant, now)
+    raw_proofs = sample.get("stopover_research")
+    if not subject or not isinstance(raw_proofs, list):
+        return None
+    proofs = [proof for raw in raw_proofs
+              if (proof := current_stopover(raw, subject, sample, now)) is not None]
+    if proofs and all(proof == proofs[0] for proof in proofs):
+        return proofs[0]
+    return None
 
 
 class StopoverResearchRegistry:
@@ -184,7 +199,7 @@ class StopoverResearchRegistry:
         for sample in samples:
             row = {key: value for key, value in sample.items() if key != "stopover_research"}
             proofs = by_route.get((row.get("origin_id"), row.get("destination_id")))
-            if proofs:
+            if proofs and row.get("route_detail_conflict") is not True:
                 row["stopover_research"] = sorted(proofs, key=lambda proof: _key(proof) or "")
             result.append(row)
         return result

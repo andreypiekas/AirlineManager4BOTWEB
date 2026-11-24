@@ -108,6 +108,75 @@ def test_transient_physical_screening_is_not_a_persisted_feasibility_verdict(tmp
     assert row["route_feasible"] is None
 
 
+def test_ranked_stopover_reloads_independent_proof_and_revokes_on_refresh(tmp_path):
+    from owned_hub_research_feed import engine_variants
+    from stopover_research import SOURCE, StopoverResearchRegistry, subject_for
+
+    inventory, routes, market = _inputs()
+    sample = routes[0]
+    sample["destination_runway_ft"] = 6500
+    source = "game_aircraft_order_detail"
+    engines = {"source": source, "models": {"11": {
+        "source": source, "model_id": "11", "model": "A320", "observed_at": NOW,
+        "model_detail_identity_verified": True, "observed_model_id": "11",
+        "selected_engine_id": "1", "engine_prices_verified": False,
+        "variants": [{"engine_id": ident, "label": label, "available": True,
+                      "selected": ident == "1"} for ident, label in (("1", "CFM"), ("3", "IAE"))],
+        "variant_details": {ident: {"observed_at": NOW, "metrics": {
+            "range_km": 1500, "required_runway_ft": 5000}} for ident in ("1", "3")},
+    }}}
+    model = {"id": "11", "name": "A320"}
+    variants, _ = engine_variants(engines, model, NOW)
+    subject = subject_for(sample, model, variants[0], NOW)
+    assert subject and subject["engine_id"] == "1"
+    raw = {**subject, "source": SOURCE, "observed_at": NOW, "stop_id": "2941",
+           "map_direct_km": 2000, "first_km": 1200, "second_km": 1300,
+           "origin_runway_ft": 6500, "destination_runway_ft": 6500, "stop_runway_ft": 7000,
+           "purchase_eligible": False, "game_rules_verified": False}
+    registry = OwnedHubResearchInputsRegistry(tmp_path / "research.json")
+    stopovers = StopoverResearchRegistry(tmp_path / "hub_expansion_stopovers.json")
+    assert stopovers.reserve([(subject, sample)], NOW)
+    assert stopovers.finish(subject, sample, NOW, raw, NOW)
+    page = build_owned_hub_research_queue(inventory, routes, market, engines=engines, now=NOW)
+    assert registry.record_queue(page, now=NOW) >= 2
+
+    def ranked(now, current_engines=engines):
+        report = rank_next_aircraft(inventory, registry.snapshot(now=now), now=now,
+                                    engine_catalog=current_engines)
+        assert report["recommendations"] == []
+        return {row["engine_id"]: row for row in report["candidates"] if row["model"] == "A320"}
+
+    rows = ranked(NOW)
+    assert rows["1"]["stopover_research"]["stop_id"] == "2941"
+    assert rows["1"]["status"] == "dados_a_confirmar"
+    assert "escala_e_trechos_a_confirmar" in rows["1"]["pending"]
+    assert rows["1"]["profit_per_day"] is None
+    assert "stopover_research" not in rows["3"]
+    stored = registry.snapshot(now=NOW)
+    candidate = next(row for row in stored if row.get("engine_id") == "1")
+    candidate["route_detail"] = {"source": "game_route_detail", "observed_at": NOW,
+                                 "origin_id": "2926", "destination_id": "3139",
+                                 "origin_runway_ft": 6500, "destination_runway_ft": 6400}
+    report = rank_next_aircraft(inventory, [candidate], now=NOW, engine_catalog=engines)
+    assert "stopover_research" not in report["candidates"][0]
+    assert not report["recommendations"]
+    changed = deepcopy(engines)
+    changed["models"]["11"]["variant_details"]["1"]["observed_at"] = NOW + 1
+    changed["models"]["11"]["observed_at"] = NOW + 1
+    assert "stopover_research" not in ranked(NOW + 1, changed)["1"]
+    assert "stopover_research" not in ranked(NOW + 901)["1"]
+    from route_detail_evidence import RouteDetailRegistry
+
+    details = RouteDetailRegistry(tmp_path / "hub_expansion_route_details.json")
+    assert details.reserve([sample], now=NOW)
+    assert details.finish("2926", "3139", NOW, candidate["route_detail"], observed_at=NOW)
+    assert "stopover_research" not in ranked(NOW)["1"]
+    assert details.reserve([sample], now=NOW + 1)
+    assert "stopover_research" in ranked(NOW + 1)["1"]
+    assert stopovers.reserve([(subject, sample)], NOW + 1)
+    assert "stopover_research" not in ranked(NOW + 1)["1"]
+
+
 def test_persisted_inputs_are_isolated_idempotent_and_expire(tmp_path):
     first = OwnedHubResearchInputsRegistry(tmp_path / "company-a.json")
     other = OwnedHubResearchInputsRegistry(tmp_path / "company-b.json")

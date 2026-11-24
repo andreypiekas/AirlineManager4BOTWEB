@@ -41,6 +41,12 @@ def test_research_reads_both_legs_and_revokes_after_failed_refresh(tmp_path, mon
     assert research.current_stopover(raw, subject, SAMPLE, NOW + 901) is None
     assert research.current_stopover(raw, {**subject, "engine_id": "10"}, SAMPLE, NOW) is None
     assert research.current_stopover(raw, subject, {**SAMPLE, "destination_runway_ft": 11999}, NOW) is None
+    assert research.current_stopover({**raw, "observed_at": NOW - 1}, subject, SAMPLE, NOW) is None
+    conflicting = {**raw, "stop_runway_ft": 11583}
+    assert research.select_current_stopover({**SAMPLE, "stopover_research": [raw, conflicting]},
+                                           MODEL, VARIANT, NOW) is None
+    assert research.select_current_stopover({**SAMPLE, "stopover_research": [raw, raw]},
+                                           MODEL, VARIANT, NOW) == proof
     clock[0] += 1
     bot.js = lambda *args: []
     assert research.collect_stopover(bot, registry, [(subject, SAMPLE)]) == 0
