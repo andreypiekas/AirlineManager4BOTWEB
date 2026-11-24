@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A3, demanda de evento e contagem de aeronaves na rota (G0)
+
+- Na sessão autenticada foi observado o aviso `Demand is currently boosted due to a special event` e a linha `A/C on route`, com duas células e contagem zero, na rota XAP–SBL. A leitura agora identifica explicitamente o aviso e associa a contagem ao rótulo, sem depender da posição da tabela. O valor permanece uma observação até conciliação com a frota completa; ausência de aviso não confirma demanda normal.
+- O aviso explícito percorre a persistência de demanda, a fila de combinações, o cache de pesquisa e os rankings de hubs próprios e externos. Cenários com demanda de evento ficam pendentes, inclusive na revalidação de expansão. O painel PT/EN apresenta o evento e a contagem observada separadamente da ocupação verificada. Leituras contraditórias no mesmo instante não constituem uma base financeira.
+- A pesquisa autenticada também demonstrou que `Custom departure` permite selecionar país e aeroporto ainda não adquirido e obter rotas daquele aeroporto. A coleta automatizada e a validação da cobertura de hubs externos continuam pendentes, assim como a conciliação de uma rota ocupada, a demanda residual e a normalização financeira. Nenhuma compra foi realizada.
+- Regressões exercitam o aviso explícito, valores inválidos, persistência, conflitos, bloqueio de compra e contagem vinculada ao rótulo. Suíte Windows: 1.658 testes aprovados, 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-23 — Autonomia Total A2/A3, evidência independente dos detalhes de rota (G0)
 
 **Objetivo:** complementar as amostras de demanda com as pistas dos dois aeroportos, vinculando a leitura ao par de IDs pesquisado e preservando a incerteza sobre a ocupação da rota.

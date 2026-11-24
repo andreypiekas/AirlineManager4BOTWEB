@@ -108,7 +108,7 @@ def _research_stamp(scenario: dict) -> float:
 
 _RESEARCH_PROOF_FIELDS = (
     "source", "observed_at", "route_feasible", "demand_verified",
-    "external_demand_verified", "engine_verified", "costs", "financial",
+    "external_demand_verified", "event_demand_boosted", "engine_verified", "costs", "financial",
     "aircraft_price", "route_fee", "hangar_price", "other_fees",
     "aircraft_price_includes_engine", "engine_delta_cost", "profit_per_day",
 )
@@ -175,6 +175,8 @@ def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
                      else scenario.get("profit_per_day"))
 
     pending = []
+    if scenario.get("event_demand_boosted") is True:
+        pending.append("demanda_evento_temporario")
     if research_conflict:
         pending.append("pesquisa_externa_conflitante")
     if candidate.get("hub_price_conflict_at") is not None:
@@ -311,6 +313,8 @@ def _demand_sample(origin: str, row: object) -> Optional[dict]:
               "distance_km": round(distance, 3),
               "y": demand[0], "j": demand[1], "f": demand[2],
               "source": "game_route_search"}
+    if row.get("event_demand_boosted") is True:
+        sample["event_demand_boosted"] = True
     runway = row.get("destination_runway_ft")
     if type(runway) is int and 0 < runway <= 30000:
         sample["destination_runway_ft"] = runway
@@ -333,7 +337,8 @@ def _stored_demand(value: object) -> dict[str, dict]:
         sample = _demand_sample(origin, {"arr_id": row.get("destination_id"),
                                          "distance": row.get("distance_km"),
                                          "y": row.get("y"), "j": row.get("j"), "f": row.get("f"),
-                                         "destination_runway_ft": row.get("destination_runway_ft")})
+                                         "destination_runway_ft": row.get("destination_runway_ft"),
+                                         "event_demand_boosted": row.get("event_demand_boosted")})
         if sample is not None and key == f"{origin}:{sample['destination_id']}":
             valid[key] = {**sample, "observed_at": timestamp}
     return valid
@@ -728,6 +733,7 @@ class HubExpansionRegistry:
             "route_feasible": research.get("route_feasible") is True,
             "demand_verified": research.get("demand_verified") is True,
             "external_demand_verified": research.get("external_demand_verified") is True,
+            "event_demand_boosted": True if research.get("event_demand_boosted") is True else None,
             "engine_verified": research.get("engine_verified") is True,
             "aircraft_price": _amount(research.get("aircraft_price", costs.get("aircraft_price"))),
             "route_fee": _amount(research.get("route_fee", costs.get("route_fee"))),

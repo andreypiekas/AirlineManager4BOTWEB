@@ -39,6 +39,29 @@ def _sample(origin="2926", dest="3139", *, observed_at=NOW, distance=2000):
             "y": 100, "j": 20, "f": 5}
 
 
+def test_event_demand_is_persisted_and_blocks_queue(tmp_path, monkeypatch):
+    monkeypatch.setattr("hub_expansion.time.time", lambda: NOW)
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    sample = {"arr_id": "3139", "distance": 2000, "y": 100, "j": 20, "f": 5,
+              "event_demand_boosted": True}
+    assert registry.record_demand("2926", [sample], observed_at=NOW) == 1
+    rows = registry.demand_research_snapshot({"2926"}, now=NOW)["samples"]
+    assert rows[0]["event_demand_boosted"] is True
+    page = build_owned_hub_research_queue(_inventory(), rows, _market(), now=NOW)
+    for item in page["items"]:
+        assert item["event_demand_boosted"] is True
+        assert "demanda_evento_temporario" in item["pending"]
+        assert item["purchase_eligible"] is False
+    from owned_hub_research_ingestion import OwnedHubResearchInputsRegistry
+    inputs = OwnedHubResearchInputsRegistry(tmp_path / "inputs.json")
+    assert inputs.record_queue(page, now=NOW) == len(page["items"])
+    assert all(row["event_demand_boosted"] is True for row in inputs.snapshot(now=NOW))
+    conflict = build_owned_hub_research_queue(
+        _inventory(), [rows[0], {k: v for k, v in rows[0].items() if k != "event_demand_boosted"}],
+        _market(), now=NOW)
+    assert not conflict["items"]
+
+
 def test_market_cache_preserves_timestamp_and_legacy_reader(tmp_path):
     path = tmp_path / "market.json"
     models = _market()["models"]

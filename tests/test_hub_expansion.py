@@ -531,6 +531,16 @@ def test_invalid_explicit_engine_id_is_rejected_without_erasing_research(tmp_pat
     assert registry.snapshot(cash=50000)["candidates"][0]["status"] == "viavel"
 
 
+def test_event_demand_blocks_otherwise_viable_external_research(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", {**_research(), "event_demand_boosted": True})
+    result = registry.snapshot(cash=50000)["candidates"][0]
+    assert result["status"] == "dados_a_confirmar"
+    assert "demanda_evento_temporario" in result["pending"]
+    assert result["purchase_evidence"] is False
+
+
 def test_distinct_engines_models_and_routes_have_independent_economics(tmp_path):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     assert registry.record_catalog([_candidate()])

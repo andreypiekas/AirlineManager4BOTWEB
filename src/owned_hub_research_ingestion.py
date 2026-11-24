@@ -108,6 +108,9 @@ def _scenario(item: dict, now: float) -> dict | None:
             or any(type(demand.get(kind)) is not int or demand[kind] < 0
                    for kind in ("y", "j", "f"))):
         return None
+    event_boosted = item.get("event_demand_boosted") is True
+    if event_boosted:
+        pending = [*pending, "demanda_evento_temporario"]
     observed = {
         "source": "derived_research_queue", "hub_id": hub_id,
         "model": model.strip(), "model_id": item.get("model_id"),
@@ -120,6 +123,7 @@ def _scenario(item: dict, now: float) -> dict | None:
         "engine_available": item.get("engine_available"),
         "research_evidence": deepcopy(evidence),
         "research_pending": sorted(set(pending)),
+        "event_demand_boosted": True if event_boosted else None,
         # The observed raw demand is NOT demand left after the active fleet.
         "demand_verified": False, "demand_remaining": None,
         "route_available": None, "route_feasible": None,

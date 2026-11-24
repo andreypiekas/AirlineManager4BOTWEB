@@ -193,6 +193,8 @@ def build_owned_hub_research_queue(
             "distance_km": distance, "observed_at": row["observed_at"],
             "demand": {key: row[key] for key in ("y", "j", "f")},
         }
+        if row.get("event_demand_boosted") is True:
+            sample["event_demand_boosted"] = True
         runway = row.get("destination_runway_ft")
         if type(runway) is int and 0 < runway <= 30000:
             sample["destination_runway_ft"] = runway
@@ -336,6 +338,8 @@ def build_owned_hub_research_queue(
                     break
                 pending = [item for item in _RESEARCH_PENDING
                            if item != "motor_a_pesquisar" or variant is None]
+                if sample.get("event_demand_boosted") is True:
+                    pending.append("demanda_evento_temporario")
                 # Direct range does not rule out a route with a legal stopover.
                 # Keep the combination in the research queue until both legs,
                 # stopover runway and the game's actual rules are verified.
@@ -358,6 +362,7 @@ def build_owned_hub_research_queue(
                     "direct_range_sufficient": (model["range_km"] >= sample["distance_km"]
                                                 if model["range_km"] is not None else None),
                     "observed_demand": sample["demand"],
+                    "event_demand_boosted": sample.get("event_demand_boosted"),
                     "destination_runway_ft": sample.get("destination_runway_ft"),
                     "route_detail": sample.get("route_detail"),
                     "model_id": model["id"], "model": model["name"],

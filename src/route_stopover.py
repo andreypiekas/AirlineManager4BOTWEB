@@ -36,10 +36,14 @@ fetch(url, {cache:'no-store', signal:AbortSignal.timeout(5000), redirect:'error'
       return airports.length === 1 ? {id:String(airports[0].Id), range:model[1], runway:model[2]} : null;
     }
     const roads = page.querySelectorAll('.glyphicons-road');
-    const onRoute = page.querySelector('table.m-text:not(.table-bordered) tr td.text-right');
+    const occupancyRows = Array.from(page.querySelectorAll('table.m-text:not(.table-bordered) tr'))
+      .filter(row => row.cells.length === 2 && row.cells[0].textContent.trim() === 'A/C on route'
+        && row.cells[1].classList.contains('text-right'));
+    const onRoute = occupancyRows.length === 1 ? occupancyRows[0].cells[1] : null;
     const codes = Array.from(page.querySelectorAll('.row .col-4 .xl-text'), node => node.textContent.trim());
     return {codes, runways:Array.from(roads, node => node.parentElement.textContent.trim()),
-            occupied:onRoute?.textContent.trim()};
+            occupied:onRoute?.textContent.trim() ?? null,
+            occupancy_label:onRoute ? 'A/C on route' : null};
   }).then(done, () => done(null));
 """
 

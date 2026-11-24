@@ -40,8 +40,8 @@ def _time(value):
 def validated_detail(raw, origin, destination, *, expected_runway=None, hub_code=None):
     """Correlate the ordered response using the game airport catalogue.
 
-    The legacy occupied cell lacks an authenticated semantic label. Its raw
-    contents cannot establish occupancy or remaining demand.
+    Only the label-bound game count is retained as an observation. It still
+    requires independent fleet reconciliation to establish route occupancy.
     """
     if not _key(origin, destination) or not isinstance(raw, dict):
         return None
@@ -59,8 +59,13 @@ def validated_detail(raw, origin, destination, *, expected_runway=None, hub_code
     first, second = map(_runway, runways)
     if first is None or second is None or (expected_runway is not None and second != expected_runway):
         return None
-    return {"origin_runway_ft": first, "destination_runway_ft": second,
-            "occupied_aircraft": None}
+    result = {"origin_runway_ft": first, "destination_runway_ft": second,
+              "occupied_aircraft": None}
+    count = raw.get("occupied")
+    if (raw.get("occupancy_label") == "A/C on route" and isinstance(count, str)
+            and re.fullmatch(r"[0-9]{1,9}", count)):
+        result["observed_aircraft_on_route"] = int(count)
+    return result
 
 
 def current_detail(raw, origin, destination, now, *, expected_runway=None):
@@ -74,9 +79,13 @@ def current_detail(raw, origin, destination, now, *, expected_runway=None):
     if (type(a) is not int or type(b) is not int or not 0 < a <= 30000 or not 0 < b <= 30000
             or (expected_runway is not None and b != expected_runway)):
         return None
-    return {"source": SOURCE, "origin_id": origin, "destination_id": destination,
-            "observed_at": raw["observed_at"], "origin_runway_ft": a,
-            "destination_runway_ft": b, "occupied_aircraft": None}
+    result = {"source": SOURCE, "origin_id": origin, "destination_id": destination,
+              "observed_at": raw["observed_at"], "origin_runway_ft": a,
+              "destination_runway_ft": b, "occupied_aircraft": None}
+    count = raw.get("observed_aircraft_on_route")
+    if type(count) is int and 0 <= count <= 999999999:
+        result["observed_aircraft_on_route"] = count
+    return result
 
 
 class RouteDetailRegistry:

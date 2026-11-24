@@ -377,15 +377,19 @@ const result = {querySelector: () => null,
 globalThis.document = {querySelector: () => result};
 const observe = new Function(process.argv[1]);
 const valid = observe();
+row.textContent = '*Demand is currently boosted due to a special event';
+const boosted = observe();
 delete attrs['data-yclass'];
 const missing = observe();
-console.log(JSON.stringify({valid, missing}));
+console.log(JSON.stringify({valid, boosted, missing}));
 """
     response = subprocess.run(["node", "-e", js, game_observations._VERIFIED_ROUTE_DEMAND_JS],
                               capture_output=True, text=True, check=True, timeout=8)
     data = json.loads(response.stdout)
     assert data["valid"] == [{"dep_id": "2926", "arr_id": "3139", "distance": "1992.763",
-                              "y": "120", "j": "106", "f": "40", "runway": "5013"}]
+                              "y": "120", "j": "106", "f": "40", "runway": "5013",
+                              "event_demand_boosted": None}]
+    assert data["boosted"][0]["event_demand_boosted"] is True
     assert data["missing"][0]["y"] is None
 
 
@@ -860,6 +864,14 @@ def test_demand_runway_is_only_retained_when_correlated():
         assert "destination_runway_ft" not in samples[0]
     assert game_observations._verified_demand(candidates, [{**raw, "runway": "5013"}], "2926")[0]["destination_runway_ft"] == 5013
     assert game_observations._verified_demand(candidates, [{**raw, "runway": "5014"}], "2926") == []
+
+
+def test_event_demand_retains_only_explicit_positive_observation():
+    candidates = [RouteCandidate("3139", "SBL", 2000, 100, 20, 5, 5013)]
+    raw = {"dep_id": "2926", "arr_id": "3139", "distance": "2000", "y": "100", "j": "20", "f": "5"}
+    for flag in (None, False, "true", 1, True):
+        row = game_observations._verified_demand(candidates, [{**raw, "event_demand_boosted": flag}], "2926")[0]
+        assert row.get("event_demand_boosted") is (True if flag is True else None)
 
 
 def test_demand_collector_persists_dom_read_time_even_when_processing_is_late(

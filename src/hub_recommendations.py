@@ -52,7 +52,7 @@ _FINANCIAL_SOURCES = {"route_optimizer", "game_research"}
 _COST_SOURCES = {"game_market", "game_research"}
 _RESEARCH_EVIDENCE_FIELDS = (
     "source", "observed_at", "engine_id", "engine_label", "distance_km", "range_km", "runway_m",
-    "required_runway_m", "demand_remaining", "demand_verified",
+    "required_runway_m", "demand_remaining", "demand_verified", "event_demand_boosted",
     "range_verified", "runway_verified", "route_feasible", "route_available",
     "stopover", "financial", "costs",
 )
@@ -202,6 +202,8 @@ def rank_next_aircraft(
         cost_total = sum(cost_parts) if all(v is not None for v in cost_parts) else None
         investment = round(cost_total, 2) if _number(cost_total) is not None else None
         missing = []
+        if scenario.get("event_demand_boosted") is True:
+            missing.append("demanda_evento_temporario")
         if not inventory_fresh:
             missing.append("inventario_hubs_desatualizado")
         if (scenario.get("source") == "derived_research_queue"
@@ -328,6 +330,8 @@ def rank_next_aircraft(
             "status": status, "pending": sorted(set(missing)),
             "financial_source": financial.get("source"), "costs_source": costs.get("source"),
         }
+        if scenario.get("event_demand_boosted") is True:
+            candidate["event_demand_boosted"] = True
         if scenario.get("source") == "derived_research_queue":
             candidate["observed_demand"] = scenario.get("observed_demand")
             candidate["research_evidence"] = scenario.get("research_evidence")

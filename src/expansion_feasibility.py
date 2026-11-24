@@ -75,6 +75,7 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
             and scenario.get("source") == "game_research"
             and scenario.get("engine_verified") is True
             and scenario.get("demand_verified") is True
+            and scenario.get("event_demand_boosted") is not True
             and scenario.get("external_demand_verified") is True
             and scenario.get("route_feasible") is True
             and type(row.get("hub_points")) is int and row["hub_points"] == 0

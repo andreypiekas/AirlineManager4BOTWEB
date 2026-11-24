@@ -45,6 +45,22 @@ def test_failed_attempts_rotate_across_hubs_and_routes(tmp_path):
     assert reopened.reserve(samples, now=NOW + 4)[0] == other_hub
 
 
+def test_label_bound_count_does_not_certify_occupancy(tmp_path):
+    registry = evidence.RouteDetailRegistry(tmp_path / "details.json")
+    assert registry.reserve([SAMPLE], now=NOW)
+    raw = {**RAW, "occupancy_label": "A/C on route", "occupied": "0"}
+    detail = evidence.validated_detail(raw, "2926", "3139")
+    assert detail["observed_aircraft_on_route"] == 0
+    assert detail["occupied_aircraft"] is None
+    assert registry.finish("2926", "3139", NOW, detail, observed_at=NOW)
+    assert registry.enrich([SAMPLE], now=NOW)[0]["route_detail"]["observed_aircraft_on_route"] == 0
+    for count in ("-1", "1 aircraft", True, None, ""):
+        assert "observed_aircraft_on_route" not in evidence.validated_detail(
+            {**raw, "occupied": count}, "2926", "3139")
+    assert "observed_aircraft_on_route" not in evidence.validated_detail(
+        {**raw, "occupancy_label": "A/C capable"}, "2926", "3139")
+
+
 def test_stable_observation_expires_and_failed_refresh_revokes_it(tmp_path, monkeypatch):
     registry = evidence.RouteDetailRegistry(tmp_path / "details.json")
     clock = [NOW]

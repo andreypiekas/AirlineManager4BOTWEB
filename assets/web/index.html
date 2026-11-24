@@ -1136,6 +1136,9 @@ const EN = {
   "Pista da origem no detalhe": "Origin runway in route details",
   "Pista do destino no detalhe": "Destination runway in route details",
   "Ocupação da rota": "Route occupancy",
+  "Aeronaves na rota (leitura do jogo)": "Aircraft on route (game reading)",
+  "Demanda elevada por evento temporário": "Demand boosted by a temporary event",
+  "Evento de demanda": "Demand event",
   "Rotas com amostras conflitantes": "Routes with conflicting samples",
   "Cobertura parcial": "Partial coverage",
   "Pesquisa ainda pendente": "Research pending",
@@ -1975,6 +1978,7 @@ const hubResearchBlockerLabels = {
   motor_a_pesquisar: "Motor ainda não pesquisado no jogo",
   preco_final_motor_a_confirmar: "Preço final do motor e da aeronave não verificado",
   demanda_residual_a_confirmar: "Demanda residual da rota não confirmada",
+  demanda_evento_temporario: "Demanda elevada por evento temporário",
   disponibilidade_da_rota_a_confirmar: "Disponibilidade da rota não confirmada",
   pista_a_confirmar: "Compatibilidade da pista não confirmada",
   configuracao_assentos_a_confirmar: "Configuração dos assentos não confirmada",
@@ -2466,6 +2470,13 @@ function renderHubRecommendations(report) {
         ? nf.format(value) + " ft" : tr("Não verificado"));
     }
     addHubMetric(metrics, "Ocupação da rota", tr("Não verificado"));
+    const observedCount = routeDetail?.observed_aircraft_on_route;
+    if (Number.isSafeInteger(observedCount) && observedCount >= 0) {
+      addHubMetric(metrics, "Aeronaves na rota (leitura do jogo)", nf.format(observedCount));
+    }
+    if (task.event_demand_boosted === true) {
+      addHubMetric(metrics, "Evento de demanda", tr("Demanda elevada por evento temporário"));
+    }
     addHubMetric(metrics, "Preço final da aeronave", tr("Não verificado"));
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
