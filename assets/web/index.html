@@ -427,8 +427,8 @@ footer strong { font-weight: 600; color: var(--aqua); }
 .hub-aircraft-list li { padding:9px 0; border-top:1px solid var(--border); font-size:12px; overflow-wrap:anywhere; }
 .hub-card summary { padding:10px 4px; color:var(--aqua); font-weight:700; }
 .hub-card summary:focus-visible { outline:2px solid var(--aqua); outline-offset:2px; }
-#hubResearchQueueList { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr)); gap:12px; padding:0; list-style:none; }
-#hubResearchQueueList > li { min-width:0; padding:14px; border:1px solid var(--border); background:var(--panel-hi); overflow-wrap:anywhere; }
+#hubResearchQueueList, #snapshotResearchList { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr)); gap:12px; padding:0; list-style:none; }
+#hubResearchQueueList > li, #snapshotResearchList > li { min-width:0; padding:14px; border:1px solid var(--border); background:var(--panel-hi); overflow-wrap:anywhere; }
 .hub-research-item h3 { margin:0; font-size:15px; line-height:1.5; overflow-wrap:anywhere; }
 .hub-research-item .hub-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:12px 0; }
 .hub-research-item .hub-metrics div { min-width:0; border-top:1px solid var(--border); padding-top:8px; }
@@ -478,7 +478,7 @@ footer strong { font-weight: 600; color: var(--aqua); }
   .hubs-field { width:100%; }
   .hub-card { padding:14px; }
   .hub-card .hub-metrics { gap:8px; }
-  #hubResearchQueueList { grid-template-columns:minmax(0,1fr); }
+  #hubResearchQueueList, #snapshotResearchList { grid-template-columns:minmax(0,1fr); }
   .hub-research-item .hub-metrics { grid-template-columns:minmax(0,1fr); }
   .hub-probe-actions { display:grid; grid-template-columns:minmax(0,1fr); }
   .hub-probe-actions button { width:100%; }
@@ -748,6 +748,16 @@ footer strong { font-weight: 600; color: var(--aqua); }
           </section>
           <ul id="hubExpansionPlannerBlockers" class="hub-research-reasons" aria-label="Impedimentos do planejamento" data-t-aria-label="Impedimentos do planejamento"></ul>
           <div id="hubExpansionPlannerGrid" class="hubs-grid" aria-label="Comparação auditada de oportunidades" data-t-aria-label="Comparação auditada de oportunidades"></div>
+          <details class="hub-probe">
+            <summary data-t="Simulações do snapshot A3">Simulações do snapshot A3</summary>
+            <p id="snapshotResearchStatus" class="hub-section-note" role="status" aria-live="polite" data-t="Consulte a última captura para comparar cenários históricos.">Consulte a última captura para comparar cenários históricos.</p>
+            <div class="hubs-controls">
+              <button id="snapshotResearchRefresh" type="button" data-t="Consultar snapshot">Consultar snapshot</button>
+              <button id="snapshotResearchPrev" type="button" data-t="Pesquisas anteriores" disabled>Pesquisas anteriores</button>
+              <button id="snapshotResearchNext" type="button" data-t="Próximas pesquisas" disabled>Próximas pesquisas</button>
+            </div>
+            <ul id="snapshotResearchList" class="hub-aircraft-list" aria-label="Simulações do snapshot A3" data-t-aria-label="Simulações do snapshot A3"></ul>
+          </details>
         </details>
         <div class="hubs-controls">
           <label class="hubs-field"><span data-t="Filtrar por modelo">Filtrar por modelo</span>
@@ -1159,6 +1169,18 @@ const EN = {
   "Histórico da companhia; compromissos futuros e lucro por aeronave ainda a confirmar.": "Company history; future commitments and aircraft-level profit still unverified.",
   "Pendências da frota": "Fleet pending statuses",
   "Cobertura parcial dos dados de jogo": "Partial game data coverage",
+  "Simulações do snapshot A3": "A3 snapshot simulations",
+  "Consulte a última captura para comparar cenários históricos.": "Load the latest capture to compare historical scenarios.",
+  "Consultar snapshot": "Load snapshot",
+  "Consultando snapshot…": "Loading snapshot…",
+  "Capturado em": "Captured at",
+  "Distância direta observada": "Observed direct distance",
+  "Hangar para uma aeronave (cotação na captura)": "Hangar for one aircraft (quote at capture)",
+  "Simulação histórica, sem autorização de compra": "Historical simulation, no purchase authorization",
+  "Snapshot substituído. Consulte a captura atual.": "Snapshot replaced. Load the current capture.",
+  "Snapshot expirado. Aguarde nova coleta.": "Snapshot expired. Await a new capture.",
+  "Aguardando nova captura de evidências.": "Awaiting a new evidence capture.",
+  "Falha ao consultar o snapshot.": "Could not load the snapshot.",
   "Sem fonte de cobertura": "No coverage source",
   "Falha ao consultar métricas.": "Could not retrieve metrics.",
   "Ambiente de simulação": "Simulation environment",
@@ -1500,6 +1522,7 @@ function setLanguage(lang) {
   if (hubInventoryReport) { renderHubs(hubInventoryReport); }
   if (hubExpansionReport) { renderHubExpansion(hubExpansionReport); }
   if (externalResearchPage) { renderExternalHubResearch(externalResearchPage); }
+  if (snapshotResearchPage) { renderSnapshotResearch(snapshotResearchPage); }
   if (gameSourceProbeReport) {
     renderGameSourceProbe(gameSourceProbeReport);
     showGameSourceProbeStatus("Verificação concluída.", "success");
@@ -2016,6 +2039,8 @@ let hubRecommendationsReport = null;
 let researchPageOffset = 0;
 let researchPageFingerprint = null;
 let researchRequestSequence = 0;
+let snapshotResearchPage = null;
+let snapshotResearchSequence = 0;
 let investmentPolicyVersion = null;
 window.addEventListener("hashchange", activateWorkspaceFromHash);
 activateWorkspaceFromHash();
@@ -2025,16 +2050,14 @@ activateWorkspaceFromHash();
 const hubDate = seconds => Number.isFinite(seconds) && seconds > 0
   ? new Date(seconds * 1000).toLocaleString(LANG === "en" ? "en-GB" : "pt-BR") : tr("Sem dados");
 const hubMoney = value => Number.isFinite(value) ? money(value) : tr("Sem dados");
-function operatingMarketText(market) {
-  const now = Date.now() / 1000;
+function operatingMarketText(market, now = Date.now() / 1000) {
   const format = quote => quote && Number.isFinite(quote.price) && quote.price > 0 &&
     quote.observed_at <= now && now < quote.expires_at ? hubMoney(quote.price) : tr("Desconhecido");
   return tr("Cotação de combustível (USD/1000)") + ": " + format(market?.fuel) +
     " · " + tr("Cotação de CO₂ (USD/1000)") + ": " + format(market?.co2);
 }
-function appendFleetRouteOccupancy(metrics, task) {
+function appendFleetRouteOccupancy(metrics, task, now = Date.now() / 1000) {
   const evidence = task.fleet_occupancy;
-  const now = Date.now() / 1000;
   if (!evidence || !Number.isSafeInteger(evidence.own_aircraft_count) || evidence.own_aircraft_count < 0 ||
       !Number.isFinite(evidence.observed_at) || !Number.isFinite(evidence.expires_at) ||
       evidence.observed_at > now || now >= evidence.expires_at ||
@@ -2043,10 +2066,10 @@ function appendFleetRouteOccupancy(metrics, task) {
   addHubMetric(metrics, "Aeronaves da frota própria na rota",
     nf.format(evidence.own_aircraft_count) + " · " + tr(qualifier));
 }
-function appendResearchEconomicsPreview(metrics, task) {
+function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) {
   const preview = task.economics_preview;
   if (!preview || preview.purchase_eligible !== false || preview.source !== "route_optimizer_what_if_v1" ||
-      !Number.isFinite(preview.expires_at) || Date.now() / 1000 >= preview.expires_at ||
+      !Number.isFinite(preview.expires_at) || now >= preview.expires_at ||
       !Array.isArray(preview.layouts) || !preview.layouts.length) { return; }
   addHubMetric(metrics, "Simulação (demanda total, não residual)", tr("Contribuição diária base / stress"));
   for (const row of preview.layouts) {
@@ -2077,11 +2100,11 @@ function appendResearchEconomicsPreview(metrics, task) {
     addHubMetric(metrics, "Encargos específicos da escala a confirmar", tr("Não confirmado"));
   }
 }
-function appendPhysicalFeasibility(metrics, task) {
+function appendPhysicalFeasibility(metrics, task, now = Date.now() / 1000) {
   const proof = task.physical_feasibility;
   if (!proof || proof.source !== "observed_direct_dimensions_v1" ||
       proof.purchase_eligible !== false || !Number.isFinite(proof.expires_at) ||
-      Date.now() / 1000 >= proof.expires_at || !proof.checks) { return; }
+      now >= proof.expires_at || !proof.checks) { return; }
   const statuses = {direct_dimensions_sufficient: "Dimensões suficientes",
     direct_shortfall: "Dimensões insuficientes", unknown: "Dimensões pendentes"};
   const checks = {sufficient: "Suficiente", short: "Insuficiente", unknown: "Não confirmado"};
@@ -2103,7 +2126,7 @@ function appendPhysicalFeasibility(metrics, task) {
   const stop = task.stopover_research;
   if (stop && stop.source === "game_map_and_leg_details_v1" && stop.purchase_eligible === false &&
       stop.game_rules_verified === false && Number.isFinite(stop.expires_at) &&
-      Date.now() / 1000 < stop.expires_at && Number.isFinite(stop.first_km) &&
+      now < stop.expires_at && Number.isFinite(stop.first_km) &&
       Number.isFinite(stop.second_km) && Number.isFinite(stop.stop_runway_ft)) {
     addHubMetric(metrics, "Escala exploratória", String(stop.stop_code || stop.stop_id));
     addHubMetric(metrics, "Trechos estimados pelo mapa", nf.format(stop.first_km) + " + " + nf.format(stop.second_km) + " km");
@@ -2111,24 +2134,24 @@ function appendPhysicalFeasibility(metrics, task) {
     addHubMetric(metrics, "Regras da escala a confirmar", tr("Não confirmado"));
   }
 }
-function appendCapitalQuotePreview(metrics, task) {
+function appendCapitalQuotePreview(metrics, task, now = Date.now() / 1000, historical = false) {
   const quote = task.capital_quote_preview;
   if (!quote || quote.source !== "displayed_capital_quotes_v1" || quote.purchase_eligible !== false ||
-      !Number.isFinite(quote.expires_at) || Date.now() / 1000 >= quote.expires_at || !quote.components) { return; }
+      !Number.isFinite(quote.expires_at) || now >= quote.expires_at || !quote.components) { return; }
   const components = quote.components;
   if (Number.isFinite(components.aircraft)) {
     addHubMetric(metrics, "Preço indicativo da aeronave", hubMoney(components.aircraft) + " · " +
       tr(quote.aircraft_price_source === "observed_variant" ? "Variante observada" : "Catálogo do modelo"));
   }
-  addHubMetric(metrics, "Hangar para uma aeronave (cotação atual)", hubMoney(components.hangar));
+  addHubMetric(metrics, historical ? "Hangar para uma aeronave (cotação na captura)" :
+    "Hangar para uma aeronave (cotação atual)", hubMoney(components.hangar));
   if (Number.isFinite(quote.displayed_subtotal)) {
     addHubMetric(metrics, "Subtotal indicativo de uma aeronave (sem taxa da rota)", hubMoney(quote.displayed_subtotal));
   }
   addHubMetric(metrics, "Investimento final a confirmar", tr("Não confirmado"));
 }
-function appendEngineDetail(metrics, task) {
+function appendEngineDetail(metrics, task, now = Date.now() / 1000) {
   const evidence = task.engine_detail;
-  const now = Date.now() / 1000;
   if (!evidence || typeof evidence.model_identity_verified !== "boolean" ||
       !Number.isFinite(evidence.observed_at) || evidence.observed_at > now ||
       now - evidence.observed_at > 3 * 86400 || !evidence.metrics) { return; }
@@ -3544,6 +3567,133 @@ async function loadHubExpansion() {
   }
   await research;
 }
+function renderSnapshotResearch(page) {
+  const list = $("snapshotResearchList");
+  const status = $("snapshotResearchStatus");
+  list.replaceChildren();
+  $("snapshotResearchPrev").disabled = true;
+  $("snapshotResearchNext").disabled = true;
+  const unavailable = {
+    expirado: "Snapshot expirado. Aguarde nova coleta.",
+    snapshot_alterado: "Snapshot substituído. Consulte a captura atual.",
+    recoleta_necessaria: "Aguardando nova captura de evidências.",
+    sem_coleta: "Aguardando nova captura de evidências.",
+    registro_invalido: "Falha ao consultar o snapshot.",
+  };
+  if (page.status !== "parcial") {
+    status.dataset.t = unavailable[page.status] || "Falha ao consultar o snapshot.";
+    status.textContent = tr(status.dataset.t);
+    return;
+  }
+  status.removeAttribute("data-t");
+  const range = page.items.length ? nf.format(page.offset + 1) + "–" +
+    nf.format(page.offset + page.items.length) : "0";
+  status.textContent = tr("Simulação histórica, sem autorização de compra") + " · " +
+    tr("Cobertura parcial") + " · " + tr("Capturado em") + ": " + hubDate(page.captured_at) +
+    " · " + page.snapshot_id + " · " + range + " / " + nf.format(page.total_candidates) +
+    " · " + operatingMarketText(page.operating_market, page.captured_at);
+  for (const reason of page.blocking_reasons || []) {
+    const item = document.createElement("li");
+    item.textContent = hubResearchBlocker(reason);
+    list.append(item);
+  }
+  for (const task of page.items) {
+    const item = document.createElement("li"); item.className = "hub-research-item";
+    const heading = document.createElement("h3");
+    heading.textContent = String(task.hub_code || task.hub_id) + " ↔ " + String(task.destination_id);
+    const metrics = document.createElement("dl"); metrics.className = "hub-metrics";
+    addHubMetric(metrics, "Modelo pesquisado", task.model || tr("Sem dados"));
+    addHubMetric(metrics, "Motor pesquisado", task.engine_id ?
+      String(task.engine_label || task.engine_id) + (task.engine_label ? " (" + task.engine_id + ")" : "") :
+      tr("Motor a pesquisar"));
+    const demand = task.observed_demand || {};
+    addHubMetric(metrics, "Demanda observada Y/J/F", [demand.y, demand.j, demand.f].map(value =>
+      Number.isSafeInteger(value) && value >= 0 ? nf.format(value) : tr("Não verificado")).join(" / "));
+    addHubMetric(metrics, "Distância direta observada", Number.isFinite(task.distance_km) && task.distance_km > 0
+      ? nf.format(task.distance_km) + " km" : tr("Não verificado"));
+    const observedCount = task.route_detail?.observed_aircraft_on_route;
+    if (Number.isSafeInteger(observedCount) && observedCount >= 0) {
+      addHubMetric(metrics, "Aeronaves na rota (leitura do jogo)", nf.format(observedCount));
+    }
+    appendFleetRouteOccupancy(metrics, task, page.captured_at);
+    if (task.event_demand_boosted === true) {
+      addHubMetric(metrics, "Evento de demanda", tr("Demanda elevada por evento temporário"));
+    }
+    appendEngineDetail(metrics, task, page.captured_at);
+    appendCapitalQuotePreview(metrics, task, page.captured_at, true);
+    appendPhysicalFeasibility(metrics, task, page.captured_at);
+    appendResearchEconomicsPreview(metrics, task, page.captured_at);
+    addHubMetric(metrics, "Custo total", tr("Desconhecido"));
+    addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
+    addHubMetric(metrics, "ROI", tr("Desconhecido"));
+    addHubMetric(metrics, "Retorno estimado", tr("Desconhecido"));
+    const reasons = document.createElement("ul"); reasons.className = "hub-research-reasons";
+    for (const reason of task.pending || []) {
+      const entry = document.createElement("li"); entry.textContent = hubResearchBlocker(reason);
+      reasons.append(entry);
+    }
+    item.append(heading, metrics, reasons); list.append(item);
+  }
+  $("snapshotResearchPrev").disabled = page.offset <= 0;
+  $("snapshotResearchNext").disabled = page.next_offset === null;
+}
+async function loadSnapshotResearch(offset = 0, previous = null) {
+  const sequence = ++snapshotResearchSequence;
+  snapshotResearchPage = null;
+  const status = $("snapshotResearchStatus");
+  status.dataset.t = "Consultando snapshot…";
+  status.textContent = tr(status.dataset.t);
+  $("snapshotResearchList").replaceChildren();
+  $("snapshotResearchPrev").disabled = true;
+  $("snapshotResearchNext").disabled = true;
+  try {
+    const query = previous ? "?research_offset=" + offset +
+      "&snapshot_id=" + encodeURIComponent(previous.snapshot_id) +
+      "&research_snapshot=" + encodeURIComponent(previous.snapshot_fingerprint) : "";
+    let page = await api("/api/investment/audited-expansion/research" + query);
+    if (sequence !== snapshotResearchSequence) { return; }
+    if (page?.read_only !== true || page.purchase_eligible !== false || page.coverage !== "partial" ||
+        !Array.isArray(page.items)) { throw new Error("Invalid snapshot response"); }
+    if (page.status === "parcial") {
+      if (page.historical_replay !== true || page.source !== "derived_research_queue" ||
+          !Number.isFinite(page.captured_at) || page.captured_at <= 0 ||
+          typeof page.snapshot_id !== "string" || !page.snapshot_id ||
+          typeof page.snapshot_fingerprint !== "string" || !page.snapshot_fingerprint ||
+          !Number.isSafeInteger(page.offset) || page.offset < 0 ||
+          !Number.isSafeInteger(page.page_size) || page.page_size <= 0 || page.items.length > page.page_size ||
+          !Number.isSafeInteger(page.total_candidates) || page.total_candidates < page.offset + page.items.length ||
+          (page.next_offset !== null && (!Number.isSafeInteger(page.next_offset) ||
+            page.next_offset <= page.offset || page.next_offset !== page.offset + page.items.length ||
+            page.next_offset >= page.total_candidates)) ||
+          page.items.some(task => task?.purchase_eligible !== false)) {
+        throw new Error("Invalid historical research page");
+      }
+      if (previous && (page.snapshot_id !== previous.snapshot_id ||
+          page.snapshot_fingerprint !== previous.snapshot_fingerprint || page.offset !== offset || page.cursor_reset)) {
+        page = {status: "snapshot_alterado"};
+      }
+    }
+    snapshotResearchPage = page;
+    renderSnapshotResearch(page);
+  } catch (_) {
+    if (sequence !== snapshotResearchSequence) { return; }
+    snapshotResearchPage = {status: "registro_invalido"};
+    renderSnapshotResearch(snapshotResearchPage);
+  }
+}
+$("snapshotResearchRefresh").addEventListener("click", () => loadSnapshotResearch());
+$("snapshotResearchPrev").addEventListener("click", () => {
+  const page = snapshotResearchPage;
+  if (page?.status === "parcial" && page.offset > 0) {
+    return loadSnapshotResearch(Math.max(0, page.offset - page.page_size), page);
+  }
+});
+$("snapshotResearchNext").addEventListener("click", () => {
+  const page = snapshotResearchPage;
+  if (page?.status === "parcial" && Number.isSafeInteger(page.next_offset)) {
+    return loadSnapshotResearch(page.next_offset, page);
+  }
+});
 function renderExternalHubResearch(page) {
   const list = $("externalResearchList");
   list.replaceChildren();

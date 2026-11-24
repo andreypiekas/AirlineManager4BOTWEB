@@ -1185,3 +1185,105 @@ assert.equal(report.candidates.length, 1);
         ["node", str(test_script)], capture_output=True, text=True, check=False, timeout=15,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not available")
+def test_snapshot_research_uses_capture_clock_and_isolates_pages(tmp_path):
+    script = "\n".join(_page().scripts)
+    helpers = script[script.index("const hubDate ="):script.index("function renderHubs(")]
+    renderer = script[script.index("function renderSnapshotResearch(page)"):
+                      script.index("function renderExternalHubResearch(page)")]
+    assertions = r"""
+const assert = require('node:assert/strict');
+const LANG = 'en';
+const nf = new Intl.NumberFormat('en-GB');
+const money = value => '$' + String(value);
+const tr = text => text;
+let snapshotResearchPage = null;
+let snapshotResearchSequence = 0;
+function element(tag) {
+  return {tag, disabled:false, textContent:'', dataset:{}, children:[], events:{},
+    append(...children) { this.children.push(...children); },
+    replaceChildren() { this.children = []; },
+    removeAttribute(name) { if (name === 'data-t') delete this.dataset.t; },
+    addEventListener(name, handler) { this.events[name] = handler; }};
+}
+const nodes = new Map();
+const $ = id => {
+  if (!nodes.has(id)) nodes.set(id, element('div'));
+  return nodes.get(id);
+};
+const document = {createElement: element};
+const calls = [];
+const api = path => new Promise((resolve, reject) => calls.push({path, resolve, reject}));
+""" + helpers + renderer + r"""
+const captured = 1700000000;
+const evidence = {observed_at:captured-10, expires_at:captured+10};
+const task = {purchase_eligible:false, hub_code:'AAA', destination_id:'42', model:'A320',
+  engine_id:'1', engine_label:'Variant <test>', observed_demand:{y:123,j:0,f:12}, distance_km:450,
+  fleet_occupancy:{...evidence, own_aircraft_count:1, count_complete:false},
+  capital_quote_preview:{...evidence, source:'displayed_capital_quotes_v1', purchase_eligible:false,
+    aircraft_price_source:'observed_variant', components:{aircraft:100,hangar:20}, displayed_subtotal:120},
+  pending:['pesquisa_pendente']};
+const makePage = (offset, id='snap-a') => ({status:'parcial', source:'derived_research_queue',
+  read_only:true, purchase_eligible:false, coverage:'partial', historical_replay:true,
+  snapshot_id:id, snapshot_fingerprint:'hash-a', captured_at:captured,
+  page_size:1, offset, next_offset:offset===0?1:null, total_candidates:2, items:[task],
+  operating_market:{fuel:{...evidence, price:900}}, blocking_reasons:[]});
+const endpoint = '/api/investment/audited-expansion/research';
+const metrics = () => Object.fromEntries($('snapshotResearchList').children[0].children[1].children
+  .map(row => row.children.map(cell => cell.textContent)));
+async function run() {
+  const initial = loadSnapshotResearch();
+  assert.equal(calls[0].path, endpoint);
+  calls[0].resolve(makePage(0));
+  await initial;
+  assert.match($('snapshotResearchStatus').textContent, /Simulação histórica.*snap-a.*1–1 \/ 2.*\$900/);
+  assert.equal(metrics()['Aeronaves da frota própria na rota'], '1 · Mínimo observado');
+  assert.equal(metrics()['Hangar para uma aeronave (cotação na captura)'], '$20');
+  assert.equal(metrics()['Motor pesquisado'], 'Variant <test> (1)');
+  assert.equal(metrics()['Demanda observada Y/J/F'], '123 / 0 / 12');
+  assert.equal(metrics()['Lucro líquido diário'], 'Desconhecido');
+  assert.equal($('snapshotResearchNext').disabled, false);
+  assert.equal($('snapshotResearchPrev').disabled, true);
+
+  const next = $('snapshotResearchNext').events.click();
+  assert.equal(calls[1].path, endpoint + '?research_offset=1&snapshot_id=snap-a&research_snapshot=hash-a');
+  assert.equal($('snapshotResearchList').children.length, 0);
+  calls[1].resolve(makePage(1));
+  await next;
+  assert.equal($('snapshotResearchPrev').disabled, false);
+  const prev = $('snapshotResearchPrev').events.click();
+  assert.equal(calls[2].path, endpoint + '?research_offset=0&snapshot_id=snap-a&research_snapshot=hash-a');
+  calls[2].resolve(makePage(0, 'snap-b'));
+  await prev;
+  assert.match($('snapshotResearchStatus').textContent, /Snapshot substituído/);
+  assert.equal($('snapshotResearchList').children.length, 0);
+  assert.equal($('snapshotResearchPrev').disabled, true);
+  assert.equal($('snapshotResearchNext').disabled, true);
+
+  const old = loadSnapshotResearch();
+  const latest = loadSnapshotResearch();
+  calls[4].resolve(makePage(0));
+  await latest;
+  calls[3].reject(new Error('old failure'));
+  await old;
+  assert.equal(snapshotResearchPage.snapshot_id, 'snap-a');
+  const invalid = loadSnapshotResearch();
+  calls[5].resolve({...makePage(0), items:[{...task, purchase_eligible:true}]});
+  await invalid;
+  assert.equal(snapshotResearchPage.status, 'registro_invalido');
+  assert.equal($('snapshotResearchList').children.length, 0);
+  const expired = loadSnapshotResearch();
+  calls[6].resolve({status:'expirado', read_only:true, purchase_eligible:false, coverage:'partial', items:[]});
+  await expired;
+  assert.match($('snapshotResearchStatus').textContent, /Snapshot expirado/);
+}
+run().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    filename = tmp_path / "snapshot_research.js"
+    filename.write_text(assertions, encoding="utf-8")
+    result = subprocess.run(
+        ["node", str(filename)], capture_output=True, text=True, check=False, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr

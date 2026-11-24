@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, painel de reprodução histórica (G0)
+
+- A análise auditada de expansão disponibiliza uma seção própria para consultar as combinações de hub, rota, modelo e motor do último snapshot A3, com paginação vinculada à identidade e à impressão digital da captura. Mostra demanda total observada, distâncias, ocupação, triagem física, custos indicativos, layouts e contribuições diárias em condições históricas, com motivos de bloqueio e indicadores desconhecidos explícitos.
+- O relógio da captura é aplicado também às cotações e às evidências de ocupação, motores, dimensões e simulações. Preços históricos são identificados na interface. Respostas atrasadas, páginas de outra captura, ausência de dados, expiração ou respostas inválidas não apresentam cenários antigos como vigentes nem habilitam compras. Interface PT/EN.
+- Validação Windows: 174 testes direcionados aprovados antes da inclusão da regressão de interface; em seguida, os 10 testes do painel foram aprovados, incluindo a nova regressão Node.js de reprodução histórica, paginação, expiração e resposta inelegível. Ruff e `git diff --check` aprovados.
+- Pendentes: coleta conclusiva de demanda residual, taxas e preços finais, geração de casos elegíveis A3 e homologação autenticada das fases restantes. Nenhuma transação real executada. O objetivo integral permanece ativo.
+
 ## 2026-11-24 — Autonomia Total A3, reprodução paginada das alternativas por snapshot (G0)
 
 - A captura automática agora preserva o modo de jogo observado, a margem configurada e as evidências de ocupação da frota usadas na avaliação. O replay reutiliza o mesmo otimizador de pesquisa com o relógio da captura, incluindo as cotações de combustível e CO₂, para gerar combinações hub/rota/modelo/motor e layouts em condições reproduzíveis.
