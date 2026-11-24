@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A2/A4/A5, conciliação do snapshot vigente (G0)
+
+- O plano auditado de aquisição exige consistência com a última captura disponível do jogo. Captura divergente, expirada ou inválida bloqueia o plano, preservando os resultados históricos para diagnóstico. Uma instalação sem captura local mantém a compatibilidade com registros auditados independentes; as demais verificações financeiras e de cobertura continuam obrigatórias.
+- A captura registra a partição de aeronaves com rota e sem rota e a confirmação nativa de identidades. Uma frota não vazia com zero páginas de rotas pode ter cobertura coerente quando todas as aeronaves sem rota são conciliadas e os totais e IDs conferem. Isso não promove as demais fontes de pesquisa a cobertura completa.
+- Validação Windows: 222 testes direcionados aprovados (contrato, captura, registro A3, painel, economia e portfólio). Ruff e `git diff --check` aprovados.
+- Pendentes: fontes verificadas de demanda residual e preços finais, alimentação de oportunidades A3 elegíveis e homologação das etapas restantes. Nenhuma transação real executada; objetivo integral ativo.
+
 ## 2026-11-24 — Autonomia Total A2/A3, cobertura independente de modelos e motores (G0)
 
 - O snapshot passa a reconhecer a cobertura do catálogo de passageiros quando a lista nativa e os detalhes de todos os modelos apresentam correspondência de identidade e tentativa válida. A cobertura das variantes exige observações de todas as opções disponíveis de cada modelo. A validade de cada escopo respeita a expiração mais próxima entre a lista nativa (900 s) e os detalhes dos modelos (3 dias).

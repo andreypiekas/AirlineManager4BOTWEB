@@ -187,6 +187,25 @@ def test_partial_or_incoherent_coverage_blocks(change):
     assert result["economics"]["payback_days"] is None
 
 
+@pytest.mark.parametrize("native_verified,routed,unrouted,valid", [
+    (True, 0, 3, True),
+    (False, 0, 3, False),
+    (True, 0, 2, False),
+    (True, 1, 2, False),
+    (True, False, 3, False),
+])
+def test_nonempty_fleet_without_route_pages_requires_native_partition(native_verified, routed, unrouted, valid):
+    snapshot, candidate = sample()
+    snapshot["coverage"].update(
+        observed_pages=0, expected_pages=0, routed_aircraft_count=routed,
+        unrouted_aircraft_count=unrouted, native_unrouted_identity_verified=native_verified,
+    )
+    rebind(snapshot, candidate)
+    result = evaluate(snapshot, candidate)
+    assert (result["status"] == "suggested") is valid
+    assert ("COVERAGE_INCOHERENT" in codes(result)) is not valid
+
+
 @pytest.mark.parametrize(
     "path",
     [

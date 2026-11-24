@@ -197,6 +197,10 @@ def test_web_dashboard_fails_closed_for_invalid_a3_storage(registry, monkeypatch
     ("cash_old", "saldo_vivo_a_confirmar"),
     ("cash_changed", "saldo_vivo_divergente_a3"),
     ("confirmed_after", "snapshot_anterior_compra_confirmada"),
+    ("snapshot_changed", "snapshot_a3_divergente_coleta"),
+    ("snapshot_expired", "coleta_jogo_expirada"),
+    ("snapshot_invalid", "coleta_jogo_invalida"),
+    ("snapshot_matches", None),
     ("route_creation_pending.json", "criacao_rota_a_conciliar"),
     ("reroute_pending.json", "redirecionamento_a_conciliar"),
     ("investment", "intencoes_locais_a_conciliar"),
@@ -225,6 +229,14 @@ def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
     live_cash = {"cash_missing": (None, None), "cash_old": (40000, NOW - 21),
                  "cash_changed": (39000, NOW)}.get(pending, (40000, NOW))
     monkeypatch.setattr("web.recent_verified_money", lambda _bot: live_cash)
+    capture = {
+        "snapshot_changed": {"status": "parcial", "snapshot_id": "different"},
+        "snapshot_expired": {"status": "expirado", "snapshot_id": snapshot_id},
+        "snapshot_invalid": {"status": "registro_invalido", "snapshot_id": None},
+        "snapshot_matches": {"status": "parcial", "snapshot_id": snapshot_id},
+    }.get(pending)
+    if capture is not None:
+        monkeypatch.setattr("web.snapshot_summary", lambda: capture)
     monkeypatch.setattr(
         "web.build_aircraft_intent_plan",
         lambda current_portfolio, evaluation: investment_plan_bridge.build_aircraft_intent_plan(
@@ -263,6 +275,9 @@ def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
 
     assert status == 200
     assert {file.name: file.read_bytes() for file in tmp_path.glob("*.sqlite3")} == before
+    if capture is not None:
+        assert result["game_observation_snapshot"] == capture
+        assert result["evaluation_count"] == 1
     if blocker:
         assert result["purchase_plan_preview"] is None
         assert result["portfolio"]["decision"] == "nao_comprar"

@@ -118,6 +118,11 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                 "observed_pages": len(pages) if fleet_verified else None,
                 "expected_pages": expected_pages if fleet_verified else None,
                 "expected_aircraft_count": total if fleet_verified else None,
+                "routed_aircraft_count": counts[0] if fleet_verified else None,
+                "unrouted_aircraft_count": sum(counts[1:]) if fleet_verified else None,
+                "native_unrouted_identity_verified": bool(
+                    fleet_verified and fleet.get("native_identity_status") == "matched"
+                    and fleet.get("native_observation_id")),
                 "count_source": "game_fleet_total" if fleet_verified else None,
                 "observed_aircraft_ids": sorted(ids) if fleet_verified else []}
     snapshot = {"schema_version": 1, "profile_id": profile_id,

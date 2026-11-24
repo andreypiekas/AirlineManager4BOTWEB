@@ -11,6 +11,8 @@ Coverage contains source="game_fleet_scan", profile_id, verified=True,
 observed_at, status="complete", observed_pages, expected_pages,
 expected_aircraft_count, count_source="game_fleet_total",
 observed_aircraft_ids and scopes (hubs/fleet/routes/models/engines/prices).
+Zero routed pages with a nonempty fleet require explicit native identity
+reconciliation and routed/unrouted counts matching the total.
 
 A candidate references the snapshot with profile_id and snapshot_id, then
 supplies kind, hub={"id": ...}, route, aircraft, costs and financial.
@@ -169,6 +171,13 @@ def _coverage(
     expected_pages = coverage.get("expected_pages")
     count = coverage.get("expected_aircraft_count")
     ids = coverage.get("observed_aircraft_ids")
+    all_unrouted = (
+        coverage.get("native_unrouted_identity_verified") is True
+        and type(coverage.get("routed_aircraft_count")) is int
+        and coverage["routed_aircraft_count"] == 0
+        and type(coverage.get("unrouted_aircraft_count")) is int
+        and coverage["unrouted_aircraft_count"] == count
+    )
     coherent = (
         type(pages) is int
         and pages >= 0
@@ -182,7 +191,7 @@ def _coverage(
         and len(ids) == count
         and all(_game_id(aircraft_id) for aircraft_id in ids)
         and len(set(ids)) == len(ids)
-        and (count == 0 or pages > 0)
+        and (count == 0 or pages > 0 or all_unrouted)
     )
     if not coherent:
         _block(reasons, "COVERAGE_INCOHERENT", "coverage", "Páginas, total de aeronaves e IDs únicos não conferem com o jogo.")

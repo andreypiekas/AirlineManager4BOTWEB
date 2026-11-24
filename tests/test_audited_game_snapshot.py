@@ -59,6 +59,22 @@ def test_missing_native_partition_or_revoked_page_audit_cannot_certify_fleet():
     assert snapshot["coverage"]["observed_aircraft_ids"] == []
 
 
+def test_capture_records_native_partition_when_all_aircraft_are_unrouted():
+    evidence = observations()
+    evidence["routes"]["fleet_coverage"].update(routes=0, parked=1, pending=1)
+    evidence["routes"]["scan_coverage"] = {}
+    coverage = compose_snapshot(**evidence)["coverage"]
+    assert coverage["verified"] is True
+    assert coverage["observed_pages"] == coverage["expected_pages"] == 0
+    assert coverage["routed_aircraft_count"] == 0
+    assert coverage["unrouted_aircraft_count"] == 2
+    assert coverage["native_unrouted_identity_verified"] is True
+    evidence["routes"]["fleet_coverage"]["native_identity_status"] = "different"
+    coverage = compose_snapshot(**evidence)["coverage"]
+    assert coverage["verified"] is False
+    assert coverage["native_unrouted_identity_verified"] is False
+
+
 def test_cycle_capture_persists_real_cash_and_missing_registry_evidence(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "current", lambda: paths.Profile("isolated"))
     monkeypatch.setattr(paths.Profile, "data", property(lambda self: tmp_path))

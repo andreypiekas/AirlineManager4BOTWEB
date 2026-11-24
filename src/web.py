@@ -451,6 +451,16 @@ class WebDashboard:
             portfolio["decision"] = "nao_comprar"
         journal = _local_investment_snapshot()
         _block_local_investment(portfolio, journal)
+        game_snapshot = snapshot_summary()
+        # A fresh capture supersedes the economic proof even when the balance
+        # is unchanged. Keep historical evaluations visible for diagnosis.
+        if game_snapshot["status"] == "registro_invalido":
+            _block_portfolio(portfolio, ["coleta_jogo_invalida"])
+        elif game_snapshot["status"] == "expirado":
+            _block_portfolio(portfolio, ["coleta_jogo_expirada"])
+        elif (game_snapshot["status"] != "sem_coleta" and record["snapshot_id"]
+              and game_snapshot.get("snapshot_id") != record["snapshot_id"]):
+            _block_portfolio(portfolio, ["snapshot_a3_divergente_coleta"])
         purchase_plan = None
         purchase_plan_blockers = []
         if portfolio.get("decision") == "sugestao_para_analise":
@@ -485,7 +495,7 @@ class WebDashboard:
         return {
             "status": record["status"], "snapshot_id": record["snapshot_id"],
             "profile_id": paths.current().label,
-            "game_observation_snapshot": snapshot_summary(),
+            "game_observation_snapshot": game_snapshot,
             "evaluation_count": len(evaluations),
             "evaluations": evaluations,
             "a3_ranking": ranking,
