@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, preços configurados e stress reproduzível (G0)
+
+- Os limites positivos de compra de combustível e CO₂ (`fuel_price_good` e `co2_price_good`, em USD/1000) são tratados como hipóteses explícitas de planejamento. A pesquisa mantém os cenários com cotações observadas e calcula, separadamente, contribuição diária base e stress com os preços configurados, preservando as configurações de assentos em cada comparação. O otimizador também considera os layouts que maximizam a contribuição sob essas hipóteses.
+- A configuração é vinculada ao fingerprint da pesquisa e preservada na captura privada para reprodução histórica. Snapshots anteriores continuam legíveis. Os cenários são apresentados no painel PT/EN, sem elevar hipóteses a preços verificados ou habilitar aquisições. Quando um dos limites não é positivo, a simulação configurada fica indisponível.
+- Validação Windows: 163 testes direcionados, suíte completa com 2.001 aprovados e 1 ignorado (instalação Linux excluída), Ruff e git diff --check aprovados. A projeção ainda exige cotações recentes para a comparação observada. Permanecem pendentes as fontes nativas e a homologação integral das fases A0–A9. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A3, integração da validação econômica auditada (G0)
 
 - A pesquisa histórica por hub, rota, modelo e motor passa a executar o validador econômico de aquisição sobre o snapshot privado e a hora de captura. A API informa os impedimentos comuns aos layouts hipotéticos, as entradas contábeis verificadas e um identificador reproduzível de avaliação. O painel PT/EN apresenta o estado e os motivos em detalhes expansíveis.

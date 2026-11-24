@@ -9,6 +9,24 @@ from gamemode import EASY, REALISM
 from route_optimizer import CLASS_WEIGHTS, CO2_PER_PAX_KM, TURNAROUND_H, estimate_route
 
 
+def configured_price_assumptions(config):
+    """Use positive purchase thresholds as explicit planning assumptions."""
+    if config is None:
+        return None
+    prices = {kind: config.get_int("settings", f"{kind}_price_good", 0)
+              for kind in ("fuel", "co2")}
+    return normalize_configured_prices(prices)
+
+
+def normalize_configured_prices(prices):
+    if not isinstance(prices, dict):
+        return None
+    if not all(type(prices.get(kind)) in (int, float) and
+               isfinite(prices[kind]) and prices[kind] > 0 for kind in ("fuel", "co2")):
+        return None
+    return {kind: prices[kind] for kind in ("fuel", "co2")}
+
+
 def research_mode(stats: object, now: float) -> str | None:
     stamp = getattr(stats, "mode_read_at", None)
     if type(stamp) not in (float, int) or not 0 <= now - stamp <= 900:
@@ -84,7 +102,8 @@ def optimal_layout(capacity, demand, fares, passengers_per_seat, *, margin, co2_
 def research_economics_preview(sample: dict, model: dict, variant: dict | None,
                                engine_evidence: dict | None, quotes: dict,
                                mode_key: str | None, margin: float = 0.10, *,
-                               physical: dict, stopover: dict | None = None) -> dict | None:
+                               physical: dict, stopover: dict | None = None,
+                               configured_prices: dict | None = None) -> dict | None:
     mode = {EASY.key: EASY, REALISM.key: REALISM}.get(mode_key)
     variant_range = physical["variant_range_km"]
     reach = variant_range if variant_range is not None else model["range_km"]
@@ -123,6 +142,7 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
     observed_co2 = metrics.get("co2_kg_per_pax_km")
     co2_rate = observed_co2 if observed_co2 is not None else CO2_PER_PAX_KM
     fuel, co2 = quotes["fuel"]["price"], quotes["co2"]["price"]
+    configured = normalize_configured_prices(configured_prices)
     load = 0.80
     # Do not credit the detour with a higher fare without a native fare read.
     fares = tuple(mode.fare(i, direct_distance) for i in range(3))
@@ -198,6 +218,15 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
                             "base": serialize(base), "stress": serialize(stressed),
                             "sensitivity": {key: serialize(result) if result is not None else None
                                             for key, result in sensitivities.items()}})
+            if configured is not None:
+                configured_base = scenario(fuel_price=configured["fuel"], co2_price=configured["co2"])
+                configured_stress = scenario(stressed_candidate, occupancy=load * stress["occupancy"],
+                                             fuel_price=configured["fuel"] * stress["fuel_price"],
+                                             co2_price=configured["co2"] * stress["co2_price"])
+                if configured_base is not None and configured_stress is not None:
+                    layouts[-1]["configured_price_scenarios"] = {
+                        "base": serialize(configured_base), "stress": serialize(configured_stress),
+                    }
 
     def estimate(premium, fixed_layout=None):
         return estimate_route(candidate, seats=capacity, model=spec, mode=mode, load_factor=load,
@@ -209,10 +238,17 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
         return None
     add_layout(economy, "economy")
     add_layout(estimate(True), "premium")
-    for strategy, scenario, occupancy, carbon_price in (
+    optimization_scenarios = [
         ("optimized_base", candidate, load, co2),
         ("optimized_stress", stressed_candidate, load * stress["occupancy"], co2 * stress["co2_price"]),
-    ):
+    ]
+    if configured is not None:
+        optimization_scenarios.extend([
+            ("optimized_configured_base", candidate, load, configured["co2"]),
+            ("optimized_configured_stress", stressed_candidate, load * stress["occupancy"],
+             configured["co2"] * stress["co2_price"]),
+        ])
+    for strategy, scenario, occupancy, carbon_price in optimization_scenarios:
         layout = optimal_layout(capacity, (scenario.y, scenario.j, scenario.f), fares,
                                 economy.legs_per_day * occupancy, margin=margin,
                                 co2_per_passenger=co2_rate * distance * carbon_price / 1000)
@@ -238,6 +274,9 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
             "assumed_load_factor": load, "safety_margin_fraction": margin,
             "expires_at": expiry,
             "estimated_fares": dict(zip(("y", "j", "f"), fares)), "stress_factors": dict(stress),
+            **({"configured_price_assumptions": {"source": "configured_purchase_thresholds",
+                                                  "unit": "USD/1000", "verified": False,
+                                                  **configured}} if configured is not None else {}),
             "co2_kg_per_pax_km": co2_rate,
             "co2_rate_source": "observed_variant" if observed_co2 is not None else "assumed_default",
             **({"a_check_projection": a_check} if a_check is not None else {}),

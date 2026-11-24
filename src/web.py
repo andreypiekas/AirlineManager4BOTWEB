@@ -49,6 +49,7 @@ from engine_catalog import EngineCatalogRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
 from owned_hub_research_ingestion import OwnedHubResearchInputsRegistry
 from owned_hub_research_feed import build_external_hub_research_queue, build_owned_hub_research_queue
+from research_economics_preview import configured_price_assumptions
 from route_detail_evidence import RouteDetailRegistry
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy, MODES
@@ -313,6 +314,7 @@ class WebDashboard:
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
             operating_market_stats=stats_reader() if callable(stats_reader) else None,
             preview_margin=max(0, min(100, self.cfg.get_int("investment", "preview_margin_pct", 10))) / 100,
+            configured_prices=configured_price_assumptions(self.cfg),
             route_report=routes,
         )
 
@@ -369,6 +371,7 @@ class WebDashboard:
             expected_fingerprint=research_fingerprint,
             operating_market_stats=stats_reader() if callable(stats_reader) else None,
             preview_margin=max(0, min(100, self.cfg.get_int("investment", "preview_margin_pct", 10))) / 100,
+            configured_prices=configured_price_assumptions(self.cfg),
             route_report=routes,
         )
         investment_policy = InvestmentPolicy.from_config(self.cfg)

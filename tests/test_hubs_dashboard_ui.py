@@ -376,6 +376,10 @@ const translations = {
   'dias': 'days',
   'Sem recuperação projetada': 'No projected recovery',
   'Sensibilidade isolada (combustível / CO₂ / ocupação / demanda)': 'Individual sensitivity (fuel / CO₂ / occupancy / demand)',
+  'Preços hipotéticos pelos limites de compra (combustível / CO₂)': 'Hypothetical purchase-threshold prices (fuel / CO₂)',
+  'Contribuição com preços configurados (base / stress)': 'Contribution at configured prices (base / stress)',
+  'Otimizada para preços configurados': 'Optimized for configured prices',
+  'Otimizada para stress dos preços configurados': 'Optimized for configured-price stress',
   'Recuperação do subtotal indicativo (base / stress)': 'Indicative subtotal recovery (base / stress)',
   'Contribuição anual / subtotal (base / stress)': 'Annual contribution / subtotal (base / stress)',
   'Simulação parcial: taxa da rota e despesas não confirmadas; sem payback ou ROI auditado': 'Partial simulation: unverified route fee and expenses; no audited payback or ROI',
@@ -552,6 +556,20 @@ const preview = {source:'route_optimizer_what_if_v1', purchase_eligible:false,
 appendResearchEconomicsPreview(previewMetrics, {economics_preview:preview});
 assert.equal(previewMetrics.children.length, 4);
 assert.equal(previewMetrics.children[1].children[1].textContent, '$120 / $-20');
+const configuredMetrics = document.createElement('div');
+const configuredPreview = {...preview, configured_price_assumptions:{source:'configured_purchase_thresholds',
+  unit:'USD/1000',verified:false,fuel:650,co2:125},layouts:[{...preview.layouts[0],
+  strategies:['optimized_configured_base'],configured_price_scenarios:{base:{projected_contribution_per_day:100},
+    stress:{projected_contribution_per_day:-40}}}]};
+appendResearchEconomicsPreview(configuredMetrics, {economics_preview:configuredPreview});
+assert.equal(configuredMetrics.children[1].children[0].textContent, 'Hypothetical purchase-threshold prices (fuel / CO₂)');
+assert.equal(configuredMetrics.children[1].children[1].textContent, '$650 / $125 · USD/1000');
+assert.ok(configuredMetrics.children[2].children[0].textContent.includes('Optimized for configured prices'));
+assert.equal(configuredMetrics.children[3].children[1].textContent, '$100 / $-40');
+const invalidConfigured = document.createElement('div');
+appendResearchEconomicsPreview(invalidConfigured, {economics_preview:{...configuredPreview,
+  configured_price_assumptions:{...configuredPreview.configured_price_assumptions,verified:true}}});
+assert.equal(invalidConfigured.children.length, 4);
 const recoveryMetrics = document.createElement('div');
 appendResearchEconomicsPreview(recoveryMetrics, {economics_preview:{...preview, layouts:[{...preview.layouts[0],
   sensitivity:Object.fromEntries(['fuel_price','co2_price','occupancy','demand'].map((key,i)=>[key,{projected_contribution_per_day:110-i}])),

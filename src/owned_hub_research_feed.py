@@ -18,7 +18,9 @@ from engine_detail import validate_metrics
 from fleet_commitment_observations import MAX_AGE as FLEET_MAX_AGE, SOURCE as FLEET_SOURCE, _hangar
 from route_detail_evidence import current_detail
 from market import recent_market_quotes
-from research_economics_preview import attach_capital_recovery_preview, research_economics_preview, research_mode
+from research_economics_preview import (
+    attach_capital_recovery_preview, normalize_configured_prices, research_economics_preview, research_mode,
+)
 from research_physical_feasibility import assess_direct_route
 from research_route_occupancy import FleetRouteOccupancy
 from stopover_research import select_current_stopover
@@ -257,12 +259,14 @@ def build_owned_hub_research_queue(
     hub_progress: Optional[list[dict]] = None,
     operating_market_stats: Optional[object] = None,
     preview_margin: float = 0.10,
+    configured_prices: Optional[dict] = None,
     route_report: Optional[dict] = None,
 ) -> dict:
     return _build_hub_research_queue(
         inventory, route_samples, market, now=now, max_items=max_items, engines=engines,
         offset=offset, expected_fingerprint=expected_fingerprint, hub_progress=hub_progress,
         operating_market_stats=operating_market_stats, preview_margin=preview_margin,
+        configured_prices=configured_prices,
         route_report=route_report)
 
 
@@ -274,6 +278,7 @@ def build_external_hub_research_queue(
     reserve: Optional[float] = None,
     operating_market_stats: Optional[object] = None,
     preview_margin: float = 0.10,
+    configured_prices: Optional[dict] = None,
     route_report: Optional[dict] = None,
 ) -> dict:
     """Join external catalog evidence with route and engine research, never owned inputs."""
@@ -312,6 +317,7 @@ def build_external_hub_research_queue(
         hub_progress=external.get("hub_progress"), external=True,
         external_budget=_external_budget(cash, cash_observed_at, reserve, now),
         operating_market_stats=operating_market_stats, preview_margin=preview_margin,
+        configured_prices=configured_prices,
         route_report=route_report)
 
 
@@ -323,6 +329,7 @@ def _build_hub_research_queue(
     external_budget: Optional[dict] = None,
     operating_market_stats: Optional[object] = None,
     preview_margin: float = 0.10,
+    configured_prices: Optional[dict] = None,
     route_report: Optional[dict] = None,
 ) -> dict:
     """Produce bounded, balanced per-hub tasks from independent cached reads.
@@ -334,6 +341,7 @@ def _build_hub_research_queue(
     # Truncating the clock or accepting integers only drops valid live samples.
     now = _positive_number(time.time() if now is None else now) or 0.0
     operating_market = recent_market_quotes(operating_market_stats, now)
+    configured_prices = normalize_configured_prices(configured_prices)
     mode_key = research_mode(operating_market_stats, now)
     fleet_occupancy = FleetRouteOccupancy(route_report, now)
     max_items = max_items if type(max_items) is int and 1 <= max_items <= 200 else 40
@@ -492,6 +500,7 @@ def _build_hub_research_queue(
         "market_observed_at": market.get("observed_at"),
         "hangar_quote": hangar_quote,
         **({"operating_market": operating_market} if any(operating_market.values()) else {}),
+        **({"configured_prices": configured_prices} if configured_prices is not None else {}),
         **({"preview_mode": mode_key, "preview_margin": preview_margin,
             "mode_read_at": operating_market_stats.mode_read_at} if mode_key else {}),
         "blockers": blockers, "models": models,
@@ -605,7 +614,7 @@ def _build_hub_research_queue(
                         pending.append("contagem_rota_divergente")
                 economics = research_economics_preview(
                     sample, model, variant, engine_evidence, operating_market, mode_key, preview_margin,
-                    physical=physical, stopover=stopover)
+                    physical=physical, stopover=stopover, configured_prices=configured_prices)
                 if economics is not None:
                     economics["expires_at"] = min(economics["expires_at"],
                                                   operating_market_stats.mode_read_at + 900,

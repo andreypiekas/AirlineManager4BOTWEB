@@ -56,7 +56,7 @@ def _catalog_scopes(coverage, now):
 
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                      quotes, cash, cash_at, now, mode=None, mode_at=None,
-                     preview_margin=0.10, native_quotes=()):
+                     preview_margin=0.10, native_quotes=(), configured_prices=None):
     """Translate independently collected observations without upgrading their provenance."""
     hub_at = inventory.get("observed_at")
     raw_hubs = inventory.get("hubs", [])
@@ -146,6 +146,7 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                     "research_inputs": {
                         "mode": mode, "mode_observed_at": mode_at,
                         "preview_margin": preview_margin,
+                        "configured_prices": configured_prices,
                         "route_report": {key: routes.get(key) for key in (
                             "current_roster_verified", "current_roster_observed_at",
                             "current_roster_total", "current_fleet_coverage_verified",
@@ -172,7 +173,7 @@ def capture_game_snapshot(bot):
     from market import recent_market_quotes
     from native_route_quotes import native_route_quotes
     from route_registry import RouteRegistry
-    from research_economics_preview import research_mode
+    from research_economics_preview import configured_price_assumptions, research_mode
     from gamemode import EASY, REALISM
 
     profile = paths.current()
@@ -194,7 +195,8 @@ def capture_game_snapshot(bot):
                                 quotes=recent_market_quotes(stats, now), cash=cash,
                                 cash_at=cash_at, now=now, mode=mode,
                                 mode_at=stats.mode_read_at if mode else None, preview_margin=margin,
-                                native_quotes=native_route_quotes(bot, now=now))
+                                native_quotes=native_route_quotes(bot, now=now),
+                                configured_prices=configured_price_assumptions(config))
     paths.write_atomic(profile.data / FILENAME, json.dumps(snapshot, ensure_ascii=False, allow_nan=False),
                        private=True)
     return snapshot
@@ -247,6 +249,7 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
             inventory, demand["samples"], observed["aircraft_market"], now=captured,
             engines=observed["engine_catalog"], hub_progress=demand.get("hub_progress"),
             operating_market_stats=stats, preview_margin=inputs["preview_margin"],
+            configured_prices=inputs.get("configured_prices"),
             route_report=inputs["route_report"], offset=offset, expected_fingerprint=expected_fingerprint,
         )
         for item in result["items"]:

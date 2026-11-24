@@ -1104,6 +1104,30 @@ def test_stopover_is_exploratory_and_bound_to_the_current_engine(external, obsta
     assert next(row for row in expired if row["engine_id"] == "1")["economics_preview"] is None
 
 
+def test_configured_prices_are_separate_from_observed_market_and_bound_to_cursor():
+    def build(prices, **kwargs):
+        return build_owned_hub_research_queue(
+            _inventory(), [_sample()], _market(), engines=_preview_engines(), now=NOW,
+            operating_market_stats=_preview_stats(), configured_prices=prices, **kwargs)
+
+    page = build({"fuel": 900, "co2": 200})
+    preview = next(item["economics_preview"] for item in page["items"] if item["economics_preview"])
+    assert preview["purchase_eligible"] is False
+    assert preview["configured_price_assumptions"]["verified"] is False
+    for row in preview["layouts"]:
+        base = row["base"]
+        scenario = row["configured_price_scenarios"]
+        assert scenario["base"]["fuel_cost_per_day"] == pytest.approx(base["fuel_cost_per_day"] * 1.5, abs=.02)
+        assert scenario["base"]["co2_cost_per_day"] == pytest.approx(base["co2_cost_per_day"] * 2, abs=.02)
+        assert scenario["base"]["revenue_per_day"] == base["revenue_per_day"]
+        assert scenario["stress"]["fuel_cost_per_day"] == pytest.approx(scenario["base"]["fuel_cost_per_day"] * 1.2, abs=.02)
+    assert page["snapshot_fingerprint"] != build({"fuel": 901, "co2": 200})["snapshot_fingerprint"]
+    invalid = build({"fuel": 0, "co2": 200})
+    assert all("configured_price_assumptions" not in item["economics_preview"]
+               for item in invalid["items"] if item["economics_preview"])
+    assert invalid["snapshot_fingerprint"] == build(None)["snapshot_fingerprint"]
+
+
 def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress():
     stats, engines = _preview_stats(), _preview_engines()
     page = build_owned_hub_research_queue(_inventory(), [_sample()], _market(), engines=engines,

@@ -125,6 +125,7 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
     evidence.update(inventory={**_inventory(), "hub_catalog_fresh": True}, routes=_fleet_report(),
                     market=_market(), engines=_preview_engines(),
                     mode="realista", mode_at=NOW - 10, preview_margin=0.15,
+                    configured_prices={"fuel": 650, "co2": 125},
                     quotes={kind: {"source": "game_market", "unit": "USD/1000",
                                    "price": price, "observed_at": NOW - 5, "expires_at": NOW + 60}
                             for kind, price in (("fuel", 600), ("co2", 100))})
@@ -149,6 +150,11 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
     assert first["has_more"] and first["next_offset"] == 40
     previews = [item["economics_preview"] for item in first["items"] if item["economics_preview"]]
     assert previews and all(p["safety_margin_fraction"] == 0.15 for p in previews)
+    assert all(p["configured_price_assumptions"] == {
+        "source": "configured_purchase_thresholds", "unit": "USD/1000", "verified": False,
+        "fuel": 650, "co2": 125,
+    } for p in previews)
+    assert all("configured_price_scenarios" in row for p in previews for row in p["layouts"])
     occupied = [item for item in first["items"] if item["destination_id"] == "3139"]
     assert occupied and all(item["fleet_occupancy"]["own_aircraft_count"] == 1
                             and item["economics_preview"] is None for item in occupied)

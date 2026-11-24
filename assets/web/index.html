@@ -1366,6 +1366,10 @@ const EN = {
   "Demanda observada Y/J/F": "Observed Y/J/F demand",
   "Simulação (demanda total, não residual)": "What-if (total demand, not remaining demand)",
   "Contribuição diária base / stress": "Daily contribution base / stress",
+  "Preços hipotéticos pelos limites de compra (combustível / CO₂)": "Hypothetical purchase-threshold prices (fuel / CO₂)",
+  "Contribuição com preços configurados (base / stress)": "Contribution at configured prices (base / stress)",
+  "Otimizada para preços configurados": "Optimized for configured prices",
+  "Otimizada para stress dos preços configurados": "Optimized for configured-price stress",
   "A-check observado (custo / intervalo)": "Observed A-check (cost / interval)",
   "Reserva diária A-check (horas reais / nominais)": "Daily A-check reserve (real / nominal hours)",
   "Relógio de manutenção a confirmar; aplicada a maior reserva": "Maintenance clock unverified; larger reserve applied",
@@ -2112,6 +2116,13 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
       !Array.isArray(preview.layouts) || !preview.layouts.length) { return; }
   addHubMetric(metrics, "Simulação (demanda total, não residual)", tr("Contribuição diária base / stress"));
   const check = preview.a_check_projection;
+  const configured = preview.configured_price_assumptions;
+  const hasConfigured = configured?.source === "configured_purchase_thresholds" && configured.verified === false &&
+    configured.unit === "USD/1000" && [configured.fuel, configured.co2].every(value => Number.isFinite(value) && value > 0);
+  if (hasConfigured) {
+    addHubMetric(metrics, "Preços hipotéticos pelos limites de compra (combustível / CO₂)",
+      hubMoney(configured.fuel) + " / " + hubMoney(configured.co2) + " · USD/1000");
+  }
   const firstScenario = preview.layouts[0].base;
   const hasCheck = check?.source === "observed_variant" && check.clock_verified === false &&
     check.reserve_basis === "max_real_time_or_nominal_airborne_hours" &&
@@ -2124,6 +2135,8 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
     const strategies = Array.isArray(row.strategies) ? row.strategies : [];
     const optimized = [
       ["optimized_base", "Otimizada para cenário base"], ["optimized_stress", "Otimizada para stress"],
+      ["optimized_configured_base", "Otimizada para preços configurados"],
+      ["optimized_configured_stress", "Otimizada para stress dos preços configurados"],
     ].filter(([key]) => strategies.includes(key)).map(([, label]) => tr(label));
     addHubMetric(metrics, "Y/J/F " + layout + (optimized.length ? " · " + optimized.join(" / ") : ""), hubMoney(row.base.projected_contribution_per_day) +
       " / " + hubMoney(row.stress.projected_contribution_per_day));
@@ -2137,6 +2150,14 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
       const key = hasCheck ? "conditional_contribution_after_a_check_per_day" : "projected_contribution_per_day";
       addHubMetric(metrics, tr("Sensibilidade isolada (combustível / CO₂ / ocupação / demanda)") + " · " + layout,
         ["fuel_price", "co2_price", "occupancy", "demand"].map(name => hubMoney(row.sensitivity[name]?.[key])).join(" / "));
+    }
+    const configuredScenarios = row.configured_price_scenarios;
+    if (hasConfigured && configuredScenarios) {
+      const key = hasCheck ? "conditional_contribution_after_a_check_per_day" : "projected_contribution_per_day";
+      if ([configuredScenarios.base?.[key], configuredScenarios.stress?.[key]].every(Number.isFinite)) {
+        addHubMetric(metrics, tr("Contribuição com preços configurados (base / stress)") + " · " + layout,
+          hubMoney(configuredScenarios.base[key]) + " / " + hubMoney(configuredScenarios.stress[key]));
+      }
     }
     const recovery = row.capital_recovery_preview;
     if (recovery?.source === "displayed_subtotal_what_if_v1" && recovery.purchase_eligible === false &&
