@@ -18,17 +18,25 @@ def research_mode(stats: object, now: float) -> str | None:
 
 def research_economics_preview(sample: dict, model: dict, variant: dict | None,
                                engine_evidence: dict | None, quotes: dict,
-                               mode_key: str | None, margin: float = 0.10) -> dict | None:
+                               mode_key: str | None, margin: float = 0.10, *,
+                               physical: dict) -> dict | None:
     mode = {EASY.key: EASY, REALISM.key: REALISM}.get(mode_key)
+    variant_range = physical["variant_range_km"]
+    reach = variant_range if variant_range is not None else model["range_km"]
+    detail = (variant or {}).get("engine_detail") or {}
+    metrics = detail.get("metrics", {}) if detail.get("model_identity_verified") is True else {}
+    observed_capacity = metrics.get("capacity_pax")
+    seats = observed_capacity if observed_capacity is not None else model["capacity"]
     if (mode is None or not variant or not engine_evidence
             or not engine_evidence.get("model_detail_identity_verified")
             or not variant["engine_available"] or sample.get("event_demand_boosted") is True
             or ((sample.get("route_detail") or {}).get("observed_aircraft_on_route") or 0) > 0
             or ((sample.get("fleet_occupancy") or {}).get("own_aircraft_count") or 0) > 0
             or (sample.get("fleet_occupancy") or {}).get("game_count_disagrees") is True
-            or not model["range_km"] or sample["distance_km"] > model["range_km"]
-            or not model["capacity"] or not float(model["capacity"]).is_integer()
-            or model["capacity"] > 10000 or not variant["engine_speed"] or not variant["engine_fuel"]
+            or physical["status"] == "direct_shortfall"
+            or not reach or sample["distance_km"] > reach
+            or not seats or not float(seats).is_integer()
+            or seats > 10000 or not variant["engine_speed"] or not variant["engine_fuel"]
             or variant["engine_speed"] > 10000 or variant["engine_fuel"] > 1000
             or not all(quotes.get(kind) for kind in ("fuel", "co2"))
             or not 0 <= margin <= 1):
@@ -37,11 +45,9 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
     demand = sample["demand"]
     distance = sample["distance_km"]
     candidate = SimpleNamespace(distance=distance, **demand)
-    capacity = int(model["capacity"])
+    capacity = int(seats)
     spec = {"capacity": capacity, "speed": variant["engine_speed"], "fuel": variant["engine_fuel"]}
-    detail = variant.get("engine_detail") or {}
-    observed_co2 = (detail.get("metrics", {}).get("co2_kg_per_pax_km")
-                    if detail.get("model_identity_verified") is True else None)
+    observed_co2 = metrics.get("co2_kg_per_pax_km")
     co2_rate = observed_co2 if observed_co2 is not None else CO2_PER_PAX_KM
     fuel, co2 = quotes["fuel"]["price"], quotes["co2"]["price"]
     load = 0.80
@@ -79,6 +85,9 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
         return None
     return {"source": "route_optimizer_what_if_v1", "purchase_eligible": False,
             "demand_basis": "observed_total_not_residual", "mode": mode.key,
+            "range_km": reach, "range_source": "observed_variant" if variant_range is not None else "catalog_model",
+            "capacity_pax": capacity,
+            "capacity_source": "observed_variant" if observed_capacity is not None else "catalog_model",
             "assumed_load_factor": load, "safety_margin_fraction": margin,
             "expires_at": min(quotes[k]["expires_at"] for k in ("fuel", "co2")),
             "estimated_fares": dict(zip(("y", "j", "f"), fares)), "stress_factors": dict(stress),

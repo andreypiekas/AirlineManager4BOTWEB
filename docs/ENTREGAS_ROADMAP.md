@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A7, dimensões específicas por variante (G0)
+
+- A fila de pesquisa dos hubs próprios e externos passou a priorizar o alcance observado no detalhe correlacionado do motor. Uma variante com alcance inferior ao trecho direto exige pesquisa de escala mesmo que o alcance genérico do modelo seja suficiente. A projeção direta também considera a capacidade observada da variante e pode utilizar o detalhe válido quando o catálogo genérico está incompleto. Na ausência do detalhe, o catálogo continua como hipótese de simulação identificada; a triagem física mantém as dimensões não confirmadas.
+- A projeção econômica e a classificação de alcance compartilham o resultado da triagem física. A simulação é bloqueada diante de alcance ou pista insuficientes e o painel PT/EN informa o alcance, a capacidade e a origem de cada valor utilizado no cálculo. O cenário de escala permanece exploratório, sem estimativa financeira certificada. As expirações de demanda, detalhe da variante, rota, mercado, modo e ocupação continuam aplicáveis.
+- Validação Windows: 1.856 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). 133 testes direcionados aprovados, incluindo fronteiras de alcance, variantes com capacidade distinta, divergência em relação ao catálogo e apresentação no painel. Ruff, compilação Python e `git diff --check` aprovados.
+- Permanecem pendentes as regras autenticadas de escala, demanda residual, horários/rotação, encargos completos, compromissos financeiros e homologação integrada. Nenhuma alteração real foi executada no jogo. G0 continua ativo.
+
 ## 2026-11-24 — Autonomia Total A4/A9, histórico financeiro e impedimentos no Telegram (G0)
 
 - A inspeção autenticada e somente leitura de Finances > History encontrou uma tabela de 30 registros recentes, com três colunas (tempo relativo, descrição e valor), sem links de detalhe ou identificador de encomenda nas linhas. A consulta mostrou despesas de cotas de CO₂ e A-check, além de receitas de voos. Não foi possível comprovar conciliação individual das encomendas, saldo futuro a pagar ou cobertura de todas as obrigações por essa tela. A seleção de Expenses não apresentou uma lista separada confirmável nessa inspeção. A tela de rotas foi restaurada. Nenhuma transação do jogo foi executada.

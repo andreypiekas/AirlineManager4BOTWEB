@@ -511,6 +511,9 @@ def _build_hub_research_queue(
                            if item != "motor_a_pesquisar" or variant is None]
                 physical = assess_direct_route(sample, variant, engine_evidence,
                                                max_evidence_age=MAX_EVIDENCE_AGE)
+                variant_range = physical["variant_range_km"]
+                reach = variant_range if variant_range is not None else model["range_km"]
+                direct_range_sufficient = reach >= sample["distance_km"] if reach is not None else None
                 stopover = select_current_stopover(sample, model, variant, now)
                 if "short" in (physical["checks"]["origin_runway"],
                                physical["checks"]["destination_runway"]):
@@ -533,17 +536,19 @@ def _build_hub_research_queue(
                 # Direct range does not rule out a route with a legal stopover.
                 # Keep the combination in the research queue until both legs,
                 # stopover runway and the game's actual rules are verified.
-                if (model["range_km"] is not None
-                        and model["range_km"] < sample["distance_km"]):
+                if direct_range_sufficient is False:
                     pending.append("escala_e_trechos_a_confirmar")
                 if variant is not None:
                     if not variant["engine_available"]:
                         pending.append("motor_indisponivel")
                     if not engine_evidence["model_detail_identity_verified"]:
                         pending.append("identidade_modelo_detalhe_a_confirmar")
-                if model["range_km"] is None:
+                if reach is None:
                     pending.append("alcance_modelo_a_confirmar")
-                if model["capacity"] is None:
+                detail = (variant or {}).get("engine_detail") or {}
+                observed_capacity = (detail.get("metrics", {}).get("capacity_pax")
+                                     if detail.get("model_identity_verified") is True else None)
+                if model["capacity"] is None and observed_capacity is None:
                     pending.append("capacidade_modelo_a_confirmar")
                 occupancy = sample.get("fleet_occupancy")
                 if occupancy:
@@ -551,10 +556,9 @@ def _build_hub_research_queue(
                         pending.append("rota_ocupada_frota_propria")
                     if occupancy["game_count_disagrees"]:
                         pending.append("contagem_rota_divergente")
-                economics = None
-                if physical["status"] != "direct_shortfall":
-                    economics = research_economics_preview(
-                        sample, model, variant, engine_evidence, operating_market, mode_key, preview_margin)
+                economics = research_economics_preview(
+                    sample, model, variant, engine_evidence, operating_market, mode_key, preview_margin,
+                    physical=physical)
                 if economics is not None:
                     economics["expires_at"] = min(economics["expires_at"],
                                                   operating_market_stats.mode_read_at + 900,
@@ -567,8 +571,9 @@ def _build_hub_research_queue(
                     "hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
                     "destination_id": sample["destination_id"],
                     "distance_km": sample["distance_km"],
-                    "direct_range_sufficient": (model["range_km"] >= sample["distance_km"]
-                                                if model["range_km"] is not None else None),
+                    "direct_range_sufficient": direct_range_sufficient,
+                    "direct_range_source": ("observed_variant" if variant_range is not None else
+                                            "catalog_model" if reach is not None else None),
                     "observed_demand": sample["demand"],
                     "event_demand_boosted": sample.get("event_demand_boosted"),
                     "destination_runway_ft": sample.get("destination_runway_ft"),

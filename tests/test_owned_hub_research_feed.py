@@ -890,6 +890,9 @@ def test_direct_physical_screening_blocks_shortfall(external, range_km, origin_f
     assert tuple(proof["checks"].values()) == expected
     assert proof["expires_at"] == NOW + 30
     assert proof["stopover_research_required"] == (expected[0] == "short")
+    assert row["direct_range_sufficient"] == (expected[0] == "sufficient")
+    assert row["direct_range_source"] == "observed_variant"
+    assert ("escala_e_trechos_a_confirmar" in row["pending"]) == (expected[0] == "short")
     assert ("pista_observada_insuficiente" in row["pending"]) == ("short" in expected[1:])
     assert row["purchase_eligible"] is proof["purchase_eligible"] is proof["game_rules_verified"] is False
     assert row["daily_net_profit"] is None
@@ -983,6 +986,7 @@ def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress()
     assert first["safety_margin_fraction"] == .15
     assert first["purchase_eligible"] is False
     assert first["mode"] == "realism"
+    assert first["range_source"] == first["capacity_source"] == "catalog_model"
     assert items["2"]["economics_preview"] is None
     assert items[None]["economics_preview"] is None
     assert first["layouts"][0]["base"]["fuel_cost_per_day"] > second["layouts"][0]["base"]["fuel_cost_per_day"]
@@ -1000,6 +1004,29 @@ def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress()
         for key, amount in stress["passengers_per_day"].items():
             assert amount <= row["layout"][key] * .72 * stress["departures_per_day"] + .02
     assert set(first["excluded_costs"]) == {"maintenance", "a_check", "other_recurring", "capex"}
+
+
+@pytest.mark.parametrize("catalog_range", [None, 1999])
+def test_preview_uses_correlated_variant_range_and_capacity_over_catalog(catalog_range):
+    engines, market = _preview_engines(), _market()
+    market["models"][0].update(range=catalog_range, capacity=180)
+    engines["models"]["11"]["variant_details"] = {
+        "1": {"observed_at": NOW, "metrics": {"range_km": 2000, "capacity_pax": 90}}}
+    page = build_owned_hub_research_queue(_inventory(), [_sample()], market, engines=engines,
+                                         now=NOW, operating_market_stats=_preview_stats())
+    rows = {row["engine_id"]: row for row in page["items"]}
+    row = rows["1"]
+    preview = row["economics_preview"]
+    assert row["direct_range_sufficient"] is True
+    assert "escala_e_trechos_a_confirmar" not in row["pending"]
+    assert "alcance_modelo_a_confirmar" not in row["pending"]
+    assert preview["range_km"] == 2000
+    assert preview["capacity_pax"] == 90
+    assert preview["range_source"] == preview["capacity_source"] == "observed_variant"
+    assert all(sum(layout["layout"][key] * weight for key, weight in
+                   zip(("y", "j", "f"), (1, 2, 3))) <= 90 for layout in preview["layouts"])
+    assert rows["3"]["economics_preview"] is None
+    assert row["purchase_eligible"] is False and row["daily_net_profit"] is None
 
 
 def test_economic_preview_uses_correlated_variant_co2_in_both_scenarios():

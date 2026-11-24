@@ -1343,6 +1343,10 @@ const EN = {
   "Coeficiente de CO₂ na simulação": "CO₂ coefficient in simulation",
   "Coeficiente observado": "Observed coefficient",
   "Hipótese padrão": "Default assumption",
+  "Alcance utilizado na simulação": "Range used in simulation",
+  "Capacidade utilizada na simulação": "Capacity used in simulation",
+  "Variante observada": "Observed variant",
+  "Catálogo do modelo": "Model catalog",
   "Consumo da variante": "Variant fuel burn",
   "Pista exigida pela aeronave": "Aircraft runway requirement",
   "Alcance da variante": "Variant range",
@@ -2034,6 +2038,15 @@ function appendResearchEconomicsPreview(metrics, task) {
       " / " + hubMoney(row.stress.projected_contribution_per_day));
   }
   addHubMetric(metrics, "Margem sobre receita", nf.format(preview.safety_margin_fraction * 100) + "%");
+  for (const [label, value, source, unit] of [
+    ["Alcance utilizado na simulação", preview.range_km, preview.range_source, "km"],
+    ["Capacidade utilizada na simulação", preview.capacity_pax, preview.capacity_source, "pax"],
+  ]) {
+    if (Number.isFinite(value) && value > 0 && ["observed_variant", "catalog_model"].includes(source)) {
+      addHubMetric(metrics, label, nf.format(value) + " " + unit + " · " +
+        tr(source === "observed_variant" ? "Variante observada" : "Catálogo do modelo"));
+    }
+  }
   if (Number.isFinite(preview.co2_kg_per_pax_km) && preview.co2_kg_per_pax_km > 0 &&
       ["observed_variant", "assumed_default"].includes(preview.co2_rate_source)) {
     addHubMetric(metrics, "Coeficiente de CO₂ na simulação", nf.format(preview.co2_kg_per_pax_km) +

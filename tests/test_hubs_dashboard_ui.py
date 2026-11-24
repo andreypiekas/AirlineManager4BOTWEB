@@ -279,6 +279,10 @@ const translations = {
       'Coeficiente de CO₂ na simulação': 'CO₂ coefficient in simulation',
       'Coeficiente observado': 'Observed coefficient',
       'Hipótese padrão': 'Default assumption',
+      'Alcance utilizado na simulação': 'Range used in simulation',
+      'Capacidade utilizada na simulação': 'Capacity used in simulation',
+      'Variante observada': 'Observed variant',
+      'Catálogo do modelo': 'Model catalog',
       'Preço exibido no detalhe': 'Displayed detail price',
       'Triagem física direta': 'Direct physical screening',
       'Escala exploratória': 'Exploratory stopover',
@@ -522,6 +526,13 @@ const assumedPreview = document.createElement('div');
 appendResearchEconomicsPreview(assumedPreview, {economics_preview:{...preview,
   co2_kg_per_pax_km:.18, co2_rate_source:'assumed_default'}});
 assert.equal(assumedPreview.children[3].children[1].textContent, '0.18 kg/pax/km · Default assumption');
+const variantPreview = document.createElement('div');
+appendResearchEconomicsPreview(variantPreview, {economics_preview:{...preview,
+  range_km:2000, range_source:'observed_variant', capacity_pax:180, capacity_source:'catalog_model'}});
+assert.equal(variantPreview.children[3].children[0].textContent, 'Range used in simulation');
+assert.equal(variantPreview.children[3].children[1].textContent, '2,000 km · Observed variant');
+assert.equal(variantPreview.children[4].children[0].textContent, 'Capacity used in simulation');
+assert.equal(variantPreview.children[4].children[1].textContent, '180 pax · Model catalog');
 const expiredMetrics = document.createElement('div');
 appendResearchEconomicsPreview(expiredMetrics, {economics_preview:{...preview, expires_at:marketNow-1}});
 assert.equal(expiredMetrics.children.length, 0);
