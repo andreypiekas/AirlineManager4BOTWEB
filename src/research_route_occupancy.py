@@ -9,6 +9,7 @@ from airport_catalog import by_code, by_id
 
 
 _ID = re.compile(r"[1-9][0-9]{0,11}")
+_OBSERVATION_ID = re.compile(r"[0-9a-f]{32}")
 
 
 def _recent(stamp, now, age):
@@ -48,11 +49,24 @@ def _pair(origin_id, destination_id):
     return tuple(sorted((origin_id, destination_id)))
 
 
+def _partition_verified(coverage):
+    """The audit covers every routed aircraft; verify its unrouted complement."""
+    status = coverage.get("native_identity_status")
+    if status == "matched":
+        observation = coverage.get("native_observation_id")
+        return isinstance(observation, str) and bool(_OBSERVATION_ID.fullmatch(observation))
+    if status is not None or coverage.get("native_observation_id") is not None:
+        return False
+    # A complete route audit with no unrouted aircraft already covers the roster.
+    return coverage["parked"] == coverage["pending"] == 0
+
+
 class FleetRouteOccupancy:
     """Project the registry's current roster onto undirected airport ID pairs.
 
     Positive matches are useful even during a partial audit. Zero is an exact
-    own-fleet count only after a fresh, complete, resolvable fleet audit.
+    own-fleet count only after a fresh, complete, resolvable fleet audit and
+    reconciliation of any unrouted aircraft against the native inventory.
     Neither count certifies the game's residual demand or route availability.
     """
 
@@ -81,7 +95,8 @@ class FleetRouteOccupancy:
                     and total == len(rows) == coverage["total"]
                     and all(type(coverage.get(key)) is int and coverage[key] >= 0
                             for key in ("routes", "parked", "pending"))
-                    and total == sum(coverage[key] for key in ("routes", "parked", "pending")))
+                    and total == sum(coverage[key] for key in ("routes", "parked", "pending"))
+                    and _partition_verified(coverage))
         identifiers = Counter(row.get("aircraft_id") for row in rows if isinstance(row, dict)
                               and isinstance(row.get("aircraft_id"), str)
                               and row["aircraft_id"])

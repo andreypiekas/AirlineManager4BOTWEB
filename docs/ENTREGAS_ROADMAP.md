@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A2/A3/A4, conciliação de ocupação da frota (G0)
+
+- A auditoria de ocupação utilizada pela pesquisa de hubs próprios, externos e pelo ranking de aeronaves passou a exigir a conciliação de identidades das aeronaves pendentes e estacionadas quando elas existem. Contagens coincidentes, evidências incompletas ou divergentes preservam os vínculos de rota comprovados, mas não certificam ausência de aeronaves em outras rotas. Uma auditoria integral com todas as aeronaves em rota continua suficiente para a contagem própria quando não há evidência nativa contraditória.
+- A validação da conciliação exige o identificador da observação nativa vinculada à auditoria. A regra mantém a ocupação como evidência independente da demanda residual e bloqueia recomendações quando a cobertura permanece parcial.
+- Validação Windows: 1.876 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). 243 testes direcionados aprovados, incluindo a integração com o ranking, divergências de identidade, evidência ausente e compatibilidade com auditorias sem aeronaves fora de rota. Ruff e `git diff --check` aprovados.
+- Permanecem pendentes a comprovação nativa de demanda residual, os custos finais e a homologação autenticada da coleta integral. Nenhuma transação real foi executada. G0 continua ativo.
+
 ## 2026-11-24 — Autonomia Total A3/A7, projeção exploratória de rotas com escala (G0)
 
 - A pesquisa de hubs próprios e externos passou a calcular cenários econômicos com uma escala somente quando os dois trechos e as três pistas estão correlacionados à variante do motor e à amostra da rota. O cálculo utiliza a distância total percorrida para combustível, CO₂ e frequência, adiciona uma parada segundo a hipótese existente de tempo em solo e conserva a distância direta como referência para as tarifas estimadas. As tarifas, as regras nativas e os encargos específicos da escala ainda dependem de confirmação. O cenário permanece inelegível para compra.

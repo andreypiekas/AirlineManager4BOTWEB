@@ -69,6 +69,52 @@ def test_fleet_route_occupancy_reconciles_inverse_route_and_airport_aliases():
     assert partial.evidence("3139", "2926", None)["count_complete"] is False
 
 
+@pytest.mark.parametrize("status, observation, complete", [
+    (None, None, False),
+    ("matched", "a" * 32, True),
+    ("matched", None, False),
+    ("matched", "invalid", False),
+    ("different", "a" * 32, False),
+    (None, "a" * 32, False),
+])
+def test_fleet_route_occupancy_requires_reconciled_unrouted_partition(status, observation, complete):
+    from research_route_occupancy import FleetRouteOccupancy
+
+    report = _fleet_report()
+    report["current_roster_total"] = 3
+    report["current_relations"].extend([
+        {"aircraft_id": "2", "game_route_id": 0},
+        {"aircraft_id": "3", "game_route_id": 0},
+    ])
+    coverage = report["fleet_coverage"]
+    coverage.update(total=3, parked=1, pending=1)
+    if status is not None:
+        coverage["native_identity_status"] = status
+    if observation is not None:
+        coverage["native_observation_id"] = observation
+
+    occupancy = FleetRouteOccupancy(report, NOW)
+    known = occupancy.evidence("2926", "3139", None)
+    assert known["own_aircraft_count"] == 1
+    assert known["count_complete"] is complete
+    absent = occupancy.evidence("2941", "3139", None)
+    if complete:
+        assert absent["own_aircraft_count"] == 0
+        assert absent["count_complete"] is True
+    else:
+        assert absent is None
+
+
+def test_fleet_route_occupancy_rejects_native_conflict_even_without_unrouted_aircraft():
+    from research_route_occupancy import FleetRouteOccupancy
+
+    report = _fleet_report()
+    report["fleet_coverage"].update(native_identity_status="different", native_observation_id="a" * 32)
+    occupancy = FleetRouteOccupancy(report, NOW)
+    assert occupancy.evidence("2926", "3139", None)["count_complete"] is False
+    assert occupancy.evidence("2941", "3139", None) is None
+
+
 @pytest.mark.parametrize("invalid", ["stale_roster", "stale_route", "wrong_route", "boolean_route",
                                      "missing_airport", "conflicting_airport", "duplicate_aircraft", "missing_identity"])
 def test_invalid_fleet_evidence_cannot_create_exact_zero_or_known_match(invalid):

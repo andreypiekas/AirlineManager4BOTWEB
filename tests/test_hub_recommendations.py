@@ -78,6 +78,20 @@ def _variant_catalog(*, range_km=3000, available=True, observed_at=NOW, verified
     }}}
 
 
+def test_rank_requires_native_partition_for_unrouted_fleet():
+    report = _audited_fleet()
+    report["current_roster_total"] = 1
+    report["current_relations"] = [{"aircraft_id": "1", "game_route_id": 0}]
+    report["fleet_coverage"].update(total=1, pending=1)
+    incomplete = _rank(route_report=report)
+    assert not incomplete["recommendations"]
+    assert "ocupacao_da_frota_a_confirmar" in incomplete["candidates"][0]["pending"]
+
+    report["fleet_coverage"].update(native_identity_status="matched", native_observation_id="a" * 32)
+    reconciled = _rank(route_report=report)
+    assert len(reconciled["recommendations"]) == 1
+
+
 def _variant_scenario(**changes):
     row = _scenario(model_id="11", engine_id="1")
     row["financial"]["engine_id"] = "1"
