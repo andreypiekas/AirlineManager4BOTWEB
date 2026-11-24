@@ -104,9 +104,21 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
     stress = DEFAULT_STRESS
     stressed_candidate = SimpleNamespace(distance=distance, **{
         key: int(value * stress["demand"]) for key, value in demand.items()})
+    a_check_cost = metrics.get("a_check_cost_usd")
+    a_check_interval = metrics.get("maintenance_interval_hours")
+    # The order detail supplies the amount and interval, but does not establish
+    # how Easy mode increments the maintenance clock. Show both flight-hour
+    # assumptions and use the larger reserve for the conditional contribution.
+    a_check = None
+    if a_check_cost is not None and a_check_interval is not None:
+        a_check = {"source": "observed_variant", "cost_usd": a_check_cost,
+                   "interval_hours": a_check_interval, "observed_at": detail["observed_at"],
+                   "clock_verified": False,
+                   "reserve_basis": "max_real_time_or_nominal_airborne_hours"}
 
     def serialize(result):
-        return {
+        contribution = result.profit_per_day - result.revenue_per_day * margin
+        scenario = {
             "departures_per_day": round(result.legs_per_day, 4),
             "passengers_per_day": dict(zip(("y", "j", "f"), map(lambda x: round(x, 2), result.passengers_per_day))),
             "revenue_by_class": {key: round(sold * fare, 2) for key, sold, fare in
@@ -115,8 +127,20 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
             "fuel_cost_per_day": round(result.fuel_cost_per_day, 2),
             "co2_cost_per_day": round(result.co2_cost_per_day, 2),
             "margin_per_day": round(result.revenue_per_day * margin, 2),
-            "projected_contribution_per_day": round(result.profit_per_day - result.revenue_per_day * margin, 2),
+            "projected_contribution_per_day": round(contribution, 2),
         }
+        if a_check is not None:
+            nominal_hours = distance / spec["speed"] * result.legs_per_day
+            real_hours = nominal_hours / mode.speed
+            hourly_reserve = a_check_cost / a_check_interval
+            reserve = hourly_reserve * max(real_hours, nominal_hours)
+            scenario.update({
+                "a_check_reserve_real_time_per_day": round(hourly_reserve * real_hours, 2),
+                "a_check_reserve_nominal_per_day": round(hourly_reserve * nominal_hours, 2),
+                "a_check_reserve_per_day": round(reserve, 2),
+                "conditional_contribution_after_a_check_per_day": round(contribution - reserve, 2),
+            })
+        return scenario
 
     layouts = []
 
@@ -179,5 +203,6 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
             "estimated_fares": dict(zip(("y", "j", "f"), fares)), "stress_factors": dict(stress),
             "co2_kg_per_pax_km": co2_rate,
             "co2_rate_source": "observed_variant" if observed_co2 is not None else "assumed_default",
+            **({"a_check_projection": a_check} if a_check is not None else {}),
             "excluded_costs": excluded,
             "layouts": layouts}

@@ -368,6 +368,11 @@ const translations = {
   'Identidades conciliadas não comprovam encomendas': 'Reconciled identities do not verify orders',
   'Cotação de combustível (USD/1000)': 'Fuel quote (USD/1000)',
   'Cotação de CO₂ (USD/1000)': 'CO₂ quote (USD/1000)',
+  'A-check observado (custo / intervalo)': 'Observed A-check (cost / interval)',
+  'Reserva diária A-check (horas reais / nominais)': 'Daily A-check reserve (real / nominal hours)',
+  'Relógio de manutenção a confirmar; aplicada a maior reserva': 'Maintenance clock unverified; larger reserve applied',
+  'Após reserva adicional A-check (base / stress)': 'After additional A-check reserve (base / stress)',
+  'Custos excluídos da contribuição original': 'Costs excluded from original contribution',
   'Pesquisa ainda pendente': 'Research pending',
   'Indisponível': 'Unavailable',
   'Mais possibilidades aguardam pesquisa.': 'Additional possibilities await research.',
@@ -541,6 +546,20 @@ const preview = {source:'route_optimizer_what_if_v1', purchase_eligible:false,
 appendResearchEconomicsPreview(previewMetrics, {economics_preview:preview});
 assert.equal(previewMetrics.children.length, 4);
 assert.equal(previewMetrics.children[1].children[1].textContent, '$120 / $-20');
+const checkMetrics = document.createElement('div');
+appendResearchEconomicsPreview(checkMetrics, {economics_preview:{...preview,
+  a_check_projection:{source:'observed_variant',cost_usd:2341,interval_hours:400,
+    clock_verified:false,reserve_basis:'max_real_time_or_nominal_airborne_hours'},
+  layouts:[{...preview.layouts[0],base:{...preview.layouts[0].base,
+    a_check_reserve_real_time_per_day:80,a_check_reserve_nominal_per_day:120,
+    conditional_contribution_after_a_check_per_day:0},
+    stress:{...preview.layouts[0].stress,conditional_contribution_after_a_check_per_day:-140}}]}});
+assert.equal(checkMetrics.children.length, 7);
+assert.equal(checkMetrics.children[2].children[0].textContent, 'After additional A-check reserve (base / stress) · 10 / 2 / 1');
+assert.equal(checkMetrics.children[2].children[1].textContent, '$0 / $-140');
+assert.equal(checkMetrics.children[3].children[1].textContent, '$2341 / 400 h');
+assert.equal(checkMetrics.children[4].children[1].textContent, '$80 / $120 · Maintenance clock unverified; larger reserve applied');
+assert.equal(checkMetrics.children[6].children[0].textContent, 'Costs excluded from original contribution');
 const observedPreview = document.createElement('div');
 appendResearchEconomicsPreview(observedPreview, {economics_preview:{...preview,
   co2_kg_per_pax_km:.14, co2_rate_source:'observed_variant'}});

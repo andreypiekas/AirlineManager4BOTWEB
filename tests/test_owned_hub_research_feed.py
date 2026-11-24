@@ -1143,6 +1143,38 @@ def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress()
     assert set(first["excluded_costs"]) == {"maintenance", "a_check", "other_recurring", "capex"}
 
 
+@pytest.mark.parametrize("mode,speed_multiplier", [("fácil", 1.5), ("realista", 1.0)])
+def test_a_check_reserve_is_conditional_and_specific_to_the_observed_engine(mode, speed_multiplier):
+    stats, engines = _preview_stats(), _preview_engines()
+    stats.mode = mode
+    engines["models"]["11"]["variant_details"] = {
+        "1": {"observed_at": NOW, "metrics": {"a_check_cost_usd": 2341, "maintenance_interval_hours": 400}},
+        "3": {"observed_at": NOW, "metrics": {"a_check_cost_usd": 1500}},
+    }
+    page = build_owned_hub_research_queue(_inventory(), [_sample()], _market(), engines=engines,
+                                         now=NOW, operating_market_stats=stats)
+    rows = {row["engine_id"]: row for row in page["items"]}
+    preview = rows["1"]["economics_preview"]
+    assert preview["a_check_projection"] == {
+        "source": "observed_variant", "cost_usd": 2341, "interval_hours": 400,
+        "observed_at": NOW, "clock_verified": False,
+        "reserve_basis": "max_real_time_or_nominal_airborne_hours",
+    }
+    assert "a_check_projection" not in rows["3"]["economics_preview"]
+    assert "a_check" in preview["excluded_costs"]
+    assert rows["1"]["purchase_eligible"] is False and rows["1"]["daily_net_profit"] is None
+    speed = rows["1"]["engine_speed"]
+    departures = 24 / (2000 / (speed * speed_multiplier) + .1)
+    nominal = 2341 / 400 * 2000 / speed * departures
+    for layout in preview["layouts"]:
+        for scenario in (layout["base"], layout["stress"]):
+            assert scenario["a_check_reserve_real_time_per_day"] == pytest.approx(nominal / speed_multiplier, abs=.01)
+            assert scenario["a_check_reserve_nominal_per_day"] == pytest.approx(nominal, abs=.01)
+            assert scenario["a_check_reserve_per_day"] == pytest.approx(nominal, abs=.01)
+            assert scenario["conditional_contribution_after_a_check_per_day"] == pytest.approx(
+                scenario["projected_contribution_per_day"] - nominal, abs=.02)
+
+
 @pytest.mark.parametrize("catalog_range", [None, 1999])
 def test_preview_uses_correlated_variant_range_and_capacity_over_catalog(catalog_range):
     engines, market = _preview_engines(), _market()

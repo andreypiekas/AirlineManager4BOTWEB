@@ -1366,6 +1366,11 @@ const EN = {
   "Demanda observada Y/J/F": "Observed Y/J/F demand",
   "Simulação (demanda total, não residual)": "What-if (total demand, not remaining demand)",
   "Contribuição diária base / stress": "Daily contribution base / stress",
+  "A-check observado (custo / intervalo)": "Observed A-check (cost / interval)",
+  "Reserva diária A-check (horas reais / nominais)": "Daily A-check reserve (real / nominal hours)",
+  "Relógio de manutenção a confirmar; aplicada a maior reserva": "Maintenance clock unverified; larger reserve applied",
+  "Após reserva adicional A-check (base / stress)": "After additional A-check reserve (base / stress)",
+  "Custos excluídos da contribuição original": "Costs excluded from original contribution",
   "Otimizada para cenário base": "Optimized for base scenario",
   "Otimizada para stress": "Optimized for stress",
   "Detalhe da variante observado": "Observed variant detail",
@@ -2074,6 +2079,14 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
       !Number.isFinite(preview.expires_at) || now >= preview.expires_at ||
       !Array.isArray(preview.layouts) || !preview.layouts.length) { return; }
   addHubMetric(metrics, "Simulação (demanda total, não residual)", tr("Contribuição diária base / stress"));
+  const check = preview.a_check_projection;
+  const firstScenario = preview.layouts[0].base;
+  const hasCheck = check?.source === "observed_variant" && check.clock_verified === false &&
+    check.reserve_basis === "max_real_time_or_nominal_airborne_hours" &&
+    Number.isFinite(check.cost_usd) && check.cost_usd > 0 &&
+    Number.isFinite(check.interval_hours) && check.interval_hours > 0 &&
+    Number.isFinite(firstScenario.a_check_reserve_real_time_per_day) &&
+    Number.isFinite(firstScenario.a_check_reserve_nominal_per_day);
   for (const row of preview.layouts) {
     const layout = [row.layout.y, row.layout.j, row.layout.f].map(value => nf.format(value)).join(" / ");
     const strategies = Array.isArray(row.strategies) ? row.strategies : [];
@@ -2082,6 +2095,20 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
     ].filter(([key]) => strategies.includes(key)).map(([, label]) => tr(label));
     addHubMetric(metrics, "Y/J/F " + layout + (optimized.length ? " · " + optimized.join(" / ") : ""), hubMoney(row.base.projected_contribution_per_day) +
       " / " + hubMoney(row.stress.projected_contribution_per_day));
+    if (hasCheck && Number.isFinite(row.base.conditional_contribution_after_a_check_per_day) &&
+        Number.isFinite(row.stress.conditional_contribution_after_a_check_per_day)) {
+      addHubMetric(metrics, tr("Após reserva adicional A-check (base / stress)") + " · " + layout,
+        hubMoney(row.base.conditional_contribution_after_a_check_per_day) + " / " +
+        hubMoney(row.stress.conditional_contribution_after_a_check_per_day));
+    }
+  }
+  if (hasCheck) {
+    addHubMetric(metrics, "A-check observado (custo / intervalo)", hubMoney(check.cost_usd) +
+      " / " + nf.format(check.interval_hours) + " h");
+    addHubMetric(metrics, "Reserva diária A-check (horas reais / nominais)",
+      hubMoney(firstScenario.a_check_reserve_real_time_per_day) + " / " +
+      hubMoney(firstScenario.a_check_reserve_nominal_per_day) + " · " +
+      tr("Relógio de manutenção a confirmar; aplicada a maior reserva"));
   }
   addHubMetric(metrics, "Margem sobre receita", nf.format(preview.safety_margin_fraction * 100) + "%");
   for (const [label, value, source, unit] of [
@@ -2098,7 +2125,8 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
     addHubMetric(metrics, "Coeficiente de CO₂ na simulação", nf.format(preview.co2_kg_per_pax_km) +
       " kg/pax/km · " + tr(preview.co2_rate_source === "observed_variant" ? "Coeficiente observado" : "Hipótese padrão"));
   }
-  addHubMetric(metrics, "Custos excluídos", tr("Manutenção, A-check, outras despesas e investimento"));
+  addHubMetric(metrics, hasCheck ? "Custos excluídos da contribuição original" : "Custos excluídos",
+    tr("Manutenção, A-check, outras despesas e investimento"));
   if (preview.route_kind === "exploratory_stopover" && preview.game_rules_verified === false) {
     addHubMetric(metrics, "Simulação exploratória com escala", tr("Regras da escala a confirmar"));
     addHubMetric(metrics, "Distância utilizada nos custos", nf.format(preview.travel_distance_km) + " km");
