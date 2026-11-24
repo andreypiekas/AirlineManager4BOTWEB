@@ -34,6 +34,7 @@ from aircraft_order_hub import AircraftOrderHubError, prepare_order_hub
 from gamemode import EASY, GameMode
 from helpers import clean_response, fmt, game_whole_number, to_int
 from notify import esc
+from native_route_quotes import record_native_route_quote
 from route_optimizer import estimate_route, operating_prices_valid, rank_candidates
 from route_strategy import best_reroute, profitable_candidates
 from route_airports import HubMatch, match_hub_options, code_from_candidate, explain_hub_options
@@ -1540,16 +1541,10 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         f"para {aircraft.reg} ({aircraft.model}), passagens ${prices[0]} / ${prices[1]} / ${prices[2]}, "
         f"matrícula {reg}, taxa da rota ${fmt(fee)}"
     )
-    if bot.dry_run:
-        log.info("[SIMULAÇÃO] Criaria a rota %s.", summary)
-        bot.notify(f"🧪 SIMULAÇÃO: criaria a rota {esc(summary)}.", silent=True, category="simulation")
-        bot.js("$('#newRouteInfo').hide();")
-        return "dry"
-
     if bot.stopping:
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
-    before = bot.read_money()
+    before = bot.read_money() if not bot.dry_run else None
     if stopover:
         current = read_form(bot, aircraft.id, origin_id, candidate.arr_id, stopover)
         unchanged = current == verified
@@ -1557,8 +1552,23 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         current = read_direct_form(bot, aircraft.id, origin, destination, allow_duplicates=allow_duplicates)
         unchanged = current == direct
     reserve = bot.config.get_int("settings", "cash_reserve", 0) if reroute else 0
-    if not unchanged or read_route_fares(bot) != prices or before is None or before - fee < reserve:
-        log.warning("%s: formulário ou saldo da rota mudou antes da criação.", aircraft.reg)
+    if not unchanged or read_route_fares(bot) != prices:
+        log.warning("%s: formulário ou tarifas da rota mudaram antes da criação.", aircraft.reg)
+        bot.js("$('#newRouteInfo').hide();")
+        return "stop"
+    record_native_route_quote(
+        bot, aircraft_id=aircraft.id, origin_id=origin_id, destination_id=candidate.arr_id,
+        stopover_id=stopover.id if stopover else None, distance=current[0], fee=fee,
+        occupied=current[3] if stopover else current[2], fares=prices,
+        total_demand=current[1] if stopover else None,
+    )
+    if bot.dry_run:
+        log.info("[SIMULAÇÃO] Criaria a rota %s.", summary)
+        bot.notify(f"🧪 SIMULAÇÃO: criaria a rota {esc(summary)}.", silent=True, category="simulation")
+        bot.js("$('#newRouteInfo').hide();")
+        return "dry"
+    if before is None or before - fee < reserve:
+        log.warning("%s: saldo da rota mudou antes da criação.", aircraft.reg)
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
     button = panel.find_element(By.XPATH, ".//*[@id='btnCreateNewRoute']")

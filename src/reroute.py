@@ -13,6 +13,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 import paths
 from helpers import fmt, game_whole_number
+from native_route_quotes import record_native_route_quote
 from notify import esc
 from route_registry import endpoint, endpoint_matches, same_route
 from route_stopover import read_route_fares
@@ -235,6 +236,9 @@ def _prepare_form(bot, aircraft_id, origin, destination):
     if (read_direct_form(bot, aircraft_id, origin, destination) != verified
             or read_route_fares(bot) != fares or balance is None or balance - fee < reserve):
         return None
+    record_native_route_quote(bot, aircraft_id=aircraft_id, origin_id=origin.get("id"),
+                              destination_id=dest_id, distance=verified[0], fee=fee,
+                              occupied=verified[2], fares=fares)
     return button, fee
 
 

@@ -3,6 +3,7 @@ import time
 from types import SimpleNamespace
 
 import paths
+from native_route_quotes import record_native_route_quote
 from audited_game_snapshot import (
     FILENAME, capture_game_snapshot, compose_snapshot, replay_research_page, snapshot_summary,
 )
@@ -80,6 +81,8 @@ def test_cycle_capture_persists_real_cash_and_missing_registry_evidence(tmp_path
     monkeypatch.setattr(paths.Profile, "data", property(lambda self: tmp_path))
     cash_at = time.time() - 3
     bot = SimpleNamespace(stats=lambda: SimpleNamespace(money=2500, money_read_at=cash_at))
+    assert record_native_route_quote(bot, aircraft_id="101", origin_id="11", destination_id="12",
+                                     distance=1000, fee=250, occupied=0, fares=(100, 200, 300), now=cash_at)
     snapshot = capture_game_snapshot(bot)
     assert json.loads((tmp_path / FILENAME).read_text(encoding="utf-8")) == snapshot
     assert snapshot["profile_id"] == "isolated"
@@ -87,7 +90,11 @@ def test_cycle_capture_persists_real_cash_and_missing_registry_evidence(tmp_path
     assert snapshot["observations"]["cash"]["available"] == 2500
     assert snapshot["observations"]["cash"]["observed_at"] == cash_at
     assert not any(snapshot["coverage"]["scopes"].values())
-    assert snapshot_summary()["status"] == "parcial"
+    assert snapshot["observations"]["native_route_quotes"][0]["observed_at"] == cash_at
+    summary = snapshot_summary()
+    assert summary["status"] == "parcial"
+    assert summary["native_route_quote_count"] == 1
+    assert "native_route_quotes" not in summary
 
 
 def test_summary_preserves_source_age_and_is_profile_bound(tmp_path, monkeypatch):

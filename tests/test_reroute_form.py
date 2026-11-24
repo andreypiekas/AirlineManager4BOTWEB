@@ -5,6 +5,7 @@ import pytest
 
 import reroute
 import fleet
+from native_route_quotes import native_route_quotes
 from route_stopover import read_route_fares
 from airport_catalog import by_code
 from route_registry import endpoint
@@ -110,6 +111,29 @@ def test_parked_direct_route_aborts_before_submit_when_form_or_cash_changes(monk
     assert fleet.create_route(bot, aircraft, candidate, origin_id=by_code("LAX").game_id,
                               allow_duplicates=False) == "stop"
     assert actions == ["autoprice"]
+    retained = native_route_quotes(bot)
+    if second == (1000, 1000, 0) and second_fares == (100, 200, 300):
+        assert len(retained) == 1
+        assert retained[0]["route_fee"] == 1000
+        assert retained[0]["daily_demand_total"] is None
+    else:
+        assert retained == []
+
+
+def test_dry_run_collects_quote_without_submitting(monkeypatch):
+    monkeypatch.setattr(fleet, "read_direct_form", lambda *args, **kwargs: (1000, 1000, 0))
+    monkeypatch.setattr(fleet, "read_route_fares", lambda *_: (100, 200, 300))
+    actions = []
+    panel = SimpleNamespace(find_elements=lambda *_: ["autoprice"],
+                            find_element=lambda *_: pytest.fail("Unexpected route submission"))
+    bot = SimpleNamespace(js=lambda *_: None, ajax=lambda *_: panel, can_spend=lambda *a, **kw: True,
+                          click_element=actions.append, pause=lambda *_: None, dry_run=True,
+                          stopping=False, notify=lambda *a, **kw: None)
+    aircraft = fleet.ParkedAircraft("5", "A320", "TEST", 180)
+    candidate = fleet.RouteCandidate(by_code("MIA").game_id, "Miami", 1000, 500, 50, 20, 8000)
+    assert fleet.create_route(bot, aircraft, candidate, origin_id=by_code("LAX").game_id) == "dry"
+    assert actions == ["autoprice"]
+    assert native_route_quotes(bot)[0]["purchase_eligible"] is False
 
 
 @pytest.mark.parametrize("codes,paused,via,expected", [

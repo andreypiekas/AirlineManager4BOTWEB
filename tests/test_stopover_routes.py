@@ -166,14 +166,23 @@ def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, mo
         def notify(self, message, *, category):
             assert "via ANC" in message
 
+    bot = Bot()
     result = fleet.create_route(
-        Bot(), ParkedAircraft("101", "A380", "PP-101", 600),
+        bot, ParkedAircraft("101", "A380", "PP-101", 600),
         RouteCandidate("1440", "Los Angeles", 15000, 0, 0, 0, 12000), origin_id="2891",
         stopover=Stopover("2601", 14400, 3652),
         stopover_economics=dict(seats=600, model={"capacity": 600, "speed": 1000, "fuel": 26},
                                 mode=EASY, load_factor=0.8, fuel_price=750, co2_price=150, premium=False),
     )
     assert result == ("created" if confirmed else "stop")
+    from native_route_quotes import native_route_quotes
+
+    quotes = native_route_quotes(bot)
+    assert len(quotes) == 1
+    assert quotes[0]["stopover_id"] == "2601"
+    assert quotes[0]["route_fee"] == 1058871
+    assert quotes[0]["daily_demand_total"] == {"y": 900, "j": 400, "f": 150}
+    assert quotes[0]["purchase_eligible"] is False
     assert sum("btnCreateNewRoute" in action for action in actions if isinstance(action, str)) == 1
     assert ((1058871, True) in actions) is confirmed
     assert route_creation.has_pending_creation() is not confirmed

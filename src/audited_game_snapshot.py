@@ -56,7 +56,7 @@ def _catalog_scopes(coverage, now):
 
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                      quotes, cash, cash_at, now, mode=None, mode_at=None,
-                     preview_margin=0.10):
+                     preview_margin=0.10, native_quotes=()):
     """Translate independently collected observations without upgrading their provenance."""
     hub_at = inventory.get("observed_at")
     raw_hubs = inventory.get("hubs", [])
@@ -136,6 +136,9 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                               "pending": counts[2] if fleet_verified else None,
                               "relations": rows if fleet_verified else []},
                     "route_research": demand,
+                    "native_route_quotes": [row for row in native_quotes
+                                            if row.get("profile_id") == profile_id
+                                            and _fresh(row.get("observed_at"), now)],
                     "engine_catalog": engines,
                     "aircraft_market": market,
                     "engine_coverage": engine_coverage,
@@ -167,6 +170,7 @@ def capture_game_snapshot(bot):
     from hub_expansion import HubExpansionRegistry
     from hub_registry import HubRegistry
     from market import recent_market_quotes
+    from native_route_quotes import native_route_quotes
     from route_registry import RouteRegistry
     from research_economics_preview import research_mode
     from gamemode import EASY, REALISM
@@ -189,7 +193,8 @@ def capture_game_snapshot(bot):
                                 market=load_market_evidence(now=now),
                                 quotes=recent_market_quotes(stats, now), cash=cash,
                                 cash_at=cash_at, now=now, mode=mode,
-                                mode_at=stats.mode_read_at if mode else None, preview_margin=margin)
+                                mode_at=stats.mode_read_at if mode else None, preview_margin=margin,
+                                native_quotes=native_route_quotes(bot, now=now))
     paths.write_atomic(profile.data / FILENAME, json.dumps(snapshot, ensure_ascii=False, allow_nan=False),
                        private=True)
     return snapshot
@@ -273,6 +278,8 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                 "owned_hub_count": len(snapshot["hubs"]) if scopes["hubs"] else None,
                 "fleet_count": coverage["expected_aircraft_count"] if scopes["fleet"] else None,
                 "route_samples": len(observations["route_research"]["samples"]),
+                "native_route_quote_count": sum(_fresh(row.get("observed_at"), now)
+                                                for row in observations.get("native_route_quotes", [])),
                 "engine_coverage": observations["engine_coverage"],
                 "cash_observed": _fresh(observations["cash"]["observed_at"], now),
                 "read_only": True}
