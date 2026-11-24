@@ -198,7 +198,10 @@ class HubRegistry:
                           and fleet_coverage["total"] == len(relations) == len(identities)
                           and all(re.fullmatch(r"[0-9]{1,14}", identity) for identity in identities))
         links_verified = fleet_verified and catalog_fresh and not unknown
+        from owned_delivery_coverage import coverage_snapshot
+
         return {"hubs": result, "unconfirmed_aircraft": unknown,
+                "delivery_coverage": coverage_snapshot(self.path.with_name("owned_delivery_coverage.json"), now=now),
                 "observed_at": saved.get("observed_at"), "source": saved.get("source"),
                 "partial_fleet": not links_verified, "known_aircraft": len(relations),
                 "fleet_coverage": fleet_coverage if fleet_verified else None,

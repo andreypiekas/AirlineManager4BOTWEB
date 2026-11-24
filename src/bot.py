@@ -638,6 +638,9 @@ class Bot:
 
             self._guard(lambda: collect_owned_hub_demand(self), "coletar demanda dos hubs")
             if self.config.get_bool("investment", "planning_enabled"):
+                from owned_delivery_coverage import collect_owned_delivery_coverage
+
+                self._guard(lambda: collect_owned_delivery_coverage(self), "conferir cobertura dos hubs de entrega")
                 self._guard(lambda: collect_owned_route_details(self), "coletar detalhes das rotas")
                 self._guard(lambda: collect_external_hub_demand(self), "coletar demanda de hubs externos")
                 self._guard(lambda: collect_external_route_details(self), "coletar detalhes de rotas externas")

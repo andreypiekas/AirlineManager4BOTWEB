@@ -974,6 +974,11 @@ const EN = {
   "Cobertura integral de aeronaves e rotas confirmada.": "Complete aircraft and route coverage verified.",
   "aeronaves no inventário atual": "aircraft in current inventory",
   "Catálogo de bases desatualizado ou não confirmado.": "Hub catalog outdated or unverified.",
+  "Hubs gerenciados e opções de entrega coincidem": "Managed hubs and delivery options match",
+  "Divergência entre hubs gerenciados e opções de entrega": "Managed hubs and delivery options differ",
+  "Cobertura das opções de entrega não confirmada.": "Delivery option coverage unverified.",
+  "Correspondência individual com aeroportos pendente.": "Individual airport mapping pending.",
+  "gerenciados": "managed", "opções de entrega": "delivery options", "coincidentes": "matching",
   "Bases exibidas": "Hubs shown", "Nenhuma base corresponde à busca.": "No hubs match the search.",
   "Nenhuma aeronave corresponde à busca.": "No aircraft match the search.",
   "Candidatos exibidos": "Candidates shown", "Nenhum candidato corresponde aos filtros.": "No candidates match the filters.",
@@ -2244,6 +2249,17 @@ function renderHubs(report) {
   const correlated = report.current_fleet_coverage_verified === true ? report.fleet_coverage : null;
   if (correlated) coverage.push(tr("Cobertura integral de aeronaves e rotas confirmada."));
   if (report.hub_catalog_fresh === false) coverage.push(tr("Catálogo de bases desatualizado ou não confirmado."));
+  const delivery = report.delivery_coverage;
+  if (delivery && ["matched", "different"].includes(delivery.status)) {
+    coverage.push(tr(delivery.status === "matched" ? "Hubs gerenciados e opções de entrega coincidem"
+      : "Divergência entre hubs gerenciados e opções de entrega") + " (" +
+      nf.format(delivery.managed_count) + " " + tr("gerenciados") + ", " +
+      nf.format(delivery.delivery_count) + " " + tr("opções de entrega") + ", " +
+      nf.format(delivery.matching_count) + " " + tr("coincidentes") + "). " +
+      tr("Correspondência individual com aeroportos pendente."));
+  } else if (delivery) {
+    coverage.push(tr("Cobertura das opções de entrega não confirmada."));
+  }
   const liveFleet = correlated ? {...correlated, count_verified: true, size: correlated.total} : report.fleet_counts;
   if (liveFleet && liveFleet.count_verified && Number.isFinite(liveFleet.size)) {
     coverage.push(tr("Frota total no jogo") + ": " + nf.format(liveFleet.size) +
