@@ -182,6 +182,15 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
         assert not {"layout", "daily_demand", "fares", "cash"} & set(gate["verified_accounting_inputs"])
         assert "DEMAND_UNVERIFIED" in {reason["code"] for reason in gate["blocking_reasons"]}
         assert {"maintenance", "a_check", "other"} == set(gate["excluded_costs"])
+        layouts = (item.get("economics_preview") or {}).get("layouts", [])
+        evaluations = gate["layout_evaluations"]
+        assert [row["configuration_yjf"] for row in evaluations] == [row["layout"] for row in layouts]
+        assert len({row["economics_id"] for row in evaluations}) == len(layouts)
+        for row in evaluations:
+            assert row["economics_id"] != gate["economics_id"]
+            assert row["status"] == "blocked" and row["read_only"] is True
+            assert row["configuration_verified"] is False and row["purchase_eligible"] is False
+            assert {"code": "EVIDENCE_CONTRADICTORY", "field": "inputs.layout"} in row["blocking_reasons"]
     assert replay_research_page(now=NOW + 100, path=path) == first
     assert replay_research_page(offset=40, expected_snapshot="other", now=NOW, path=path)["status"] == "snapshot_alterado"
     second = replay_research_page(offset=40, expected_snapshot=snapshot["snapshot_id"],

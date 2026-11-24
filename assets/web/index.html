@@ -1385,6 +1385,7 @@ const EN = {
   "Validação econômica auditada": "Audited economic validation",
   "Bloqueado": "Blocked",
   "Impedimentos comuns aos layouts": "Shared layout blockers",
+  "Avaliações por layout hipotético": "Hypothetical layout evaluations",
   "Entradas contábeis verificadas": "Verified accounting inputs",
   "Taxa de rota observada (intervalo)": "Observed route fee (range)",
   "Tarifas observadas Y/J/F (intervalos)": "Observed Y/J/F fares (ranges)",
@@ -3760,6 +3761,29 @@ function renderSnapshotResearch(page) {
         auditReasons.append(entry);
       }
       details.append(summary, auditReasons); item.append(details);
+    }
+    const evaluations = Array.isArray(gate?.layout_evaluations) ? gate.layout_evaluations : [];
+    if (evaluations.length) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = tr("Avaliações por layout hipotético") + " (" + nf.format(evaluations.length) + ")";
+      details.append(summary);
+      for (const evaluation of evaluations) {
+        if (evaluation.configuration_verified !== false || evaluation.purchase_eligible !== false ||
+            evaluation.status !== "blocked" || !evaluation.configuration_yjf) { continue; }
+        const layout = evaluation.configuration_yjf;
+        const heading = document.createElement("div");
+        heading.textContent = "Y/J/F " + [layout.y, layout.j, layout.f].map(value => nf.format(value)).join(" / ") +
+          " · " + tr("Bloqueado");
+        const reasons = document.createElement("ul"); reasons.className = "hub-research-reasons";
+        for (const reason of evaluation.blocking_reasons || []) {
+          const entry = document.createElement("li");
+          entry.textContent = String(reason.code) + " · " + String(reason.field);
+          reasons.append(entry);
+        }
+        details.append(heading, reasons);
+      }
+      item.append(details);
     }
     list.append(item);
   }

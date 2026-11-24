@@ -1284,7 +1284,9 @@ const task = {purchase_eligible:false, hub_code:'AAA', destination_id:'42', mode
     aircraft_price_source:'observed_variant', components:{aircraft:100,hangar:20}, displayed_subtotal:120},
   accounting_gate:{scope:'shared_layout_prerequisites',status:'blocked',
     verified_accounting_inputs:['fuel_price_per_1000','co2_price_per_1000'],
-    blocking_reasons:[{code:'DEMAND_UNVERIFIED',field:'route.demand_remaining'}]},
+    blocking_reasons:[{code:'DEMAND_UNVERIFIED',field:'route.demand_remaining'}],
+    layout_evaluations:[{configuration_yjf:{y:10,j:2,f:1},configuration_verified:false,
+      purchase_eligible:false,status:'blocked',blocking_reasons:[{code:'EVIDENCE_CONTRADICTORY',field:'inputs.layout'}]}]},
   pending:['pesquisa_pendente']};
 const makePage = (offset, id='snap-a') => ({status:'parcial', source:'derived_research_queue',
   read_only:true, purchase_eligible:false, coverage:'partial', historical_replay:true,
@@ -1317,6 +1319,10 @@ async function run() {
   const audit = $('snapshotResearchList').children[0].children[3];
   assert.equal(audit.tag, 'details');
   assert.equal(audit.children[0].textContent, 'Impedimentos comuns aos layouts (1)');
+  const layoutAudit = $('snapshotResearchList').children[0].children[4];
+  assert.equal(layoutAudit.children[0].textContent, 'Avaliações por layout hipotético (1)');
+  assert.equal(layoutAudit.children[1].textContent, 'Y/J/F 10 / 2 / 1 · Bloqueado');
+  assert.equal(layoutAudit.children[2].children[0].textContent, 'EVIDENCE_CONTRADICTORY · inputs.layout');
   assert.equal(audit.children[1].children[0].textContent, 'DEMAND_UNVERIFIED · route.demand_remaining');
   assert.equal($('snapshotResearchNext').disabled, false);
   assert.equal($('snapshotResearchPrev').disabled, true);

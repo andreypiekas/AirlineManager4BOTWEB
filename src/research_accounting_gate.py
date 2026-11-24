@@ -89,10 +89,30 @@ def evaluate_research_gate(snapshot, item, *, now, margin):
 
     result = evaluate_expansion_economics(snapshot, candidate, inputs, now=now,
                                           safety_margin_fraction=margin)
+    layout_evaluations = []
+    preview = item.get("economics_preview") or {}
+    for row in preview.get("layouts", []):
+        layout = row["layout"]
+        # Bind the hypothetical configuration to the accounting identity without
+        # claiming the shop has confirmed these seats. The provenance validator
+        # deliberately rejects this envelope until native evidence is available.
+        layout_inputs = {**inputs, "layout": {
+            **binding, "source": "route_optimizer_what_if_v1", "verified": False,
+            "model_id": model, "engine_id": engine, "value": layout,
+        }}
+        evaluation = evaluate_expansion_economics(snapshot, candidate, layout_inputs,
+                                                 now=now, safety_margin_fraction=margin)
+        layout_evaluations.append({
+            "configuration_yjf": layout, "configuration_verified": False,
+            "economics_id": evaluation["economics_id"], "status": evaluation["status"],
+            "blocking_reasons": evaluation["blocking_reasons"],
+            "purchase_eligible": False, "read_only": True,
+        })
     return {"status": result["status"], "scope": "shared_layout_prerequisites",
             "economics_id": result["economics_id"], "read_only": True,
             "purchase_eligible": False, "blocking_reasons": result["blocking_reasons"],
             "verified_accounting_inputs": sorted(result["provenance"]),
             "excluded_costs": result["excluded_costs"],
             "total_investment": result["capital_costs"]["total_investment"],
-            "cash_after_purchase": result["cash_after_purchase"]}
+            "cash_after_purchase": result["cash_after_purchase"],
+            "layout_evaluations": layout_evaluations}
