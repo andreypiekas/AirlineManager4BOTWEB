@@ -447,10 +447,48 @@ def test_selected_detail_is_exposed_but_only_correlated_metrics_feed_model(verif
     assert item["capacity"] == (164 if verified else 180)
     assert item["final_aircraft_price"] is None
     assert item["purchase_eligible"] is False
+    quote = item["capital_quote_preview"]
+    assert quote["components"]["aircraft"] == (6770196 if verified else 1700000)
+    assert quote["aircraft_price_source"] == ("observed_variant" if verified else "catalog_model")
+    assert quote["displayed_subtotal"] is None
     catalog["variant_details"]["2"] = None
     invalid = build_owned_hub_research_queue(_inventory(), [_sample()], _market(),
                                             engines=engines, now=NOW)
     assert all(row["engine_id"] is None for row in invalid["items"])
+
+
+@pytest.mark.parametrize("external", [False, True])
+@pytest.mark.parametrize("free, age, cost, expected", [
+    (0, 10, 200000, 200000), (1, 10, 200000, 0), (0, 10, None, None),
+    (0, 901, 200000, None), (0, -1, 200000, None),
+])
+def test_capital_quotes_for_single_aircraft(external, free, age, cost, expected):
+    inventory = _inventory()
+    inventory["fleet_commitment_observations"] = {
+        "source": "game_hangar_and_fleet_status", "status": "partial", "observed_at": NOW - age,
+        "passenger_hangar": {"capacity": 2, "occupied": 2 - free, "free": free,
+                             "upgrade_quotes": {"1": {"cost": cost, "duration_seconds": 60}}},
+    }
+    if external:
+        inventory["hub_catalog_fresh"] = True
+        catalog = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                   "candidate_inventory": [{"id": "3139", "code": "SBL", "observed_at": NOW,
+                                            "hub_price": 50000, "hub_price_observed_at": NOW}],
+                   "samples": [_sample("3139", "2926")]}
+        page = build_external_hub_research_queue(inventory, catalog, _market(), now=NOW)
+    else:
+        page = build_owned_hub_research_queue(inventory, [_sample()], _market(), now=NOW)
+    item = page["items"][0]
+    quote = item["capital_quote_preview"]
+    assert quote["components"]["hangar"] == expected
+    assert quote["components"]["aircraft"] == 1700000
+    assert quote["displayed_subtotal"] == (None if expected is None else 1700000 + expected + 50000 * external)
+    assert quote["purchase_eligible"] is item["purchase_eligible"] is False
+    assert all(quote[key] is None for key in ("route_fee", "total_investment", "payback_days", "roi"))
+    if 0 <= age <= 900:
+        assert quote["expires_at"] == NOW - age + 900
+    else:
+        assert quote["hangar_observation"] is None
 
 
 @pytest.mark.parametrize("page_size", [1, 2, 3, 4, 7])

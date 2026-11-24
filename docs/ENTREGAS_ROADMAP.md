@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A4/A7, composição indicativa do investimento (G0)
+
+- A fila de pesquisa de hubs próprios e externos apresenta o preço exibido da variante identificada ou, na sua ausência, o preço indicativo do catálogo do modelo. Para uma única aeronave, utiliza a disponibilidade atual do hangar de passageiros ou a cotação exibida para ampliar uma vaga. Hubs externos acrescentam o preço monetário observado do hub quando disponível.
+- O subtotal só é apresentado quando todos esses componentes estão disponíveis e identifica a ausência da taxa de rota. Evidências de hangar ausentes, inválidas, futuras ou com mais de 900 segundos deixam o componente desconhecido. A expiração das cotações é considerada também no painel PT/EN e a alteração da observação de hangar invalida o cursor de pesquisa interativa.
+- O subtotal é indicativo, condicionado à disponibilidade de uma vaga no momento da pesquisa, e não certifica preço final, saldo após compromissos, taxa de rota, elegibilidade, ROI ou payback. A taxa de rota continua pendente de uma leitura nativa correlacionada à combinação candidata. Nenhuma transação foi realizada.
+- Validação Windows: 1.888 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX); 229 testes direcionados aprovados. Ruff e `git diff --check` aprovados. G0 e o objetivo de autonomia total permanecem ativos.
+
 ## 2026-11-24 — Autonomia Total A9/A7, histórico financeiro correlacionado à rota (G0)
 
 - A leitura financeira passou a exigir inventário recente, identidade da aeronave, identificador de rota e aeroportos observados no jogo. Registros de outras rotas são excluídos da amostra de 24 horas, inclusive após trocas de rota. A leitura inválida revoga a amostra anterior; caches legados sem correlação não aparecem como evidência financeira da rota atual.

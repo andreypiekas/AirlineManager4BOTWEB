@@ -289,6 +289,10 @@ const translations = {
       'Encargos específicos da escala a confirmar': 'Stopover-specific charges unverified',
       'Não confirmado': 'Unverified',
       'Preço exibido no detalhe': 'Displayed detail price',
+      'Subtotal indicativo de uma aeronave (sem taxa da rota)': 'Indicative subtotal for one aircraft (excluding route fee)',
+      'Preço indicativo da aeronave': 'Indicative aircraft price',
+      'Hangar para uma aeronave (cotação atual)': 'Hangar for one aircraft (current quote)',
+      'Investimento final a confirmar': 'Final investment requires verification',
       'Triagem física direta': 'Direct physical screening',
       'Escala exploratória': 'Exploratory stopover',
       'Trechos estimados pelo mapa': 'Map-estimated legs',
@@ -515,6 +519,21 @@ assert.equal(operatingMarketText({fuel:{price:600, observed_at:marketNow-5, expi
   co2:{price:100, observed_at:marketNow-60, expires_at:marketNow-1}}),
   'Fuel quote (USD/1000): $600 · CO₂ quote (USD/1000): Unknown');
 const previewMetrics = document.createElement('div');
+const capitalMetrics = document.createElement('div');
+const capitalQuote = {source:'displayed_capital_quotes_v1', purchase_eligible:false,
+  expires_at:marketNow+60, aircraft_price_source:'observed_variant',
+  components:{aircraft:100,hangar:20,hub:50}, displayed_subtotal:170};
+appendCapitalQuotePreview(capitalMetrics, {capital_quote_preview:capitalQuote});
+assert.equal(capitalMetrics.children[0].children[1].textContent, '$100 · Observed variant');
+assert.equal(capitalMetrics.children[2].children[0].textContent, 'Indicative subtotal for one aircraft (excluding route fee)');
+assert.equal(capitalMetrics.children[2].children[1].textContent, '$170');
+const partialCapital = document.createElement('div');
+appendCapitalQuotePreview(partialCapital, {capital_quote_preview:{...capitalQuote,
+  components:{aircraft:100,hangar:null},displayed_subtotal:null}});
+assert.equal(partialCapital.children.length, 3);
+const expiredCapital = document.createElement('div');
+appendCapitalQuotePreview(expiredCapital, {capital_quote_preview:{...capitalQuote, expires_at:marketNow-1}});
+assert.equal(expiredCapital.children.length, 0);
 const preview = {source:'route_optimizer_what_if_v1', purchase_eligible:false,
   expires_at:marketNow+60, safety_margin_fraction:.1, layouts:[{
     layout:{y:10,j:2,f:1}, base:{projected_contribution_per_day:120},

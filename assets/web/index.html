@@ -1356,6 +1356,10 @@ const EN = {
   "Alcance da variante": "Variant range",
   "Capacidade da variante": "Variant capacity",
   "Preço exibido no detalhe": "Displayed detail price",
+  "Subtotal indicativo de uma aeronave (sem taxa da rota)": "Indicative subtotal for one aircraft (excluding route fee)",
+  "Preço indicativo da aeronave": "Indicative aircraft price",
+  "Hangar para uma aeronave (cotação atual)": "Hangar for one aircraft (current quote)",
+  "Investimento final a confirmar": "Final investment requires verification",
   "Valor exibido do A-check": "Displayed A-check cost",
   "Intervalo exibido de manutenção": "Displayed maintenance interval",
   "Margem sobre receita": "Revenue margin",
@@ -2098,6 +2102,21 @@ function appendPhysicalFeasibility(metrics, task) {
     addHubMetric(metrics, "Regras da escala a confirmar", tr("Não confirmado"));
   }
 }
+function appendCapitalQuotePreview(metrics, task) {
+  const quote = task.capital_quote_preview;
+  if (!quote || quote.source !== "displayed_capital_quotes_v1" || quote.purchase_eligible !== false ||
+      !Number.isFinite(quote.expires_at) || Date.now() / 1000 >= quote.expires_at || !quote.components) { return; }
+  const components = quote.components;
+  if (Number.isFinite(components.aircraft)) {
+    addHubMetric(metrics, "Preço indicativo da aeronave", hubMoney(components.aircraft) + " · " +
+      tr(quote.aircraft_price_source === "observed_variant" ? "Variante observada" : "Catálogo do modelo"));
+  }
+  addHubMetric(metrics, "Hangar para uma aeronave (cotação atual)", hubMoney(components.hangar));
+  if (Number.isFinite(quote.displayed_subtotal)) {
+    addHubMetric(metrics, "Subtotal indicativo de uma aeronave (sem taxa da rota)", hubMoney(quote.displayed_subtotal));
+  }
+  addHubMetric(metrics, "Investimento final a confirmar", tr("Não confirmado"));
+}
 function appendEngineDetail(metrics, task) {
   const evidence = task.engine_detail;
   const now = Date.now() / 1000;
@@ -2838,6 +2857,7 @@ function renderHubRecommendations(report) {
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
     appendEngineDetail(metrics, task);
+    appendCapitalQuotePreview(metrics, task);
     appendPhysicalFeasibility(metrics, task);
     appendResearchEconomicsPreview(metrics, task);
     addHubMetric(metrics, "ROI", tr("Desconhecido"));
@@ -3543,6 +3563,7 @@ function renderExternalHubResearch(page) {
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
     appendEngineDetail(metrics, task);
+    appendCapitalQuotePreview(metrics, task);
     appendPhysicalFeasibility(metrics, task);
     appendResearchEconomicsPreview(metrics, task);
     const reasons = document.createElement("ul"); reasons.className = "hub-research-reasons";

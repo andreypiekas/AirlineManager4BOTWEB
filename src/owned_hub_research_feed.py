@@ -15,6 +15,7 @@ from collections import defaultdict
 from typing import Optional
 
 from engine_detail import validate_metrics
+from fleet_commitment_observations import MAX_AGE as FLEET_MAX_AGE, SOURCE as FLEET_SOURCE, _hangar
 from route_detail_evidence import current_detail
 from market import recent_market_quotes
 from research_economics_preview import research_economics_preview, research_mode
@@ -99,6 +100,49 @@ def _external_cost_preview(hub: dict, budget: dict) -> dict:
             if price is not None and available is not None else None,
             "total_investment": None, "cash_after_purchase": None,
             "roi": None, "payback_days": None}
+
+
+def _current_hangar_quote(observations: object, now: float) -> dict | None:
+    if (not isinstance(observations, dict) or observations.get("source") != FLEET_SOURCE
+            or observations.get("status") not in ("observed", "partial")):
+        return None
+    stamp = _positive_number(observations.get("observed_at"))
+    if stamp is None or not 0 <= now - stamp <= FLEET_MAX_AGE:
+        return None
+    hangar = _hangar(observations.get("passenger_hangar"))
+    if hangar is None:
+        return None
+    quote = hangar.get("upgrade_quotes", {}).get("1")
+    return {"observed_at": stamp, "expires_at": stamp + FLEET_MAX_AGE,
+            "free_slots": hangar["free"],
+            "displayed_cost": (0 if hangar["free"] else quote["cost"] if quote else None),
+            "displayed_duration_seconds": (0 if hangar["free"] else
+                                           quote["duration_seconds"] if quote else None)}
+
+
+def _capital_quote_preview(model: dict, variant: dict | None, market_stamp: float,
+                           hangar: dict | None, hub: dict | None) -> dict:
+    """Combine displayed amounts for one aircraft, retaining unknown final costs."""
+    detail = (variant or {}).get("engine_detail") or {}
+    displayed = (detail.get("metrics", {}).get("displayed_cost_usd")
+                 if variant and variant["engine_available"] and detail.get("model_identity_verified") is True
+                 else None)
+    aircraft = displayed if displayed is not None else model["catalog_price"]
+    aircraft_stamp = detail["observed_at"] if displayed is not None else market_stamp
+    components = {"aircraft": aircraft, "hangar": hangar["displayed_cost"] if hangar else None}
+    expiries = [aircraft_stamp + MAX_EVIDENCE_AGE]
+    if hangar:
+        expiries.append(hangar["expires_at"])
+    if hub is not None:
+        components["hub"] = hub["hub_price"]
+        if hub["hub_price"] is not None:
+            expiries.append(hub["hub_price_observed_at"] + MAX_EVIDENCE_AGE)
+    subtotal = sum(components.values()) if all(value is not None for value in components.values()) else None
+    return {"source": "displayed_capital_quotes_v1", "purchase_eligible": False,
+            "aircraft_price_source": "observed_variant" if displayed is not None else "catalog_model",
+            "components": components, "hangar_observation": hangar,
+            "displayed_subtotal": subtotal, "expires_at": min(expiries),
+            "route_fee": None, "total_investment": None, "payback_days": None, "roi": None}
 
 
 def _models(raw: object) -> list[dict]:
@@ -260,7 +304,8 @@ def build_external_hub_research_queue(
     inventory = {"source": "game_purchase_catalog" if catalog_verified else None,
                  "observed_at": max((row["observed_at"] for row in hubs), default=None),
                  "hubs": hubs, "ownership_observed_at": ownership.get("observed_at")
-                 if ownership_verified else None}
+                 if ownership_verified else None,
+                 "fleet_commitment_observations": ownership.get("fleet_commitment_observations")}
     return _build_hub_research_queue(
         inventory, external.get("samples", []), market, now=now, max_items=max_items,
         engines=engines, offset=offset, expected_fingerprint=expected_fingerprint,
@@ -293,6 +338,7 @@ def _build_hub_research_queue(
     fleet_occupancy = FleetRouteOccupancy(route_report, now)
     max_items = max_items if type(max_items) is int and 1 <= max_items <= 200 else 40
     inventory = inventory if isinstance(inventory, dict) else {}
+    hangar_quote = _current_hangar_quote(inventory.get("fleet_commitment_observations"), now)
     market = market if isinstance(market, dict) else {}
     engines = engines if isinstance(engines, dict) else {}
     external_budget = external_budget or {}
@@ -444,6 +490,7 @@ def _build_hub_research_queue(
             "external_budget": external_budget} if external else {}),
         "market_source": market.get("source"),
         "market_observed_at": market.get("observed_at"),
+        "hangar_quote": hangar_quote,
         **({"operating_market": operating_market} if any(operating_market.values()) else {}),
         **({"preview_mode": mode_key, "preview_margin": preview_margin,
             "mode_read_at": operating_market_stats.mode_read_at} if mode_key else {}),
@@ -592,6 +639,8 @@ def _build_hub_research_queue(
                     "physical_feasibility": physical,
                     **({"stopover_research": stopover} if stopover else {}),
                     "final_aircraft_price": None,
+                    "capital_quote_preview": _capital_quote_preview(
+                        model, variant, market["observed_at"], hangar_quote, preview if external else None),
                     **({"external_cost_preview": preview} if external else {}),
                     "economics_preview": economics,
                     "daily_net_profit": None, "status": "pesquisa_pendente",
