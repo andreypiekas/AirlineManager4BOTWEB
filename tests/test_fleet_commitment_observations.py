@@ -9,6 +9,7 @@ import game_observations
 from fleet_commitment_observations import (
     FILENAME, PARKED_FLEET_JS, PASSENGER_HANGAR_JS, PENDING_FLEET_JS, SOURCE,
     _fleet_list, _hangar, collect_fleet_commitment_observations, observations_snapshot,
+    reconcile_route_coverage,
 )
 from hub_registry import HubRegistry
 from portfolio_planner import compare_portfolio
@@ -101,6 +102,69 @@ def test_portfolio_exposes_missing_or_full_hangar_without_certifying_orders():
     assert "pedidos_pendentes_a_conciliar" in result["blocking_reasons"]
     report["fleet_commitment_observations"] = {"status": "unverified"}
     assert "vagas_hangar_a_confirmar" in compare_portfolio(report)["blocking_reasons"]
+
+
+@pytest.mark.parametrize("parked,pending,audited_parked,audited_pending,status", [
+    (0, 0, 0, 0, "matched"), (0, 2, 0, 2, "matched"),
+    (1, 2, 1, 2, "matched"), (0, 2, 1, 2, "different"),
+    (1, 2, 0, 2, "different"), (0, 2, 0, 1, "different"),
+])
+def test_reconcile_counts_and_portfolio_blockers(parked, pending, audited_parked, audited_pending, status):
+    now = 10000
+    observations = {"source": SOURCE, "status": "observed", "observed_at": now - 10,
+                    "parked_count": parked, "pending_fleet": {"total": pending, "maintenance": pending, "unclassified": 0}}
+    coverage = {"source": "game_roster_and_route_audit", "observed_at": now - 5,
+                "roster_observed_at": now - 30, "total": 10 + audited_parked + audited_pending,
+                "routes": 10, "parked": audited_parked, "pending": audited_pending}
+    result = reconcile_route_coverage(observations, coverage, now=now)
+    assert result == {"status": status, "native_parked_count": parked, "native_pending_count": pending,
+                      "audited_parked_count": audited_parked, "audited_pending_count": audited_pending,
+                      "unrouted_or_pending_count": audited_parked + audited_pending}
+    report = {"partial_fleet": False, "available_cash": 100, "fleet_route_reconciliation": result}
+    blockers = compare_portfolio(report, research_coverage_verified=True)["blocking_reasons"]
+    assert ("aeronaves_sem_rota_a_resolver" in blockers) == (max(parked, audited_parked) > 0)
+    assert ("contagens_frota_divergentes" in blockers) == (status == "different")
+    assert "pedidos_pendentes_a_conciliar" in blockers
+
+
+def test_reconciliation_rejects_stale_partial_and_noncontemporaneous_evidence():
+    now = 10000
+    observations = {"source": SOURCE, "status": "observed", "observed_at": now - 10,
+                    "parked_count": 1, "pending_fleet": {"total": 2, "maintenance": 2, "unclassified": 0}}
+    coverage = {"source": "game_roster_and_route_audit", "observed_at": now - 5,
+                "roster_observed_at": now - 30, "total": 13, "routes": 10, "parked": 1, "pending": 2}
+    for invalid in (None, {**coverage, "parked": True}, {**coverage, "total": 14},
+                    {**coverage, "roster_observed_at": now - 901}, {**coverage, "observed_at": now + 1}):
+        result = reconcile_route_coverage(observations, invalid, now=now)
+        assert result["status"] == "native_only"
+        assert result["audited_parked_count"] is None
+        blockers = compare_portfolio({"fleet_route_reconciliation": result})["blocking_reasons"]
+        assert "aeronaves_sem_rota_a_resolver" in blockers
+        assert "aeronaves_sem_rota_a_confirmar" in blockers
+    assert reconcile_route_coverage(observations, {**coverage, "roster_observed_at": now - 200}, now=now)["status"] == "not_contemporaneous"
+    for invalid in ({}, {**observations, "observed_at": now - 901}, {**observations, "parked_count": False}):
+        result = reconcile_route_coverage(invalid, coverage, now=now)
+        assert result["status"] != "matched"
+        assert result["native_parked_count"] is None
+        assert result["audited_parked_count"] == 1
+    assert reconcile_route_coverage({}, None, now=now)["status"] == "unverified"
+
+
+def test_hub_snapshot_only_reconciles_verified_current_roster(tmp_path):
+    now = 10000
+    (tmp_path / FILENAME).write_text(json.dumps({"source": SOURCE, "observed_at": now - 10,
+        "parked_count": 0, "pending_fleet": {"total": 1, "maintenance": 1, "unclassified": 0}}), encoding="utf-8")
+    coverage = {"source": "game_roster_and_route_audit", "observed_at": now - 5,
+                "roster_observed_at": now - 30, "total": 2, "routes": 1, "parked": 0, "pending": 1}
+    routes = {"current_roster_available": True, "current_fleet_coverage_verified": True,
+              "current_relations": [{"aircraft_id": "12345678"}, {"aircraft_id": "23456789"}], "fleet_coverage": coverage}
+    registry = HubRegistry(tmp_path / "hubs.json")
+    snapshot = registry.snapshot(routes, now=now)
+    assert snapshot["fleet_route_reconciliation"]["status"] == "matched"
+    assert snapshot["partial_fleet"] is True
+    assert "12345678" not in json.dumps(snapshot["fleet_route_reconciliation"])
+    snapshot = registry.snapshot({**routes, "current_fleet_coverage_verified": False}, now=now)
+    assert snapshot["fleet_route_reconciliation"]["status"] == "native_only"
 
 
 def test_expansion_quote_does_not_certify_capacity_or_final_cost():

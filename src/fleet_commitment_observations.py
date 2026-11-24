@@ -174,6 +174,52 @@ def observations_snapshot(path: Path | None = None, *, now: float | None = None)
             "parked_count": parked}
 
 
+def reconcile_route_coverage(observations: dict, coverage: dict | None, *, now: float) -> dict:
+    """Compare current native lists with the independently audited roster counts."""
+    result = {"status": "unverified", "native_parked_count": None, "native_pending_count": None,
+              "audited_parked_count": None, "audited_pending_count": None,
+              "unrouted_or_pending_count": None}
+
+    def current(stamp):
+        return type(stamp) in (int, float) and 0 < stamp <= now and now - stamp <= MAX_AGE
+
+    stamp = observations.get("observed_at")
+    native_current = (observations.get("source") == SOURCE and observations.get("status") in ("observed", "partial")
+                      and current(stamp))
+    parked = observations.get("parked_count")
+    pending = observations.get("pending_fleet")
+    if native_current and _count(parked):
+        result["native_parked_count"] = parked
+        result["status"] = "native_only"
+    if (native_current and isinstance(pending, dict)
+            and all(_count(pending.get(key)) for key in ("total", "maintenance", "unclassified"))
+            and pending["total"] == pending["maintenance"] + pending["unclassified"]):
+        result["native_pending_count"] = pending["total"]
+        result["status"] = "native_only"
+    if not isinstance(coverage, dict) or coverage.get("source") != "game_roster_and_route_audit":
+        return result
+    keys = ("total", "routes", "parked", "pending")
+    audited_at = coverage.get("observed_at")
+    roster_at = coverage.get("roster_observed_at")
+    if (not all(_count(coverage.get(key)) for key in keys)
+            or coverage["total"] != sum(coverage[key] for key in keys[1:])
+            or not current(audited_at) or not current(roster_at) or roster_at > audited_at):
+        return result
+    result.update(audited_parked_count=coverage["parked"], audited_pending_count=coverage["pending"],
+                  unrouted_or_pending_count=coverage["total"] - coverage["routes"])
+    if result["native_parked_count"] is not None and result["native_pending_count"] is not None:
+        if max(stamp, audited_at) - min(stamp, roster_at) > MAX_WINDOW:
+            result["status"] = "not_contemporaneous"
+        else:
+            result["status"] = ("matched" if parked == coverage["parked"] and pending["total"] == coverage["pending"]
+                                else "different")
+    elif result["status"] == "unverified":
+        result["status"] = "audit_only"
+    else:
+        result["status"] = "partial"
+    return result
+
+
 def collect_fleet_commitment_observations(bot, *, path=None):
     """Refresh native fragments without maintenance, route, or purchase mutations."""
     from game_observations import _stable_read

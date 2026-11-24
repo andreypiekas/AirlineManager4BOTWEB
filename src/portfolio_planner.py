@@ -145,6 +145,19 @@ def compare_portfolio(
             blockers.append("vagas_hangar_a_confirmar")
         elif hangar["free"] == 0:
             blockers.append("hangar_sem_vaga")
+    if "fleet_route_reconciliation" in report:
+        reconciliation = report.get("fleet_route_reconciliation")
+        reconciliation = reconciliation if isinstance(reconciliation, Mapping) else {}
+        counts = (reconciliation.get("native_parked_count"), reconciliation.get("audited_parked_count"))
+        pending = (reconciliation.get("native_pending_count"), reconciliation.get("audited_pending_count"))
+        if any(type(count) is int and count > 0 for count in counts):
+            blockers.append("aeronaves_sem_rota_a_resolver")
+        complete_counts = all(type(count) is int and count >= 0 for count in counts + pending)
+        if reconciliation.get("status") == "different" or (complete_counts and
+                reconciliation.get("status") == "matched" and (counts[0] != counts[1] or pending[0] != pending[1])):
+            blockers.append("contagens_frota_divergentes")
+        elif reconciliation.get("status") != "matched" or not complete_counts:
+            blockers.append("aeronaves_sem_rota_a_confirmar")
 
     available_cash = _number(report.get("available_cash"))
     obligations = _number(committed_cash) if commitments_verified is True else None

@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A7, conciliação das contagens da frota (G0)
+
+- O inventário cruza as contagens nativas das listas de aeronaves estacionadas e pendentes com as contagens da auditoria integral de rotas e do inventário de aeronaves. Exige evidências atuais (até 15 minutos) e proximidade temporal de até 120 segundos entre a observação nativa, o início do inventário e a conclusão da auditoria. Registra coincidência, divergência, observações em horários distintos, fonte única ou cobertura parcial, sem persistir identificadores adicionais.
+- A comparação global bloqueia a conclusão quando existe aeronave estacionada a resolver, contagem divergente ou ausência de conciliação válida. Uma contagem positiva de qualquer fonte atual mantém o bloqueio. O painel PT/EN apresenta o resultado e as contagens da auditoria junto às nativas. A soma de estacionadas e pendentes não representa encomendas nem prova identidade individual, vínculo permanente ao hub ou compromissos financeiros; estes continuam pendentes.
+- A janela de 120 segundos é conservadora e poderá limitar a conciliação em ciclos extensos. A coleta nativa atualmente ocorre depois das demais etapas operacionais, portanto a coincidência temporal precisa de homologação autenticada e poderá exigir aproximação das coletas no ciclo. G0 permanece ativo, sem aquisição real.
+- Validação Windows: 1.838 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). O teste inicial da interface falhou por retenção de dados no cenário sintético e foi corrigido antes da suíte final. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A4/A7, limites de investimento e aquisições em 24 horas (G0)
 
 - O diário de investimentos passou a retornar, em uma única consulta isolada por perfil, as reservas atuais e as intenções confirmadas nas últimas 24 horas. Os estados APPROVED, PRECHECKED, SUBMITTED e UNKNOWN mantêm a reserva mesmo quando anteriores à janela. As confirmações são contabilizadas uma única vez, seguindo a mesma regra dos executores.

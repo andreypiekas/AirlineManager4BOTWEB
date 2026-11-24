@@ -1086,6 +1086,8 @@ const EN = {
   "Prova do gasto do período não confirmada": "Period spending evidence unverified",
   "Prova do limite do período não confirmada": "Period limit evidence unverified",
   "Aeronaves sem rota precisam de solução": "Unrouted aircraft require resolution",
+  "Contagens da frota divergentes": "Fleet counts differ",
+  "Aeronaves sem rota a confirmar": "Unrouted aircraft need verification",
   "Formato das avaliações A3 inválido": "Invalid A3 evaluation format",
   "Avaliações A3 inválidas ou conflitantes": "Invalid or conflicting A3 evaluations",
   "Avaliações A3 incompatíveis": "Incompatible A3 evaluations",
@@ -1196,6 +1198,14 @@ const EN = {
   "Em manutenção pendente": "Pending maintenance",
   "Pendências sem classificação": "Unclassified pending statuses",
   "Encomendas e compromissos financeiros a conciliar": "Orders and financial commitments need reconciliation",
+  "Conciliação das contagens da frota": "Fleet count reconciliation",
+  "Contagens coincidentes": "Matching counts",
+  "Observações em horários distintos": "Observations at different times",
+  "Somente lista nativa": "Native list only",
+  "Somente auditoria de rotas": "Route audit only",
+  "Estacionadas na auditoria": "Parked in audit",
+  "Pendentes na auditoria": "Pending in audit",
+  "Contagens agregadas não comprovam identidades ou encomendas": "Aggregate counts do not verify identities or orders",
   "Pesquisa ainda pendente": "Research pending",
   "Indisponível": "Unavailable",
   "Mais possibilidades aguardam pesquisa.": "Additional possibilities await research.",
@@ -2236,6 +2246,8 @@ const hubResearchBlockerLabels = {
   evidencia_period_spent_a_confirmar: "Prova do gasto do período não confirmada",
   evidencia_period_limit_a_confirmar: "Prova do limite do período não confirmada",
   aeronaves_sem_rota_a_resolver: "Aeronaves sem rota precisam de solução",
+  contagens_frota_divergentes: "Contagens da frota divergentes",
+  aeronaves_sem_rota_a_confirmar: "Aeronaves sem rota a confirmar",
   formato_avaliacoes_a3_invalido: "Formato das avaliações A3 inválido",
   avaliacoes_a3_invalidas_ou_conflitantes: "Avaliações A3 inválidas ou conflitantes",
   avaliacoes_a3_incompativeis: "Avaliações A3 incompatíveis",
@@ -2684,6 +2696,17 @@ function renderHubRecommendations(report) {
           (duration ? " (" + tr("Prazo exibido") + ": " + duration + ")" : "");
       }
     }
+  }
+  const reconciliation = report.fleet_route_reconciliation;
+  if (reconciliation) {
+    const labels = {matched: "Contagens coincidentes", different: "Contagens da frota divergentes",
+      not_contemporaneous: "Observações em horários distintos", native_only: "Somente lista nativa",
+      audit_only: "Somente auditoria de rotas", partial: "Cobertura parcial"};
+    const countText = value => Number.isSafeInteger(value) && value >= 0 ? nf.format(value) : tr("Indisponível");
+    $("hubResearchQueueStatus").textContent += " · " + tr("Conciliação das contagens da frota") + ": " +
+      tr(labels[reconciliation.status] || "Indisponível") + " · " + tr("Estacionadas na auditoria") + ": " +
+      countText(reconciliation.audited_parked_count) + " · " + tr("Pendentes na auditoria") + ": " +
+      countText(reconciliation.audited_pending_count) + " · " + tr("Contagens agregadas não comprovam identidades ou encomendas");
   }
   $("hubResearchPrev").disabled = !paged || researchQueue.offset <= 0;
   $("hubResearchNext").disabled = !paged || researchQueue.next_offset == null;

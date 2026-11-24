@@ -282,6 +282,7 @@ class WebDashboard:
         }
         report["engine_order_list_coverage"] = engines.get("order_list_coverage")
         report["fleet_commitment_observations"] = inventory.get("fleet_commitment_observations")
+        report["fleet_route_reconciliation"] = inventory.get("fleet_route_reconciliation")
         report["finance_observations"] = inventory.get("finance_observations")
         owned_ids = {hub["id"] for hub in inventory.get("hubs", [])
                      if isinstance(hub, dict) and isinstance(hub.get("id"), str)}

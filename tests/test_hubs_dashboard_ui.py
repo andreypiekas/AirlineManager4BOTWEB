@@ -342,6 +342,12 @@ const translations = {
   'Pendências sem classificação': 'Unclassified pending statuses',
   'Aeronaves estacionadas': 'Parked aircraft',
   'Encomendas e compromissos financeiros a conciliar': 'Orders and financial commitments need reconciliation',
+  'Conciliação das contagens da frota': 'Fleet count reconciliation',
+  'Contagens coincidentes': 'Matching counts',
+  'Contagens da frota divergentes': 'Fleet counts differ',
+  'Estacionadas na auditoria': 'Parked in audit',
+  'Pendentes na auditoria': 'Pending in audit',
+  'Contagens agregadas não comprovam identidades ou encomendas': 'Aggregate counts do not verify identities or orders',
   'Cotação de combustível (USD/1000)': 'Fuel quote (USD/1000)',
   'Cotação de CO₂ (USD/1000)': 'CO₂ quote (USD/1000)',
   'Pesquisa ainda pendente': 'Research pending',
@@ -441,11 +447,19 @@ delete report.engine_order_list_coverage;
 report.fleet_commitment_observations = {status:'observed', passenger_hangar:{capacity:223,occupied:223,free:0,
   upgrade_quotes:{'1':{cost:190835956,duration_seconds:1080},'10':{cost:1908359562,duration_seconds:10740}}},
   pending_fleet:{total:11,maintenance:11,unclassified:0}, parked_count:0};
+report.fleet_route_reconciliation = {status:'matched',native_parked_count:0,native_pending_count:11,
+  audited_parked_count:0,audited_pending_count:11,unrouted_or_pending_count:11};
 renderHubRecommendations(report);
 assert.match($('hubResearchQueueStatus').textContent, /Passenger hangar: Free slots 0\/223/);
 assert.match($('hubResearchQueueStatus').textContent, /Pending aircraft in fleet: 11 \(Pending maintenance: 11, Unclassified pending statuses: 0\)/);
 assert.match($('hubResearchQueueStatus').textContent, /Parked aircraft: 0/);
 assert.match($('hubResearchQueueStatus').textContent, /Orders and financial commitments need reconciliation/);
+assert.match($('hubResearchQueueStatus').textContent, /Fleet count reconciliation: Matching counts/);
+assert.match($('hubResearchQueueStatus').textContent, /Parked in audit: 0.*Pending in audit: 11/);
+assert.match($('hubResearchQueueStatus').textContent, /Aggregate counts do not verify identities or orders/);
+report.fleet_route_reconciliation.status = 'different';
+renderHubRecommendations(report);
+assert.match($('hubResearchQueueStatus').textContent, /Fleet count reconciliation: Fleet counts differ/);
 assert.match($('hubResearchQueueStatus').textContent, /Hangar expansion \(displayed quote\) \+1: \$190835956 \(Displayed duration: 00:18:00\)/);
 assert.match($('hubResearchQueueStatus').textContent, /Hangar expansion \(displayed quote\) \+10: \$1908359562 \(Displayed duration: 02:59:00\)/);
 report.fleet_commitment_observations = {status:'unverified', passenger_hangar:null, pending_fleet:null, parked_count:null};
@@ -454,6 +468,7 @@ assert.match($('hubResearchQueueStatus').textContent, /Passenger hangar: Unavail
 assert.match($('hubResearchQueueStatus').textContent, /Parked aircraft: Unavailable/);
 assert.doesNotMatch($('hubResearchQueueStatus').textContent, /Hangar expansion/);
 delete report.fleet_commitment_observations;
+delete report.fleet_route_reconciliation;
 renderHubRecommendations(report);
 const marketNow = Date.now() / 1000;
 const fleetMetrics = document.createElement('div');
