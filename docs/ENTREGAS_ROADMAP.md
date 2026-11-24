@@ -4,7 +4,7 @@
 
 - O bot conserva cotações de formulários nativos somente após duas leituras consistentes de identidade, distância, taxa, ocupação e tarifas Y/J/F. A simulação também coleta a cotação, sem enviar o formulário. A coleção é limitada a 256 registros recentes, isolada por perfil e consolidada no snapshot privado do ciclo.
 - A observação identifica a aeronave existente e a escala quando aplicável. Demanda total de escala é preservada separadamente; demanda residual permanece desconhecida. A API de resumo expõe apenas a quantidade de cotações recentes. A cotação não comprova preço de rota para uma futura encomenda e permanece inelegível para compra.
-- Validação Windows: 84 testes direcionados aprovados, Ruff e `git diff --check` aprovados. A coleta ainda requer homologação Selenium autenticada. Permanecem pendentes a comprovação de demanda residual e preço de futuras rotas, a alimentação de oportunidades elegíveis A3 e as demais fases do roadmap. Nenhuma transação real executada.
+- Validação Windows: 84 testes direcionados aprovados; suíte Windows ampliada: 1.994 aprovados e 1 ignorado, com `tests/test_instalacao_linux.py` excluído por depender de Linux. Ruff e `git diff --check` aprovados. A coleta ainda requer homologação Selenium autenticada. Permanecem pendentes a comprovação de demanda residual e preço de futuras rotas, a alimentação de oportunidades elegíveis A3 e as demais fases do roadmap. Nenhuma transação real executada.
 
 ## 2026-11-24 — Autonomia Total A3/A5, validação das tarifas nativas de rota (G0)
 
