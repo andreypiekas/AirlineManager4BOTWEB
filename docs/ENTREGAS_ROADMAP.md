@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A7, peso de retorno no ranking (G0)
+
+- A política por perfil passa a oferecer `return_weight` de 0 a 100, com padrão zero para preservar o ranking anterior. O painel PT/EN salva o valor pela API autenticada e os planejadores consideram o peso na composição do score. Uma política baseada exclusivamente em retorno é válida; valores inválidos e a ausência de qualquer peso positivo são recusados.
+- O retorno auditado usa o ROI de 365 dias comprovado pela avaliação A3. Na comparação preliminar, o índice normalizado equivale à eficiência diária do capital, porque a anualização é proporcional. O painel explica essa relação para evitar interpretar os dois pesos como evidências econômicas independentes.
+- Validação: 175 testes direcionados e 2.052 testes da suíte Windows aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Nenhuma transação real executada. A integração do ciclo ao executor produtivo depende de sua homologação; o ciclo operacional do bot não encerra automaticamente o orçamento persistente. Permanecem pendentes a cobertura econômica real e a homologação das fases A0–A9. Rollback por reversão deste commit na branch de trabalho; configurações existentes mantêm os demais pesos.
+
 ## 2026-11-24 — Autonomia Total A4/A7, saldo persistente do ciclo no planejamento (G0)
 
 - O planejador auditado e a API consultam o ciclo ativo e as reservas do diário SQLite em uma única transação de leitura. As confirmações vinculadas ao ciclo continuam contabilizadas mesmo fora da janela móvel de 24 horas. O orçamento disponível respeita simultaneamente o limite local vigente e o limite auditado, adotando o menor saldo restante para evitar dupla contagem de observações possivelmente sobrepostas.

@@ -36,6 +36,7 @@ def test_nova_politica_de_investimento_inicia_desligada(defaults):
     assert defaults.getint("investment", "max_payback_days") == 0
     assert defaults.getint("investment", "profit_weight") == 60
     assert defaults.getint("investment", "efficiency_weight") == 40
+    assert defaults.getint("investment", "return_weight") == 0
     assert defaults.getint("investment", "risk_weight") == 0
     assert defaults.getint("investment", "confidence_weight") == 0
     assert defaults.getint("investment", "diversification_weight") == 0

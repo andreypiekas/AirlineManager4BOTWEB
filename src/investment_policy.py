@@ -26,6 +26,7 @@ class InvestmentPolicy:
     max_payback_days: int = 0
     profit_weight: int = 60
     efficiency_weight: int = 40
+    return_weight: int = 0
     risk_weight: int = 0
     confidence_weight: int = 0
     diversification_weight: int = 0
@@ -52,7 +53,7 @@ class InvestmentPolicy:
                   ("max_payback_days", 3650, 0), ("profit_weight", 100, 60),
                   ("efficiency_weight", 100, 40), ("risk_weight", 100, 0),
                   ("confidence_weight", 100, 0), ("diversification_weight", 100, 0),
-                  ("max_cycle_spend", 10**15, 0))
+                  ("max_cycle_spend", 10**15, 0), ("return_weight", 100, 0))
         for key, upper, fallback in bounds:
             raw = read(key, str(fallback)).strip()
             if not raw.isascii() or not raw.isdecimal() or len(raw) > 16 or int(raw) > upper:
@@ -60,7 +61,7 @@ class InvestmentPolicy:
                 limits.append(0)
             else:
                 limits.append(int(raw))
-        if not any(limits[5:10]):
+        if not any(limits[5:10]) and not limits[11]:
             valid = False
 
         return cls(
@@ -75,6 +76,7 @@ class InvestmentPolicy:
             max_payback_days=limits[4],
             profit_weight=limits[5],
             efficiency_weight=limits[6],
+            return_weight=limits[11],
             risk_weight=limits[7],
             confidence_weight=limits[8],
             diversification_weight=limits[9],
@@ -113,6 +115,7 @@ class InvestmentPolicy:
             "max_payback_days": self.max_payback_days,
             "profit_weight": self.profit_weight,
             "efficiency_weight": self.efficiency_weight,
+            "return_weight": self.return_weight,
             "risk_weight": self.risk_weight,
             "confidence_weight": self.confidence_weight,
             "diversification_weight": self.diversification_weight,

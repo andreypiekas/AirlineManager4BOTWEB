@@ -142,7 +142,7 @@ def test_investment_policy_controls_have_labels_and_separate_endpoints():
                        "investmentSingle", "investmentDaily", "investmentCycle", "investmentCount",
                        "investmentMinProfit", "investmentPayback"):
         assert page.controls[identifier]["nested_label"], identifier
-    for identifier in ("investmentProfitWeight", "investmentEfficiencyWeight",
+    for identifier in ("investmentProfitWeight", "investmentEfficiencyWeight", "investmentReturnWeight",
                        "investmentRiskWeight", "investmentConfidenceWeight",
                        "investmentDiversificationWeight"):
         assert page.controls[identifier]["nested_label"], identifier

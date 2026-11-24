@@ -275,6 +275,15 @@ def test_a4_api_enforces_live_policy_and_rolling_journal(registry, monkeypatch):
         assert result["purchase_plan_preview"] is not None, result["purchase_plan_blockers"]
         assert result["portfolio"]["local_period_limits"]["remaining_acquisitions"] == 1
 
+        cfg.set("investment", "profit_weight", 0)
+        cfg.set("investment", "efficiency_weight", 0)
+        cfg.set("investment", "return_weight", 100)
+        status, result = request(port, "GET", endpoint, headers=auth())
+        assert status == 200
+        assert result["portfolio"]["criteria"]["return_weight"] == 100
+        assert result["portfolio"]["best"]["score_components"] == {"return": 1.0}
+        assert result["purchase_plan_preview"] is not None
+
         cfg.set("investment", "max_cycle_spend", 10000)
         status, result = request(port, "GET", endpoint, headers=auth())
         assert status == 200

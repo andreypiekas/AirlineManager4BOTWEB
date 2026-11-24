@@ -396,6 +396,7 @@ class WebDashboard:
                               else None),
             profit_weight=investment_policy.profit_weight,
             efficiency_weight=investment_policy.efficiency_weight,
+            return_weight=investment_policy.return_weight,
             risk_weight=investment_policy.risk_weight,
             confidence_weight=investment_policy.confidence_weight,
             diversification_weight=investment_policy.diversification_weight,
@@ -466,6 +467,7 @@ class WebDashboard:
             max_payback_days=policy.max_payback_days or None,
             profit_weight=policy.profit_weight,
             efficiency_weight=policy.efficiency_weight,
+            return_weight=policy.return_weight,
             risk_weight=policy.risk_weight,
             confidence_weight=policy.confidence_weight,
             diversification_weight=policy.diversification_weight,
@@ -618,7 +620,7 @@ class WebDashboard:
         fields = {"planning_enabled", "mode", "auto_buy_aircraft", "auto_buy_hub",
                   "max_single_investment", "max_daily_spend", "max_cycle_spend", "max_acquisitions_per_day",
                   "min_daily_profit", "max_payback_days", "profit_weight", "efficiency_weight",
-                  "risk_weight", "confidence_weight", "diversification_weight"}
+                  "return_weight", "risk_weight", "confidence_weight", "diversification_weight"}
         values = payload.get("policy")
         version = payload.get("expected_version")
         if (not isinstance(values, dict) or set(values) != fields
@@ -633,12 +635,12 @@ class WebDashboard:
                            ("max_cycle_spend", 10**15),
                            ("max_acquisitions_per_day", 100), ("min_daily_profit", 10**15),
                            ("max_payback_days", 3650), ("profit_weight", 100),
-                           ("efficiency_weight", 100), ("risk_weight", 100),
+                           ("efficiency_weight", 100), ("return_weight", 100), ("risk_weight", 100),
                            ("confidence_weight", 100), ("diversification_weight", 100)):
             amount = values[key]
             if type(amount) is not int or amount < 0 or amount > upper:
                 return False, f"{key} deve ser um inteiro entre 0 e {upper}."
-        if not any(values[key] for key in ("profit_weight", "efficiency_weight", "risk_weight",
+        if not any(values[key] for key in ("profit_weight", "efficiency_weight", "return_weight", "risk_weight",
                                                "confidence_weight", "diversification_weight")):
             return False, "Configure pelo menos um peso positivo para o ranking."
         with self.cfg._lock:

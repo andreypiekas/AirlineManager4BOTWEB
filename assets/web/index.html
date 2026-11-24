@@ -688,11 +688,13 @@ footer strong { font-weight: 600; color: var(--aqua); }
             <div class="hubs-controls">
               <label class="hubs-field"><span data-t="Peso do lucro">Peso do lucro</span><input id="investmentProfitWeight" type="number" min="0" max="100" step="1" required></label>
               <label class="hubs-field"><span data-t="Peso da eficiência do capital">Peso da eficiência do capital</span><input id="investmentEfficiencyWeight" type="number" min="0" max="100" step="1" required></label>
+              <label class="hubs-field"><span data-t="Peso do retorno (ROI 365 dias)">Peso do retorno (ROI 365 dias)</span><input id="investmentReturnWeight" type="number" min="0" max="100" step="1" required></label>
               <label class="hubs-field"><span data-t="Peso do risco">Peso do risco</span><input id="investmentRiskWeight" type="number" min="0" max="100" step="1" required></label>
               <label class="hubs-field"><span data-t="Peso da confiança dos dados">Peso da confiança dos dados</span><input id="investmentConfidenceWeight" type="number" min="0" max="100" step="1" required></label>
               <label class="hubs-field"><span data-t="Peso da diversificação">Peso da diversificação</span><input id="investmentDiversificationWeight" type="number" min="0" max="100" step="1" required></label>
             </div>
             <p id="investmentPolicyContext" class="hub-section-note"></p>
+            <p class="hub-section-note" data-t="O ROI em 365 dias é proporcional à eficiência diária do capital. Os dois pesos reforçam o mesmo critério econômico.">O ROI em 365 dias é proporcional à eficiência diária do capital. Os dois pesos reforçam o mesmo critério econômico.</p>
             <div class="hub-policy-actions">
               <button type="submit" class="primary" data-t="Salvar política">Salvar política</button>
             </div>
@@ -1534,6 +1536,8 @@ const EN = {
   "Pesos relativos do ranking. Critérios sem evidência verificada tornam a comparação inconclusiva.": "Relative ranking weights. Criteria without verified evidence make the comparison inconclusive.",
   "Peso do lucro": "Profit weight",
   "Peso da eficiência do capital": "Capital efficiency weight",
+  "Peso do retorno (ROI 365 dias)": "Return weight (365-day ROI)",
+  "O ROI em 365 dias é proporcional à eficiência diária do capital. Os dois pesos reforçam o mesmo critério econômico.": "365-day ROI is proportional to daily capital efficiency. Both weights reinforce the same economic criterion.",
   "Peso do risco": "Risk weight",
   "Peso da confiança dos dados": "Data confidence weight",
   "Peso da diversificação": "Diversification weight",
@@ -3555,6 +3559,7 @@ function renderInvestmentPolicy(report) {
   $("investmentPayback").value = String(policy.max_payback_days);
   $("investmentProfitWeight").value = String(policy.profit_weight);
   $("investmentEfficiencyWeight").value = String(policy.efficiency_weight);
+  $("investmentReturnWeight").value = String(policy.return_weight);
   $("investmentRiskWeight").value = String(policy.risk_weight);
   $("investmentConfidenceWeight").value = String(policy.confidence_weight);
   $("investmentDiversificationWeight").value = String(policy.diversification_weight);
@@ -3661,6 +3666,7 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
     [$("investmentPayback").value.trim(), 3650],
     [$("investmentProfitWeight").value.trim(), 100],
     [$("investmentEfficiencyWeight").value.trim(), 100],
+    [$("investmentReturnWeight").value.trim(), 100],
     [$("investmentRiskWeight").value.trim(), 100],
     [$("investmentConfidenceWeight").value.trim(), 100],
     [$("investmentDiversificationWeight").value.trim(), 100]
@@ -3670,8 +3676,8 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
     return;
   }
   const [single, daily, cycle, count, minProfit, maxPayback, profitWeight,
-    efficiencyWeight, riskWeight, confidenceWeight, diversificationWeight] = amounts.map(([text]) => Number(text));
-  if (profitWeight + efficiencyWeight + riskWeight + confidenceWeight + diversificationWeight === 0) {
+    efficiencyWeight, returnWeight, riskWeight, confidenceWeight, diversificationWeight] = amounts.map(([text]) => Number(text));
+  if (profitWeight + efficiencyWeight + returnWeight + riskWeight + confidenceWeight + diversificationWeight === 0) {
     $("investmentPolicyStatus").textContent = tr("Configure pelo menos um peso positivo para o ranking.");
     return;
   }
@@ -3688,6 +3694,7 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
     max_payback_days: maxPayback,
     profit_weight: profitWeight,
     efficiency_weight: efficiencyWeight,
+    return_weight: returnWeight,
     risk_weight: riskWeight,
     confidence_weight: confidenceWeight,
     diversification_weight: diversificationWeight

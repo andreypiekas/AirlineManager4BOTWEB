@@ -106,6 +106,7 @@ def compare_portfolio(
     max_payback_days: object = None,
     profit_weight: float = DEFAULT_PROFIT_WEIGHT,
     efficiency_weight: float = DEFAULT_EFFICIENCY_WEIGHT,
+    return_weight: float = 0.0,
     risk_weight: float = DEFAULT_RISK_WEIGHT,
     confidence_weight: float = DEFAULT_CONFIDENCE_WEIGHT,
     diversification_weight: float = DEFAULT_DIVERSIFICATION_WEIGHT,
@@ -228,6 +229,7 @@ def compare_portfolio(
     weights = {
         "profit": _number(profit_weight),
         "capital_efficiency": _number(efficiency_weight),
+        "return": _number(return_weight),
         "risk": _number(risk_weight),
         "confidence": _number(confidence_weight),
         "diversification": _number(diversification_weight),
@@ -356,7 +358,10 @@ def compare_portfolio(
                                 / highest_efficiency)
             item["profit_index"] = round(profit_index, 6)
             item["efficiency_index"] = round(efficiency_index, 6)
-            indexes = {"profit": profit_index, "capital_efficiency": efficiency_index}
+            # For a constant annualization horizon, normalized ROI equals
+            # normalized daily capital efficiency. Do not invent a new signal.
+            indexes = {"profit": profit_index, "capital_efficiency": efficiency_index,
+                       "return": efficiency_index}
             indexes.update((dimension, item[f"{dimension}_index"])
                            for dimension in _OPTIONAL_DIMENSIONS if weights[dimension] > 0)
             contributions = {name: indexes[name] * (weight / total_weight)
@@ -395,6 +400,7 @@ def compare_portfolio(
             "max_single_investment": single_limit,
             "profit_weight": profit_weight,
             "capital_efficiency_weight": efficiency_weight,
+            "return_weight": return_weight,
             "risk_weight": risk_weight,
             "confidence_weight": confidence_weight,
             "diversification_weight": diversification_weight,

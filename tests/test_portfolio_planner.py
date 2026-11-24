@@ -269,12 +269,16 @@ def test_configurable_profit_and_efficiency_weights_change_the_global_winner():
     default = compare_complete(data)
     profit_only = compare_complete(data, profit_weight=1, efficiency_weight=0)
     efficient_only = compare_complete(data, profit_weight=0, efficiency_weight=1)
+    roi_only = compare_complete(data, profit_weight=0, efficiency_weight=0, return_weight=1)
     scaled = compare_complete(data, profit_weight=6, efficiency_weight=4)
 
     assert default["best"]["hub_id"] == "789"
     assert profit_only["best"]["hub_id"] == "789"
     assert efficient_only["best"]["hub_id"] == "123"
     assert efficient_only["best"]["score_components"] == {"capital_efficiency": 1.0}
+    assert roi_only["best"]["hub_id"] == efficient_only["best"]["hub_id"]
+    assert roi_only["best"]["score_components"] == {"return": 1.0}
+    assert roi_only["criteria"]["return_weight"] == 1
     assert scaled["alternatives"] == default["alternatives"]
     assert data == original
 

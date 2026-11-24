@@ -72,6 +72,7 @@ def test_limite_de_aquisicoes_e_criterios_invalidos_falham_fechados():
 def test_pesos_legados_e_configuracao_do_ranking_por_perfil():
     defaults = InvestmentPolicy.from_config(Config()).report()
     assert (defaults["profit_weight"], defaults["efficiency_weight"]) == (60, 40)
+    assert defaults["return_weight"] == 0
     assert (defaults["risk_weight"], defaults["confidence_weight"],
             defaults["diversification_weight"]) == (0, 0, 0)
 
@@ -83,6 +84,12 @@ def test_pesos_legados_e_configuracao_do_ranking_por_perfil():
     report = InvestmentPolicy.from_config(custom).report()
     assert report["risk_weight"] == 100
     assert "politica_invalida" not in report["blocking_reasons"]
+
+    roi_only = Config({("investment", "profit_weight"): "0",
+                       ("investment", "efficiency_weight"): "0",
+                       ("investment", "return_weight"): "100"})
+    assert InvestmentPolicy.from_config(roi_only).valid
+    assert InvestmentPolicy.from_config(roi_only).return_weight == 100
 
 
 def test_pesos_incorretos_bloqueiam_politica():
