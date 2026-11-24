@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4, controles locais de política vinculados à coleta (G0)
+
+- A coleta produtiva registra a reserva operacional e os limites configurados de investimento por ciclo e por 24 horas, com identidade de perfil e snapshot. O planejador A4 utiliza esses controles somente quando permanecem compatíveis com a política atual. Alterações ou limites ausentes exigem nova coleta; a reserva zero explícita é válida, enquanto limites de gasto zero permanecem desconfigurados.
+- Os valores configurados não comprovam gastos realizados, pedidos pendentes ou compromissos futuros. Esses controles continuam independentes e podem bloquear aquisições. Snapshots antigos preservam a compatibilidade com as evidências anteriormente registradas. Nenhuma compra real executada.
+- Validação: 56 testes direcionados aprovados; suíte Windows com 2.063 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Permanecem pendentes a alimentação produtiva A3, demanda residual, custos finais, comprovação de gastos e compromissos, calibração e homologação autenticada A0–A9.
+
 ## 2026-11-24 — Autonomia Total A9, replanejamento no ciclo operacional (G0)
 
 - Com o planejamento habilitado, o próprio worker recalcula a decisão A4 após consolidar cada snapshot produtivo, independentemente de consultas ao painel ou do envio de notificações. A execução é somente leitura, registra status e horários em arquivo privado por perfil e invalida a decisão anterior durante uma nova execução, após falha, expiração ou mudança de snapshot.

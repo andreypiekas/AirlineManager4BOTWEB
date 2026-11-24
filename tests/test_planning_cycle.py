@@ -7,7 +7,7 @@ import pytest
 
 import paths
 import planning_cycle
-from audited_game_snapshot import capture_game_snapshot
+from audited_game_snapshot import capture_game_snapshot, snapshot_summary
 from config import AppConfig
 from conftest import ROOT
 from web import WebDashboard
@@ -82,3 +82,28 @@ def test_worker_summary_rejects_wrong_profile_and_invalid_record(worker, tmp_pat
     assert planning_cycle.planning_cycle_summary()["status"] == "registro_invalido"
     path.write_text(json.dumps({**record, "eligible_count": 5}), encoding="utf-8")
     assert planning_cycle.planning_cycle_summary()["status"] == "registro_invalido"
+
+
+def test_worker_captures_policy_controls_and_revokes_changed_limits(worker):
+    worker.config.set("investment", "planning_enabled", "on")
+    worker.config.set("investment", "max_cycle_spend", 1200)
+    worker.config.set("investment", "max_daily_spend", 2400)
+    worker.config.set("settings", "cash_reserve", 0)
+    snapshot = planning_cycle.capture_and_plan(worker)
+    controls = snapshot_summary()["policy_controls"]
+    assert {name: proof["value"] for name, proof in controls.items()} == {
+        "operational_reserve": 0, "cycle_limit": 1200, "period_limit": 2400,
+    }
+    assert all(proof["source"] == "investment_policy" and proof["verified"] is True
+               and proof["profile_id"] == "isolated" and proof["snapshot_id"] == snapshot["snapshot_id"]
+               for proof in controls.values())
+    dashboard = WebDashboard(worker, worker.config, buffer=None)
+    reasons = dashboard.audited_expansion()["purchase_plan_blockers"]
+    assert all(f"evidencia_{name}_a_confirmar" not in reasons for name in controls)
+    assert "evidencia_period_spent_a_confirmar" in reasons
+    worker.config.set("investment", "max_cycle_spend", 1500)
+    reasons = dashboard.audited_expansion()["purchase_plan_blockers"]
+    assert "evidencia_cycle_limit_a_confirmar" in reasons
+    planning_cycle.capture_and_plan(worker)
+    assert snapshot_summary()["policy_controls"]["cycle_limit"]["value"] == 1500
+    assert "evidencia_cycle_limit_a_confirmar" not in dashboard.audited_expansion()["purchase_plan_blockers"]

@@ -52,7 +52,7 @@ from owned_hub_research_feed import build_external_hub_research_queue, build_own
 from research_economics_preview import configured_price_assumptions
 from route_detail_evidence import RouteDetailRegistry
 from hub_recommendations import rank_next_aircraft
-from investment_policy import InvestmentPolicy, MODES
+from investment_policy import AUDITED_POLICY_LIMITS, InvestmentPolicy, MODES, audited_policy_values
 from investment_journal import InvestmentJournal
 from route_creation import has_pending_creation
 from reroute import has_pending_reroute
@@ -448,6 +448,16 @@ class WebDashboard:
                                      ("hubs", "routes", "models", "engines", "prices")))
         stored_controls = proof.get("controls")
         controls = dict(stored_controls) if isinstance(stored_controls, dict) else {}
+        current_reserve = self.cfg.get_int("settings", "cash_reserve", -1)
+        if matching_capture and "policy_controls" in game_snapshot:
+            # Policy is local configuration, captured with the game snapshot.
+            # Never reuse a previous policy control after its value changes.
+            current_policy = audited_policy_values(policy, current_reserve)
+            for name in AUDITED_POLICY_LIMITS:
+                controls.pop(name, None)
+                captured = game_snapshot["policy_controls"].get(name)
+                if captured is not None and captured["value"] == current_policy.get(name):
+                    controls[name] = captured
         controls.pop("unrouted_aircraft_count", None)
         if fleet_verified and game_snapshot.get("unrouted_aircraft_control") is not None:
             controls["unrouted_aircraft_count"] = game_snapshot["unrouted_aircraft_control"]
@@ -464,7 +474,7 @@ class WebDashboard:
             fleet_coverage_verified=fleet_verified,
             research_coverage_verified=research_verified,
             commitments_verified=proof.get("commitments_verified") is True,
-            current_cash_reserve=self.cfg.get_int("settings", "cash_reserve", -1),
+            current_cash_reserve=current_reserve,
             max_daily_spend=policy.max_daily_spend,
             max_cycle_spend=policy.max_cycle_spend,
             max_acquisitions_per_day=policy.max_acquisitions_per_day,

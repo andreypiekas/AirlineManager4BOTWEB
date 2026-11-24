@@ -13,6 +13,7 @@ from pathlib import Path
 
 import paths
 from fleet_commitment_observations import SOURCE as HANGAR_SOURCE, _hangar
+from investment_policy import AUDITED_POLICY_LIMITS, InvestmentPolicy, audited_policy_values
 from opportunity_models import DEFAULT_MAX_AGE_SECONDS, fingerprint_snapshot
 
 FILENAME = "audited_game_snapshot.json"
@@ -57,7 +58,7 @@ def _catalog_scopes(coverage, now):
 
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                      quotes, cash, cash_at, now, mode=None, mode_at=None,
-                     preview_margin=0.10, native_quotes=(), configured_prices=None):
+                     preview_margin=0.10, native_quotes=(), configured_prices=None, policy_values=None):
     """Translate independently collected observations without upgrading their provenance."""
     hub_at = inventory.get("observed_at")
     raw_hubs = inventory.get("hubs", [])
@@ -161,6 +162,8 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                              "observed_at": cash_at if cash_verified else None,
                              "committed": None, "reserve": None},
                 }}
+    if policy_values is not None:
+        snapshot["observations"]["investment_policy"] = policy_values
     snapshot["snapshot_id"] = fingerprint_snapshot(snapshot)
     return snapshot
 
@@ -198,7 +201,10 @@ def capture_game_snapshot(bot):
                                 cash_at=cash_at, now=now, mode=mode,
                                 mode_at=stats.mode_read_at if mode else None, preview_margin=margin,
                                 native_quotes=native_route_quotes(bot, now=now),
-                                configured_prices=configured_price_assumptions(config))
+                                configured_prices=configured_price_assumptions(config),
+                                policy_values=audited_policy_values(
+                                    InvestmentPolicy.from_config(config),
+                                    config.get_int("settings", "cash_reserve", -1) if config else -1))
     paths.write_atomic(profile.data / FILENAME, json.dumps(snapshot, ensure_ascii=False, allow_nan=False),
                        private=True)
     return snapshot
@@ -320,6 +326,15 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                           if hangar is not None else None)
         for scope, valid in _catalog_scopes(observations["engine_coverage"], now).items():
             scopes[scope] = scopes[scope] and valid
+        policy_controls = {}
+        policy_values = observations.get("investment_policy")
+        if isinstance(policy_values, dict):
+            for name, (minimum, maximum) in AUDITED_POLICY_LIMITS.items():
+                value = policy_values.get(name)
+                if type(value) is int and minimum <= value <= maximum:
+                    policy_controls[name] = {"source": "investment_policy", "profile_id": snapshot["profile_id"],
+                                             "snapshot_id": snapshot["snapshot_id"], "verified": True,
+                                             "observed_at": observations["captured_at"], "value": value}
         return {"status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": observations["captured_at"],
                 "observed_at": snapshot["observed_at"],
@@ -328,6 +343,7 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                 "fleet_count": coverage["expected_aircraft_count"] if scopes["fleet"] else None,
                 "unrouted_aircraft_control": unrouted,
                 "passenger_hangar_control": hangar_control,
+                **({"policy_controls": policy_controls} if "investment_policy" in observations else {}),
                 "route_samples": len(observations["route_research"]["samples"]),
                 "native_route_quote_count": sum(_fresh(row.get("observed_at"), now)
                                                 for row in observations.get("native_route_quotes", [])),

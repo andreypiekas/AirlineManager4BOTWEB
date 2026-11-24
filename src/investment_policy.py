@@ -10,6 +10,21 @@ from typing import Any
 
 
 MODES = {"analyze", "approval", "autonomous"}
+AUDITED_POLICY_LIMITS = {
+    "operational_reserve": (0, 10**15),
+    "cycle_limit": (1, 10**15),
+    "period_limit": (1, 10**15),
+}
+
+
+def audited_policy_values(policy: InvestmentPolicy, cash_reserve: int) -> dict[str, int]:
+    """Read local policy controls, independently of actual game spending."""
+    if not policy.valid or not policy.enabled:
+        return {}
+    values = {"operational_reserve": cash_reserve, "cycle_limit": policy.max_cycle_spend,
+              "period_limit": policy.max_daily_spend}
+    return {name: value for name, value in values.items()
+            if type(value) is int and AUDITED_POLICY_LIMITS[name][0] <= value <= AUDITED_POLICY_LIMITS[name][1]}
 
 
 @dataclass(frozen=True)
