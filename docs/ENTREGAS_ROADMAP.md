@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A9, resumo financeiro observado de 24 horas (G0)
+
+- A inspeção autenticada do resumo nativo de transações confirmou o período explícito de 24 horas e nove indicadores monetários: despesas, receitas, resultado, combustível, cotas, taxas de rota, encomendas de aeronaves, hubs e passagens. A leitura agregada observada apresentou consistência entre receitas, despesas e resultado. O histórico individual exibido tem cobertura limitada e não comprova a razão financeira completa.
+- O ciclo de planejamento ganhou coleta somente leitura, com dupla leitura estável, janela de 120 segundos, validação de rótulos, valores inteiros, consistência contábil e revogação do cache por perfil antes da atualização. A evidência expira em 15 minutos. Apenas agregados são persistidos, sem nome da conta ou identificadores privados.
+- As recomendações e as métricas A9 expõem o resumo histórico, com isolamento da simulação e apresentação PT/EN. A classificação das pendências da frota foi corrigida no painel e nos logs. Os agregados não comprovam compromissos futuros, entrega de encomendas, gasto por plano ou lucro incremental por aeronave. A calibração continua pendente, G0 permanece ativo e a integração Selenium ainda requer homologação autenticada. Nenhuma aquisição foi acionada.
+- Validação Windows: 51 testes direcionados aprovados, incluindo contrato JavaScript sintético, valores negativos, consistência, expiração, isolamento e revogação. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A4/A7, cotação e prazo de ampliação do hangar (G0)
 
 - A inspeção autenticada anterior do hangar PAX cheio (223/223) mostrou duas opções nativas habilitadas: ampliação de uma vaga por US$ 190.835.956 com prazo exibido de 00:18:00 e dez vagas por US$ 1.908.359.562 com prazo de 02:59:00. Nenhuma opção foi acionada.

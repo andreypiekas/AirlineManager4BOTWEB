@@ -200,10 +200,12 @@ class HubRegistry:
         links_verified = fleet_verified and catalog_fresh and not unknown
         from owned_delivery_coverage import coverage_snapshot
         from fleet_commitment_observations import FILENAME, observations_snapshot
+        from finance_observations import FILENAME as FINANCE_FILENAME, finance_snapshot
 
         return {"hubs": result, "unconfirmed_aircraft": unknown,
                 "delivery_coverage": coverage_snapshot(self.path.with_name("owned_delivery_coverage.json"), now=now),
                 "fleet_commitment_observations": observations_snapshot(self.path.with_name(FILENAME), now=now),
+                "finance_observations": finance_snapshot(self.path.with_name(FINANCE_FILENAME), now=now),
                 "observed_at": saved.get("observed_at"), "source": saved.get("source"),
                 "partial_fleet": not links_verified, "known_aircraft": len(relations),
                 "fleet_coverage": fleet_coverage if fleet_verified else None,

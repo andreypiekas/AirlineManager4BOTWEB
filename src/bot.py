@@ -679,9 +679,12 @@ class Bot:
             self._guard(lambda: check_checklist(self), "verificar a lista de tarefas")
         if self.config.get_bool("investment", "planning_enabled"):
             from fleet_commitment_observations import collect_fleet_commitment_observations
+            from finance_observations import collect_finance_observations
 
             self._guard(lambda: collect_fleet_commitment_observations(self),
                         "conferir hangar e pendências da frota")
+            self._guard(lambda: collect_finance_observations(self),
+                        "conferir resumo financeiro das últimas 24 horas")
         if (self.config.get_bool("investment", "planning_enabled")
                 and opt("telegram_expansion")):
             from expansion_alerts import publish_expansion_alert

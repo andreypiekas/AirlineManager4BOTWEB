@@ -806,7 +806,7 @@ def manage_fleet(bot: "Bot") -> None:
         # complete read so new partial counters cannot look verified.
         bot.update_stats(parked=parked, pending=pending, fleet_count_read_at=0)
         log_fleet.warning("Contagem total da frota não confirmada no cabeçalho de rotas do jogo.")
-    log_fleet.info("%d aeronaves estacionadas sem rota, %d pendentes de entrega.", parked, pending)
+    log_fleet.info("%d aeronaves estacionadas sem rota, %d pendências na frota.", parked, pending)
 
     audit_routes(bot, registry)
     if planning_enabled or cfg.get_bool("options", "audit_route_pages", False):

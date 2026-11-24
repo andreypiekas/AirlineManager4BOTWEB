@@ -12,6 +12,7 @@ import time
 from collections.abc import Mapping, Sequence
 
 from investment_journal import InvestmentJournal
+from finance_observations import MAX_AGE as FINANCE_MAX_AGE, SOURCE as FINANCE_SOURCE, validate_summary
 
 
 def build_expansion_metrics(
@@ -40,7 +41,16 @@ def build_expansion_metrics(
                 "research_tasks_shown": None, "has_more_tasks": None}
     opportunities = {"evaluated_count": None, "eligible_count": None,
                      "source": None, "status": "sem_fonte"}
+    company_finance = {"status": "unverified", "historical_only": True, "summary": None}
     if isinstance(opportunity_report, Mapping):
+        finance = opportunity_report.get("finance_observations")
+        if isinstance(finance, Mapping) and finance.get("source") == FINANCE_SOURCE and finance.get("status") == "observed":
+            stamp = finance.get("observed_at")
+            summary = validate_summary(finance.get("summary"))
+            if (not journal.simulation and summary is not None and type(stamp) in (int, float)
+                    and 0 < stamp <= current and current - stamp <= FINANCE_MAX_AGE):
+                company_finance = {**company_finance, "status": "observed", "source": FINANCE_SOURCE,
+                                   "observed_at": stamp, "summary": summary}
         queue = opportunity_report.get("research_queue")
         if isinstance(queue, Mapping):
             hub_coverage = queue.get("hub_coverage")
@@ -128,6 +138,7 @@ def build_expansion_metrics(
         "research_coverage": coverage,
         "opportunities": opportunities,
         "forecast": forecast,
+        "company_finance_24h": company_finance,
         "actual_spend": None,
         "verified_deliveries": None,
         "verified_spend_avoided": None,

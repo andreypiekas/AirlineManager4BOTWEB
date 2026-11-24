@@ -1128,6 +1128,18 @@ const EN = {
   "Cenários avaliados": "Evaluated scenarios",
   "Precisão financeira": "Forecast accuracy",
   "Aguardando razão financeira e histórico de voos": "Awaiting accounting ledger and flight history",
+  "Resumo financeiro da companhia (últimas 24 horas)": "Company financial summary (last 24 hours)",
+  "Despesas totais": "Total expenses",
+  "Receitas totais": "Total income",
+  "Resultado financeiro observado": "Observed financial result",
+  "Despesas com combustível": "Fuel expenses",
+  "Despesas com cotas de CO₂": "CO₂ quota expenses",
+  "Taxas de rotas": "Route fees",
+  "Despesas com encomendas de aeronaves": "Aircraft order expenses",
+  "Despesas com hubs": "Hub expenses",
+  "Receitas de passagens": "Ticket income",
+  "Histórico da companhia; compromissos futuros e lucro por aeronave ainda a confirmar.": "Company history; future commitments and aircraft-level profit still unverified.",
+  "Pendências da frota": "Fleet pending statuses",
   "Cobertura parcial dos dados de jogo": "Partial game data coverage",
   "Sem fonte de cobertura": "No coverage source",
   "Falha ao consultar métricas.": "Could not retrieve metrics.",
@@ -3228,6 +3240,22 @@ async function loadInvestmentMetrics() {
         ? String(report.forecast.mean_absolute_daily_error)
         : tr("Aguardando razão financeira e histórico de voos")],
     ];
+    const finance = report.company_finance_24h;
+    const summary = finance?.status === "observed" && finance.historical_only === true ? finance.summary : null;
+    const financeFields = [
+      ["expenses", "Despesas totais"], ["income", "Receitas totais"],
+      ["result", "Resultado financeiro observado"], ["fuel_expenses", "Despesas com combustível"],
+      ["quota_expenses", "Despesas com cotas de CO₂"], ["route_fees", "Taxas de rotas"],
+      ["aircraft_orders", "Despesas com encomendas de aeronaves"], ["hubs", "Despesas com hubs"],
+      ["ticket_income", "Receitas de passagens"],
+    ];
+    rows.push([tr("Resumo financeiro da companhia (últimas 24 horas)"),
+      summary?.window_hours === 24 ? tr("Histórico da companhia; compromissos futuros e lucro por aeronave ainda a confirmar.") : null]);
+    if (summary?.window_hours === 24) {
+      for (const [key, label] of financeFields) {
+        rows.push([tr(label), Number.isSafeInteger(summary[key]) ? hubMoney(summary[key]) : null]);
+      }
+    }
     for (const [label, value] of rows) {
       const line = document.createElement("p");
       line.textContent = label + " · " + (value == null ? tr("Desconhecido") : value);
@@ -3792,7 +3820,7 @@ function renderRoutes(report) {
   for (const [count, label] of [
     [fleet.count_verified && !fleet.count_stale ? fleet.size : "—", "Aeronaves no jogo"],
     [fleet.count_verified && !fleet.count_stale ? fleet.routes : "—", "Com rota no jogo"],
-    [fleet.count_verified && !fleet.count_stale ? fleet.pending : "—", "Aguardando entrega"],
+    [fleet.count_verified && !fleet.count_stale ? fleet.pending : "—", tr("Pendências da frota")],
     [report.total || 0, "Registros históricos"],
     [current ? report.current_duplicate_routes || 0 : report.duplicate_routes || 0,
       current ? "Duplicidades recentes" : "Duplicidades no histórico"],
