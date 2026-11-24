@@ -370,7 +370,7 @@ def test_demand_script_keeps_missing_attributes_visible_to_validator():
     js = r"""
 const attrs = {onclick: 'route_research_route.php?dep=2926&arr=3139',
                'data-distance': '1992.763', 'data-yclass': '120',
-               'data-jclass': '106', 'data-fclass': '40'};
+               'data-jclass': '106', 'data-fclass': '40', 'data-rwy': '5013'};
 const row = {getAttribute: name => attrs[name] ?? null};
 const result = {querySelector: () => null,
                 querySelectorAll: () => [row]};
@@ -385,7 +385,7 @@ console.log(JSON.stringify({valid, missing}));
                               capture_output=True, text=True, check=True, timeout=8)
     data = json.loads(response.stdout)
     assert data["valid"] == [{"dep_id": "2926", "arr_id": "3139", "distance": "1992.763",
-                              "y": "120", "j": "106", "f": "40"}]
+                              "y": "120", "j": "106", "f": "40", "runway": "5013"}]
     assert data["missing"][0]["y"] is None
 
 
@@ -773,6 +773,93 @@ def test_demand_collection_rejects_partial_or_unmatched_search(tmp_path, monkeyp
     persisted = json.loads(registry.path.read_text(encoding="utf-8"))
     assert persisted["route_demand"] == original
     assert persisted["route_demand_attempts"]["2926"]["status"] == "inconclusive"
+
+
+def test_planning_rotates_configured_and_broad_search_per_hub(tmp_path, monkeypatch):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
+    options = [{"id": "2926"}, {"id": "2941"}]
+    monkeypatch.setattr(game_observations, "HubRegistry", lambda: type("Hubs", (), {
+        "record_options": lambda self, value: value == options})())
+    clock = [1_900_000_000.0]
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: clock[0])
+    requested = []
+    rows = []
+
+    def search(_bot, origin, distance, runway, *, persist_demand):
+        requested.append((origin, distance, runway, persist_demand))
+        candidate = (RouteCandidate("2957", "LONG", 9000, 100, 20, 5, 4000)
+                     if distance == 20000 else RouteCandidate("3139", "SBL", 2000, 100, 20, 5, 5013))
+        rows[:] = [{"dep_id": origin, "arr_id": candidate.arr_id,
+                    "distance": str(candidate.distance), "runway": str(candidate.runway),
+                    "y": "100", "j": "20", "f": "5"}]
+        return [candidate]
+
+    monkeypatch.setattr(fleet, "search_routes", search)
+    monkeypatch.setattr(game_observations, "_stable_read", lambda *_args, **_kwargs: (rows, clock[0]))
+
+    class Bot:
+        stopping = False
+
+        class config:
+            @staticmethod
+            def get_int(_section, _key, default):
+                return default
+
+            @staticmethod
+            def get_bool(section, key):
+                return (section, key) == ("investment", "planning_enabled")
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            pass
+
+        def ajax(self, *_args):
+            pass
+
+        def js(self, script):
+            assert script == _HUB_OPTIONS_JS
+            return options
+
+    for _ in range(4):
+        assert game_observations.collect_owned_hub_demand(Bot()) == 1
+        clock[0] += 10
+    assert requested == [("2926", 6000, 5000, False), ("2941", 6000, 5000, False),
+                         ("2926", 20000, 0, False), ("2941", 20000, 0, False)]
+    reopened = HubExpansionRegistry(registry.path)
+    snapshot = reopened.demand_research_snapshot({"2926", "2941"}, now=clock[0])
+    assert snapshot["coverage"] == "partial"
+    assert len(snapshot["samples"]) == 4
+    assert {row["destination_runway_ft"] for row in snapshot["samples"]} == {4000, 5013}
+    for row in snapshot["hub_progress"]:
+        assert row["last_search_scope"] == "broad"
+        assert row["last_requested_max_distance_km"] == 20000
+        assert row["last_requested_min_runway_ft"] == 0
+        assert reopened.next_demand_scope(row["hub_id"]) == "configured"
+
+
+def test_dedicated_search_cursor_survives_unrelated_samples_and_failed_attempt(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_demand_attempt("2926", search_scope="configured", max_distance=6000, min_runway=5000)
+    assert registry.record_demand("2926", [{"arr_id": "3139", "distance": 2000, "y": 100, "j": 20, "f": 5}]) == 1
+    snapshot = registry.demand_research_snapshot({"2926"})
+    assert snapshot["hub_progress"][0]["last_attempt_status"] == "inconclusive"
+    assert registry.next_demand_scope("2926") == "broad"
+    assert registry.record_demand_attempt("2926", search_scope="broad", max_distance=20000, min_runway=0)
+    assert HubExpansionRegistry(registry.path).next_demand_scope("2926") == "configured"
+
+
+def test_demand_runway_is_only_retained_when_correlated():
+    candidates = [RouteCandidate("3139", "SBL", 2000, 100, 20, 5, 5013)]
+    raw = {"dep_id": "2926", "arr_id": "3139", "distance": "2000", "y": "100", "j": "20", "f": "5"}
+    for unknown in (None, "0", "n/a", True):
+        samples = game_observations._verified_demand(candidates, [{**raw, "runway": unknown}], "2926")
+        assert len(samples) == 1
+        assert "destination_runway_ft" not in samples[0]
+    assert game_observations._verified_demand(candidates, [{**raw, "runway": "5013"}], "2926")[0]["destination_runway_ft"] == 5013
+    assert game_observations._verified_demand(candidates, [{**raw, "runway": "5014"}], "2926") == []
 
 
 def test_demand_collector_persists_dom_read_time_even_when_processing_is_late(

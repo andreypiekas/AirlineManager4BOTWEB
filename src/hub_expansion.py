@@ -307,10 +307,14 @@ def _demand_sample(origin: str, row: object) -> Optional[dict]:
     if (not math.isfinite(distance) or not 0 < distance <= 25000
             or any(type(value) is not int or not 0 <= value <= 100_000_000 for value in demand)):
         return None
-    return {"origin_id": origin, "destination_id": destination,
-            "distance_km": round(distance, 3),
-            "y": demand[0], "j": demand[1], "f": demand[2],
-            "source": "game_route_search"}
+    sample = {"origin_id": origin, "destination_id": destination,
+              "distance_km": round(distance, 3),
+              "y": demand[0], "j": demand[1], "f": demand[2],
+              "source": "game_route_search"}
+    runway = row.get("destination_runway_ft")
+    if type(runway) is int and 0 < runway <= 30000:
+        sample["destination_runway_ft"] = runway
+    return sample
 
 
 def _stored_demand(value: object) -> dict[str, dict]:
@@ -328,7 +332,8 @@ def _stored_demand(value: object) -> dict[str, dict]:
             continue
         sample = _demand_sample(origin, {"arr_id": row.get("destination_id"),
                                          "distance": row.get("distance_km"),
-                                         "y": row.get("y"), "j": row.get("j"), "f": row.get("f")})
+                                         "y": row.get("y"), "j": row.get("j"), "f": row.get("f"),
+                                         "destination_runway_ft": row.get("destination_runway_ft")})
         if sample is not None and key == f"{origin}:{sample['destination_id']}":
             valid[key] = {**sample, "observed_at": timestamp}
     return valid
@@ -377,7 +382,20 @@ def _stored_demand_attempts(value: object) -> dict[str, dict]:
             continue
         attempts[key] = {"attempted_at": raw["attempted_at"],
                          "status": raw["status"], "sequence": raw["sequence"]}
+        scope = _demand_scope(raw.get("search_scope"), raw.get("max_distance"), raw.get("min_runway"))
+        if scope is not None:
+            attempts[key].update(scope)
     return attempts
+
+
+def _demand_scope(scope: object, distance: object, runway: object) -> dict | None:
+    if (scope not in ("configured", "broad") or type(distance) is not int
+            or not 300 <= distance <= 25000 or type(runway) is not int
+            or not 0 <= runway <= 30000):
+        return None
+    if scope == "broad" and (distance, runway) != (20000, 0):
+        return None
+    return {"search_scope": scope, "max_distance": distance, "min_runway": runway}
 
 
 class HubExpansionRegistry:
@@ -764,7 +782,7 @@ class HubExpansionRegistry:
         return True
 
     def record_demand(self, origin_id: object, results: object, *,
-                      observed_at: object = _UNSET) -> int:
+                      observed_at: object = _UNSET, search_scope: str | None = None) -> int:
         """Store independently observed route demand keyed by game airport IDs.
 
         A partial search only updates the destinations it actually returned.
@@ -836,33 +854,51 @@ class HubExpansionRegistry:
                 current["route_demand_last_at"] = max(
                     current.get("route_demand_last_at") or 0, timestamp)
                 attempts = _stored_demand_attempts(current.get("route_demand_attempts"))
-                if (origin not in attempts or attempts[origin]["attempted_at"] <= timestamp):
-                    self._write_demand_attempt(current, origin, int(now), "samples_observed")
+                previous_attempt = attempts.get(origin, {})
+                # Ordinary route searches can contribute observations without
+                # completing or advancing the dedicated planning cursor.
+                if (previous_attempt.get("search_scope") == search_scope
+                        and previous_attempt.get("attempted_at", 0) <= timestamp):
+                    scope = _demand_scope(previous_attempt.get("search_scope"),
+                                          previous_attempt.get("max_distance"),
+                                          previous_attempt.get("min_runway"))
+                    self._write_demand_attempt(current, origin, int(now), "samples_observed", scope=scope)
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return accepted
 
     @staticmethod
-    def _write_demand_attempt(current: dict, origin: str, now: int, status: str) -> None:
+    def _write_demand_attempt(current: dict, origin: str, now: int, status: str,
+                              *, scope: dict | None = None) -> None:
         """Update the per-hub research cursor in the same atomic JSON write."""
         attempts = _stored_demand_attempts(current.get("route_demand_attempts"))
         sequence = max((entry["sequence"] for entry in attempts.values()), default=0) + 1
         attempts[origin] = {"attempted_at": now, "status": status, "sequence": sequence}
+        if scope is not None:
+            attempts[origin].update(scope)
         current["route_demand_attempts"] = attempts
 
-    def record_demand_attempt(self, origin_id: object) -> bool:
+    def record_demand_attempt(self, origin_id: object, *, search_scope: str | None = None,
+                              max_distance: int | None = None, min_runway: int | None = None) -> bool:
         """Persist an inconclusive attempt before search, even if Selenium fails.
 
         This is scheduling evidence only. It never implies zero demand or
         completed coverage, and verified samples are preserved independently.
         """
         origin = _airport_id(origin_id)
-        if origin is None:
+        scope = _demand_scope(search_scope, max_distance, min_runway)
+        if origin is None or (search_scope is not None and scope is None):
             return False
         with _LOCK:
             current = self._load()
-            self._write_demand_attempt(current, origin, int(time.time()), "inconclusive")
+            self._write_demand_attempt(current, origin, int(time.time()), "inconclusive", scope=scope)
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
+
+    def next_demand_scope(self, origin_id: str) -> str:
+        """Alternate requested envelopes per hub, including after failed reads."""
+        with _LOCK:
+            attempt = _stored_demand_attempts(self._load().get("route_demand_attempts")).get(origin_id, {})
+        return "broad" if attempt.get("search_scope") == "configured" else "configured"
 
     def next_demand_origin(self, owned_ids: list[str]) -> Optional[str]:
         """Rotate on attempted research, even when a hub has no valid results."""
@@ -916,6 +952,9 @@ class HubExpansionRegistry:
                 "last_attempt_at": attempted_at,
                 "last_attempt_status": (attempt["status"] if attempted_at is not None
                                         else "unattempted"),
+                "last_search_scope": attempt.get("search_scope") if attempted_at is not None else None,
+                "last_requested_max_distance_km": attempt.get("max_distance") if attempted_at is not None else None,
+                "last_requested_min_runway_ft": attempt.get("min_runway") if attempted_at is not None else None,
                 "conflicted_routes": sum(
                     key.startswith(hub + ":")
                     and 0 <= now - conflict["observed_at"] <= MAX_AGE_SECONDS

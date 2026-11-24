@@ -294,6 +294,10 @@ const translations = {
   'Última tentativa inconclusiva': 'Last inconclusive attempt',
   'Amostras de rotas': 'Route samples',
   'Rotas observadas': 'Observed routes',
+  'Último filtro solicitado': 'Last requested search filter',
+  'Pesquisa ampla': 'Broad search',
+  'Pesquisa configurada': 'Configured search',
+  'Pista do destino observada': 'Observed destination runway',
   'Rotas com amostras conflitantes': 'Routes with conflicting samples',
   'Cobertura parcial': 'Partial coverage',
   'Pesquisa ainda pendente': 'Research pending',
@@ -404,6 +408,13 @@ assert.deepEqual($('hubResearchCoverageList').children.map(item => item.textCont
   'AAA · Route research started · Route samples: 2 · Partial coverage',
   '<img src=x> · No route research · Route samples: 0 · Partial coverage'
 ]);
+Object.assign(report.research_queue.hub_coverage[0], {
+  last_search_scope:'broad', last_requested_max_distance_km:20000, last_requested_min_runway_ft:0
+});
+renderHubRecommendations(report);
+assert.equal($('hubResearchCoverageList').children[0].textContent,
+  'AAA · Route research started · Route samples: 2 · Last requested search filter: Broad search (≤ 20,000 km, ≥ 0 ft) · Partial coverage');
+delete report.research_queue.hub_coverage[0].last_search_scope;
 report.research_queue.conflicted_routes = 2;
 report.research_queue.hub_coverage[0].conflicted_routes = 1;
 report.research_queue.hub_coverage[1].conflicted_routes = 1;
@@ -433,6 +444,7 @@ assert.deepEqual(researchMetrics(withoutEngine), {
   'Model identity':'Model details not observed',
   'Researched engine':'Engine research pending',
   'Engine status':'Engine research pending',
+  'Observed destination runway':'Not verified',
   'Final aircraft price':'Not verified',
   'Total cost':'Unknown',
   'Daily net profit':'Unknown', 'ROI':'Unknown', 'Estimated payback':'Unknown'
@@ -458,6 +470,7 @@ assert.deepEqual(researchReasons(unavailable), ['Variante de motor indisponível
   'Final engine and aircraft price unverified', '<svg/onload=alert(1)>']);
 report.research_queue.items.push({hub_code:'BBB', destination_id:'9', model:'A320',
   engine_id:'1', engine_label:'Trent <prova>', engine_available:true, engine_selected:true,
+  destination_runway_ft:5013,
   evidence:{engine:{model_detail_identity_verified:true}},
   final_aircraft_price:123456, daily_net_profit:123, roi:0.42, payback_days:10,
   pending:['preco_final_motor_a_confirmar', 'cobertura_da_frota_a_confirmar']});
@@ -466,6 +479,7 @@ const selected = $('hubResearchQueueList').children[1];
 assert.equal(researchMetrics(selected)['Model identity'], 'Verified in game model details');
 assert.equal(researchMetrics(selected)['Researched engine'], 'Trent <prova> (1)');
 assert.equal(researchMetrics(selected)['Engine status'], 'Selected in game');
+assert.equal(researchMetrics(selected)['Observed destination runway'], '5,013 ft');
 assert.equal(researchMetrics(selected)['Final aircraft price'], 'Not verified');
 assert.equal(researchMetrics(selected)['Total cost'], 'Unknown');
 assert.equal(researchMetrics(selected)['ROI'], 'Unknown');

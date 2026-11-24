@@ -75,6 +75,25 @@ def test_observed_inputs_persist_and_remain_unpurchaseable(tmp_path):
                and candidate["investment"] is None for candidate in report["candidates"])
 
 
+def test_observed_destination_runway_and_search_envelope_do_not_prove_feasibility(tmp_path):
+    inventory, routes, market = _inputs()
+    routes[0]["destination_runway_ft"] = 5013
+    queue = build_owned_hub_research_queue(inventory, routes, market, now=NOW, hub_progress=[{
+        "hub_id": "2926", "last_attempt_at": NOW, "last_attempt_status": "samples_observed",
+        "last_search_scope": "broad", "last_requested_max_distance_km": 20000,
+        "last_requested_min_runway_ft": 0,
+    }])
+    assert queue["coverage"] == "partial"
+    assert queue["hub_coverage"][0]["last_search_scope"] == "broad"
+    registry = OwnedHubResearchInputsRegistry(tmp_path / "research.json")
+    assert registry.record_queue(queue, now=NOW) == 2
+    for row in registry.snapshot(now=NOW):
+        assert row["destination_runway_ft"] == 5013
+        assert "pista_a_confirmar" in row["research_pending"]
+        assert row["route_feasible"] is None
+        assert row["demand_verified"] is False
+
+
 def test_persisted_inputs_are_isolated_idempotent_and_expire(tmp_path):
     first = OwnedHubResearchInputsRegistry(tmp_path / "company-a.json")
     other = OwnedHubResearchInputsRegistry(tmp_path / "company-b.json")

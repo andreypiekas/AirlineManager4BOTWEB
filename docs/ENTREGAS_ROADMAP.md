@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A3, ampliação da pesquisa de rotas por hub (G0)
+
+**Objetivo:** aumentar o universo observado para comparar aeronaves de alcances e requisitos de pista diferentes, mantendo a procedência dos dados e a rotação entre hubs próprios.
+
+### Implementação e evidências
+
+- Com `investment.planning_enabled=on`, a pesquisa de demanda alterna, individualmente por hub, entre os filtros configurados e uma solicitação ampla de até 20.000 km com pista mínima de 0 ft. O cursor persiste antes da consulta, inclusive após tentativas inconclusivas e reinícios. Amostras de outras consultas não completam a tentativa do planejador. Os filtros registrados identificam os parâmetros enviados, cuja aceitação e abrangência ainda dependem de homologação autenticada.
+- `src/game_observations.py` correlaciona a pista informada em `data-rwy` com a mesma rota e os demais valores da leitura estável. Pistas ausentes ou inválidas permanecem desconhecidas; uma pista positiva contraditória invalida o lote. A pesquisa rejeita resultados incompatíveis com os limites solicitados quando a informação está disponível.
+- A observação de pista do destino segue pelo registro de demanda, pela fila de pesquisa, pelo cache de combinações e pelo painel PT/EN. O painel também identifica o último filtro solicitado para cada hub. As combinações permanecem pendentes de confirmação das pistas dos dois extremos, dos requisitos do modelo e motor, da demanda residual, da disponibilidade da rota e dos custos.
+- Os testes cobrem a rotação em dois hubs, persistência após reinício, tentativas inconclusivas, amostras de consultas independentes, correlação de pista e a propagação da evidência sem autorizar aquisição.
+
+### Verificação, limites e reversão
+
+- 244 testes direcionados de pesquisa e 9 testes do painel aprovados. Suíte Windows: 1.642 aprovados, 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Ruff em `src`, `tests` e `scripts`, compilação Python e `git diff --check` aprovados.
+- **Gate G0.** A pesquisa continua com cobertura parcial, sem prova de exaustão do mercado ou de demanda residual. A validação desta entrega usa dados simulados. Permanecem pendentes a homologação dos limites e da paginação do jogo, as especificações das variantes de motor e a confirmação de viabilidade e retorno por combinação. Nenhuma compra real, implantação ou merge na `main` foi executado.
+- Reversão pelo commit desta entrega na branch `codex/autonomia-a0-a1-20261122`, considerando dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A2, conciliação integral da frota e dos hubs (G0)
 
 **Objetivo:** correlacionar a auditoria de rotas com o inventário atual do jogo antes de admitir que a rede existente foi integralmente identificada.

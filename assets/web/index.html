@@ -1129,6 +1129,10 @@ const EN = {
   "Última tentativa inconclusiva": "Last inconclusive attempt",
   "Amostras de rotas": "Route samples",
   "Rotas observadas": "Observed routes",
+  "Último filtro solicitado": "Last requested search filter",
+  "Pesquisa ampla": "Broad search",
+  "Pesquisa configurada": "Configured search",
+  "Pista do destino observada": "Observed destination runway",
   "Rotas com amostras conflitantes": "Routes with conflicting samples",
   "Cobertura parcial": "Partial coverage",
   "Pesquisa ainda pendente": "Research pending",
@@ -2402,6 +2406,13 @@ function renderHubRecommendations(report) {
         : hub.status === "pesquisa_inconclusiva" || conflicts
           ? tr("Pesquisa de rota inconclusiva") : tr("Sem pesquisa de rota")) +
       " · " + tr("Amostras de rotas") + ": " + nf.format(samples) +
+      (Number.isSafeInteger(hub.last_requested_max_distance_km) &&
+        Number.isSafeInteger(hub.last_requested_min_runway_ft) &&
+        ["broad", "configured"].includes(hub.last_search_scope)
+        ? " · " + tr("Último filtro solicitado") + ": " +
+          tr(hub.last_search_scope === "broad" ? "Pesquisa ampla" : "Pesquisa configurada") +
+          " (≤ " + nf.format(hub.last_requested_max_distance_km) + " km, ≥ " +
+          nf.format(hub.last_requested_min_runway_ft) + " ft)" : "") +
       (conflicts ? " · " + tr("Rotas com amostras conflitantes") + ": " + nf.format(conflicts) : "") +
         (hub.last_attempt_status === "inconclusive" && Number.isFinite(hub.last_attempt_at)
           ? " · " + tr("Última tentativa inconclusiva") + ": " + hubDate(hub.last_attempt_at) : "") +
@@ -2442,6 +2453,9 @@ function renderHubRecommendations(report) {
     addHubMetric(metrics, "Identidade do modelo", identity);
     addHubMetric(metrics, "Motor pesquisado", engine);
     addHubMetric(metrics, "Situação do motor", engineStatus);
+    addHubMetric(metrics, "Pista do destino observada",
+      Number.isSafeInteger(task.destination_runway_ft) && task.destination_runway_ft > 0
+        ? nf.format(task.destination_runway_ft) + " ft" : tr("Não verificado"));
     addHubMetric(metrics, "Preço final da aeronave", tr("Não verificado"));
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));

@@ -126,6 +126,9 @@ def _scenario(item: dict, now: float) -> dict | None:
     }
     if item.get("engine_id") is not None:
         observed["engine_id"] = item["engine_id"]
+    runway = item.get("destination_runway_ft")
+    if type(runway) is int and 0 < runway <= 30000:
+        observed["destination_runway_ft"] = runway
     return observed if _identity(observed) is not None else None
 
 

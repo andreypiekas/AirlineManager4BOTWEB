@@ -193,6 +193,7 @@ return rows.map(el => ({
   dep_id: ((String(el.getAttribute('onclick') || '').match(/(?:[?&]|\b)dep=(\d+)(?!\d)/) || [])[1]) || null,
   arr_id: ((String(el.getAttribute('onclick') || '').match(/(?:[?&]|\b)arr=(\d+)(?!\d)/) || [])[1]) || null,
   distance: el.getAttribute('data-distance'),
+  runway: el.getAttribute('data-rwy'),
   y: el.getAttribute('data-yclass'),
   j: el.getAttribute('data-jclass'),
   f: el.getAttribute('data-fclass')
@@ -254,8 +255,17 @@ def _verified_demand(candidates: list, rows: object, origin: str) -> list[dict]:
                 or not math.isclose(distance, candidate.distance, rel_tol=0, abs_tol=0.001)
                 or counts != [candidate.y, candidate.j, candidate.f]):
             return []
-        samples.append({"arr_id": destination, "distance": distance,
-                        "y": counts[0], "j": counts[1], "f": counts[2]})
+        sample = {"arr_id": destination, "distance": distance,
+                  "y": counts[0], "j": counts[1], "f": counts[2]}
+        runway = raw.get("runway")
+        if (isinstance(runway, str) and _COUNT.fullmatch(runway)
+                and 0 < int(runway) <= 30000 and int(runway) == candidate.runway):
+            sample["destination_runway_ft"] = int(runway)
+        elif runway is not None:
+            # A contradictory runway must not become physical evidence.
+            if isinstance(runway, str) and _COUNT.fullmatch(runway) and int(runway) > 0:
+                return []
+        samples.append(sample)
         seen.add(destination)
     return samples
 
@@ -414,17 +424,33 @@ def collect_owned_hub_demand(bot: object) -> int:
             return 0
         # Reserve the rotation cursor before making AJAX requests. An empty,
         # inconsistent or interrupted response must not starve the next hub.
-        registry.record_demand_attempt(origin)
         distance = max(300, bot.config.get_int("settings", "route_max_distance_big", 6000))
         runway = max(0, bot.config.get_int("settings", "route_min_runway", 5000))
+        # The legacy distance and runway preferences are not a universal
+        # opportunity envelope. Alternate the normal query with a broad one
+        # during investment planning, so small runways and long routes are
+        # sampled without starving the normal search. Neither proves coverage.
+        planning = getattr(bot.config, "get_bool", None)
+        scope = None
+        if callable(planning) and planning("investment", "planning_enabled"):
+            distance, runway = min(distance, 25000), min(runway, 30000)
+            scope = registry.next_demand_scope(origin)
+            if scope == "broad":
+                distance, runway = 20000, 0
+            registry.record_demand_attempt(origin, search_scope=scope,
+                                           max_distance=distance, min_runway=runway)
+        else:
+            registry.record_demand_attempt(origin)
         candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
         read = _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS, with_timestamp=True)
         rows, read_at = read if isinstance(read, tuple) and len(read) == 2 else (None, None)
         samples = _verified_demand(candidates, rows, origin)
-        if not samples:
+        if not samples or any(sample["distance"] > distance + 0.001
+                              or sample.get("destination_runway_ft", runway) < runway
+                              for sample in samples):
             log.debug("Pesquisa de demanda do hub %s incompleta ou sem resultados confirmados.", origin)
             return 0
-        count = registry.record_demand(origin, samples, observed_at=read_at)
+        count = registry.record_demand(origin, samples, observed_at=read_at, search_scope=scope)
         log.info("Pesquisa de demanda: hub %s, %d destinos confirmados.", origin, count)
         return count
     finally:

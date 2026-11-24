@@ -192,6 +192,9 @@ def build_owned_hub_research_queue(
             "distance_km": distance, "observed_at": row["observed_at"],
             "demand": {key: row[key] for key in ("y", "j", "f")},
         }
+        runway = row.get("destination_runway_ft")
+        if type(runway) is int and 0 < runway <= 30000:
+            sample["destination_runway_ft"] = runway
         key = (origin, destination)
         prior = latest_routes.get(key)
         if prior is None or sample["observed_at"] > prior["sample"]["observed_at"]:
@@ -227,6 +230,17 @@ def build_owned_hub_research_queue(
             "last_attempt_at": attempt_at if recent_attempt else None,
             "last_attempt_status": attempt_status if recent_attempt else "unattempted",
         }
+        distance = row.get("last_requested_max_distance_km")
+        runway = row.get("last_requested_min_runway_ft")
+        scope = row.get("last_search_scope")
+        if (recent_attempt and scope in ("configured", "broad")
+                and type(distance) is int and 300 <= distance <= 25000
+                and type(runway) is int and 0 <= runway <= 30000
+                and (scope != "broad" or (distance, runway) == (20000, 0))):
+            attempts_by_hub[hub_id].update({
+                "last_search_scope": scope, "last_requested_max_distance_km": distance,
+                "last_requested_min_runway_ft": runway,
+            })
 
     blockers = []
     if not inventory_fresh:
@@ -339,6 +353,7 @@ def build_owned_hub_research_queue(
                     "direct_range_sufficient": (model["range_km"] >= sample["distance_km"]
                                                 if model["range_km"] is not None else None),
                     "observed_demand": sample["demand"],
+                    "destination_runway_ft": sample.get("destination_runway_ft"),
                     "model_id": model["id"], "model": model["name"],
                     "range_km": model["range_km"], "capacity": model["capacity"],
                     "catalog_price": model["catalog_price"],
@@ -370,6 +385,8 @@ def build_owned_hub_research_queue(
          "conflicted_routes": conflicts_by_hub[hub_id],
          "last_attempt_at": attempts_by_hub.get(hub_id, {}).get("last_attempt_at"),
          "last_attempt_status": attempts_by_hub.get(hub_id, {}).get("last_attempt_status", "unattempted"),
+         **{key: value for key, value in attempts_by_hub.get(hub_id, {}).items()
+            if key.startswith("last_requested_") or key == "last_search_scope"},
          "last_route_observed_at": max(
              (item["observed_at"] for item in samples_by_hub.get(hub_id, ())), default=None
          ),
