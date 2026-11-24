@@ -1395,6 +1395,8 @@ const EN = {
   "Otimizada para cenário base": "Optimized for base scenario",
   "Otimizada para stress": "Optimized for stress",
   "Detalhe da variante observado": "Observed variant detail",
+  "Assentos Y/J/F do modelo oculto (sem confirmação)": "Hidden template Y/J/F seats (unconfirmed)",
+  "Assentos Y/J/F do formulário visível (sem confirmação)": "Visible form Y/J/F seats (unconfirmed)",
   "Identidade do modelo confirmada": "Model identity confirmed",
   "Identidade do modelo pendente": "Model identity pending",
   "Velocidade da variante": "Variant cruise speed",
@@ -2268,6 +2270,17 @@ function appendEngineDetail(metrics, task, now = Date.now() / 1000) {
   addHubMetric(metrics, "Detalhe da variante observado",
     tr(evidence.model_identity_verified ? "Identidade do modelo confirmada" : "Identidade do modelo pendente"));
   const data = evidence.metrics;
+  const seats = evidence.seat_observation;
+  if (evidence.model_identity_verified && seats &&
+      ["hidden_native_template", "visible_native_form"].includes(seats.source) &&
+      Number.isInteger(data.capacity_pax) && data.capacity_pax > 0 && data.capacity_pax <= 10000 &&
+      [seats.y, seats.j, seats.f].every(value => Number.isInteger(value) && value >= 0) &&
+      seats.y + 2 * seats.j + 3 * seats.f === data.capacity_pax) {
+    addHubMetric(metrics, seats.source === "hidden_native_template"
+      ? "Assentos Y/J/F do modelo oculto (sem confirmação)"
+      : "Assentos Y/J/F do formulário visível (sem confirmação)",
+      [seats.y, seats.j, seats.f].map(value => nf.format(value)).join(" / "));
+  }
   for (const [label, value, unit] of [
     ["Velocidade da variante", data.speed_kph, "kph"],
     ["Consumo da variante", data.fuel_lbs_per_km, "lbs/km"],

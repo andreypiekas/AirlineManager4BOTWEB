@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, observação nativa dos assentos (G0)
+
+- A leitura estável do detalhe de cada variante captura os assentos Y/J/F dentro de `#step2`, diferenciando o modelo oculto do formulário visível. Exige campos únicos, contagens inteiras e capacidade ponderada coerente. A informação acompanha o motor correlacionado, o registro de pesquisa e a reprodução histórica; o painel PT/EN sinaliza que a configuração ainda não está confirmada.
+- Evidência autenticada anterior à implementação: Cessna 172 com capacidade de 3 passageiros e modelo oculto 3/0/0, enquanto a etapa inicial informava limite de frota atingido. Nenhuma interação de compra. O formulário oculto não comprova disponibilidade, configuração selecionável ou custo final; mesmo a leitura visível permanece apenas observacional. A validação econômica continua bloqueando configurações sem evidência de aquisição.
+- Validação: 223 testes direcionados aprovados, incluindo execução do coletor DOM em Node, persistência por variante, identidade, reprodução histórica e interface. Ruff e git diff --check aprovados. Suíte completa não executada nesta entrega. Permanecem pendentes configuração efetivamente selecionável, demanda residual, custos finais e homologação das fases A0–A9.
+
 ## 2026-11-24 — Autonomia Total A9, tempos de detecção e conciliação no diário (G0)
 
 - O diário mede o intervalo local entre envio e reconhecimento de incerteza, e entre incerteza e conciliação, com contagem de amostras por perfil. A janela considera a transição final e recupera o evento predecessor mesmo se ele ocorreu antes do corte. Intervalos negativos ou transições inconsistentes são descartados. O painel PT/EN e o relatório diário Telegram exibem essas métricas quando há evidência.

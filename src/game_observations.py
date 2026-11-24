@@ -10,7 +10,7 @@ import time
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
 from engine_catalog import EngineCatalogRegistry, MODEL_ROSTER_JS
-from engine_detail import MODEL_DETAIL_IDENTITY_JS, parse_displayed_metrics
+from engine_detail import MODEL_DETAIL_IDENTITY_JS, parse_displayed_metrics, parse_seat_observation
 from engine_selection import (
     EngineSelectionError, _ENGINE_OPTIONS_JS, _SET_ENGINE_JS, parse_engine_catalog,
 )
@@ -42,8 +42,23 @@ const rows = Array.from(panel.querySelectorAll('tr, .row'))
   .filter(row => metricLabels.has(normalized(row[0])));
 const costs = Array.from(panel.querySelectorAll('#acCost'),
   el => String(el.textContent || '').trim());
+const seatObservation = (() => {
+  const steps = panel.querySelectorAll('#step2');
+  if (steps.length !== 1) return null;
+  const step = steps[0];
+  const visible = el => el.getClientRects().length > 0 &&
+    !['hidden', 'collapse'].includes(window.getComputedStyle(el).visibility);
+  const shown = visible(step);
+  const result = {source: shown ? 'visible_native_form' : 'hidden_native_template'};
+  for (const [key, selector] of [['y', '#eSeats'], ['j', '#bSeats'], ['f', '#fSeats']]) {
+    const matches = panel.querySelectorAll(selector);
+    if (matches.length !== 1 || !step.contains(matches[0]) || visible(matches[0]) !== shown) return null;
+    result[key] = String(matches[0].textContent || '').trim();
+  }
+  return result;
+})();
 return {detail: identity, groups,
-        metrics: {rows, costs}};
+        metrics: {rows, costs}, seat_observation: seatObservation};
 """
 
 # Only the currently selected airport can have an observed price. The country
@@ -595,7 +610,14 @@ def _observe_variant_details(bot, snapshot, catalog, observed_at):
     selected = catalog.selected_engine_id
     if not selected or metrics is None:
         return {}
-    result = {selected: {"observed_at": observed_at, "metrics": metrics}}
+    def observation(read, stamp, parsed_metrics):
+        entry = {"observed_at": stamp, "metrics": parsed_metrics}
+        seats = parse_seat_observation(read.get("seat_observation"), parsed_metrics.get("capacity_pax"))
+        if seats is not None:
+            entry["seat_observation"] = seats
+        return entry
+
+    result = {selected: observation(snapshot, observed_at, metrics)}
     # Only the native selector has been observed in the authenticated game.
     if catalog.selector_type != "select" or catalog.dom_id != "engSelection":
         return result
@@ -627,7 +649,7 @@ def _observe_variant_details(bot, snapshot, catalog, observed_at):
                         and current_metrics[key] != last_metrics[key]
                         for key in ("speed_kph", "fuel_lbs_per_km", "range_km", "co2_kg_per_pax_km",
                                     "displayed_cost_usd"))):
-                    result[variant.engine_id] = {"observed_at": stamp, "metrics": current_metrics}
+                    result[variant.engine_id] = observation(candidate, stamp, current_metrics)
                     last_metrics = current_metrics
                     break
             stop = getattr(bot, "_stop", None)

@@ -102,3 +102,28 @@ def parse_displayed_metrics(raw: object) -> dict | None:
             return None
         result[field] = value
     return validate_metrics(result)
+
+
+def validate_seat_observation(raw: object, capacity: object) -> dict | None:
+    """A native form reading, distinct from a confirmed purchasable layout."""
+    if (not isinstance(raw, dict) or raw.keys() != {"source", "y", "j", "f"}
+            or raw["source"] not in ("hidden_native_template", "visible_native_form")
+            or type(capacity) is not int or not 0 < capacity <= 10000):
+        return None
+    if any(type(raw[key]) is not int or not 0 <= raw[key] <= capacity for key in ("y", "j", "f")):
+        return None
+    if raw["y"] + 2 * raw["j"] + 3 * raw["f"] != capacity:
+        return None
+    return dict(raw)
+
+
+def parse_seat_observation(raw: object, capacity: object) -> dict | None:
+    if not isinstance(raw, dict) or raw.keys() != {"source", "y", "j", "f"}:
+        return None
+    values = {"source": raw["source"]}
+    for key in ("y", "j", "f"):
+        value = raw[key]
+        if not isinstance(value, str) or not re.fullmatch(r"(?:0|[1-9][0-9]{0,4})", value):
+            return None
+        values[key] = int(value)
+    return validate_seat_observation(values, capacity)

@@ -274,6 +274,7 @@ const nf = new Intl.NumberFormat('en-GB');
 const money = value => '$' + String(value);
 const translations = {
       'Identidade do modelo pendente': 'Model identity pending',
+      'Assentos Y/J/F do modelo oculto (sem confirmação)': 'Hidden template Y/J/F seats (unconfirmed)',
       'Velocidade da variante': 'Variant cruise speed',
       'Emissão de CO₂ da variante': 'Variant CO₂ emission',
       'Coeficiente de CO₂ na simulação': 'CO₂ coefficient in simulation',
@@ -638,6 +639,11 @@ appendEngineDetail(emissionMetrics, {engine_detail:{...detailEvidence,
   metrics:{co2_kg_per_pax_km:.16}}});
 assert.equal(emissionMetrics.children[1].children[0].textContent, 'Variant CO₂ emission');
 assert.equal(emissionMetrics.children[1].children[1].textContent, '0.16 kg/pax/km');
+const seatMetrics = document.createElement('div');
+appendEngineDetail(seatMetrics, {engine_detail:{...detailEvidence, model_identity_verified:true,
+  metrics:{capacity_pax:3}, seat_observation:{source:'hidden_native_template', y:3, j:0, f:0}}});
+assert.equal(seatMetrics.children[1].children[0].textContent, 'Hidden template Y/J/F seats (unconfirmed)');
+assert.equal(seatMetrics.children[1].children[1].textContent, '3 / 0 / 0');
 const physicalMetrics = document.createElement('div');
 const physical = {source:'observed_direct_dimensions_v1', status:'direct_shortfall', purchase_eligible:false,
   expires_at:marketNow+60, checks:{range:'short', origin_runway:'unknown', destination_runway:'unknown'},

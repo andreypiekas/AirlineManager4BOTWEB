@@ -592,16 +592,24 @@ const select = {
 let modelId = '11';
 let loading = false;
 let scripts = [];
+let stepShown = false;
+let duplicateSeat = false;
+const seat = textContent => ({textContent, getClientRects: () => stepShown ? [{}] : []});
+const seats = {'#eSeats': seat('3'), '#bSeats': seat('0'), '#fSeats': seat('0')};
+const step = {contains: el => Object.values(seats).includes(el),
+  getClientRects: () => stepShown ? [{}] : []};
 const panel = {
   getAttribute: name => name === 'data-model-id' ? modelId : null,
   querySelector: () => loading ? {} : null,
-  querySelectorAll: name => name === 'select' ? [select] : name === 'script' ? scripts : []
+  querySelectorAll: name => name === 'select' ? [select] : name === 'script' ? scripts :
+    name === '#step2' ? [step] : name in seats ?
+    (duplicateSeat && name === '#eSeats' ? [seats[name], seat('3')] : [seats[name]]) : []
 };
 globalThis.document = {
   querySelector: name => name === '#acModel' ? panel : null,
   querySelectorAll: name => name === '#acModel' ? [panel] : []
 };
-globalThis.window = {jQuery: {active: 0}};
+globalThis.window = {jQuery: {active: 0}, getComputedStyle: () => ({visibility: 'visible'})};
 """
     js = (mock + "\nconst snapshot = new Function(" +
           json.dumps(game_observations._ENGINE_DETAIL_SNAPSHOT_JS) +
@@ -613,7 +621,9 @@ globalThis.window = {jQuery: {active: 0}};
           "scripts.push({textContent: 'acId = 12;'}); const conflict = snapshot();\n" +
           "scripts = [{textContent: 'var acId = 2;'}]; modelId = '12'; const attrConflict = snapshot();\n" +
           "modelId = null; scripts = []; const missing = snapshot();\n" +
-          "console.log(JSON.stringify({first, ajax, loader, next, native, conflict, attrConflict, missing}));\n")
+          "stepShown = true; const visibleSeats = snapshot();\n" +
+          "duplicateSeat = true; const duplicateSeats = snapshot();\n" +
+          "console.log(JSON.stringify({first, ajax, loader, next, native, conflict, attrConflict, missing, visibleSeats, duplicateSeats}));\n")
     path = tmp_path / "engine_snapshot.js"
     path.write_text(js, encoding="utf-8")
     result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
@@ -631,3 +641,8 @@ globalThis.window = {jQuery: {active: 0}};
     assert reads["conflict"] is None
     assert reads["attrConflict"] is None
     assert reads["missing"]["detail"]["script_model_id"] is None
+    assert reads["first"]["seat_observation"] == {
+        "source": "hidden_native_template", "y": "3", "j": "0", "f": "0"}
+    assert reads["visibleSeats"]["seat_observation"] == {
+        "source": "visible_native_form", "y": "3", "j": "0", "f": "0"}
+    assert reads["duplicateSeats"]["seat_observation"] is None

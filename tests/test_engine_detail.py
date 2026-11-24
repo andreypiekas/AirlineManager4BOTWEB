@@ -5,7 +5,7 @@ import pytest
 
 import engine_catalog
 import game_observations
-from engine_detail import parse_displayed_metrics
+from engine_detail import parse_displayed_metrics, parse_seat_observation, validate_seat_observation
 from engine_selection import parse_engine_catalog
 
 
@@ -71,6 +71,7 @@ def test_bad_units_and_ambiguous_values_fail_closed(raw):
 def test_observations_bound_to_selected_variant_and_persisted(tmp_path, monkeypatch):
     monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
     initial = _snapshot("10")
+    initial["seat_observation"] = {"source": "hidden_native_template", "y": "164", "j": "0", "f": "0"}
     catalog = parse_engine_catalog(initial["groups"])
 
     class Bot:
@@ -85,6 +86,8 @@ def test_observations_bound_to_selected_variant_and_persisted(tmp_path, monkeypa
                         lambda *_args, **_kwargs: (_snapshot("9"), NOW))
     result = game_observations._observe_variant_details(Bot(), initial, catalog, NOW - 1)
     assert result["10"]["metrics"]["speed_kph"] == 881
+    assert result["10"]["seat_observation"] == {"source": "hidden_native_template", "y": 164, "j": 0, "f": 0}
+    assert "seat_observation" not in result["9"]
     assert result["9"]["metrics"]["speed_kph"] == 798
     registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
     assert registry.record("11", "A320-200", catalog, observed_at=NOW - 1,
@@ -119,3 +122,16 @@ def test_changed_selector_without_refreshed_specs_is_not_attributed(monkeypatch)
                         lambda *_args, **_kwargs: (stale, NOW))
     result = game_observations._observe_variant_details(bot, initial, catalog, NOW - 1)
     assert set(result) == {"10"}
+
+
+@pytest.mark.parametrize("source", ["hidden_native_template", "visible_native_form"])
+def test_native_seats_are_bounded_observations(source):
+    raw = {"source": source, "y": "3", "j": "0", "f": "0"}
+    parsed = parse_seat_observation(raw, 3)
+    assert parsed == {"source": source, "y": 3, "j": 0, "f": 0}
+    assert validate_seat_observation(parsed, 3) == parsed
+    assert parse_seat_observation({**raw, "j": "1"}, 3) is None
+    assert parse_seat_observation({**raw, "y": "3.0"}, 3) is None
+    assert validate_seat_observation({**parsed, "y": True}, 3) is None
+    assert validate_seat_observation({**parsed, "verified": True}, 3) is None
+    assert validate_seat_observation({**parsed, "source": "confirmed"}, 3) is None

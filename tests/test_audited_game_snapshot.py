@@ -221,7 +221,8 @@ def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, mo
     engines = _preview_engines()
     engines["models"]["11"]["variant_details"] = {
         "1": {"observed_at": NOW, "metrics": {"capacity_pax": 180, "range_km": 2000,
-                                                "required_runway_ft": 6500}}}
+                                                "required_runway_ft": 6500},
+              "seat_observation": {"source": "hidden_native_template", "y": 180, "j": 0, "f": 0}}}
     sample = _sample()
     sample["destination_runway_ft"] = 6499
     sample["route_detail"] = {"source": "game_route_detail", "observed_at": NOW,
@@ -241,6 +242,9 @@ def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, mo
     page = replay_research_page(now=NOW, path=path)
     row = next(item for item in page["items"] if item["engine_id"] == "1")
     gate = row["accounting_gate"]
+    assert row["engine_detail"]["seat_observation"] == {
+        "source": "hidden_native_template", "y": 180, "j": 0, "f": 0}
+    assert not row["purchase_eligible"]
     assert gate["verified_accounting_inputs"] == ["capacity", "co2_price_per_1000"]
     codes = {reason["code"] for reason in gate["blocking_reasons"]}
     assert "ROUTE_PHYSICALLY_INFEASIBLE" in codes

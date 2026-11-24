@@ -14,7 +14,7 @@ import time
 from collections import defaultdict
 from typing import Optional
 
-from engine_detail import validate_metrics
+from engine_detail import validate_metrics, validate_seat_observation
 from fleet_commitment_observations import MAX_AGE as FLEET_MAX_AGE, SOURCE as FLEET_SOURCE, _hangar
 from route_detail_evidence import current_detail
 from market import recent_market_quotes
@@ -236,6 +236,10 @@ def engine_variants(engines: dict, model: dict, now: float) -> tuple[list[dict],
                        "engine_detail": ({"observed_at": detail["observed_at"], "metrics": metrics,
                                           "model_identity_verified": identity_verified}
                                          if metrics is not None else None)})
+        if metrics is not None and identity_verified:
+            seats = validate_seat_observation(detail.get("seat_observation"), metrics.get("capacity_pax"))
+            if seats is not None:
+                result[-1]["engine_detail"]["seat_observation"] = seats
     if not details.keys() <= seen:
         return [], None
     if (sum(item["engine_selected"] for item in result) > 1
