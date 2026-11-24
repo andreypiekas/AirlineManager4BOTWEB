@@ -656,7 +656,8 @@ class InvestmentJournal:
         """Read an atomic, profile-scoped journal summary for A9 observability.
 
         Costs remain *planned* amounts, even after a game order is confirmed.
-        Recovery durations come only from observed journal state transitions.
+        Local detection and recovery durations use observed journal transitions.
+        A sample belongs to the window when its ending transition occurs.
         """
         if type(since) not in (int, float) or not math.isfinite(since) or since < 0:
             raise ValueError("Início de janela inválido.")
@@ -668,8 +669,12 @@ class InvestmentJournal:
                 (self.profile_id,),
             ).fetchall()
             events = conn.execute(
-                "SELECT intent_key, new_state, observed_at FROM events "
-                "WHERE profile_id=? AND observed_at>=? ORDER BY event_id",
+                "WITH timeline AS (SELECT event_id, new_state, previous_state, observed_at, "
+                "LAG(new_state) OVER history AS prior_state, "
+                "LAG(observed_at) OVER history AS prior_at "
+                "FROM events WHERE profile_id=? "
+                "WINDOW history AS (PARTITION BY intent_key ORDER BY event_id)) "
+                "SELECT * FROM timeline WHERE observed_at>=? ORDER BY event_id",
                 (self.profile_id, since),
             ).fetchall()
 
@@ -698,15 +703,20 @@ class InvestmentJournal:
             if row["updated_at"] >= since and state == "FAILED":
                 failed_in_window += 1
 
-        unknown_at: dict[str, float] = {}
+        detection_seconds: list[float] = []
         recovery_seconds: list[float] = []
         for event in events:
-            key = event["intent_key"]
-            state = event["new_state"]
-            if state == "UNKNOWN":
-                unknown_at[key] = event["observed_at"]
-            elif state in ("CONFIRMED", "FAILED") and key in unknown_at:
-                recovery_seconds.append(max(0.0, event["observed_at"] - unknown_at.pop(key)))
+            previous = event["prior_state"]
+            prior_at = event["prior_at"]
+            if previous != event["previous_state"] or prior_at is None:
+                continue
+            duration = event["observed_at"] - prior_at
+            if not math.isfinite(duration) or duration < 0:
+                continue
+            if previous == "SUBMITTED" and event["new_state"] == "UNKNOWN":
+                detection_seconds.append(duration)
+            elif previous == "UNKNOWN" and event["new_state"] in ("CONFIRMED", "FAILED"):
+                recovery_seconds.append(duration)
 
         return {
             "profile_id": self.profile_id,
@@ -722,6 +732,10 @@ class InvestmentJournal:
             "submit_attempts_total": submit_attempts,
             "pending_planned_cost": pending_cost,
             "confirmed_planned_cost_in_window": confirmed_planned_cost,
+            "uncertain_submissions_detected": len(detection_seconds),
+            "mean_submission_to_unknown_seconds": (
+                sum(detection_seconds) / len(detection_seconds) if detection_seconds else None
+            ),
             "reconciliations_from_unknown": len(recovery_seconds),
             "mean_recovery_seconds": (
                 sum(recovery_seconds) / len(recovery_seconds) if recovery_seconds else None

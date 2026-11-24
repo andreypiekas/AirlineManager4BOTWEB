@@ -214,6 +214,14 @@ def format_investment_daily(metrics: dict, *, date_label: str, planning_enabled:
         lines.append(f"⚠️ Pedidos aguardando conciliação: {journal['by_state']['UNKNOWN']}.")
     if journal["failed_in_window"]:
         lines.append(f"⚠️ Intenções com falha no período: {journal['failed_in_window']}.")
+    detection = journal.get("mean_submission_to_unknown_seconds")
+    recovery = journal.get("mean_recovery_seconds")
+    if detection is not None:
+        lines.append(f"⏱ Diário local: envio → incerteza {detection:.1f}s em "
+                     f"{journal['uncertain_submissions_detected']} pedidos.")
+    if recovery is not None:
+        lines.append(f"⏱ Diário local: incerteza → conciliação {recovery:.1f}s em "
+                     f"{journal['reconciliations_from_unknown']} pedidos.")
     return "\n".join(lines)
 
 

@@ -55,6 +55,8 @@ def test_empty_metrics_do_not_invent_game_purchase_or_profits(tmp_path):
     assert report["journal"]["total_intents"] == 0
     assert report["journal"]["pending_planned_cost"] == 0
     assert report["journal"]["mean_recovery_seconds"] is None
+    assert report["journal"]["mean_submission_to_unknown_seconds"] is None
+    assert report["journal"]["uncertain_submissions_detected"] == 0
     assert report["research_coverage"]["hubs_total"] is None
     assert report["opportunities"]["evaluated_count"] is None
     assert report["forecast"]["mean_absolute_daily_error"] is None
@@ -81,12 +83,37 @@ def test_journal_events_are_scoped_and_persist_across_restart(tmp_path):
     assert audit["confirmed_planned_cost_in_window"] == 20000
     assert audit["reconciliations_from_unknown"] == 1
     assert audit["mean_recovery_seconds"] is not None
+    assert audit["uncertain_submissions_detected"] == 1
+    assert audit["mean_submission_to_unknown_seconds"] is not None
     assert audit["submit_attempts_total"] == 1
 
     second = other.audit_metrics(time.time() - 3600)
     assert second["total_intents"] == 1
     assert second["pending_planned_cost"] == 0
     assert second["reconciliations_from_unknown"] == 0
+    assert second["uncertain_submissions_detected"] == 0
+
+
+def test_latency_window_uses_predecessor_even_before_cutoff(tmp_path):
+    journal = _journal(tmp_path)
+    _confirmed(journal, uncertain=True)
+    with journal._connect() as conn, conn:
+        for state, stamp in (("PROPOSED", 100), ("APPROVED", 110), ("PRECHECKED", 120),
+                             ("SUBMITTED", 130), ("UNKNOWN", 150), ("CONFIRMED", 190)):
+            conn.execute("UPDATE events SET observed_at=? WHERE profile_id=? AND new_state=?",
+                         (stamp, journal.profile_id, state))
+    audit = journal.audit_metrics(140)
+    assert audit["mean_submission_to_unknown_seconds"] == 20
+    assert audit["mean_recovery_seconds"] == 40
+    audit = journal.audit_metrics(160)
+    assert audit["uncertain_submissions_detected"] == 0
+    assert audit["mean_submission_to_unknown_seconds"] is None
+    assert audit["reconciliations_from_unknown"] == 1
+    assert audit["mean_recovery_seconds"] == 40
+    assert journal.audit_metrics(200)["mean_recovery_seconds"] is None
+    with journal._connect() as conn, conn:
+        conn.execute("UPDATE events SET observed_at=195 WHERE new_state='UNKNOWN'")
+    assert journal.audit_metrics(140)["mean_recovery_seconds"] is None
 
 
 def test_metrics_window_counts_current_reservations_but_not_old_events(tmp_path):

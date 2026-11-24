@@ -1,5 +1,10 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A9, tempos de detecção e conciliação no diário (G0)
+
+- O diário mede o intervalo local entre envio e reconhecimento de incerteza, e entre incerteza e conciliação, com contagem de amostras por perfil. A janela considera a transição final e recupera o evento predecessor mesmo se ele ocorreu antes do corte. Intervalos negativos ou transições inconsistentes são descartados. O painel PT/EN e o relatório diário Telegram exibem essas métricas quando há evidência.
+- Validação: 47 testes direcionados, Ruff e git diff --check aprovados. A métrica de detecção do incidente real permanece desconhecida: o diário comprova apenas os tempos entre seus próprios eventos. A calibração de lucro exige histórico de voos e contabilidade independentes. Nenhuma compra executada.
+
 ## 2026-11-24 — Autonomia Total A3, avaliação individual de layouts (G0)
 
 - A pesquisa histórica passa a identificar e avaliar cada configuração hipotética Y/J/F separadamente, vinculando sua identidade econômica à combinação de hub, rota, modelo, motor e snapshot. O validador conserva os impedimentos comuns e rejeita a configuração ainda não confirmada pela loja do jogo. A interface PT/EN exibe os motivos de bloqueio por layout.

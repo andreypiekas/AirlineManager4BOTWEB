@@ -1150,6 +1150,8 @@ const EN = {
   "Pedidos confirmados no diário": "Orders confirmed in ledger",
   "Intenções em estado incerto": "Intents with uncertain outcome",
   "Intenções falhadas": "Failed intents",
+  "Envio → incerteza no diário (média em segundos)": "Submission → uncertainty in journal (mean seconds)",
+  "Incerteza → conciliação no diário (média em segundos)": "Uncertainty → reconciliation in journal (mean seconds)",
   "Custo planejado de pedidos confirmados": "Planned cost of confirmed orders",
   "Custo planejado reservado": "Reserved planned cost",
   "Pesquisas por hub": "Research by hub",
@@ -3493,6 +3495,12 @@ async function loadInvestmentMetrics() {
       [tr("Pedidos confirmados no diário"), journal.by_state?.CONFIRMED],
       [tr("Intenções em estado incerto"), journal.by_state?.UNKNOWN],
       [tr("Intenções falhadas"), journal.by_state?.FAILED],
+      [tr("Envio → incerteza no diário (média em segundos)"),
+        Number.isFinite(journal.mean_submission_to_unknown_seconds) ?
+          nf.format(journal.mean_submission_to_unknown_seconds) + " (n=" + nf.format(journal.uncertain_submissions_detected) + ")" : null],
+      [tr("Incerteza → conciliação no diário (média em segundos)"),
+        Number.isFinite(journal.mean_recovery_seconds) ?
+          nf.format(journal.mean_recovery_seconds) + " (n=" + nf.format(journal.reconciliations_from_unknown) + ")" : null],
       [tr("Custo planejado de pedidos confirmados"),
         journal.confirmed_planned_cost_in_window == null ? null : hubMoney(journal.confirmed_planned_cost_in_window)],
       [tr("Custo planejado reservado"),
