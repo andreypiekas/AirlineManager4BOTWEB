@@ -1121,6 +1121,10 @@ def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress()
     assert first["range_source"] == first["capacity_source"] == "catalog_model"
     assert items["2"]["economics_preview"] is None
     assert items[None]["economics_preview"] is None
+    for strategy, scenario in (("optimized_base", "base"), ("optimized_stress", "stress")):
+        optimized = next(row for row in first["layouts"] if strategy in row["strategies"])
+        assert optimized[scenario]["projected_contribution_per_day"] == max(
+            row[scenario]["projected_contribution_per_day"] for row in first["layouts"])
     assert first["layouts"][0]["base"]["fuel_cost_per_day"] > second["layouts"][0]["base"]["fuel_cost_per_day"]
     for row in items.values():
         assert row["daily_net_profit"] is None
@@ -1128,6 +1132,7 @@ def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress()
     for row in first["layouts"]:
         assert sum(row["layout"][key] * weight for key, weight in zip(("y", "j", "f"), (1, 2, 3))) <= 180
         base, stress = row["base"], row["stress"]
+        assert sum(base["revenue_by_class"].values()) == pytest.approx(base["revenue_per_day"], abs=.02)
         assert stress["fuel_cost_per_day"] == pytest.approx(base["fuel_cost_per_day"] * 1.2, abs=.02)
         assert base["margin_per_day"] == pytest.approx(base["revenue_per_day"] * .15, abs=.02)
         assert base["projected_contribution_per_day"] == pytest.approx(
@@ -1181,7 +1186,10 @@ def test_economic_preview_uses_correlated_variant_co2_in_both_scenarios():
         assert after["co2_rate_source"] == "observed_variant"
         assert after["co2_kg_per_pax_km"] == coefficient
         assert after["purchase_eligible"] is False
-        for original, updated in zip(before["layouts"], after["layouts"]):
+        for original in before["layouts"]:
+            if not {"economy", "premium"}.intersection(original["strategies"]):
+                continue
+            updated = next(row for row in after["layouts"] if row["layout"] == original["layout"])
             assert original["layout"] == updated["layout"]
             for scenario in ("base", "stress"):
                 assert updated[scenario]["co2_cost_per_day"] == pytest.approx(

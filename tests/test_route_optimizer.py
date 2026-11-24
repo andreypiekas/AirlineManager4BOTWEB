@@ -1,9 +1,11 @@
 """Pure route-ranking tests; no browser, AM4 login or real purchases."""
 from dataclasses import dataclass
+from random import Random
 
 import pytest
 
 from gamemode import EASY, REALISM
+from research_economics_preview import optimal_layout
 from route_optimizer import estimate_route, rank_candidates
 
 
@@ -16,6 +18,34 @@ class Candidate:
 
 
 MODEL = {"speed": 800, "fuel": 7, "capacity": 180}
+
+
+def test_contribution_layout_matches_exhaustive_weighted_capacity_search():
+    rng = Random(20261124)
+    for _ in range(160):
+        capacity = rng.randint(1, 30)
+        demand = tuple(rng.randint(0, 90) for _ in range(3))
+        fares = tuple(rng.randint(1, 1000) for _ in range(3))
+        throughput = rng.choice((0.5, 1.0, 2.75, 5.2))
+        margin = rng.choice((0.0, 0.1, 0.4, 1.0))
+        carbon = rng.randint(0, 300)
+
+        def score(layout, demand=demand, throughput=throughput, fares=fares, margin=margin, carbon=carbon):
+            return sum(min(demand[i], count * throughput) *
+                       (fares[i] * (1 - margin) - (i + 1) * carbon)
+                       for i, count in enumerate(layout))
+
+        maximum = max(score((y, j, f)) for f in range(capacity // 3 + 1)
+                      for j in range((capacity - 3 * f) // 2 + 1)
+                      for y in range(capacity - 3 * f - 2 * j + 1))
+        layout = optimal_layout(capacity, demand, fares, throughput, margin=margin,
+                                co2_per_passenger=carbon)
+        if maximum == 0:
+            assert layout is None
+        else:
+            assert layout is not None
+            assert 0 < sum((i + 1) * count for i, count in enumerate(layout)) <= capacity
+            assert score(layout) == pytest.approx(maximum)
 
 
 def estimate(route, **kw):

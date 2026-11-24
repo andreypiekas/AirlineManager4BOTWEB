@@ -1,11 +1,12 @@
 """Explicit what-if scenarios for pending research; never purchase evidence."""
 from __future__ import annotations
 
+from math import ceil
 from types import SimpleNamespace
 
 from expansion_economics import DEFAULT_STRESS
 from gamemode import EASY, REALISM
-from route_optimizer import CO2_PER_PAX_KM, TURNAROUND_H, estimate_route
+from route_optimizer import CLASS_WEIGHTS, CO2_PER_PAX_KM, TURNAROUND_H, estimate_route
 
 
 def research_mode(stats: object, now: float) -> str | None:
@@ -14,6 +15,45 @@ def research_mode(stats: object, now: float) -> str | None:
         return None
     return next((mode.key for mode in (EASY, REALISM)
                  if mode.label == getattr(stats, "mode", None)), None)
+
+
+def optimal_layout(capacity, demand, fares, passengers_per_seat, *, margin, co2_per_passenger):
+    """Maximize contribution over integer Y/J/F layouts with weighted capacity.
+
+    Fuel is constant for the flight schedule. For each F count, the objective
+    over J is discrete concave: increasing J adds its diminishing marginal
+    revenue and removes two Y capacity units. Binary search finds its maximum.
+    Seats beyond demand or with nonpositive contribution are unnecessary.
+    """
+    unit_profit = tuple(fare * (1 - margin) - weight * co2_per_passenger
+                        for fare, weight in zip(fares, CLASS_WEIGHTS))
+    limits = tuple(min(capacity // weight, ceil(value / passengers_per_seat))
+                   if profit > 0 else 0
+                   for value, weight, profit in zip(demand, CLASS_WEIGHTS, unit_profit))
+
+    def contribution(index, count):
+        return min(demand[index], count * passengers_per_seat) * unit_profit[index]
+
+    def economy_count(remaining, business):
+        return min(limits[0], remaining - 2 * business)
+
+    def score(remaining, business):
+        return contribution(0, economy_count(remaining, business)) + contribution(1, business)
+
+    best, best_value = None, 0.0
+    for first in range(limits[2] + 1):
+        remaining = capacity - 3 * first
+        low, high = 0, min(limits[1], remaining // 2)
+        while low < high:
+            middle = (low + high) // 2
+            if score(remaining, middle) < score(remaining, middle + 1):
+                low = middle + 1
+            else:
+                high = middle
+        value = score(remaining, low) + contribution(2, first)
+        if value > best_value:
+            best, best_value = (economy_count(remaining, low), low, first), value
+    return best
 
 
 def research_economics_preview(sample: dict, model: dict, variant: dict | None,
@@ -69,6 +109,8 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
         return {
             "departures_per_day": round(result.legs_per_day, 4),
             "passengers_per_day": dict(zip(("y", "j", "f"), map(lambda x: round(x, 2), result.passengers_per_day))),
+            "revenue_by_class": {key: round(sold * fare, 2) for key, sold, fare in
+                                 zip(("y", "j", "f"), result.passengers_per_day, fares)},
             "revenue_per_day": round(result.revenue_per_day, 2),
             "fuel_cost_per_day": round(result.fuel_cost_per_day, 2),
             "co2_cost_per_day": round(result.co2_cost_per_day, 2),
@@ -77,19 +119,45 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
         }
 
     layouts = []
-    for premium in (False, True):
-        base = estimate_route(candidate, seats=capacity, model=spec, mode=mode, load_factor=load,
-                              fuel_price=fuel, co2_price=co2, premium=premium, prices=fares,
-                              co2_kg_per_pax_km=co2_rate, extra_stops=extra_stops)
-        if base is None or any(row["layout"] == dict(zip(("y", "j", "f"), base.layout)) for row in layouts):
-            continue
+
+    def add_layout(base, strategy):
+        if base is None:
+            return
+        layout = dict(zip(("y", "j", "f"), base.layout))
+        existing = next((row for row in layouts if row["layout"] == layout), None)
+        if existing is not None:
+            existing["strategies"].append(strategy)
+            return
+        if not any(base.layout):
+            return
         stressed = estimate_route(stressed_candidate, seats=capacity, model=spec, mode=mode,
                                   load_factor=load * stress["occupancy"], fuel_price=fuel * stress["fuel_price"],
                                   co2_price=co2 * stress["co2_price"], premium=True, prices=fares,
                                   fixed_layout=base.layout, co2_kg_per_pax_km=co2_rate, extra_stops=extra_stops)
         if stressed is not None:
-            layouts.append({"layout": dict(zip(("y", "j", "f"), base.layout)),
+            layouts.append({"layout": layout, "strategies": [strategy],
                             "base": serialize(base), "stress": serialize(stressed)})
+
+    def estimate(premium, fixed_layout=None):
+        return estimate_route(candidate, seats=capacity, model=spec, mode=mode, load_factor=load,
+                              fuel_price=fuel, co2_price=co2, premium=premium, prices=fares,
+                              co2_kg_per_pax_km=co2_rate, extra_stops=extra_stops, fixed_layout=fixed_layout)
+
+    economy = estimate(False)
+    if economy is None:
+        return None
+    add_layout(economy, "economy")
+    add_layout(estimate(True), "premium")
+    for strategy, scenario, occupancy, carbon_price in (
+        ("optimized_base", candidate, load, co2),
+        ("optimized_stress", stressed_candidate, load * stress["occupancy"], co2 * stress["co2_price"]),
+    ):
+        layout = optimal_layout(capacity, (scenario.y, scenario.j, scenario.f), fares,
+                                economy.legs_per_day * occupancy, margin=margin,
+                                co2_per_passenger=co2_rate * distance * carbon_price / 1000)
+        if layout is None:
+            continue
+        add_layout(estimate(True, layout), strategy)
     if not layouts:
         return None
     expiry = min(quotes[k]["expires_at"] for k in ("fuel", "co2"))

@@ -1366,6 +1366,8 @@ const EN = {
   "Demanda observada Y/J/F": "Observed Y/J/F demand",
   "Simulação (demanda total, não residual)": "What-if (total demand, not remaining demand)",
   "Contribuição diária base / stress": "Daily contribution base / stress",
+  "Otimizada para cenário base": "Optimized for base scenario",
+  "Otimizada para stress": "Optimized for stress",
   "Detalhe da variante observado": "Observed variant detail",
   "Identidade do modelo confirmada": "Model identity confirmed",
   "Identidade do modelo pendente": "Model identity pending",
@@ -2074,7 +2076,11 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
   addHubMetric(metrics, "Simulação (demanda total, não residual)", tr("Contribuição diária base / stress"));
   for (const row of preview.layouts) {
     const layout = [row.layout.y, row.layout.j, row.layout.f].map(value => nf.format(value)).join(" / ");
-    addHubMetric(metrics, "Y/J/F " + layout, hubMoney(row.base.projected_contribution_per_day) +
+    const strategies = Array.isArray(row.strategies) ? row.strategies : [];
+    const optimized = [
+      ["optimized_base", "Otimizada para cenário base"], ["optimized_stress", "Otimizada para stress"],
+    ].filter(([key]) => strategies.includes(key)).map(([, label]) => tr(label));
+    addHubMetric(metrics, "Y/J/F " + layout + (optimized.length ? " · " + optimized.join(" / ") : ""), hubMoney(row.base.projected_contribution_per_day) +
       " / " + hubMoney(row.stress.projected_contribution_per_day));
   }
   addHubMetric(metrics, "Margem sobre receita", nf.format(preview.safety_margin_fraction * 100) + "%");

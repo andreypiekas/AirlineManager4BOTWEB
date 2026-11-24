@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, otimização de layouts Y/J/F (G0)
+
+- A pesquisa por hub, rota, modelo e motor agora inclui layouts que maximizam a contribuição diária estimada no cenário base e no stress combinado, preservando as alternativas de referência econômica e premium. O algoritmo inteiro respeita a capacidade ponderada 1/2/3, demanda por classe, margem e custo de CO₂; explora as quantidades de F e encontra a melhor combinação Y/J por busca sobre uma função discreta côncava. As alternativas idênticas são consolidadas, com indicação das estratégias que as selecionaram.
+- O painel identifica layouts otimizados em PT/EN e os resultados incluem receita discriminada por classe. Cada layout permanece fixo na comparação base/stress. O cálculo usa as hipóteses da pesquisa existente e a demanda total observada, não comprova disponibilidade residual nem preços finais. Lucro líquido, payback e elegibilidade de compra permanecem pendentes de evidência.
+- Validação Windows: 234 testes direcionados aprovados, incluindo comparação do otimizador com enumeração exaustiva em 160 cenários determinísticos. Ruff e `git diff --check` aprovados.
+- Pendentes: fontes verificadas de demanda residual e taxas/preços finais, alimentação de casos auditados A3 elegíveis e homologação das fases seguintes. Nenhuma compra real executada; objetivo integral ativo.
+
 ## 2026-11-24 — Autonomia Total A2/A4/A5, conciliação do snapshot vigente (G0)
 
 - O plano auditado de aquisição exige consistência com a última captura disponível do jogo. Captura divergente, expirada ou inválida bloqueia o plano, preservando os resultados históricos para diagnóstico. Uma instalação sem captura local mantém a compatibilidade com registros auditados independentes; as demais verificações financeiras e de cobertura continuam obrigatórias.
