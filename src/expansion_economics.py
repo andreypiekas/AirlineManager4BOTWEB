@@ -229,7 +229,9 @@ def evaluate_expansion_economics(
         "engine_id": base["aircraft"]["engine_id"],
     }
     route = candidate.get("route") if isinstance(candidate.get("route"), Mapping) else {}
-    if route.get("occupied") is not False:
+    if route.get("occupied") is True:
+        _reason(reasons, "ROUTE_OCCUPIED", "candidate.route.occupied")
+    elif route.get("occupied") is not False:
         _reason(reasons, "ROUTE_OCCUPANCY_UNVERIFIED", "candidate.route.occupied")
     if route.get("demand_unit") != "passengers_per_day":
         _reason(reasons, "DEMAND_UNIT_UNVERIFIED", "candidate.route.demand_unit")

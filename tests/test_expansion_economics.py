@@ -182,7 +182,7 @@ def test_missing_required_evidence_never_substitutes_zero(field):
 
 @pytest.mark.parametrize("mutation,code", [
     (lambda d: d[2]["layout"]["value"].update(j=100), "LAYOUT_CAPACITY_EXCEEDED"),
-    (lambda d: d[1]["route"].update(occupied=True), "ROUTE_OCCUPANCY_UNVERIFIED"),
+    (lambda d: d[1]["route"].update(occupied=True), "ROUTE_OCCUPIED"),
     (lambda d: d[1]["route"].update(occupied=None), "ROUTE_OCCUPANCY_UNVERIFIED"),
     (lambda d: d[2]["daily_demand"]["value"].update(y=300), "DEMAND_CONTRADICTORY"),
     (lambda d: d[2]["layout"].update(engine_id="wrong-engine"), "EVIDENCE_CONTRADICTORY"),

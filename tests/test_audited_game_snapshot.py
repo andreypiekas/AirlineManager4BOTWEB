@@ -153,6 +153,10 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
     assert occupied and all(item["fleet_occupancy"]["own_aircraft_count"] == 1
                             and item["economics_preview"] is None for item in occupied)
     for item in occupied:
+        gate = item["accounting_gate"]
+        assert gate["status"] == "blocked" and gate["purchase_eligible"] is False
+        assert gate["scope"] == "shared_layout_prerequisites"
+        assert "ROUTE_OCCUPIED" in {reason["code"] for reason in gate["blocking_reasons"]}
         ref = item["native_route_quote_reference"]
         assert ref["quote_count"] == 2
         assert ref["route_fee_range"] == {"min": 1000, "max": 1500}
@@ -164,6 +168,14 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
                if item["destination_id"] != "3139")
     assert not any(aircraft in json.dumps(first) for aircraft in ("900001", "900002", "900003", "900004"))
     assert all(item["purchase_eligible"] is False for item in first["items"])
+    for item in first["items"]:
+        gate = item["accounting_gate"]
+        assert gate["status"] == "blocked" and gate["read_only"] is True
+        assert gate["total_investment"] is None and gate["cash_after_purchase"] is None
+        assert {"fuel_price_per_1000", "co2_price_per_1000"} <= set(gate["verified_accounting_inputs"])
+        assert not {"layout", "daily_demand", "fares", "cash"} & set(gate["verified_accounting_inputs"])
+        assert "DEMAND_UNVERIFIED" in {reason["code"] for reason in gate["blocking_reasons"]}
+        assert {"maintenance", "a_check", "other"} == set(gate["excluded_costs"])
     assert replay_research_page(now=NOW + 100, path=path) == first
     assert replay_research_page(offset=40, expected_snapshot="other", now=NOW, path=path)["status"] == "snapshot_alterado"
     second = replay_research_page(offset=40, expected_snapshot=snapshot["snapshot_id"],
@@ -184,6 +196,43 @@ def test_replay_rejects_legacy_or_modified_snapshot(tmp_path, monkeypatch):
     snapshot["observations"]["captured_at"] += 1
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     assert replay_research_page(now=NOW, path=path)["status"] == "registro_invalido"
+
+
+def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, monkeypatch):
+    from test_owned_hub_research_feed import _fleet_report, _inventory, _market, _preview_engines, _sample
+
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    evidence = observations()
+    engines = _preview_engines()
+    engines["models"]["11"]["variant_details"] = {
+        "1": {"observed_at": NOW, "metrics": {"capacity_pax": 180, "range_km": 2000,
+                                                "required_runway_ft": 6500}}}
+    sample = _sample()
+    sample["destination_runway_ft"] = 6499
+    sample["route_detail"] = {"source": "game_route_detail", "observed_at": NOW,
+                              "origin_id": "2926", "destination_id": "3139",
+                              "origin_runway_ft": 6500, "destination_runway_ft": 6499,
+                              "observed_aircraft_on_route": 0}
+    evidence.update(inventory={**_inventory(), "hub_catalog_fresh": True}, routes=_fleet_report(),
+                    market=_market(), engines=engines,
+                    mode="realista", mode_at=NOW - 10,
+                    quotes={"fuel": {"source": "game_market", "unit": "USD/1000", "price": 600,
+                                     "observed_at": NOW - 10, "expires_at": NOW},
+                            "co2": {"source": "game_market", "unit": "USD/1000", "price": 100,
+                                    "observed_at": NOW - 5, "expires_at": NOW + 60}})
+    evidence["demand"]["samples"] = [sample]
+    path = tmp_path / FILENAME
+    path.write_text(json.dumps(compose_snapshot(**evidence)), encoding="utf-8")
+    page = replay_research_page(now=NOW, path=path)
+    row = next(item for item in page["items"] if item["engine_id"] == "1")
+    gate = row["accounting_gate"]
+    assert gate["verified_accounting_inputs"] == ["capacity", "co2_price_per_1000"]
+    codes = {reason["code"] for reason in gate["blocking_reasons"]}
+    assert "ROUTE_PHYSICALLY_INFEASIBLE" in codes
+    assert "ROUTE_OCCUPANCY_UNVERIFIED" in codes and "ROUTE_OCCUPIED" not in codes
+    assert row["economics_preview"] is None
+    other = next(item for item in page["items"] if item["engine_id"] == "3")
+    assert other["accounting_gate"]["verified_accounting_inputs"] == ["co2_price_per_1000"]
 
 
 

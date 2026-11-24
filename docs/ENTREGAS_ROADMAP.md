@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, integração da validação econômica auditada (G0)
+
+- A pesquisa histórica por hub, rota, modelo e motor passa a executar o validador econômico de aquisição sobre o snapshot privado e a hora de captura. A API informa os impedimentos comuns aos layouts hipotéticos, as entradas contábeis verificadas e um identificador reproduzível de avaliação. O painel PT/EN apresenta o estado e os motivos em detalhes expansíveis.
+- O adaptador reconhece capacidade somente no detalhe correlacionado e recente da variante, preços de combustível e CO₂ dentro da janela observada, custo incremental zero para hub próprio comprovado e ocupação com evidência consistente. Distingue rota ocupada de ocupação desconhecida e converte pistas de pés para metros no contrato auditado. Não atribui demanda residual, configuração de assentos nativa, preço final, disponibilidade de compra ou despesas sem evidência. A validação é compartilhada pelos layouts e não gera oportunidades elegíveis ou registros de aquisição enquanto faltarem esses dados.
+- Validação Windows: 226 testes direcionados e suíte completa com 2.000 aprovados, 1 ignorado e nenhum erro (testes de instalação Linux excluídos). Ruff e git diff --check aprovados. Nenhuma transação real executada. Permanecem pendentes a coleta nativa dos dados de aquisição, a avaliação integral por layout e a homologação das demais fases do objetivo.
+
 ## 2026-11-24 — Autonomia Total A3, sensibilidade e recuperação indicativa de capital (G0)
 
 - A pesquisa por combinação de hub, rota, motor e layout simula cada variável de stress isoladamente: preço de combustível +20%, CO₂ +20%, ocupação -10% e demanda -10%, além do stress combinado. Cada comparação preserva a configuração Y/J/F e a margem, com as mesmas hipóteses de rotação e tarifas. Quando disponível, a reserva condicional de A-check também é aplicada às contribuições comparadas.

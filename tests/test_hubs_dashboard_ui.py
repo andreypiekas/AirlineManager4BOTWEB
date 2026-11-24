@@ -1264,6 +1264,9 @@ const task = {purchase_eligible:false, hub_code:'AAA', destination_id:'42', mode
     aircraft_on_route_range:{min:0,max:1}},
   capital_quote_preview:{...evidence, source:'displayed_capital_quotes_v1', purchase_eligible:false,
     aircraft_price_source:'observed_variant', components:{aircraft:100,hangar:20}, displayed_subtotal:120},
+  accounting_gate:{scope:'shared_layout_prerequisites',status:'blocked',
+    verified_accounting_inputs:['fuel_price_per_1000','co2_price_per_1000'],
+    blocking_reasons:[{code:'DEMAND_UNVERIFIED',field:'route.demand_remaining'}]},
   pending:['pesquisa_pendente']};
 const makePage = (offset, id='snap-a') => ({status:'parcial', source:'derived_research_queue',
   read_only:true, purchase_eligible:false, coverage:'partial', historical_replay:true,
@@ -1291,6 +1294,12 @@ async function run() {
   assert.equal(metrics()['Motor pesquisado'], 'Variant <test> (1)');
   assert.equal(metrics()['Demanda observada Y/J/F'], '123 / 0 / 12');
   assert.equal(metrics()['Lucro líquido diário'], 'Desconhecido');
+  assert.equal(metrics()['Validação econômica auditada'], 'Bloqueado');
+  assert.equal(metrics()['Entradas contábeis verificadas'], '2');
+  const audit = $('snapshotResearchList').children[0].children[3];
+  assert.equal(audit.tag, 'details');
+  assert.equal(audit.children[0].textContent, 'Impedimentos comuns aos layouts (1)');
+  assert.equal(audit.children[1].children[0].textContent, 'DEMAND_UNVERIFIED · route.demand_remaining');
   assert.equal($('snapshotResearchNext').disabled, false);
   assert.equal($('snapshotResearchPrev').disabled, true);
 

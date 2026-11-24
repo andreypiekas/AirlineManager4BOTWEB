@@ -1378,6 +1378,10 @@ const EN = {
   "Sem recuperação projetada": "No projected recovery",
   "Cotações nativas de aeronaves existentes": "Native quotes for existing aircraft",
   "Referência histórica, sem preço para nova aeronave": "Historical reference, no price for a new aircraft",
+  "Validação econômica auditada": "Audited economic validation",
+  "Bloqueado": "Blocked",
+  "Impedimentos comuns aos layouts": "Shared layout blockers",
+  "Entradas contábeis verificadas": "Verified accounting inputs",
   "Taxa de rota observada (intervalo)": "Observed route fee (range)",
   "Tarifas observadas Y/J/F (intervalos)": "Observed Y/J/F fares (ranges)",
   "Ocupação observada no formulário (intervalo)": "Observed form occupancy (range)",
@@ -3709,6 +3713,11 @@ function renderSnapshotResearch(page) {
     appendCapitalQuotePreview(metrics, task, page.captured_at, true);
     appendPhysicalFeasibility(metrics, task, page.captured_at);
     appendResearchEconomicsPreview(metrics, task, page.captured_at);
+    const gate = task.accounting_gate;
+    if (gate?.scope === "shared_layout_prerequisites" && gate.status === "blocked") {
+      addHubMetric(metrics, "Validação econômica auditada", tr("Bloqueado"));
+      addHubMetric(metrics, "Entradas contábeis verificadas", nf.format(gate.verified_accounting_inputs.length));
+    }
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
     addHubMetric(metrics, "ROI", tr("Desconhecido"));
@@ -3718,7 +3727,20 @@ function renderSnapshotResearch(page) {
       const entry = document.createElement("li"); entry.textContent = hubResearchBlocker(reason);
       reasons.append(entry);
     }
-    item.append(heading, metrics, reasons); list.append(item);
+    item.append(heading, metrics, reasons);
+    if (gate?.status === "blocked" && Array.isArray(gate.blocking_reasons)) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = tr("Impedimentos comuns aos layouts") + " (" + nf.format(gate.blocking_reasons.length) + ")";
+      const auditReasons = document.createElement("ul"); auditReasons.className = "hub-research-reasons";
+      for (const reason of gate.blocking_reasons) {
+        const entry = document.createElement("li");
+        entry.textContent = String(reason.code) + " · " + String(reason.field);
+        auditReasons.append(entry);
+      }
+      details.append(summary, auditReasons); item.append(details);
+    }
+    list.append(item);
   }
   $("snapshotResearchPrev").disabled = page.offset <= 0;
   $("snapshotResearchNext").disabled = page.next_offset === null;

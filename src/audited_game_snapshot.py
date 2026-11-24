@@ -215,6 +215,7 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
     from market import MarketQuote
     from native_route_quotes import reference_for_route
     from owned_hub_research_feed import build_owned_hub_research_queue
+    from research_accounting_gate import evaluate_research_gate
 
     now = time.time() if now is None else now
     path = path if path is not None else paths.current().data / FILENAME
@@ -249,6 +250,9 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
             route_report=inputs["route_report"], offset=offset, expected_fingerprint=expected_fingerprint,
         )
         for item in result["items"]:
+            item["accounting_gate"] = evaluate_research_gate(
+                snapshot, item, now=captured, margin=inputs["preview_margin"],
+            )
             stop = item.get("stopover_research")
             reference = reference_for_route(
                 observed.get("native_route_quotes", []), profile_id=snapshot["profile_id"],
