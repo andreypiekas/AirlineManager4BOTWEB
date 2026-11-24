@@ -407,6 +407,44 @@ def test_collector_discards_mismatched_detail_without_replacing_last_good(tmp_pa
     assert registry.snapshot(now=NOW)["models"]["11"] == original
 
 
+@pytest.mark.parametrize(("detail", "collected", "verified"), [
+    ({"attribute_present": False, "model_id": None, "script_model_id": "2"}, 1, True),
+    ({"attribute_present": False, "model_id": None, "script_model_id": "12"}, 0, False),
+    ({"attribute_present": True, "model_id": "2", "script_model_id": "12"}, 0, False),
+    ({"attribute_present": True, "model_id": "12", "script_model_id": "2"}, 0, False),
+    ({"attribute_present": False, "model_id": None, "script_model_id": None}, 1, False),
+])
+def test_collector_correlates_response_script_id(tmp_path, monkeypatch, detail, collected, verified):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    monkeypatch.setattr(game_observations, "EngineCatalogRegistry", lambda: registry)
+
+    class Bot:
+        stopping = False
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            pass
+
+        def ajax(self, *_args):
+            pass
+
+        def js(self, script):
+            if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
+                return {"detail": detail, "groups": _groups()}
+            return [{"id": "2", "name": "A380-800"}]
+
+    assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == collected
+    models = registry.snapshot(now=NOW)["models"]
+    if collected:
+        assert models["2"]["model_detail_identity_verified"] is verified
+        assert models["2"]["engine_prices_verified"] is False
+    else:
+        assert not models
+
+
 @pytest.mark.parametrize("change", ["model", "engine"])
 def test_collector_rejects_ajax_panel_change_between_snapshots(tmp_path, monkeypatch, change):
     """An AJAX replacement cannot combine engines and identity from different forms."""
@@ -472,10 +510,11 @@ const select = {
 };
 let modelId = '11';
 let loading = false;
+let scripts = [];
 const panel = {
   getAttribute: name => name === 'data-model-id' ? modelId : null,
   querySelector: () => loading ? {} : null,
-  querySelectorAll: name => name === 'select' ? [select] : []
+  querySelectorAll: name => name === 'select' ? [select] : name === 'script' ? scripts : []
 };
 globalThis.document = {
   querySelector: name => name === '#acModel' ? panel : null,
@@ -489,15 +528,25 @@ globalThis.window = {jQuery: {active: 0}};
           "window.jQuery.active = 1; const ajax = snapshot();\n" +
           "window.jQuery.active = 0; loading = true; const loader = snapshot();\n" +
           "loading = false; modelId = '22'; const next = snapshot();\n" +
-          "console.log(JSON.stringify({first, ajax, loader, next}));\n")
+          "modelId = null; scripts = [{textContent: 'var acId = 2;'}]; const native = snapshot();\n" +
+          "scripts.push({textContent: 'acId = 12;'}); const conflict = snapshot();\n" +
+          "scripts = [{textContent: 'var acId = 2;'}]; modelId = '12'; const attrConflict = snapshot();\n" +
+          "modelId = null; scripts = []; const missing = snapshot();\n" +
+          "console.log(JSON.stringify({first, ajax, loader, next, native, conflict, attrConflict, missing}));\n")
     path = tmp_path / "engine_snapshot.js"
     path.write_text(js, encoding="utf-8")
     result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
     reads = json.loads(result.stdout)
-    assert reads["first"]["detail"] == {"attribute_present": True, "model_id": "11"}
+    assert reads["first"]["detail"] == {"attribute_present": True, "model_id": "11",
+                                       "script_model_id": None}
     catalog = engine_selection.parse_engine_catalog(reads["first"]["groups"])
     assert [item.engine_id for item in catalog.variants] == ["1", "2"]
     assert reads["ajax"] is None
     assert reads["loader"] is None
     assert reads["next"]["detail"]["model_id"] == "22"
+    assert reads["native"]["detail"] == {"attribute_present": False, "model_id": None,
+                                        "script_model_id": "2"}
+    assert reads["conflict"] is None
+    assert reads["attrConflict"] is None
+    assert reads["missing"]["detail"]["script_model_id"] is None

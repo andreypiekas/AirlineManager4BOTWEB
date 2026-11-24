@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A1/A3, identidade da aeronave no detalhe de motores (G0)
+
+- Em sessão autenticada, os detalhes de catálogo de A380-800, Cessna 172 e A320-200 apresentaram a declaração nativa `var acId = 2;`, `var acId = 12;` e `var acId = 5;`, respectivamente, dentro de `#acModel`. O cabeçalho do catálogo muda antes de o carregamento terminar; durante a transição observada não havia declaração no painel. O ID permaneceu correto durante as trocas reversíveis de motor do A380 e A320.
+- O coletor extrai exclusivamente o identificador numérico da resposta, junto às opções e especificações da mesma leitura DOM. A dupla leitura estável continua obrigatória. Divergências entre declarações, atributo de modelo e ID solicitado invalidam a observação. Ausência de ambas as fontes mantém a identidade sem confirmação. O registro existente conserva os dados por variante e permite que as filas e o ranking usem dimensões com identidade correlacionada.
+- No A380-800 foram observados GP7270 (ID 5, 964 km/h, 22,89 lbs/km), RR Trent 970 (ID 6, 917 km/h, 18,90 lbs/km) e RR Trent 972 (ID 7, 1.049 km/h, 22,26 lbs/km). Os três exibiram US$ 215.629.503 e alcance de 14.500 km. A observação confirma a associação entre o detalhe e o modelo, sem confirmar o preço final, a aquisição ou as regras econômicas do jogo. Ainda falta executar o coletor integrado em sessão autenticada e ampliar a cobertura dos modelos. G0 continua ativo.
+- Validação Windows: 47 testes direcionados aprovados; suíte ampla com 1.764 testes aprovados e 1 ignorado, excluído `tests/test_instalacao_linux.py` (requisito POSIX). Ruff, compilação Python e `git diff --check` aprovados. Nenhuma compra foi realizada.
+
 ## 2026-11-24 — Autonomia Total A2/A3/A7, escalas exploratórias no ranking persistido (G0)
 
 - O ranking de hubs próprios reconsulta o registro independente de escalas por perfil. Candidatos de pesquisa derivados exibem aeroporto intermediário, trechos e pistas quando a evidência corresponde à rota e à variante atuais. O seletor de evidência é compartilhado com as filas de hubs próprios e externos.

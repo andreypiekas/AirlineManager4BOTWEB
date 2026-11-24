@@ -27,6 +27,15 @@ if (!panel || document.querySelectorAll('#acModel').length !== 1 ||
     (window.jQuery && window.jQuery.active > 0) ||
     panel.querySelector('img[src*="loader"], [aria-busy="true"]')) return null;
 const id = panel.getAttribute('data-model-id');
+// The native detail response carries its model ID in an inline acId assignment.
+// Read only that assignment, scoped to the freshly loaded panel. The catalog
+// header changes before the response arrives and cannot identify the detail.
+const scriptIds = Array.from(panel.querySelectorAll('script'))
+  .flatMap(el => Array.from(String(el.textContent || '').matchAll(
+    /\bacId\s*=\s*([1-9][0-9]{0,11})\s*;/g), match => match[1]));
+const scriptId = scriptIds.length ? scriptIds[0] : null;
+if (scriptIds.some(value => value !== scriptId) ||
+    (id !== null && scriptId !== null && id !== scriptId)) return null;
 const groups = (() => {
 """ + _ENGINE_OPTIONS_JS + r"""
 })();
@@ -40,7 +49,7 @@ const rows = Array.from(panel.querySelectorAll('tr, .row'))
   .filter(row => metricLabels.has(normalized(row[0])));
 const costs = Array.from(panel.querySelectorAll('#acCost'),
   el => String(el.textContent || '').trim());
-return {detail: {attribute_present: id !== null, model_id: id}, groups,
+return {detail: {attribute_present: id !== null, model_id: id, script_model_id: scriptId}, groups,
         metrics: {rows, costs}};
 """
 
@@ -642,8 +651,9 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
     The model list and each combined detail snapshot are stable double reads.
     The AJAX target is cleared by bot.ajax(), so an old model's form cannot
     pass as a new one while its engine options and identity stay correlated.
-    Model ID correspondence and final engine prices still require verification
-    from the actual order form before any investment is authorized.
+    Model ID correspondence comes from the detail response itself. Final engine
+    prices still require verification from the actual order form before any
+    investment is authorized.
     """
     from fleet import _MODELS_JS
 
@@ -686,8 +696,10 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
                 continue
             explicit = detail["attribute_present"]
             observed_id = detail.get("model_id")
+            script_id = detail.get("script_model_id")
             if ((explicit and observed_id != model_id)
-                    or (not explicit and observed_id is not None)):
+                    or (not explicit and observed_id is not None)
+                    or (script_id is not None and script_id != model_id)):
                 log.warning("Motor de %s (%s): ID de modelo divergente no detalhe.", name, model_id)
                 continue
             try:
@@ -696,7 +708,7 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
                 log.debug("A pesquisa de detalhes por variante não foi concluída.")
                 variant_details = {}
             if registry.record(model_id, name, catalog,
-                               observed_model_id=observed_id if explicit else None,
+                               observed_model_id=observed_id if explicit else script_id,
                                observed_at=observed_at, variant_details=variant_details):
                 collected += 1
             else:
