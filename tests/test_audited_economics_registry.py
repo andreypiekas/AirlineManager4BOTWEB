@@ -77,6 +77,10 @@ def compare_registry(registry):
         fleet_coverage_verified=evidence.get("fleet_coverage_verified") is True,
         research_coverage_verified=evidence.get("research_coverage_verified") is True,
         commitments_verified=evidence.get("commitments_verified") is True,
+        current_cash_reserve=0, max_daily_spend=50000, max_acquisitions_per_day=10,
+        local_journal={"profile_id": "principal", "estimated_exposure": 0, "count": 0,
+                       "period_usage": {"source": "local_investment_journal", "since": NOW - 86400,
+                                        "estimated_exposure": 0, "acquisition_count": 0}},
         max_single_investment=20000, now=NOW,
     )
 
@@ -223,6 +227,66 @@ def test_a4_uses_current_capture_instead_of_stored_fleet_claims(
     assert expected in result["purchase_plan_blockers"]
     assert absent not in result["purchase_plan_blockers"]
     assert result["purchase_plan_preview"] is None
+
+
+def test_a4_api_enforces_live_policy_and_rolling_journal(registry, monkeypatch):
+    data = record_fixture(registry)
+    snapshot_id = data[0]["snapshot_id"]
+    assert registry.record_portfolio_evidence(
+        snapshot_id=snapshot_id, controls=controls(snapshot_id),
+        hub_capacity={},
+        fleet_coverage_verified=True, research_coverage_verified=True,
+        commitments_verified=True,
+    )
+    record = registry.snapshot(now=NOW)
+
+    class SnapshotRegistry:
+        def snapshot(self):
+            return deepcopy(record)
+
+    journal = {"profile_id": "principal", "estimated_exposure": 0, "count": 0,
+               "period_usage": {"source": "local_investment_journal", "since": NOW - 86400,
+                                "estimated_exposure": 5000, "acquisition_count": 1,
+                                "last_confirmed_at": None}}
+    monkeypatch.setattr("web.AuditedEconomicsRegistry", SnapshotRegistry)
+    monkeypatch.setattr("web.snapshot_summary", lambda: matching_capture(snapshot_id))
+    monkeypatch.setattr("web._local_investment_snapshot", lambda: deepcopy(journal))
+    monkeypatch.setattr("web.compare_audited_portfolio", lambda *args, **kwargs:
+                        compare_audited_portfolio(*args, **kwargs, now=NOW))
+    monkeypatch.setattr("web.recent_verified_money", lambda _bot: (40000, NOW))
+    monkeypatch.setattr("web.build_aircraft_intent_plan", lambda portfolio, evaluation:
+                        investment_plan_bridge.build_aircraft_intent_plan(portfolio, evaluation, now=NOW))
+    endpoint = "/api/investment/audited-expansion"
+    with served(registry.path.parent) as (port, cfg):
+        for key, value in (("planning_enabled", "on"), ("max_single_investment", 20000),
+                           ("max_daily_spend", 50000), ("max_acquisitions_per_day", 2)):
+            cfg.set("investment", key, value)
+        cfg.set("settings", "cash_reserve", 5000)
+        status, result = request(port, "GET", endpoint, headers=auth())
+        assert status == 200
+        assert result["purchase_plan_preview"] is not None, result["purchase_plan_blockers"]
+        assert result["portfolio"]["local_period_limits"]["remaining_acquisitions"] == 1
+
+        cfg.set("investment", "max_daily_spend", 15000)
+        status, result = request(port, "GET", endpoint, headers=auth())
+        assert status == 200
+        assert result["portfolio"]["budget_after_reservations_and_limits"] == 10000
+        assert result["portfolio"]["decision"] == "nao_comprar"
+        assert result["purchase_plan_preview"] is None
+
+        cfg.set("investment", "max_daily_spend", 50000)
+        cfg.set("investment", "max_acquisitions_per_day", 1)
+        status, result = request(port, "GET", endpoint, headers=auth())
+        assert status == 200
+        assert "limite_de_aquisicoes_em_24h" in result["purchase_plan_blockers"]
+        assert result["purchase_plan_preview"] is None
+
+        cfg.set("investment", "max_acquisitions_per_day", 2)
+        cfg.set("settings", "cash_reserve", 35000)
+        status, result = request(port, "GET", endpoint, headers=auth())
+        assert status == 200
+        assert result["portfolio"]["budget_after_reservations_and_limits"] == 4000
+        assert result["purchase_plan_preview"] is None
 
 
 def test_authenticated_snapshot_research_api_passes_pagination(tmp_path, monkeypatch):

@@ -508,6 +508,12 @@ def a4_controls(**changes):
             for key, (value, source) in values.items()}
 
 
+def a4_local_journal(*, exposure=0, count=0, since=NOW - 86400):
+    return {"profile_id": PROFILE, "estimated_exposure": 0, "count": 0,
+            "period_usage": {"source": "local_investment_journal", "since": since,
+                             "estimated_exposure": exposure, "acquisition_count": count}}
+
+
 def a4_compare(*evaluations, controls=None, capacities=None, **changes):
     default_capacity = a4_proof(2, "game_hangar_and_fleet_status")
     settings = {"profile_id": PROFILE, "snapshot_id": SNAPSHOT,
@@ -515,9 +521,46 @@ def a4_compare(*evaluations, controls=None, capacities=None, **changes):
                 "passenger_hangar": default_capacity if capacities is None else capacities,
                 "fleet_coverage_verified": True, "research_coverage_verified": True,
                 "commitments_verified": True, "max_single_investment": 9000,
+                "current_cash_reserve": 0, "max_daily_spend": 30000,
+                "max_acquisitions_per_day": 10, "local_journal": a4_local_journal(),
                 "now": NOW}
     settings.update(changes)
     return compare_audited_portfolio(list(evaluations), **settings)
+
+
+def test_a4_current_policy_caps_audited_budget_without_double_counting():
+    cheap = a4_evaluation(cost=2000)
+    expensive = a4_evaluation("789", "999", cost=7000, profit=350)
+    result = a4_compare(cheap, expensive, max_daily_spend=9000,
+                        local_journal=a4_local_journal(exposure=5000, count=1),
+                        max_acquisitions_per_day=2)
+    assert result["budget_after_reservations_and_limits"] == 4000
+    assert result["best"]["economics_id"] == cheap["economics_id"]
+    assert result["local_period_limits"]["remaining_acquisitions"] == 1
+
+    reserved = a4_compare(cheap, expensive, current_cash_reserve=21000)
+    assert reserved["budget_after_reservations_and_limits"] == 2500
+    assert reserved["best"]["economics_id"] == cheap["economics_id"]
+
+
+@pytest.mark.parametrize("changes, reason", [
+    ({"max_daily_spend": 0}, "limites_periodo_invalidos"),
+    ({"max_acquisitions_per_day": 0}, "limites_periodo_invalidos"),
+    ({"current_cash_reserve": -1}, "limites_periodo_invalidos"),
+    ({"local_journal": None}, "uso_periodo_a_confirmar"),
+    ({"local_journal": a4_local_journal(since=NOW - 86399)}, "uso_periodo_a_confirmar"),
+    ({"local_journal": a4_local_journal(since=NOW - 86500)}, "uso_periodo_a_confirmar"),
+    ({"local_journal": {**a4_local_journal(), "profile_id": "other"}}, "uso_periodo_a_confirmar"),
+    ({"max_daily_spend": 1000, "local_journal": a4_local_journal(exposure=1000, count=1)},
+     "limite_periodo_esgotado"),
+    ({"max_acquisitions_per_day": 1, "local_journal": a4_local_journal(exposure=1000, count=1)},
+     "limite_de_aquisicoes_em_24h"),
+])
+def test_a4_current_limits_fail_closed(changes, reason):
+    result = a4_compare(a4_evaluation(), **changes)
+    assert result["decision"] == "nao_comprar"
+    assert reason in result["blocking_reasons"]
+    assert result["best"] is None
 
 
 def test_a4_global_ranking_best_per_hub_and_explanation_is_deterministic():

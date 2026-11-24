@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4, limites vigentes e diário de 24 horas (G0)
+
+- A comparação global auditada incorpora a reserva operacional vigente, o teto de gasto e a quantidade máxima de aquisições nas últimas 24 horas, usando o mesmo diário local consultado pela conciliação financeira. A reserva aplicada é a maior entre a configuração atual e as evidências A3/A4. O orçamento é o menor entre caixa após compromissos, limites auditados de ciclo/período e limite local de gasto restante, sem somar exposições já conciliadas ao caixa.
+- Limites ausentes ou inválidos, janela local incompleta ou antiga, perfil divergente e quantidade esgotada impedem a proposta. O painel PT/EN exibe a disponibilidade dos limites locais. Os valores do diário são estimativas de intenções reservadas e confirmadas; não constituem comprovação do gasto real completo do jogo. A configuração explícita de teto por ciclo e o vínculo temporal do gasto auditado continuam pendentes.
+- Validação: 143 testes direcionados aprovados (incluindo integração real do planejador pela API com alteração de política); suíte Windows com 2.035 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Continuam pendentes a cobertura econômica integral, demanda residual, custos finais, alimentação produtiva do registro A3 e homologação autenticada das fases A0–A9. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A4, capacidade global do hangar de passageiros (G0)
 
 - O planejador auditado utiliza as vagas livres do hangar de passageiros da companhia, observadas no jogo e vinculadas ao perfil, ao snapshot e ao instante original da coleta. A mesma capacidade restringe todas as alternativas de hubs próprios. A antiga evidência por hub permanece apenas para compatibilidade dos registros existentes.

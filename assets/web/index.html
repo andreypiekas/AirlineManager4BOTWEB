@@ -3348,6 +3348,21 @@ function renderAuditedExpansionPlanner(audited, hubs) {
       : tr("Aguardando provas completas de rota, motor, demanda e custos.");
   }
   const observed = audited.game_observation_snapshot;
+  const period = portfolio.local_period_limits;
+  if (period) {
+    if (period.estimated_exposure == null || period.acquisition_count == null) {
+      explanation.textContent += " · " + tr("Uso dos limites de 24 horas a confirmar");
+    } else {
+      if (Number.isFinite(period.remaining_spend)) {
+        explanation.textContent += " · " + tr("Limite de 24 horas restante (diário local)") +
+          ": " + hubMoney(period.remaining_spend);
+      }
+      if (Number.isSafeInteger(period.remaining_acquisitions)) {
+        explanation.textContent += " · " + tr("Aquisições restantes em 24 horas (diário local)") +
+          ": " + nf.format(period.remaining_acquisitions);
+      }
+    }
+  }
   if (observed?.status === "parcial") {
     explanation.textContent += " · " + tr("Cobertura parcial dos dados de jogo") +
       " · " + tr("Amostras de rotas") + ": " + nf.format(observed.route_samples || 0);

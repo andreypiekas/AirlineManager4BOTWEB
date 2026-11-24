@@ -443,6 +443,7 @@ class WebDashboard:
         if fleet_verified and game_snapshot.get("unrouted_aircraft_control") is not None:
             controls["unrouted_aircraft_count"] = game_snapshot["unrouted_aircraft_control"]
         passenger_hangar = game_snapshot.get("passenger_hangar_control") if matching_capture else None
+        journal = _local_investment_snapshot()
         portfolio = compare_audited_portfolio(
             evaluations,
             profile_id=paths.current().label,
@@ -454,6 +455,10 @@ class WebDashboard:
             fleet_coverage_verified=fleet_verified,
             research_coverage_verified=research_verified,
             commitments_verified=proof.get("commitments_verified") is True,
+            current_cash_reserve=self.cfg.get_int("settings", "cash_reserve", -1),
+            max_daily_spend=policy.max_daily_spend,
+            max_acquisitions_per_day=policy.max_acquisitions_per_day,
+            local_journal=journal,
             max_single_investment=(policy.max_single_investment
                                    if policy.enabled and policy.max_single_investment > 0 else None),
             min_daily_profit=policy.min_daily_profit,
@@ -469,7 +474,6 @@ class WebDashboard:
             portfolio["blocking_reasons"].append("registro_a3_invalido")
             portfolio["status"] = "inconclusivo"
             portfolio["decision"] = "nao_comprar"
-        journal = _local_investment_snapshot()
         _block_local_investment(portfolio, journal)
         # A fresh capture supersedes the economic proof even when the balance
         # is unchanged. Keep historical evaluations visible for diagnosis.
