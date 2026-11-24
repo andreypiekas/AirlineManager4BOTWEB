@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from expansion_economics import evaluate_expansion_economics
 from opportunity_models import DEFAULT_MAX_AGE_SECONDS
+from route_detail_evidence import current_detail
 
 
-def evaluate_research_gate(snapshot, item, *, now, margin):
+def evaluate_research_gate(snapshot, item, *, now, margin, native_reference=None):
     """Evaluate shared prerequisites for all hypothetical layouts of one row."""
     binding = {key: snapshot[key] for key in ("profile_id", "snapshot_id")}
 
@@ -43,8 +44,15 @@ def evaluate_research_gate(snapshot, item, *, now, margin):
             occupied = False
 
     physical = item["physical_feasibility"]
-    route_detail = item.get("route_detail") or {}
+    route_detail = current_detail(item.get("route_detail"), hub, destination, now) or {}
     stop = item.get("stopover_research")
+    # A positive observation is sufficient to reject an investment. Neither
+    # an empty native form nor an empty route detail proves fleet coverage.
+    detail_count = route_detail.get("observed_aircraft_on_route")
+    if type(detail_count) is int and detail_count > 0:
+        occupied = True
+    if native_reference and native_reference["aircraft_on_route_range"]["max"] > 0:
+        occupied = True
     route = evidence("game_route_search", route_stamp, id_source="game",
                      origin_id=hub, destination_id=destination,
                      stopover_id=stop["stop_id"] if stop else None,

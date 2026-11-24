@@ -256,9 +256,6 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
             route_report=inputs["route_report"], offset=offset, expected_fingerprint=expected_fingerprint,
         )
         for item in result["items"]:
-            item["accounting_gate"] = evaluate_research_gate(
-                snapshot, item, now=captured, margin=inputs["preview_margin"],
-            )
             stop = item.get("stopover_research")
             reference = reference_for_route(
                 observed.get("native_route_quotes", []), profile_id=snapshot["profile_id"],
@@ -268,6 +265,17 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
             )
             if reference is not None:
                 item["native_route_quote_reference"] = reference
+                if reference["aircraft_on_route_range"]["max"] > 0:
+                    # The form was bound to an existing aircraft. Its positive
+                    # count vetoes an optimistic preview, but its fares and
+                    # fees still cannot price a future aircraft.
+                    item["economics_preview"] = None
+                    if "rota_ocupada_frota_propria" not in item["pending"]:
+                        item["pending"].append("rota_ocupada_frota_propria")
+            item["accounting_gate"] = evaluate_research_gate(
+                snapshot, item, now=captured, margin=inputs["preview_margin"],
+                native_reference=reference,
+            )
         return {**result, "status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": captured, "historical_replay": True}
     except FileNotFoundError:

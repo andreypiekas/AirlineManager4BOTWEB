@@ -620,9 +620,11 @@ def _build_hub_research_queue(
                 if model["capacity"] is None and observed_capacity is None:
                     pending.append("capacidade_modelo_a_confirmar")
                 occupancy = sample.get("fleet_occupancy")
+                detail_count = (sample.get("route_detail") or {}).get("observed_aircraft_on_route")
+                if ((type(detail_count) is int and detail_count > 0)
+                        or (occupancy and occupancy["own_aircraft_count"] > 0)):
+                    pending.append("rota_ocupada_frota_propria")
                 if occupancy:
-                    if occupancy["own_aircraft_count"] > 0:
-                        pending.append("rota_ocupada_frota_propria")
                     if occupancy["game_count_disagrees"]:
                         pending.append("contagem_rota_divergente")
                 economics = research_economics_preview(

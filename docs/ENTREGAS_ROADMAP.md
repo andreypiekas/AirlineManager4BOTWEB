@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, veto de rota por observação nativa (G0)
+
+- O replay auditado usa a contagem positiva do formulário nativo correlacionado por perfil, origem, destino, distância e escala para excluir a projeção econômica de uma rota potencialmente ocupada, mesmo sem cobertura completa da frota. O gate A3 também considera a contagem positiva do detalhe nativo atual e o feed sinaliza essa observação como pendência.
+- Contagens zero isoladas não provam disponibilidade. Tarifas e taxa do formulário existente permanecem referências específicas da aeronave observada, sem transferência para a proposta de compra. Demanda residual, preço final e custos incrementais ainda exigem evidência independente; a proposta permanece bloqueada. Nenhuma compra real executada.
+- Regressão coberta para contagem positiva sem frota, contagem zero, distância incompatível e detalhe nativo positivo. Suíte Windows: 2.053 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Rollback por reversão deste commit na branch de trabalho. A homologação de A3–A9 continua pendente.
+
 ## 2026-11-24 — Autonomia Total A4/A7, peso de retorno no ranking (G0)
 
 - A política por perfil passa a oferecer `return_weight` de 0 a 100, com padrão zero para preservar o ranking anterior. O painel PT/EN salva o valor pela API autenticada e os planejadores consideram o peso na composição do score. Uma política baseada exclusivamente em retorno é válida; valores inválidos e a ausência de qualquer peso positivo são recusados.
