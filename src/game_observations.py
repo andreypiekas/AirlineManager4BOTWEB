@@ -489,6 +489,17 @@ def _collect_hub_demand(bot: object, *, external: bool) -> int:
 
 def collect_owned_route_details(bot: object) -> int:
     """Rotate independent route-detail reads over fresh owned-hub samples."""
+    return _collect_hub_route_details(bot, external=False)
+
+
+def collect_external_route_details(bot: object) -> int:
+    """Research one independent external route detail per planning cycle."""
+    if not bot.config.get_bool("investment", "planning_enabled"):
+        return 0
+    return _collect_hub_route_details(bot, external=True)
+
+
+def _collect_hub_route_details(bot: object, *, external: bool) -> int:
     from route_detail_evidence import collect_route_details
 
     if getattr(bot, "stopping", False):
@@ -498,12 +509,23 @@ def collect_owned_route_details(bot: object) -> int:
         return 0
     codes = {hub["id"]: hub.get("code") for hub in inventory["hubs"]}
     expansion = HubExpansionRegistry()
-    samples = expansion.demand_research_snapshot(set(codes))["samples"]
+    if external:
+        snapshot = expansion.external_demand_snapshot(set(codes))
+        samples = snapshot["samples"]
+        codes = {hub["id"]: hub.get("code") for hub in snapshot["candidate_inventory"]}
+        registry = expansion.external_demand_registry()
+    else:
+        samples = expansion.demand_research_snapshot(set(codes))["samples"]
+        registry = expansion
     if not samples:
         return 0
-    count = collect_route_details(bot, expansion.route_detail_registry(), samples, codes)
+    count = collect_route_details(bot, registry.route_detail_registry(), samples, codes,
+                                  per_cycle=1 if external else 2)
     if count:
-        log.info("Detalhes de rotas: %d pares de pistas observados.", count)
+        if external:
+            log.info("Detalhes de rotas externas: %d pares de pistas observados.", count)
+        else:
+            log.info("Detalhes de rotas: %d pares de pistas observados.", count)
     return count
 
 

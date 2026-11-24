@@ -784,6 +784,15 @@ footer strong { font-weight: 600; color: var(--aqua); }
           <ul id="hubDemandProgressList" class="hub-section-note"></ul>
         </details>
         <p id="hubExpansionDecision" class="hub-section-note hub-coverage" role="status" aria-live="polite"></p>
+        <details class="hub-probe">
+          <summary data-t="Pesquisa de aeronaves e rotas para novos hubs">Pesquisa de aeronaves e rotas para novos hubs</summary>
+          <p id="externalResearchStatus" class="hub-section-note" role="status" aria-live="polite"></p>
+          <ul id="externalResearchList" class="hub-aircraft-list"></ul>
+          <div class="hubs-controls">
+            <button id="externalResearchPrev" type="button" data-t="Pesquisas anteriores" disabled>Pesquisas anteriores</button>
+            <button id="externalResearchNext" type="button" data-t="Próximas pesquisas" disabled>Próximas pesquisas</button>
+          </div>
+        </details>
         <div class="hubs-grid" id="hubExpansionRanking" aria-label="Ranking externo com evidências verificadas" data-t-aria-label="Ranking externo com evidências verificadas"></div>
         <div class="hubs-controls">
           <label class="hubs-field"><span data-t="Buscar novo hub">Buscar novo hub</span>
@@ -1244,6 +1253,13 @@ const EN = {
   "Hubs próprios pesquisados": "Owned hubs researched",
   "Hubs externos pesquisados": "External hubs researched",
   "Amostras externas recentes": "Fresh external samples",
+  "Detalhes externos recentes": "Fresh external route details",
+  "Pesquisa de aeronaves e rotas para novos hubs": "Aircraft and route research for new hubs",
+  "Demanda observada Y/J/F": "Observed Y/J/F demand",
+  "Catálogo externo ou propriedade a confirmar": "External catalog or ownership requires verification",
+  "Demanda externa a confirmar": "External demand requires verification",
+  "Custo do hub a confirmar": "Hub cost requires verification",
+  "Pontos do hub a confirmar": "Hub points require verification",
   "Última pesquisa externa": "Last external research",
   "Pesquisa externa aguarda confirmação dos hubs próprios.": "External research awaits confirmation of owned hubs.",
   "tentativas inconclusivas": "inconclusive attempts",
@@ -1358,6 +1374,7 @@ function setLanguage(lang) {
   if (overviewRouteReport) { renderOverviewRoutes(overviewRouteReport); }
   if (hubInventoryReport) { renderHubs(hubInventoryReport); }
   if (hubExpansionReport) { renderHubExpansion(hubExpansionReport); }
+  if (externalResearchPage) { renderExternalHubResearch(externalResearchPage); }
   if (gameSourceProbeReport) {
     renderGameSourceProbe(gameSourceProbeReport);
     showGameSourceProbeStatus("Verificação concluída.", "success");
@@ -1868,6 +1885,8 @@ let lastHubsFetch = 0;
 let hubsLoading = false;
 let hubInventoryReport = null;
 let hubExpansionReport = null;
+let externalResearchPage = null;
+let externalResearchSequence = 0;
 let hubRecommendationsReport = null;
 let researchPageOffset = 0;
 let researchPageFingerprint = null;
@@ -1979,6 +1998,10 @@ function addHubMetric(list, label, value) {
   list.append(item);
 }
 const hubResearchBlockerLabels = {
+  catalogo_hubs_externos_a_confirmar: "Catálogo externo ou propriedade a confirmar",
+  demanda_externa_a_confirmar: "Demanda externa a confirmar",
+  custo_hub_a_confirmar: "Custo do hub a confirmar",
+  pontos_hub_a_confirmar: "Pontos do hub a confirmar",
   motor_a_pesquisar: "Motor ainda não pesquisado no jogo",
   preco_final_motor_a_confirmar: "Preço final do motor e da aeronave não verificado",
   demanda_residual_a_confirmar: "Demanda residual da rota não confirmada",
@@ -2351,6 +2374,7 @@ function renderHubExpansion(report) {
     addHubMetric(evidence, "Consulta do hub", hubDate(hub.observed_at));
     if (hub.route_research) {
       addHubMetric(evidence, "Amostras externas recentes", nf.format(hub.route_research.fresh_sample_count || 0));
+      addHubMetric(evidence, "Detalhes externos recentes", nf.format(hub.route_research.fresh_detail_count || 0));
       addHubMetric(evidence, "Última pesquisa externa", hubDate(hub.route_research.last_attempt_at));
     }
     addHubMetric(evidence, "Observação do cenário", hubDate(scenario.observed_at));
@@ -3097,6 +3121,7 @@ for (const id of ["hubsSearch", "hubsSort"]) {
 }
 $("hubsRefresh").addEventListener("click", loadHubs);
 async function loadHubExpansion() {
+  const research = loadExternalHubResearch(externalResearchPage?.offset || 0);
   try {
     const report = await api("/api/hubs/expansion");
     if (!report || !Array.isArray(report.candidates)) { throw new Error("Invalid expansion response"); }
@@ -3110,7 +3135,86 @@ async function loadHubExpansion() {
     $("hubExpansionCount").textContent = "";
     $("hubExpansionGrid").replaceChildren();
   }
+  await research;
 }
+function renderExternalHubResearch(page) {
+  const list = $("externalResearchList");
+  list.replaceChildren();
+  $("externalResearchStatus").textContent = tr("Cobertura parcial") + " · " +
+    nf.format(page.sampled_hubs) + " / " + nf.format(page.external_hubs) + " · " +
+    tr("Amostras de rotas") + ": " + nf.format(page.sampled_routes) + " · " +
+    (page.items.length ? nf.format(page.offset + 1) + "–" + nf.format(page.offset + page.items.length) : "0") +
+    " / " + nf.format(page.total_candidates);
+  for (const reason of page.blocking_reasons || []) {
+    const item = document.createElement("li");
+    item.textContent = hubResearchBlocker(reason);
+    list.append(item);
+  }
+  for (const task of page.items) {
+    const item = document.createElement("li"); item.className = "hub-research-item";
+    const heading = document.createElement("h3");
+    heading.textContent = String(task.hub_code || task.hub_id) + " → " + String(task.destination_id);
+    const metrics = document.createElement("dl"); metrics.className = "hub-metrics";
+    addHubMetric(metrics, "Modelo pesquisado", task.model || tr("Sem dados"));
+    addHubMetric(metrics, "Motor pesquisado", task.engine_label || task.engine_id || tr("Motor a pesquisar"));
+    const demand = task.observed_demand || {};
+    addHubMetric(metrics, "Demanda observada Y/J/F", [demand.y, demand.j, demand.f].map(value =>
+      Number.isSafeInteger(value) ? nf.format(value) : tr("Não verificado")).join(" / "));
+    const detail = task.route_detail || {};
+    for (const [label, value] of [["Pista da origem no detalhe", detail.origin_runway_ft],
+      ["Pista do destino no detalhe", detail.destination_runway_ft]]) {
+      addHubMetric(metrics, label, Number.isSafeInteger(value) && value > 0
+        ? nf.format(value) + " ft" : tr("Não verificado"));
+    }
+    if (Number.isSafeInteger(detail.observed_aircraft_on_route)) {
+      addHubMetric(metrics, "Aeronaves na rota (leitura do jogo)", nf.format(detail.observed_aircraft_on_route));
+    }
+    if (task.event_demand_boosted === true) {
+      addHubMetric(metrics, "Evento de demanda", tr("Demanda elevada por evento temporário"));
+    }
+    addHubMetric(metrics, "Custo total", tr("Desconhecido"));
+    addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
+    const reasons = document.createElement("ul"); reasons.className = "hub-research-reasons";
+    for (const reason of task.pending || []) {
+      const entry = document.createElement("li"); entry.textContent = hubResearchBlocker(reason);
+      reasons.append(entry);
+    }
+    item.append(heading, metrics, reasons); list.append(item);
+  }
+  $("externalResearchPrev").disabled = page.offset <= 0;
+  $("externalResearchNext").disabled = !Number.isSafeInteger(page.next_offset);
+}
+async function loadExternalHubResearch(offset = 0) {
+  const sequence = ++externalResearchSequence;
+  $("externalResearchPrev").disabled = true;
+  $("externalResearchNext").disabled = true;
+  try {
+    const query = offset > 0 && externalResearchPage?.snapshot_fingerprint
+      ? "?research_offset=" + offset + "&research_snapshot=" + encodeURIComponent(externalResearchPage.snapshot_fingerprint) : "";
+    const page = await api("/api/hubs/expansion/research" + query);
+    if (sequence !== externalResearchSequence) { return; }
+    if (page?.source !== "derived_external_research_queue" || !Array.isArray(page.items)) {
+      throw new Error("Invalid external research response");
+    }
+    externalResearchPage = page;
+    renderExternalHubResearch(page);
+  } catch (_) {
+    if (sequence !== externalResearchSequence) { return; }
+    externalResearchPage = null;
+    $("externalResearchStatus").textContent = tr("Não foi possível consultar novos hubs.");
+    $("externalResearchList").replaceChildren();
+  }
+}
+$("externalResearchPrev").addEventListener("click", () => {
+  if (externalResearchPage?.offset > 0) {
+    loadExternalHubResearch(Math.max(0, externalResearchPage.offset - externalResearchPage.page_size));
+  }
+});
+$("externalResearchNext").addEventListener("click", () => {
+  if (Number.isSafeInteger(externalResearchPage?.next_offset)) {
+    loadExternalHubResearch(externalResearchPage.next_offset);
+  }
+});
 for (const id of ["hubExpansionSearch", "hubExpansionFilter", "hubExpansionSort"]) {
   $(id).addEventListener(id === "hubExpansionSearch" ? "input" : "change", () => {
     if (hubExpansionReport) { renderHubExpansion(hubExpansionReport); }

@@ -7,7 +7,7 @@ import pytest
 
 from economy import load_market, load_market_evidence
 from hub_expansion import HubExpansionRegistry
-from owned_hub_research_feed import build_owned_hub_research_queue
+from owned_hub_research_feed import build_external_hub_research_queue, build_owned_hub_research_queue
 
 
 NOW = 1_900_000_000
@@ -37,6 +37,41 @@ def _sample(origin="2926", dest="3139", *, observed_at=NOW, distance=2000):
     return {"source": "game_route_search", "observed_at": observed_at,
             "origin_id": origin, "destination_id": dest, "distance_km": distance,
             "y": 100, "j": 20, "f": 5}
+
+
+def test_external_queue_keeps_ownership_and_financial_evidence_separate(tmp_path):
+    from owned_hub_research_ingestion import OwnedHubResearchInputsRegistry
+
+    inventory = {**_inventory(), "hub_catalog_fresh": True}
+    external = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                "candidate_inventory": [{"id": "3139", "code": "SBL", "observed_at": NOW - 10}],
+                "samples": [_sample("3139", "2926"), _sample("2926", "3139")]}
+    page = build_external_hub_research_queue(inventory, external, _market(), now=NOW,
+                                             engines=_engines(), max_items=1)
+    assert page["source"] == "derived_external_research_queue"
+    assert page["external_hubs"] == page["sampled_hubs"] == page["sampled_routes"] == 1
+    assert page["total_candidates"] == 3
+    item = page["items"][0]
+    assert item["hub_id"] == "3139"
+    assert item["evidence"]["hub"] == {"source": "game_purchase_catalog", "observed_at": NOW - 10}
+    assert item["evidence"]["ownership"] == {"source": "game_hub_select", "observed_at": NOW}
+    assert item["purchase_eligible"] is False
+    assert item["final_aircraft_price"] is None and item["daily_net_profit"] is None
+    assert {"demanda_externa_a_confirmar", "custo_hub_a_confirmar", "pontos_hub_a_confirmar"} <= set(item["pending"])
+    assert OwnedHubResearchInputsRegistry(tmp_path / "inputs.json").record_queue(page, now=NOW) == 0
+    next_page = build_external_hub_research_queue(
+        inventory, external, _market(), now=NOW, engines=_engines(), max_items=1,
+        offset=page["next_offset"], expected_fingerprint=page["snapshot_fingerprint"])
+    assert next_page["offset"] == 1 and next_page["items"][0]["engine_id"] == "2"
+    acquired = {**inventory, "hubs": [*inventory["hubs"], {"id": "3139", "code": "SBL"}]}
+    reset = build_external_hub_research_queue(
+        acquired, external, _market(), now=NOW, offset=1,
+        expected_fingerprint=page["snapshot_fingerprint"])
+    assert reset["cursor_reset"] is True and not reset["items"]
+    assert not build_external_hub_research_queue(
+        {**inventory, "hub_catalog_fresh": False}, external, _market(), now=NOW)["items"]
+    assert not build_external_hub_research_queue(
+        inventory, {**external, "candidate_source": "unknown"}, _market(), now=NOW)["items"]
 
 
 def test_event_demand_is_persisted_and_blocks_queue(tmp_path, monkeypatch):

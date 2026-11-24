@@ -139,6 +139,57 @@ def build_owned_hub_research_queue(
     offset: int = 0, expected_fingerprint: Optional[str] = None,
     hub_progress: Optional[list[dict]] = None,
 ) -> dict:
+    return _build_hub_research_queue(
+        inventory, route_samples, market, now=now, max_items=max_items, engines=engines,
+        offset=offset, expected_fingerprint=expected_fingerprint, hub_progress=hub_progress)
+
+
+def build_external_hub_research_queue(
+    ownership: dict, external: dict, market: dict, *,
+    now: Optional[float] = None, max_items: int = 40, engines: Optional[dict] = None,
+    offset: int = 0, expected_fingerprint: Optional[str] = None,
+) -> dict:
+    """Join external catalog evidence with route and engine research, never owned inputs."""
+    now = time.time() if now is None else now
+    ownership = ownership if isinstance(ownership, dict) else {}
+    external = external if isinstance(external, dict) else {}
+    owned_rows = ownership.get("hubs")
+    ownership_verified = (
+        ownership.get("source") == "game_hub_select"
+        and ownership.get("hub_catalog_fresh") is True
+        and _fresh(ownership.get("observed_at"), now)
+        and isinstance(owned_rows, list) and bool(owned_rows)
+        and all(isinstance(row, dict) and isinstance(row.get("id"), str)
+                and _GAME_ID.fullmatch(row["id"]) for row in owned_rows)
+        and len({row["id"] for row in owned_rows}) == len(owned_rows))
+    candidates = external.get("candidate_inventory")
+    catalog_verified = (ownership_verified and external.get("origin_scope") == "external_catalog"
+                        and external.get("candidate_source") == "game_purchase_catalog"
+                        and isinstance(candidates, list))
+    owned_ids = {row["id"] for row in owned_rows} if ownership_verified else set()
+    hubs = []
+    if catalog_verified:
+        for row in candidates:
+            if (isinstance(row, dict) and isinstance(row.get("id"), str)
+                    and _GAME_ID.fullmatch(row["id"]) and row["id"] not in owned_ids
+                    and _fresh(row.get("observed_at"), now)):
+                hubs.append(row)
+    inventory = {"source": "game_purchase_catalog" if catalog_verified else None,
+                 "observed_at": max((row["observed_at"] for row in hubs), default=None),
+                 "hubs": hubs, "ownership_observed_at": ownership.get("observed_at")
+                 if ownership_verified else None}
+    return _build_hub_research_queue(
+        inventory, external.get("samples", []), market, now=now, max_items=max_items,
+        engines=engines, offset=offset, expected_fingerprint=expected_fingerprint,
+        hub_progress=external.get("hub_progress"), external=True)
+
+
+def _build_hub_research_queue(
+    inventory: dict, route_samples: list[dict], market: dict, *,
+    now: Optional[float] = None, max_items: int = 40, engines: Optional[dict] = None,
+    offset: int = 0, expected_fingerprint: Optional[str] = None,
+    hub_progress: Optional[list[dict]] = None, external: bool = False,
+) -> dict:
     """Produce bounded, balanced per-hub tasks from independent cached reads.
 
     The returned items are *always* pending research. All values are read-only
@@ -151,7 +202,8 @@ def build_owned_hub_research_queue(
     inventory = inventory if isinstance(inventory, dict) else {}
     market = market if isinstance(market, dict) else {}
     engines = engines if isinstance(engines, dict) else {}
-    inventory_fresh = (inventory.get("source") == "game_hub_select"
+    hub_source = "game_purchase_catalog" if external else "game_hub_select"
+    inventory_fresh = (inventory.get("source") == hub_source
                        and _fresh(inventory.get("observed_at"), now))
     market_fresh = (market.get("source") == "bot_aircraft_market_cache"
                     and market.get("fresh") is True
@@ -164,6 +216,8 @@ def build_owned_hub_research_queue(
             hub_id = raw["id"]
             if _GAME_ID.fullmatch(hub_id):
                 hub = {"id": hub_id, "code": str(raw.get("code") or "")}
+                if external:
+                    hub["observed_at"] = raw["observed_at"]
                 if hub_id in hubs and hubs[hub_id] != hub:
                     conflicted_hub_ids.add(hub_id)
                 hubs[hub_id] = hub
@@ -251,7 +305,7 @@ def build_owned_hub_research_queue(
 
     blockers = []
     if not inventory_fresh:
-        blockers.append("inventario_hubs_desatualizado")
+        blockers.append("catalogo_hubs_externos_a_confirmar" if external else "inventario_hubs_desatualizado")
     if conflicted_hub_ids:
         blockers.append("inventario_hubs_conflitante")
     if not market_fresh:
@@ -275,6 +329,7 @@ def build_owned_hub_research_queue(
     fingerprint_data = {
         "hubs": hubs, "inventory_source": inventory.get("source"),
         "inventory_observed_at": inventory.get("observed_at"),
+        **({"ownership_observed_at": inventory.get("ownership_observed_at")} if external else {}),
         "market_source": market.get("source"),
         "market_observed_at": market.get("observed_at"),
         "blockers": blockers, "models": models,
@@ -290,6 +345,7 @@ def build_owned_hub_research_queue(
     # timestamps when the ordered candidate identities are unchanged. The
     # interactive UI still uses the stricter evidence fingerprint above.
     layout_data = {
+        **({"origin_scope": "external_catalog"} if external else {}),
         "hub_identifiers": [(hub_id, hubs[hub_id]["code"]) for hub_id in sorted(hubs, key=int)],
         "hub_routes": {hub_id: [route["destination_id"] for route in samples_by_hub[hub_id]]
                        for hub_id in ordered_hubs},
@@ -338,6 +394,9 @@ def build_owned_hub_research_queue(
                     break
                 pending = [item for item in _RESEARCH_PENDING
                            if item != "motor_a_pesquisar" or variant is None]
+                if external:
+                    pending.extend(["demanda_externa_a_confirmar", "custo_hub_a_confirmar",
+                                    "pontos_hub_a_confirmar"])
                 if sample.get("event_demand_boosted") is True:
                     pending.append("demanda_evento_temporario")
                 # Direct range does not rule out a route with a legal stopover.
@@ -378,8 +437,11 @@ def build_owned_hub_research_queue(
                     "daily_net_profit": None, "status": "pesquisa_pendente",
                     "pending": pending, "purchase_eligible": False,
                     "evidence": {
-                        "hub": {"source": "game_hub_select",
-                                "observed_at": inventory["observed_at"]},
+                        "hub": {"source": hub_source,
+                                "observed_at": hubs[hub_id]["observed_at"] if external else inventory["observed_at"]},
+                        **({"ownership": {"source": "game_hub_select",
+                                          "observed_at": inventory["ownership_observed_at"]}}
+                           if external else {}),
                         "route": {"source": "game_route_search",
                                   "observed_at": sample["observed_at"]},
                         "model": {"source": "bot_aircraft_market_cache",
@@ -410,9 +472,10 @@ def build_owned_hub_research_queue(
         for hub_id in sorted(hubs, key=int)
     ]
     return {
-        "source": "derived_research_queue", "read_only": True,
+        "source": "derived_external_research_queue" if external else "derived_research_queue", "read_only": True,
         "coverage": "partial", "purchase_eligible": False,
-        "owned_hubs": len(hubs), "sampled_hubs": len(samples_by_hub),
+        **({"external_hubs": len(hubs), "origin_scope": "external_catalog"} if external else {"owned_hubs": len(hubs)}),
+        "sampled_hubs": len(samples_by_hub),
         "sampled_routes": sum(len(rows) for rows in samples_by_hub.values()),
         "conflicted_routes": sum(conflicts_by_hub.values()),
         "hub_coverage": hub_coverage,

@@ -46,7 +46,7 @@ from hub_expansion import HubExpansionRegistry
 from engine_catalog import EngineCatalogRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
 from owned_hub_research_ingestion import OwnedHubResearchInputsRegistry
-from owned_hub_research_feed import build_owned_hub_research_queue
+from owned_hub_research_feed import build_external_hub_research_queue, build_owned_hub_research_queue
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy, MODES
 from investment_journal import InvestmentJournal
@@ -221,6 +221,19 @@ class WebDashboard:
             if isinstance(owned_research, dict) else None,
         )
         return report
+
+    def external_hub_research(self, *, research_offset: int = 0,
+                              research_fingerprint: str | None = None) -> dict:
+        """Serve external combinations from independent, read-only cached evidence."""
+        inventory = HubRegistry().snapshot()
+        owned = {hub["id"] for hub in inventory.get("hubs", [])
+                 if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
+        external = HubExpansionRegistry().external_demand_snapshot(owned)
+        return build_external_hub_research_queue(
+            inventory, external, load_market_evidence(),
+            engines=EngineCatalogRegistry().snapshot(), offset=research_offset,
+            expected_fingerprint=research_fingerprint,
+        )
 
     def hub_recommendations(self, *, research_offset: int = 0,
                             research_fingerprint: str | None = None) -> dict:
@@ -653,6 +666,15 @@ class WebDashboard:
                     return self._json(dashboard.hubs())
                 if url.path == "/api/hubs/expansion":
                     return self._json(dashboard.hub_expansion())
+                if url.path == "/api/hubs/expansion/research":
+                    params = parse_qs(url.query)
+                    raw_offset = params.get("research_offset", ["0"])[0]
+                    research_offset = (int(raw_offset) if raw_offset.isdecimal()
+                                       and len(raw_offset) <= 9 else 0)
+                    return self._json(dashboard.external_hub_research(
+                        research_offset=research_offset,
+                        research_fingerprint=params.get("research_snapshot", [None])[0],
+                    ))
                 if url.path == "/api/hubs/recommendations":
                     params = parse_qs(url.query)
                     raw_offset = params.get("research_offset", ["0"])[0]

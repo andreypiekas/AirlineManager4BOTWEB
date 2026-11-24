@@ -104,3 +104,34 @@ def test_registry_feed_and_materialized_rows_respect_independent_evidence(tmp_pa
     assert "route_detail" not in registry.snapshot(now=NOW + evidence.MAX_AGE + 1)[0]
     details.reserve([SAMPLE], now=NOW + 1)
     assert "route_detail" not in registry.snapshot(now=NOW + 1)[0]
+
+
+def test_external_details_use_isolated_registry_and_exclude_acquired_hubs(tmp_path, monkeypatch):
+    import game_observations as observations
+
+    monkeypatch.setattr(evidence.time, "time", lambda: NOW)
+    expansion = HubExpansionRegistry(tmp_path / "hub_expansion.json")
+    assert expansion.record_catalog([{"id": "3139", "code": "SBL", "name": "SBL",
+                                      "purchasable": True, "hub_price": 1000, "hub_points": 0}])
+    external = expansion.external_demand_registry()
+    assert external.record_demand("3139", [{"arr_id": "2926", "distance": 1992.763,
+                                             "y": 120, "j": 106, "f": 40,
+                                             "destination_runway_ft": 6749}], observed_at=NOW) == 1
+    inventory = {"source": "game_hub_select", "hub_catalog_fresh": True, "observed_at": NOW,
+                 "hubs": [{"id": "2926", "code": "XAP"}]}
+    monkeypatch.setattr(observations, "HubRegistry", lambda: SimpleNamespace(snapshot=lambda: inventory))
+    monkeypatch.setattr(observations, "HubExpansionRegistry", lambda: expansion)
+    monkeypatch.setattr(evidence, "research_details", lambda *_: {
+        "codes": ["SBL", "XAP"], "runways": ["5013ft", "6749ft"],
+        "occupancy_label": "A/C on route", "occupied": "0"})
+    bot = SimpleNamespace(stopping=False, config=SimpleNamespace(get_bool=lambda *_: True))
+    assert observations.collect_external_route_details(bot) == 1
+    samples = expansion.external_demand_snapshot({"2926"}, now=NOW)["samples"]
+    assert samples[0]["route_detail"]["origin_runway_ft"] == 5013
+    assert samples[0]["route_detail"]["occupied_aircraft"] is None
+    assert not expansion.route_detail_registry().path.exists()
+    inventory["hubs"].append({"id": "3139", "code": "SBL"})
+    assert observations.collect_external_route_details(bot) == 0
+    assert not expansion.external_demand_snapshot({"2926", "3139"}, now=NOW)["samples"]
+    inventory["hub_catalog_fresh"] = False
+    assert observations.collect_external_route_details(bot) == 0

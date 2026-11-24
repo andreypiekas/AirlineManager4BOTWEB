@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A6/A7, combinações e detalhes de rotas externas (G0)
+
+- A coleta incremental de hubs externos passou a pesquisar um detalhe independente de rota por ciclo de planejamento, com pistas dos dois aeroportos e contagem observada quando disponível. O registro, a rotação e a validade são separados dos hubs próprios. Hubs adquiridos deixam de alimentar a pesquisa externa.
+- A fila externa cruza candidatos recentes do catálogo de compra, inventário confirmado de propriedade, demanda observada, modelos e variantes de motores. A paginação distribui combinações entre hubs e reinicia quando a evidência muda. O histórico de pesquisa próprio permanece compatível e a ingestão financeira própria rejeita filas externas.
+- A API autenticada `GET /api/hubs/expansion/research` e o painel PT/EN exibem combinações, demanda Y/J/F observada, detalhes de pista, eventos temporários e bloqueios de viabilidade. O preço final, custo total e lucro permanecem desconhecidos enquanto não confirmados. A cobertura é parcial e nenhuma combinação autoriza compra.
+- Regressões exercitam a separação dos registros, aquisição posterior de hub, propriedade desatualizada, origem do catálogo, variantes de motores, paginação e autenticação. Suíte Windows: 1.666 testes aprovados, 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Após preservar as impressões digitais da fila própria, 75 testes direcionados também passaram. Ruff, compilação Python, sintaxe JavaScript e `git diff --check` aprovados.
+- Permanecem pendentes a homologação autenticada das consultas diretas externas, a semântica da demanda residual, a cobertura completa, os custos finais e a integração de cenários externos à decisão financeira auditada. Nenhuma compra real foi executada.
+
 ## 2026-11-23 — Autonomia Total A6/A7, pesquisa incremental de hubs externos (G0)
 
 - O planejador pesquisa até um aeroporto externo por ciclo quando `collect_market_observations` e `investment.planning_enabled` estão ativos. A seleção exige uma lista estável e válida dos hubs próprios e candidatos recentes do catálogo de compra. O seletor de hubs é conferido novamente após a pesquisa e os IDs, valores e limites dos resultados são correlacionados antes de persistir qualquer amostra.

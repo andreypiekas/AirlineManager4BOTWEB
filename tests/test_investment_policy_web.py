@@ -112,6 +112,27 @@ def test_hub_research_pagination_endpoint_requires_auth_and_passes_cursor(tmp_pa
         assert requests[2:] == [(0, None)] * 4
 
 
+def test_external_research_endpoint_requires_auth_and_validates_cursor(tmp_path, monkeypatch):
+    calls = []
+
+    def research(_dashboard, *, research_offset=0, research_fingerprint=None):
+        calls.append((research_offset, research_fingerprint))
+        return {"source": "derived_external_research_queue", "offset": research_offset,
+                "items": [], "purchase_eligible": False}
+
+    monkeypatch.setattr(WebDashboard, "external_hub_research", research)
+    path = "/api/hubs/expansion/research"
+    with served(tmp_path) as (port, _config):
+        assert request(port, "GET", path)[0] == 403
+        assert not calls
+        status, page = request(port, "GET", path + "?research_offset=4&research_snapshot=abc", headers=auth())
+        assert status == 200 and page["offset"] == 4 and page["purchase_eligible"] is False
+        for invalid in ("-1", "1.5", "999999999999", "abc"):
+            status, page = request(port, "GET", path + "?research_offset=" + invalid, headers=auth())
+            assert status == 200 and page["offset"] == 0
+        assert calls == [(4, "abc"), *([(0, None)] * 4)]
+
+
 def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_path, monkeypatch):
     from investment_journal import InvestmentJournal
 

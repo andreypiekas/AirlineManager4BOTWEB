@@ -979,9 +979,9 @@ class HubExpansionRegistry:
         """Keep pre-purchase observations and cursors separate from owned hubs."""
         return HubExpansionRegistry(self.path.with_name(self.path.stem + "_external_demand.json"))
 
-    def external_research_origins(self, owned_ids: set[str], *,
-                                  now: Optional[float] = None) -> list[str]:
-        """Return fresh catalog airports outside a verified ownership inventory."""
+    def external_research_candidates(self, owned_ids: set[str], *,
+                                     now: Optional[float] = None) -> list[dict]:
+        """Return fresh catalog evidence outside a verified ownership inventory."""
         owned = {_airport_id(value) for value in owned_ids}
         if not owned or None in owned:
             return []
@@ -990,15 +990,23 @@ class HubExpansionRegistry:
             saved = self._load()
         if saved.get("source") != "game_purchase_catalog":
             return []
-        return sorted((row["id"] for row in _stored_candidates(saved.get("candidates"))
-                       if row["id"] not in owned
-                       and _fresh(row.get("observed_at"), now)), key=int)
+        return sorted(({"id": row["id"], "code": row.get("code"),
+                        "observed_at": row["observed_at"]}
+                       for row in _stored_candidates(saved.get("candidates"))
+                       if row["id"] not in owned and _fresh(row.get("observed_at"), now)),
+                      key=lambda row: int(row["id"]))
+
+    def external_research_origins(self, owned_ids: set[str], *,
+                                  now: Optional[float] = None) -> list[str]:
+        return [row["id"] for row in self.external_research_candidates(owned_ids, now=now)]
 
     def external_demand_snapshot(self, owned_ids: set[str], *,
                                  now: Optional[float] = None) -> dict:
-        origins = self.external_research_origins(owned_ids, now=now)
-        snapshot = self.external_demand_registry().demand_research_snapshot(set(origins), now=now)
-        return {**snapshot, "origin_scope": "external_catalog", "candidate_hubs": len(origins)}
+        candidates = self.external_research_candidates(owned_ids, now=now)
+        snapshot = self.external_demand_registry().demand_research_snapshot(
+            {row["id"] for row in candidates}, now=now)
+        return {**snapshot, "origin_scope": "external_catalog", "candidate_hubs": len(candidates),
+                "candidate_inventory": candidates, "candidate_source": "game_purchase_catalog"}
 
     def demand_observations(self, owned_hub_ids: set[str], *,
                             now: Optional[float] = None) -> list[dict]:
@@ -1026,10 +1034,12 @@ class HubExpansionRegistry:
                                        and all(_airport_id(value) is not None for value in owned_hub_ids or set()))
         external = self.external_demand_snapshot(
             (owned_hub_ids or set()) if external_ownership_verified else set(), now=now)
-        external_progress = {row["hub_id"]: {**row, "fresh_sample_count": 0}
+        external_progress = {row["hub_id"]: {**row, "fresh_sample_count": 0, "fresh_detail_count": 0}
                              for row in external["hub_progress"]}
         for sample in external["samples"]:
             external_progress[sample["origin_id"]]["fresh_sample_count"] += 1
+            if sample.get("route_detail"):
+                external_progress[sample["origin_id"]]["fresh_detail_count"] += 1
         attempted_owned = {hub for hub in owned if hub in attempts and
                            0 <= now - attempts[hub]["attempted_at"]}
         sampled_owned = {item["origin_id"] for item in demand.values()} & owned
