@@ -246,25 +246,34 @@ def _validate_route(
             "route",
             "Distância, alcance e pistas precisam de medidas positivas verificadas.",
         )
-    else:
-        if origin_runway < required_runway or destination_runway < required_runway:
-            _block(reasons, "ROUTE_PHYSICALLY_INFEASIBLE", "route", "Pista insuficiente em um dos aeroportos.")
-        if stopover is None and distance > flight_range:
-            _block(reasons, "ROUTE_PHYSICALLY_INFEASIBLE", "route", "Distância direta excede alcance verificado.")
+    # Each known physical constraint can independently rule out a route.
+    # Unknown or invalid dimensions still prevent a positive determination.
+    if required_runway is not None and required_runway > 0 and any(
+        runway is not None and 0 < runway < required_runway
+        for runway in (origin_runway, destination_runway)
+    ):
+        _block(reasons, "ROUTE_PHYSICALLY_INFEASIBLE", "route", "Pista insuficiente em um dos aeroportos.")
+    if (stopover is None and distance is not None and flight_range is not None
+            and 0 < flight_range < distance):
+        _block(reasons, "ROUTE_PHYSICALLY_INFEASIBLE", "route", "Distância direta excede alcance verificado.")
 
     if stopover is not None:
         legs = route.get("legs_km")
         stopover_runway = _amount(route.get("stopover_runway_m"))
         valid_legs = isinstance(legs, list) and len(legs) == 2 and all((_amount(leg) or Decimal(0)) > 0 for leg in legs)
-        if route.get("stopover_verified") is not True or not valid_legs or stopover_runway is None or stopover_runway <= 0:
+        verified_stopover = route.get("stopover_verified") is True
+        valid_stopover_runway = stopover_runway is not None and stopover_runway > 0
+        if not verified_stopover or not valid_legs or not valid_stopover_runway:
             _block(reasons, "STOPOVER_UNVERIFIED", "route.stopover_id", "Escala, trechos e pista exigem leitura explícita.")
-        elif flight_range is not None and required_runway is not None:
-            if (
-                any(_amount(leg) > flight_range for leg in legs)
-                or stopover_runway < required_runway
-                or (distance is not None and sum(_amount(leg) for leg in legs) < distance)
-            ):
-                _block(reasons, "ROUTE_PHYSICALLY_INFEASIBLE", "route", "Alcance, pista ou distâncias de escala incoerentes.")
+        if verified_stopover and (
+            (valid_legs and flight_range is not None and flight_range > 0
+             and any(_amount(leg) > flight_range for leg in legs))
+            or (valid_stopover_runway and required_runway is not None and required_runway > 0
+                and stopover_runway < required_runway)
+            or (valid_legs and distance is not None and distance > 0
+                and sum(_amount(leg) for leg in legs) < distance)
+        ):
+            _block(reasons, "ROUTE_PHYSICALLY_INFEASIBLE", "route", "Alcance, pista ou distâncias de escala incoerentes.")
 
     return {
         "origin_id": origin if _game_id(origin) else None,

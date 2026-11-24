@@ -275,6 +275,55 @@ def test_incoherent_route_model_and_hub_are_blocked(path, code):
     assert result["economics"]["payback_days"] is None
 
 
+@pytest.mark.parametrize("updates,negative", [
+    ({"distance_km": 4000, "origin_runway_m": None}, True),
+    ({"origin_runway_m": 800, "destination_runway_m": None}, True),
+    ({"destination_runway_m": 800, "range_km": None}, True),
+    ({"range_km": 0, "origin_runway_m": None}, False),
+    ({"origin_runway_m": -1, "destination_runway_m": None}, False),
+    ({"origin_runway_m": None}, False),
+])
+def test_partial_direct_route_data_retains_independent_negative_constraints(updates, negative):
+    snapshot, candidate = sample()
+    candidate["route"].update(updates)
+    result = evaluate(snapshot, candidate)
+    assert "ROUTE_PHYSICAL_DATA_UNKNOWN" in codes(result)
+    assert ("ROUTE_PHYSICALLY_INFEASIBLE" in codes(result)) is negative
+    assert result["status"] == "blocked"
+
+
+@pytest.mark.parametrize("updates", [
+    {"required_runway_m": None, "legs_km": [3100, 200]},
+    {"range_km": None, "stopover_runway_m": 800},
+    {"range_km": None, "legs_km": [100, 100]},
+])
+def test_partial_verified_stopover_data_retains_independent_negative_constraints(updates):
+    snapshot, candidate = sample()
+    candidate["route"].update(stopover_id="333", stopover_verified=True,
+                              legs_km=[700, 800], stopover_runway_m=2400)
+    candidate["route"].update(updates)
+    result = evaluate(snapshot, candidate)
+    assert {"ROUTE_PHYSICAL_DATA_UNKNOWN", "ROUTE_PHYSICALLY_INFEASIBLE"} <= codes(result)
+    assert result["status"] == "blocked"
+
+
+@pytest.mark.parametrize("updates", [
+    {"stopover_runway_m": None, "legs_km": [3100, 200]},
+    {"legs_km": None, "stopover_runway_m": 800},
+])
+def test_incomplete_stopover_keeps_negative_constraints_only_when_verified(updates):
+    snapshot, candidate = sample()
+    candidate["route"].update(stopover_id="333", stopover_verified=True,
+                              legs_km=[700, 800], stopover_runway_m=2400)
+    candidate["route"].update(updates)
+    assert {"STOPOVER_UNVERIFIED", "ROUTE_PHYSICALLY_INFEASIBLE"} <= codes(evaluate(snapshot, candidate))
+    candidate["route"]["stopover_verified"] = False
+    result = evaluate(snapshot, candidate)
+    assert "STOPOVER_UNVERIFIED" in codes(result)
+    assert "ROUTE_PHYSICALLY_INFEASIBLE" not in codes(result)
+    assert result["status"] == "blocked"
+
+
 @pytest.mark.parametrize(
     ("target", "source"),
     [

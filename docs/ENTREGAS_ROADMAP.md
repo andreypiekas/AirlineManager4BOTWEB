@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, restrições físicas com coleta parcial (G0)
+
+- O contrato de viabilidade econômica preserva vetos físicos independentes: alcance direto insuficiente, pista de origem ou destino insuficiente e incompatibilidades nos trechos ou na pista de uma escala verificada. Medidas ausentes ou inválidas continuam bloqueando a recomendação; a insuficiência conhecida permanece explícita mesmo que outras medidas faltem.
+- O replay do snapshot utiliza o alcance observado da variante de motor para excluir a rota direta mesmo sem o detalhe das pistas. A evidência permanece vinculada à variante e não é estendida a outros motores. Uma escala ainda pode ser pesquisada; sua viabilidade e as regras do jogo precisam de confirmação.
+- Validação: suíte Windows com 2.076 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída), iniciada antes do refinamento final de escalas; 137 testes direcionados aprovados na versão final, incluindo regressão do replay auditado, medidas inválidas e escalas parciais; Ruff e git diff --check aprovados. Rollback por reversão deste commit. Permanecem pendentes a demanda residual verificável, os custos finais de aquisição, a alimentação econômica produtiva, a conciliação financeira e a homologação autenticada. Nenhuma compra real executada.
+
 ## 2026-11-24 — Autonomia Total A4, restrição financeira histórica nativa (G0)
 
 - A captura vincula ao perfil e snapshot a soma das despesas identificadas de encomendas de aeronaves, hubs e taxas de rota no resumo nativo das últimas 24 horas. A evidência mantém o horário original, expira em 900 segundos e exige resumo contabilmente consistente.

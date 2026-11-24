@@ -367,6 +367,32 @@ def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, mo
 
 
 
+def test_replay_retains_verified_direct_range_veto_without_runway_detail(tmp_path, monkeypatch):
+    from test_owned_hub_research_feed import _fleet_report, _inventory, _market, _preview_engines, _sample
+
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    evidence = observations()
+    engines = _preview_engines()
+    engines["models"]["11"]["variant_details"] = {
+        "1": {"observed_at": NOW, "metrics": {"range_km": 1999, "required_runway_ft": 6500}}}
+    evidence.update(inventory={**_inventory(), "hub_catalog_fresh": True}, routes=_fleet_report(),
+                    market=_market(), engines=engines, mode="realista", mode_at=NOW)
+    evidence["demand"]["samples"] = [_sample(distance=2000)]
+    path = tmp_path / FILENAME
+    path.write_text(json.dumps(compose_snapshot(**evidence)), encoding="utf-8")
+    rows = replay_research_page(now=NOW, path=path)["items"]
+    row = next(item for item in rows if item["engine_id"] == "1")
+    assert row["physical_feasibility"]["checks"] == {
+        "range": "short", "origin_runway": "unknown", "destination_runway": "unknown"}
+    assert row["physical_feasibility"]["stopover_research_required"] is True
+    assert row["economics_preview"] is None and row["purchase_eligible"] is False
+    codes = {reason["code"] for reason in row["accounting_gate"]["blocking_reasons"]}
+    assert {"ROUTE_PHYSICAL_DATA_UNKNOWN", "ROUTE_PHYSICALLY_INFEASIBLE"} <= codes
+    other = next(item for item in rows if item["engine_id"] == "3")
+    other_codes = {reason["code"] for reason in other["accounting_gate"]["blocking_reasons"]}
+    assert "ROUTE_PHYSICALLY_INFEASIBLE" not in other_codes
+
+
 def test_catalog_coverage_is_independent_and_expires_with_oldest_source(tmp_path, monkeypatch):
     import engine_catalog
     import engine_selection
