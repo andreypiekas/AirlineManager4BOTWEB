@@ -90,7 +90,7 @@ def _roster_coverage(state: dict, models: dict, now: object) -> dict:
     pending = {"source": ROSTER_SOURCE, "status": "unverified", "listed_model_count": None,
                "verified_model_count": None, "available_variant_count": None,
                "observed_variant_count": None, "models_with_all_variant_details": None,
-               "final_prices_verified": False}
+               "final_prices_verified": False, "models_expires_at": None, "engines_expires_at": None}
     roster = state.get("roster")
     if not isinstance(roster, dict) or roster.get("source") != ROSTER_SOURCE:
         return pending
@@ -118,7 +118,15 @@ def _roster_coverage(state: dict, models: dict, now: object) -> dict:
         available_count += len(available)
         observed_count += len(observed)
         all_details_count += bool(available and available == observed)
+    # A complete list is independent from the detail and checkout coverage.
+    # Expire the crosswalk when either the native roster or its oldest detail expires.
+    models_expires_at = None
+    if len(verified) == len(rows):
+        models_expires_at = min(stamp + ROSTER_MAX_AGE_SECONDS,
+                                min(model["observed_at"] for model in verified) + MAX_AGE_SECONDS)
+    engines_expires_at = models_expires_at if all_details_count == len(rows) else None
     return {**pending, "observed_at": stamp, "listed_model_count": len(rows),
+            "models_expires_at": models_expires_at, "engines_expires_at": engines_expires_at,
             "verified_model_count": len(verified), "available_variant_count": available_count,
             "observed_variant_count": observed_count,
             "models_with_all_variant_details": all_details_count,

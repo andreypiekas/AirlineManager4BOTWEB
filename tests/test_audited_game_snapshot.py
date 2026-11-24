@@ -139,3 +139,42 @@ def test_replay_rejects_legacy_or_modified_snapshot(tmp_path, monkeypatch):
     snapshot["observations"]["captured_at"] += 1
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     assert replay_research_page(now=NOW, path=path)["status"] == "registro_invalido"
+
+
+
+def test_catalog_coverage_is_independent_and_expires_with_oldest_source(tmp_path, monkeypatch):
+    import engine_catalog
+    import engine_selection
+    from test_engine_catalog import _groups, _roster
+
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    detail_at = NOW - engine_catalog.MAX_AGE_SECONDS + 25
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: detail_at)
+    catalog = engine_selection.parse_engine_catalog(_groups())
+    assert registry.record("11", "A320", catalog, observed_model_id="11")
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    assert registry.record_roster(_roster(("11", "A320")), observed_at=NOW)
+    inputs = observations()
+    inputs["engines"] = registry.snapshot(now=NOW)
+    snapshot = compose_snapshot(**inputs)
+    assert snapshot["coverage"]["scopes"]["models"] is True
+    assert snapshot["coverage"]["scopes"]["engines"] is False
+    assert snapshot["coverage"]["scopes"]["prices"] is False
+    assert snapshot["coverage"]["status"] == "partial"
+    path = tmp_path / "observed.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    assert snapshot_summary(now=NOW + 25, path=path)["scopes"]["models"] is True
+    assert snapshot_summary(now=NOW + 26, path=path)["scopes"]["models"] is False
+
+    details = {"1": {"observed_at": NOW, "metrics": {"speed_kph": 905}}}
+    assert registry.record("11", "A320", catalog, observed_model_id="11", variant_details=details)
+    inputs["engines"] = registry.snapshot(now=NOW)
+    snapshot = compose_snapshot(**inputs)
+    scopes = snapshot["coverage"]["scopes"]
+    assert scopes["models"] and scopes["engines"]
+    assert not scopes["prices"] and not scopes["routes"]
+    assert snapshot["coverage"]["status"] == "partial"
+    assert registry.record_attempt("11", "A320")
+    inputs["engines"] = registry.snapshot(now=NOW)
+    assert not compose_snapshot(**inputs)["coverage"]["scopes"]["models"]

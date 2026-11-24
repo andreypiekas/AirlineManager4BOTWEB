@@ -26,6 +26,34 @@ def _game_id(value):
     return isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,11}", value) is not None
 
 
+def _catalog_scopes(coverage, now):
+    """Certify only the native passenger list/detail crosswalk, independently of prices."""
+    from engine_catalog import ROSTER_SOURCE
+
+    def active(key):
+        expires = coverage.get(key)
+        return (type(expires) in (int, float) and math.isfinite(expires)
+                and now <= expires <= coverage["observed_at"] + DEFAULT_MAX_AGE_SECONDS)
+
+    listed = coverage.get("listed_model_count")
+    verified = coverage.get("verified_model_count")
+    available = coverage.get("available_variant_count")
+    observed = coverage.get("observed_variant_count")
+    full_details = coverage.get("models_with_all_variant_details")
+    models = (coverage.get("source") == ROSTER_SOURCE
+              and coverage.get("status") in ("partial", "details_observed")
+              and _fresh(coverage.get("observed_at"), now)
+              and type(listed) is int and listed > 0
+              and type(verified) is int and verified == listed
+              and active("models_expires_at"))
+    engines = (models and coverage.get("status") == "details_observed"
+               and type(full_details) is int and full_details == listed
+               and type(available) is int and available >= listed
+               and type(observed) is int and observed == available
+               and active("engines_expires_at"))
+    return {"models": models, "engines": engines}
+
+
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                      quotes, cash, cash_at, now, mode=None, mode_at=None,
                      preview_margin=0.10):
@@ -80,7 +108,7 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
     # establish checkout prices. Even a full fleet audit cannot prove these.
     engine_coverage = engines.get("order_list_coverage") or {}
     scopes = {"hubs": hubs_verified, "fleet": fleet_verified,
-              "routes": False, "models": False, "engines": False, "prices": False}
+              "routes": False, **_catalog_scopes(engine_coverage, now), "prices": False}
     observed = [stamp for stamp in (hub_at if hubs_verified else None,
                                     roster_at if fleet_verified else None) if _fresh(stamp, now)]
     cash_verified = type(cash) is int and cash >= 0 and _fresh(cash_at, now)
@@ -231,6 +259,8 @@ def snapshot_summary(*, now=None, path: Path | None = None):
         scopes["hubs"] = scopes["hubs"] and all(
             _fresh(hub["observed_at"], now) for hub in snapshot["hubs"])
         scopes["fleet"] = scopes["fleet"] and _fresh(coverage["observed_at"], now)
+        for scope, valid in _catalog_scopes(observations["engine_coverage"], now).items():
+            scopes[scope] = scopes[scope] and valid
         return {"status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": observations["captured_at"],
                 "observed_at": snapshot["observed_at"],

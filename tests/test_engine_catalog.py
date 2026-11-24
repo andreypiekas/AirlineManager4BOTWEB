@@ -37,7 +37,8 @@ def test_roster_coverage_counts_exact_identities_and_available_variant_details(t
     assert coverage == {"source": engine_catalog.ROSTER_SOURCE, "status": "partial",
                         "observed_at": NOW, "listed_model_count": 2, "verified_model_count": 1,
                         "available_variant_count": 1, "observed_variant_count": 1,
-                        "models_with_all_variant_details": 1, "final_prices_verified": False}
+                        "models_with_all_variant_details": 1, "final_prices_verified": False,
+                        "models_expires_at": None, "engines_expires_at": None}
     # A new valid observation can fill the missing identity, but cannot prove checkout prices.
     monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW + 1)
     details["1"]["observed_at"] = NOW + 1
@@ -45,6 +46,8 @@ def test_roster_coverage_counts_exact_identities_and_available_variant_details(t
     snapshot = engine_catalog.EngineCatalogRegistry(registry.path).snapshot(now=NOW + 1)
     assert snapshot["coverage"] == "partial"
     assert snapshot["order_list_coverage"]["status"] == "details_observed"
+    assert snapshot["order_list_coverage"]["models_expires_at"] == NOW + 900
+    assert snapshot["order_list_coverage"]["engines_expires_at"] == NOW + 900
     assert snapshot["order_list_coverage"]["final_prices_verified"] is False
     assert registry.record_attempt("11", "A320")
     assert registry.snapshot(now=NOW + 1)["order_list_coverage"]["verified_model_count"] == 1

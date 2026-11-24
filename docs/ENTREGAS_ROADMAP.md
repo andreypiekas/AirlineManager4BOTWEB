@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A2/A3, cobertura independente de modelos e motores (G0)
+
+- O snapshot passa a reconhecer a cobertura do catálogo de passageiros quando a lista nativa e os detalhes de todos os modelos apresentam correspondência de identidade e tentativa válida. A cobertura das variantes exige observações de todas as opções disponíveis de cada modelo. A validade de cada escopo respeita a expiração mais próxima entre a lista nativa (900 s) e os detalhes dos modelos (3 dias).
+- A API reavalia a validade dos escopos na leitura do snapshot. Detalhes ausentes, tentativas inconclusivas, expiração ou registros antigos sem a nova prova mantêm a cobertura correspondente pendente. Cobertura de opções de motor não equivale à comprovação de todos os parâmetros econômicos ou do preço final; rotas e preços permanecem parciais.
+- Validação Windows: 222 testes direcionados aprovados, incluindo regressões de expiração, identidade, detalhes de variantes e integração com o snapshot. Ruff e `git diff --check` aprovados.
+- Pendentes: demanda residual, taxas, preços finais, produção de oportunidades A3 elegíveis e homologação das fases seguintes. Nenhuma compra real executada. A meta integral permanece ativa.
+
 ## 2026-11-24 — Autonomia Total A3, painel de reprodução histórica (G0)
 
 - A análise auditada de expansão disponibiliza uma seção própria para consultar as combinações de hub, rota, modelo e motor do último snapshot A3, com paginação vinculada à identidade e à impressão digital da captura. Mostra demanda total observada, distâncias, ocupação, triagem física, custos indicativos, layouts e contribuições diárias em condições históricas, com motivos de bloqueio e indicadores desconhecidos explícitos.
