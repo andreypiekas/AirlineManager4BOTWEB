@@ -120,7 +120,8 @@ def _block_portfolio(portfolio: dict, blockers: list[str]) -> None:
             portfolio["decision"] = "nao_comprar"
 
 
-def _current_audited_finance_blockers(bot, evaluation: dict, record: dict, journal: dict) -> list[str]:
+def _current_audited_finance_blockers(bot, evaluation: dict, record: dict, journal: dict,
+                                      controls: dict) -> list[str]:
     """Require the audited snapshot to agree with the current account and ledger."""
     blockers = []
     money, observed_at = recent_verified_money(bot)
@@ -136,7 +137,7 @@ def _current_audited_finance_blockers(bot, evaluation: dict, record: dict, journ
         if type(last_confirmed) not in (int, float) or not math.isfinite(last_confirmed):
             blockers.append("diario_indisponivel")
         else:
-            evidence = record["portfolio_evidence"]
+            evidence = {**record["portfolio_evidence"], "controls": controls}
             timestamps = [row["observed_at_oldest"] for row in record["evaluations"]]
             for group in ("controls", "hub_capacity", "confidence_evidence", "diversification_evidence"):
                 timestamps.extend(proof["observed_at"] for proof in evidence.get(group, {}).values())
@@ -426,16 +427,30 @@ class WebDashboard:
         policy = InvestmentPolicy.from_config(self.cfg)
         proof = record["portfolio_evidence"]
         evaluations = record["evaluations"]
+        game_snapshot = snapshot_summary()
+        snapshot_id = record["snapshot_id"] or game_snapshot.get("snapshot_id") or ""
+        matching_capture = (game_snapshot["status"] == "parcial" and bool(snapshot_id)
+                            and game_snapshot.get("snapshot_id") == snapshot_id)
+        scopes = game_snapshot.get("scopes", {}) if matching_capture else {}
+        fleet_verified = scopes.get("fleet") is True
+        research_verified = (proof.get("research_coverage_verified") is True
+                             and all(scopes.get(scope) is True for scope in
+                                     ("hubs", "routes", "models", "engines", "prices")))
+        stored_controls = proof.get("controls")
+        controls = dict(stored_controls) if isinstance(stored_controls, dict) else {}
+        controls.pop("unrouted_aircraft_count", None)
+        if fleet_verified and game_snapshot.get("unrouted_aircraft_control") is not None:
+            controls["unrouted_aircraft_count"] = game_snapshot["unrouted_aircraft_control"]
         portfolio = compare_audited_portfolio(
             evaluations,
             profile_id=paths.current().label,
-            snapshot_id=record["snapshot_id"] or "",
-            controls=proof.get("controls"),
+            snapshot_id=snapshot_id,
+            controls=controls,
             hub_capacity=proof.get("hub_capacity"),
             confidence_evidence=proof.get("confidence_evidence"),
             diversification_evidence=proof.get("diversification_evidence"),
-            fleet_coverage_verified=proof.get("fleet_coverage_verified") is True,
-            research_coverage_verified=proof.get("research_coverage_verified") is True,
+            fleet_coverage_verified=fleet_verified,
+            research_coverage_verified=research_verified,
             commitments_verified=proof.get("commitments_verified") is True,
             max_single_investment=(policy.max_single_investment
                                    if policy.enabled and policy.max_single_investment > 0 else None),
@@ -454,14 +469,15 @@ class WebDashboard:
             portfolio["decision"] = "nao_comprar"
         journal = _local_investment_snapshot()
         _block_local_investment(portfolio, journal)
-        game_snapshot = snapshot_summary()
         # A fresh capture supersedes the economic proof even when the balance
         # is unchanged. Keep historical evaluations visible for diagnosis.
         if game_snapshot["status"] == "registro_invalido":
             _block_portfolio(portfolio, ["coleta_jogo_invalida"])
         elif game_snapshot["status"] == "expirado":
             _block_portfolio(portfolio, ["coleta_jogo_expirada"])
-        elif (game_snapshot["status"] != "sem_coleta" and record["snapshot_id"]
+        elif game_snapshot["status"] == "sem_coleta":
+            _block_portfolio(portfolio, ["coleta_jogo_ausente"])
+        elif (record["snapshot_id"]
               and game_snapshot.get("snapshot_id") != record["snapshot_id"]):
             _block_portfolio(portfolio, ["snapshot_a3_divergente_coleta"])
         purchase_plan = None
@@ -479,7 +495,7 @@ class WebDashboard:
             else:
                 try:
                     finance_blockers = _current_audited_finance_blockers(
-                        self.bot, matches[0], record, journal,
+                        self.bot, matches[0], record, journal, controls,
                     )
                 except (AttributeError, ValueError, TypeError, KeyError):
                     finance_blockers = ["conciliacao_financeira_a_confirmar"]

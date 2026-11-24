@@ -288,7 +288,18 @@ def snapshot_summary(*, now=None, path: Path | None = None):
         scopes = dict(coverage["scopes"])
         scopes["hubs"] = scopes["hubs"] and all(
             _fresh(hub["observed_at"], now) for hub in snapshot["hubs"])
-        scopes["fleet"] = scopes["fleet"] and _fresh(coverage["observed_at"], now)
+        fleet = observations["fleet"]
+        counts = [fleet["routes"], fleet["parked"], fleet["pending"]]
+        scopes["fleet"] = (scopes["fleet"] and coverage["verified"] is True
+                           and _fresh(coverage["observed_at"], now)
+                           and _fresh(fleet["observed_at"], now)
+                           and all(type(count) is int and count >= 0 for count in counts)
+                           and coverage["expected_aircraft_count"] == sum(counts)
+                           and coverage["unrouted_aircraft_count"] == sum(counts[1:]))
+        unrouted = ({"source": "game_fleet_scan", "profile_id": snapshot["profile_id"],
+                     "snapshot_id": snapshot["snapshot_id"], "verified": True,
+                     "observed_at": min(coverage["observed_at"], fleet["observed_at"]),
+                     "value": sum(counts[1:])} if scopes["fleet"] else None)
         for scope, valid in _catalog_scopes(observations["engine_coverage"], now).items():
             scopes[scope] = scopes[scope] and valid
         return {"status": "parcial", "snapshot_id": snapshot["snapshot_id"],
@@ -297,6 +308,7 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                 "scopes": scopes,
                 "owned_hub_count": len(snapshot["hubs"]) if scopes["hubs"] else None,
                 "fleet_count": coverage["expected_aircraft_count"] if scopes["fleet"] else None,
+                "unrouted_aircraft_control": unrouted,
                 "route_samples": len(observations["route_research"]["samples"]),
                 "native_route_quote_count": sum(_fresh(row.get("observed_at"), now)
                                                 for row in observations.get("native_route_quotes", [])),

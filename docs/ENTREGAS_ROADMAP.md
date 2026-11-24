@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4, vinculação à coleta atual da frota (G0)
+
+- O planejamento global passa a exigir uma coleta atual, válida e vinculada ao mesmo snapshot das avaliações A3. A cobertura da frota usa a observação do jogo e sua validade temporal, inclusive quando ainda não há avaliações registradas. A cobertura de pesquisa exige simultaneamente os escopos de hubs, rotas, modelos, motores e preços e a comprovação independente do registro A4.
+- A quantidade de aeronaves sem rota é derivada dos totais conciliados da coleta, preservando o timestamp mais antigo entre o inventário e a auditoria das rotas. A prova antiga armazenada é substituída pela observação atual; ausência, vencimento e divergência da coleta impedem uma proposta de compra. A conciliação financeira utiliza os controles efetivamente empregados na comparação. Nenhum identificador de aeronave é exposto pelo resumo agregado.
+- Validação: 117 testes direcionados aprovados após os ajustes finais; suíte Windows com 2.021 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. As fixtures comprovam os bloqueios e a integração local. Continuam pendentes a cobertura integral de pesquisa, a demanda residual e os custos finais comprovados, a alimentação produtiva do registro econômico e a homologação autenticada das fases A0–A9. Nenhuma transação real foi executada.
+
 ## 2026-11-24 — Autonomia Total A3, referência salarial por variante (G0)
 
 - A observação nativa de pessoal captura quantidade, salário diário unitário e total por função, exigindo as quatro categorias únicas e a consistência aritmética. A leitura autenticada anterior identificou os quatro cartões e as respectivas linhas de salário diário, sem alterações no jogo. A coleta Selenium automatizada ainda requer homologação autenticada. Os registros permanecem isolados por perfil, em arquivo privado, com invalidação antes de nova tentativa e validade de 900 segundos.

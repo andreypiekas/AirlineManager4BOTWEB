@@ -55,6 +55,16 @@ def controls(snapshot_id):
     }
 
 
+def matching_capture(snapshot_id, *, unrouted=0, research=True, fleet=True):
+    return {
+        "status": "parcial", "snapshot_id": snapshot_id,
+        "scopes": {"fleet": fleet, "hubs": True, "models": True, "engines": True,
+                   "routes": research, "prices": research},
+        "unrouted_aircraft_control": (proof(unrouted, "game_fleet_scan", snapshot_id)
+                                      if fleet else None),
+    }
+
+
 def compare_registry(registry):
     stored = registry.snapshot(now=NOW)
     evidence = stored["portfolio_evidence"]
@@ -163,6 +173,51 @@ def test_authenticated_a3_api_exposes_only_read_only_analysis(tmp_path, monkeypa
         assert result["execution_available"] is False
 
 
+@pytest.mark.parametrize("scenario,expected,absent", [
+    ("empty", "aeronaves_sem_rota_a_resolver", "evidencia_unrouted_aircraft_count_a_confirmar"),
+    ("positive", "aeronaves_sem_rota_a_resolver", "evidencia_unrouted_aircraft_count_a_confirmar"),
+    ("partial", "cobertura_pesquisa_a_confirmar", "cobertura_frota_a_confirmar"),
+    ("unverified", "evidencia_unrouted_aircraft_count_a_confirmar", "aeronaves_sem_rota_a_resolver"),
+    ("different", "snapshot_a3_divergente_coleta", "aeronaves_sem_rota_a_resolver"),
+])
+def test_a4_uses_current_capture_instead_of_stored_fleet_claims(
+    registry, monkeypatch, scenario, expected, absent,
+):
+    if scenario == "empty":
+        snapshot_id = "current-capture"
+    else:
+        data = record_fixture(registry)
+        snapshot_id = data[0]["snapshot_id"]
+        assert registry.record_portfolio_evidence(
+            snapshot_id=snapshot_id, controls=controls(snapshot_id),
+            hub_capacity={"123": proof(2, "game_hub_select", snapshot_id, hub_id="123")},
+            fleet_coverage_verified=True, research_coverage_verified=True,
+            commitments_verified=True,
+        )
+    record = registry.snapshot(now=NOW)
+    capture = matching_capture(
+        "different" if scenario == "different" else snapshot_id,
+        unrouted=1 if scenario in ("empty", "positive", "different") else 0,
+        research=False, fleet=scenario != "unverified",
+    )
+
+    class SnapshotRegistry:
+        def snapshot(self):
+            return deepcopy(record)
+
+    monkeypatch.setattr("web.AuditedEconomicsRegistry", SnapshotRegistry)
+    monkeypatch.setattr("web.snapshot_summary", lambda: capture)
+    monkeypatch.setattr("web.compare_audited_portfolio", lambda *args, **kwargs:
+                        compare_audited_portfolio(*args, **kwargs, now=NOW))
+    with served(registry.path.parent) as (port, _config):
+        status, result = request(port, "GET", "/api/investment/audited-expansion", headers=auth())
+    assert status == 200
+    assert result["portfolio"]["decision"] == "nao_comprar"
+    assert expected in result["purchase_plan_blockers"]
+    assert absent not in result["purchase_plan_blockers"]
+    assert result["purchase_plan_preview"] is None
+
+
 def test_authenticated_snapshot_research_api_passes_pagination(tmp_path, monkeypatch):
     calls = []
 
@@ -200,6 +255,7 @@ def test_web_dashboard_fails_closed_for_invalid_a3_storage(registry, monkeypatch
     ("snapshot_changed", "snapshot_a3_divergente_coleta"),
     ("snapshot_expired", "coleta_jogo_expirada"),
     ("snapshot_invalid", "coleta_jogo_invalida"),
+    ("snapshot_missing", "coleta_jogo_ausente"),
     ("snapshot_matches", None),
     ("route_creation_pending.json", "criacao_rota_a_conciliar"),
     ("reroute_pending.json", "redirecionamento_a_conciliar"),
@@ -233,8 +289,8 @@ def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
         "snapshot_changed": {"status": "parcial", "snapshot_id": "different"},
         "snapshot_expired": {"status": "expirado", "snapshot_id": snapshot_id},
         "snapshot_invalid": {"status": "registro_invalido", "snapshot_id": None},
-        "snapshot_matches": {"status": "parcial", "snapshot_id": snapshot_id},
-    }.get(pending)
+        "snapshot_missing": {"status": "sem_coleta", "snapshot_id": None},
+    }.get(pending, matching_capture(snapshot_id))
     if capture is not None:
         monkeypatch.setattr("web.snapshot_summary", lambda: capture)
     monkeypatch.setattr(
@@ -323,6 +379,7 @@ def test_a5_preview_fails_closed_for_missing_or_ambiguous_a3_economics(
     monkeypatch.setattr("web.AuditedEconomicsRegistry", SnapshotRegistry)
     monkeypatch.setattr("web.compare_audited_portfolio", lambda *_args, **_kwargs: portfolio)
     monkeypatch.setattr("web.recent_verified_money", lambda _bot: (40000, NOW))
+    monkeypatch.setattr("web.snapshot_summary", lambda: matching_capture(snapshot_id))
     monkeypatch.setattr(
         "web.build_aircraft_intent_plan",
         lambda current_portfolio, evaluation: investment_plan_bridge.build_aircraft_intent_plan(

@@ -104,9 +104,15 @@ def test_summary_preserves_source_age_and_is_profile_bound(tmp_path, monkeypatch
     monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
     summary = snapshot_summary(now=NOW, path=path)
     assert summary["status"] == "parcial" and summary["fleet_count"] == 2
+    assert summary["unrouted_aircraft_control"] == {
+        "source": "game_fleet_scan", "profile_id": "principal",
+        "snapshot_id": snapshot["snapshot_id"], "verified": True,
+        "observed_at": NOW - 30, "value": 1,
+    }
     assert "observed_aircraft_ids" not in json.dumps(summary)
     summary = snapshot_summary(now=NOW + 875, path=path)
     assert not summary["scopes"]["fleet"] and summary["fleet_count"] is None
+    assert summary["unrouted_aircraft_control"] is None
     assert summary["scopes"]["hubs"] and summary["cash_observed"]
     assert snapshot_summary(now=NOW + 901, path=path)["status"] == "expirado"
     monkeypatch.setattr(paths, "current", lambda: paths.Profile("other"))
@@ -115,6 +121,23 @@ def test_summary_preserves_source_age_and_is_profile_bound(tmp_path, monkeypatch
     snapshot["coverage"]["scopes"]["prices"] = True
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     assert snapshot_summary(now=NOW, path=path)["status"] == "registro_invalido"
+
+
+def test_summary_certifies_zero_unrouted_and_expires_older_route_scan(tmp_path, monkeypatch):
+    evidence = observations()
+    evidence["routes"]["fleet_coverage"].update(
+        routes=2, parked=0, pending=0, observed_at=NOW - 40,
+    )
+    snapshot = compose_snapshot(**evidence)
+    path = tmp_path / "observed.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    summary = snapshot_summary(now=NOW, path=path)
+    assert summary["unrouted_aircraft_control"]["value"] == 0
+    assert summary["unrouted_aircraft_control"]["observed_at"] == NOW - 40
+    summary = snapshot_summary(now=NOW + 861, path=path)
+    assert summary["scopes"]["fleet"] is False
+    assert summary["unrouted_aircraft_control"] is None
 
 
 def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, monkeypatch):
