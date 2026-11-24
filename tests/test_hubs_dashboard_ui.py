@@ -338,6 +338,7 @@ const translations = {
   'Acima do teto de caixa': 'Above cash upper bound',
   'Dentro do teto de caixa': 'Within cash upper bound',
   'Aeronaves pendentes na frota': 'Pending aircraft in fleet',
+  'Aguardando entrega': 'Pending delivery',
   'Em manutenção pendente': 'Pending maintenance',
   'Pendências sem classificação': 'Unclassified pending statuses',
   'Aeronaves estacionadas': 'Parked aircraft',
@@ -451,7 +452,10 @@ report.fleet_route_reconciliation = {status:'matched',native_parked_count:0,nati
   audited_parked_count:0,audited_pending_count:11,unrouted_or_pending_count:11};
 renderHubRecommendations(report);
 assert.match($('hubResearchQueueStatus').textContent, /Passenger hangar: Free slots 0\/223/);
-assert.match($('hubResearchQueueStatus').textContent, /Pending aircraft in fleet: 11 \(Pending maintenance: 11, Unclassified pending statuses: 0\)/);
+assert.match($('hubResearchQueueStatus').textContent, /Pending aircraft in fleet: 11 \(Pending maintenance: 11, Pending delivery: Unavailable, Unclassified pending statuses: 0\)/);
+report.fleet_commitment_observations.pending_fleet = {total:11,maintenance:9,delivery:2,unclassified:0};
+renderHubRecommendations(report);
+assert.match($('hubResearchQueueStatus').textContent, /Pending aircraft in fleet: 11 \(Pending maintenance: 9, Pending delivery: 2, Unclassified pending statuses: 0\)/);
 assert.match($('hubResearchQueueStatus').textContent, /Parked aircraft: 0/);
 assert.match($('hubResearchQueueStatus').textContent, /Orders and financial commitments need reconciliation/);
 assert.match($('hubResearchQueueStatus').textContent, /Fleet count reconciliation: Matching counts/);

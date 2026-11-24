@@ -24,7 +24,7 @@ def test_invalid_hangar(sample):
 def test_pending_count_is_not_an_order_count():
     raw = {"total": 2, "rows": [{"id": "101", "status": "maintenance"},
                                 {"id": "102", "status": "unclassified"}]}
-    assert _fleet_list(raw) == {"total": 2, "maintenance": 1, "unclassified": 1}
+    assert _fleet_list(raw) == {"total": 2, "maintenance": 1, "delivery": 0, "unclassified": 1}
     raw["rows"][1]["id"] = "101"
     assert _fleet_list(raw) is None
     raw["rows"].pop()
@@ -52,7 +52,8 @@ def test_collector_and_profile_snapshot(tmp_path, monkeypatch):
     bot = Bot()
     data = {PASSENGER_HANGAR_JS: {"capacity": 223, "occupied": 223, "free": 0,
                                 "upgrade_quotes": {"1": {"cost": 190835956, "duration_seconds": 1080}}},
-            PENDING_FLEET_JS: {"total": 1, "rows": [{"id": "12345678", "status": "maintenance"}]},
+            PENDING_FLEET_JS: {"total": 2, "rows": [{"id": "12345678", "status": "maintenance"},
+                                                   {"id": "23456789", "status": "delivery"}]},
             PARKED_FLEET_JS: {"total": 0, "rows": []}}
     monkeypatch.setattr(game_observations, "_stable_read", lambda _, script: data[script])
     assert collect_fleet_commitment_observations(bot, path=path)
@@ -64,7 +65,7 @@ def test_collector_and_profile_snapshot(tmp_path, monkeypatch):
     assert report["observed_at"] <= report["observed_until"] <= time.time()
     assert report["passenger_hangar"]["free"] == 0
     assert report["passenger_hangar"]["upgrade_quotes"] == {"1": {"cost": 190835956, "duration_seconds": 1080}}
-    assert report["pending_fleet"] == {"total": 1, "maintenance": 1, "unclassified": 0}
+    assert report["pending_fleet"] == {"total": 2, "maintenance": 1, "delivery": 1, "unclassified": 0}
     assert report["parked_count"] == 0
     assert report["pending_orders_verified"] is False
     assert report["commitments_verified"] is False
@@ -235,9 +236,12 @@ const hg = {querySelector:()=>null, querySelectorAll:key=>({
 let kind = 'pending', total = 2;
 const button = {get textContent(){return `${kind} (${total})`},
   getAttribute:()=>`Ajax('fleet_${kind}.php','routesContainer',this);`};
+const statusCell = label => ({childNodes:[{nodeType:3,textContent:label}],
+  querySelectorAll:selector=>selector==='span.hasCountdown'?[{}]:[]});
+const pendingRow = (id, ...labels) => ({id:`routeMainPendingList${id}`,
+  querySelectorAll:selector=>selector==='.row.p-2 > .col-6'?labels.map(statusCell):[]});
 const panel = {querySelector:()=>null, children:[cell('2 AIRCRAFT'),
-  {id:'routeMainPendingList101',innerText:'Synthetic\\nPending maintenance: 12:00:00'},
-  {id:'routeMainPendingList102',innerText:'Synthetic\\nOther status'}, {tagName:'SCRIPT'}]};
+  pendingRow('101','Pending maintenance:'), pendingRow('102','Pending delivery:'), {tagName:'SCRIPT'}]};
 global.window = {jQuery:{active:0}};
 global.document = {querySelectorAll:key=>({'#maintAction':[hg], '#routesContainer':[panel],
   '#routeAction .listBtns':[button]}[key]||[])};
@@ -254,7 +258,13 @@ upgrades=[one,ten]; ten.parentElement.innerText='INCREASE CAPACITY BY +1 A/C\\n0
 assert.deepEqual(Object.keys(hangar().upgrade_quotes),['1']);
 one.textContent='$190,835,956 00:18:00'; assert.equal(hangar().upgrade_quotes,undefined);
 rows[1].cells[1].textContent = 'Other slots'; assert.equal(hangar(),null);
-assert.deepEqual(pending(), {total:2,rows:[{id:'101',status:'maintenance'},{id:'102',status:'unclassified'}]});
+assert.deepEqual(pending(), {total:2,rows:[{id:'101',status:'maintenance'},{id:'102',status:'delivery'}]});
+panel.children[2]=pendingRow('102','Entrega pendente:');
+assert.equal(pending().rows[1].status,'delivery');
+panel.children[2]=pendingRow('102','Pending delivery:','Pending maintenance:');
+assert.equal(pending().rows[1].status,'unclassified');
+panel.children[2]=pendingRow('102','Other status');
+assert.equal(pending().rows[1].status,'unclassified');
 total=3; assert.equal(pending(),null);
 kind='parked'; total=0; panel.children=[cell('0 AIRCRAFT'),cell('THERE ARE NO PARKED AIRCRAFT'),{tagName:'SCRIPT'}];
 assert.deepEqual(parked(), {total:0,rows:[]});

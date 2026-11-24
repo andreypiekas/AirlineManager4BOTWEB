@@ -94,9 +94,21 @@ if (total === 0) {
 }
 const prefix = kind === 'parked' ? 'routeMainParkedList' : 'routeMainPendingList';
 if (children.length !== total || children.some(row => !row.id.startsWith(prefix))) return null;
-return {total, rows: children.map(row => ({id: row.id.slice(prefix.length),
-    status: kind === 'pending' && /^(?:pending maintenance|manutencao pendente)\s*:/.test(
-        norm(String(row.innerText || '').trim().split('\n').at(-1))) ? 'maintenance' : 'unclassified'}))};
+const classify = row => {
+    if (kind !== 'pending') return 'unclassified';
+    const states = [];
+    for (const cell of row.querySelectorAll('.row.p-2 > .col-6')) {
+        if (cell.querySelectorAll('span.hasCountdown').length !== 1) continue;
+        for (const node of cell.childNodes) {
+            if (node.nodeType !== 3) continue;
+            const label = norm(node.textContent);
+            if (['pending maintenance:', 'manutencao pendente:'].includes(label)) states.push('maintenance');
+            if (['pending delivery:', 'entrega pendente:'].includes(label)) states.push('delivery');
+        }
+    }
+    return states.length === 1 ? states[0] : 'unclassified';
+};
+return {total, rows: children.map(row => ({id: row.id.slice(prefix.length), status: classify(row)}))};
 """
 
 
@@ -137,11 +149,28 @@ def _fleet_list(value):
     rows = value["rows"]
     if len(rows) != value["total"] or any(
         not isinstance(row, dict) or not isinstance(row.get("id"), str) or not _ROW_ID.fullmatch(row["id"])
-        or row.get("status") not in ("maintenance", "unclassified") for row in rows
+        or row.get("status") not in ("maintenance", "delivery", "unclassified") for row in rows
     ) or len({row["id"] for row in rows}) != len(rows):
         return None
     maintenance = sum(row["status"] == "maintenance" for row in rows)
-    return {"total": len(rows), "maintenance": maintenance, "unclassified": len(rows) - maintenance}
+    delivery = sum(row["status"] == "delivery" for row in rows)
+    return {"total": len(rows), "maintenance": maintenance, "delivery": delivery,
+            "unclassified": len(rows) - maintenance - delivery}
+
+
+def _pending_counts(value):
+    if not isinstance(value, dict):
+        return None
+    keys = ("total", "maintenance", "unclassified")
+    # Older caches did not distinguish deliveries. Keep their counts usable
+    # without reporting an observed zero for a classification not collected.
+    if "delivery" in value:
+        keys += ("delivery",)
+    if any(not _count(value.get(key)) for key in keys):
+        return None
+    if value["total"] != sum(value[key] for key in keys[1:]):
+        return None
+    return {key: value[key] for key in keys}
 
 
 def observations_snapshot(path: Path | None = None, *, now: float | None = None) -> dict:
@@ -164,10 +193,7 @@ def observations_snapshot(path: Path | None = None, *, now: float | None = None)
                                      or end - stamp > MAX_WINDOW):
         return result
     hangar = _hangar(saved.get("passenger_hangar"))
-    pending = saved.get("pending_fleet")
-    if (not isinstance(pending, dict) or any(not _count(pending.get(key)) for key in ("total", "maintenance", "unclassified"))
-            or pending["total"] != pending["maintenance"] + pending["unclassified"]):
-        pending = None
+    pending = _pending_counts(saved.get("pending_fleet"))
     parked = saved.get("parked_count")
     parked = parked if _count(parked) else None
     if hangar is None and pending is None and parked is None:
@@ -175,7 +201,7 @@ def observations_snapshot(path: Path | None = None, *, now: float | None = None)
     return {**result, "status": "observed" if all(value is not None for value in (hangar, pending, parked)) else "partial",
             "source": SOURCE, "observed_at": stamp, "passenger_hangar": hangar,
             **({"observed_until": end} if end is not None else {}),
-            "pending_fleet": ({key: pending[key] for key in ("total", "maintenance", "unclassified")} if pending else None),
+            "pending_fleet": pending,
             "parked_count": parked}
 
 
@@ -194,13 +220,11 @@ def reconcile_route_coverage(observations: dict, coverage: dict | None, *, now: 
                       and current(stamp) and ("observed_until" not in observations or
                           (current(end) and stamp <= end and end - stamp <= MAX_WINDOW)))
     parked = observations.get("parked_count")
-    pending = observations.get("pending_fleet")
+    pending = _pending_counts(observations.get("pending_fleet"))
     if native_current and _count(parked):
         result["native_parked_count"] = parked
         result["status"] = "native_only"
-    if (native_current and isinstance(pending, dict)
-            and all(_count(pending.get(key)) for key in ("total", "maintenance", "unclassified"))
-            and pending["total"] == pending["maintenance"] + pending["unclassified"]):
+    if native_current and pending is not None:
         result["native_pending_count"] = pending["total"]
         result["status"] = "native_only"
     if not isinstance(coverage, dict) or coverage.get("source") != "game_roster_and_route_audit":

@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A7, entregas de aeronaves pendentes (G0)
+
+- A inspeção autenticada da aba Pending mostrou seis aeronaves, sendo duas com o rótulo nativo `Pending delivery:` e quatro com `Pending maintenance:`. Ambos os estados aparecem em células próprias com contador regressivo. O menu Order exibiu catálogo e capacidade, sem uma relação financeira das encomendas. A inspeção foi somente leitura.
+- O coletor passou a reconhecer os dois estados pelo rótulo explícito da célula de status e pelo marcador de contador regressivo. Rótulos ausentes, desconhecidos ou conflitantes permanecem sem classificação. A leitura estável, a validação de totais, a expiração e a privacidade das contagens permanecem aplicáveis. Caches anteriores são compatíveis e não produzem uma contagem de entrega artificialmente igual a zero.
+- O painel PT/EN e a API exibem separadamente aeronaves aguardando entrega, manutenção e estados sem classificação. A conciliação de contagens aceita o novo formato e conserva o bloqueio financeiro. A lista de entregas em trânsito não prova o valor a pagar, a origem do pedido, a cobertura de outras obrigações ou a identidade individual conciliada com o diário. A integração Selenium ainda precisa de homologação autenticada; G0 permanece ativo.
+- Validação Windows: 1.839 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX); 96 testes direcionados aprovados, incluindo contrato JavaScript, classificação conflitante, compatibilidade de cache e painel em inglês. O teste inicial do painel revelou uma tradução ausente na fixture e foi corrigido. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A4, conciliação dentro do ciclo de auditoria (G0)
 
 - A coleta nativa de hangar, aeronaves estacionadas e pendentes passou a ocorrer imediatamente após a auditoria paginada e antes da conferência final do inventário, das correções de rota e das compras nessa etapa. A tela de rotas é restaurada antes da leitura final, e a coleta continua restrita à opção de planejamento habilitada.

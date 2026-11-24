@@ -1196,6 +1196,7 @@ const EN = {
   "Dentro do teto de caixa": "Within cash upper bound",
   "Aeronaves pendentes na frota": "Pending aircraft in fleet",
   "Em manutenção pendente": "Pending maintenance",
+  "Aguardando entrega": "Pending delivery",
   "Pendências sem classificação": "Unclassified pending statuses",
   "Encomendas e compromissos financeiros a conciliar": "Orders and financial commitments need reconciliation",
   "Conciliação das contagens da frota": "Fleet count reconciliation",
@@ -2674,13 +2675,16 @@ function renderHubRecommendations(report) {
     const validCount = value => Number.isSafeInteger(value) && value >= 0;
     const hangarKnown = hangar && [hangar.capacity, hangar.occupied, hangar.free].every(validCount) &&
       hangar.occupied + hangar.free === hangar.capacity;
+    const deliveryKnown = pending && validCount(pending.delivery);
     const pendingKnown = pending && [pending.total, pending.maintenance, pending.unclassified].every(validCount) &&
-      pending.maintenance + pending.unclassified === pending.total;
+      (deliveryKnown || !Object.hasOwn(pending, "delivery")) &&
+      pending.maintenance + pending.unclassified + (deliveryKnown ? pending.delivery : 0) === pending.total;
     $("hubResearchQueueStatus").textContent += " · " + tr("Hangar de passageiros") + ": " +
       (hangarKnown ? tr("Vagas livres") + " " + nf.format(hangar.free) + "/" + nf.format(hangar.capacity)
         : tr("Indisponível")) + " · " + tr("Aeronaves pendentes na frota") + ": " +
       (pendingKnown ? nf.format(pending.total) + " (" + tr("Em manutenção pendente") + ": " +
-        nf.format(pending.maintenance) + ", " + tr("Pendências sem classificação") + ": " +
+        nf.format(pending.maintenance) + ", " + tr("Aguardando entrega") + ": " +
+        (deliveryKnown ? nf.format(pending.delivery) : tr("Indisponível")) + ", " + tr("Pendências sem classificação") + ": " +
         nf.format(pending.unclassified) + ")" : tr("Indisponível")) + " · " +
       tr("Aeronaves estacionadas") + ": " + (validCount(parked) ? nf.format(parked) : tr("Indisponível")) +
       " · " + tr("Encomendas e compromissos financeiros a conciliar");
