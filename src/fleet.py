@@ -32,7 +32,7 @@ from economy import (find_model, fmt_days, fmt_money, goal_progress, is_auto_goa
                      save_market)
 from aircraft_order_hub import AircraftOrderHubError, prepare_order_hub
 from gamemode import EASY, GameMode
-from helpers import clean_response, fmt, to_int
+from helpers import clean_response, fmt, game_whole_number, to_int
 from notify import esc
 from route_optimizer import estimate_route, operating_prices_valid, rank_candidates
 from route_strategy import best_reroute, profitable_candidates
@@ -42,7 +42,7 @@ from hub_registry import HubRegistry
 from hub_expansion import HubExpansionRegistry
 from route_registry import HOME_HUB_EVIDENCE, RouteRegistry, reroute_block_reason, endpoint, route_key
 from reroute import (aircraft_details_missing, confirm_stopover, has_pending_reroute,
-                     landed_departure, recover_pending, replace_route)
+                     landed_departure, read_direct_form, recover_pending, replace_route)
 from reroute_preflight import check_existing_route
 from route_stopover import Stopover, find_stopover, parked_specs, read_form, research_details
 
@@ -138,11 +138,6 @@ Promise.all(ids.map(async aircraft_id => {
 # Everything below reads the game by structure (ids, classes, data attributes, onclick handlers),
 # never by visible text, so the bot works with the game in English, Spanish or any other language.
 
-# Route fee: the only bold red figure of the new-route panel.
-_ROUTE_FEE_JS = """
-const figures = document.querySelectorAll("#newRouteInfo .text-danger.font-weight-bold");
-return figures.length ? figures[figures.length - 1].textContent : null;
-"""
 # "A/C on route": first row of the small table under the demand table in the route details.
 _ON_ROUTE_JS = """
 const cell = document.querySelector("#rDetails table.m-text:not(.table-bordered) tr td.text-right");
@@ -1452,16 +1447,18 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
                 if not capable:
                     log.debug("%s não pode voar para %s (alcance ou pista).", aircraft.reg, candidate.name)
                     continue
-                on_route = to_int(bot.js(_ON_ROUTE_JS)) or 0
-                if on_route and not allow_duplicates:
-                    log.debug("%s já tem %d aeronaves.", candidate.name, on_route)
+                on_route = game_whole_number(bot.js(_ON_ROUTE_JS))
+                if not allow_duplicates and on_route != 0:
+                    log.debug("%s: ocupação diferente de zero ou desconhecida.", candidate.name)
                     continue
                 estimated = estimates.get(candidate.arr_id)
                 outcome = create_route(
                     bot, aircraft, candidate, origin_id=hub_id,
                     profit_per_day=estimated.profit_per_day if estimated is not None else None,
+                    allow_duplicates=allow_duplicates,
                 )
-                break
+                if outcome != "none":
+                    break
         if outcome in ("created", "dry"):
             created += 1
             if not allow_duplicates:
@@ -1489,6 +1486,9 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
     else:
         panel = bot.ajax(f"{url}&mode=res", "newRouteInfo")
     stop = endpoint(stopover.id, code=game_code(stopover.id)) if stopover else None
+    origin = endpoint(origin_id, code=game_code(origin_id))
+    destination_code = game_code(candidate.arr_id, "" if stop else candidate.code)
+    destination = endpoint(candidate.arr_id, code=destination_code, name=candidate.name)
     name = f"{candidate.name} via {stop['code'] or stop['id']}" if stop else candidate.name
     if stopover:
         verified = read_form(bot, aircraft.id, origin_id, candidate.arr_id, stopover)
@@ -1499,7 +1499,15 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         distance, (y, j, f), fee, _ = verified
         candidate = replace(candidate, distance=distance, y=y, j=j, f=f)
     else:
-        fee = to_int(bot.js(_ROUTE_FEE_JS))
+        direct = read_direct_form(bot, aircraft.id, origin, destination, allow_duplicates=allow_duplicates)
+        if direct is None:
+            log.info("%s: formulário da rota direta não confirmou %s.", aircraft.reg, name)
+            bot.js("$('#newRouteInfo').hide();")
+            return "none"
+        native_distance, fee, _ = direct
+        if abs(native_distance - candidate.distance) > 5:
+            bot.js("$('#newRouteInfo').hide();")
+            return "none"
     if not bot.can_spend(fee, f"a rota {candidate.name}", essential=not reroute):  # reroutes must preserve cash reserve
         bot.js("$('#newRouteInfo').hide();")
         return "none" if stop else "stop"
@@ -1538,10 +1546,14 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
     if bot.stopping:
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
-    origin = endpoint(origin_id, code=game_code(origin_id))
-    destination_code = game_code(candidate.arr_id, "" if stop else candidate.code)
-    destination = endpoint(candidate.arr_id, code=destination_code, name=candidate.name)
     before = bot.read_money() if not stop else None
+    if not stop:
+        current = read_direct_form(bot, aircraft.id, origin, destination, allow_duplicates=allow_duplicates)
+        reserve = bot.config.get_int("settings", "cash_reserve", 0) if reroute else 0
+        if current != direct or before is None or before - fee < reserve:
+            log.warning("%s: formulário ou saldo da rota direta mudou antes da criação.", aircraft.reg)
+            bot.js("$('#newRouteInfo').hide();")
+            return "stop"
     RouteRegistry().invalidate_fleet_coverage()
     bot.click_element(panel.find_element(By.XPATH, ".//*[@id='btnCreateNewRoute']"))
     response = bot.wait_text("//*[@id='routeNewAction']", timeout=15)

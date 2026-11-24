@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 
 from airport_catalog import game_code
-from helpers import to_int
+from helpers import game_whole_number, to_int
 from route_registry import endpoint, endpoint_matches
 
 _ID = re.compile(r"[0-9]{1,14}")
@@ -140,10 +140,10 @@ def read_form(bot, aircraft_id, origin, destination, stop):
         return None
     if not _same_airports((origin, destination, stop.id), (*form["codes"], form.get("via"))):
         return None
-    distance = to_int(form["distance"])
-    demand = [to_int(value) for value in form["demand"]]
-    fee = to_int(form["fee"])
-    occupied = to_int(form["occupied"])
+    distance = game_whole_number(form["distance"])
+    demand = [game_whole_number(value) for value in form["demand"]]
+    fee = game_whole_number(form["fee"], currency=True)
+    occupied = game_whole_number(form["occupied"])
     if (distance is None or abs(distance - stop.distance) > 5 or fee is None or fee < 0
             or occupied is None or len(demand) != 3 or any(value is None for value in demand)):
         return None

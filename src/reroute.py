@@ -12,7 +12,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
 import paths
-from helpers import fmt, to_int
+from helpers import fmt, game_whole_number
 from notify import esc
 from route_registry import endpoint, endpoint_matches, same_route
 
@@ -65,16 +65,17 @@ if (!panel) return null;
 const root = panel.parentElement;
 const codes = Array.from(panel.querySelectorAll('.row.p-0 > .col-3.m-text > b'),
   e => e.textContent.trim().toUpperCase());
-const counts = panel.querySelectorAll('.row.p-1 > .col-4.px-1.text-right.s-text');
+const counts = panel.querySelectorAll('.row.p-1 > .col-4.text-right.s-text');
 const fees = panel.querySelectorAll('.text-danger.font-weight-bold');
 const specs = panel.querySelector('.row.py-2 .xs-text')?.textContent || '';
 const range = (specs.match(/([\d,]+)\s*km\//i) || [])[1];
 const distance = panel.querySelector('.row.p-0 > .col-2 > span')?.textContent.trim();
-const prefix = 'new_route_info.php?mode=do&id=' + arguments[0] + '&airportId=' + arguments[1] + '&';
+const submissions = Array.from(root.querySelectorAll('script')).flatMap(s =>
+  Array.from(s.textContent.matchAll(/new_route_info\.php\?mode=do&id=([0-9]+)&airportId=([0-9]+)&/g)));
 return {codes, existing: counts.length === 1 ? counts[0].textContent.trim() : null,
   fee: fees.length === 1 ? fees[0].textContent.trim() : null,
   range, distance,
-  bound: Array.from(root.querySelectorAll('script')).some(s => s.textContent.includes(prefix))};
+  bound: submissions.length > 0 && submissions.every(m => m[1] === arguments[0] && m[2] === arguments[1])};
 """
 
 # Observe the game's own request and wait for its response. A lost response
@@ -170,24 +171,36 @@ def _check_route(bot, aircraft_id, condition):
     return last
 
 
-def _prepare_form(bot, aircraft_id, origin, destination):
-    dest_id = destination["id"]
-    panel = bot.ajax(f"new_route_info.php?id={aircraft_id}&airportId={dest_id}&mode=res", "newRouteInfo")
-    form = bot.js(_FORM, aircraft_id, dest_id)
-    if not form or not form["bound"] or len(form["codes"]) != 2:
+def read_direct_form(bot, aircraft_id, origin, destination, *, allow_duplicates=False):
+    """Validate the direct route form against the intended endpoints and aircraft."""
+    form = bot.js(_FORM, aircraft_id, destination["id"])
+    if not form or form.get("bound") is not True or len(form.get("codes", [])) != 2:
         return None
     if (not endpoint_matches(origin, endpoint(code=form["codes"][0]))
             or not endpoint_matches(destination, endpoint(code=form["codes"][1]))):
         return None
-    if to_int(form["existing"]) != 0:
+    occupied = game_whole_number(form.get("existing"))
+    if occupied is None or (occupied and not allow_duplicates):
         return None
-    distance, max_range = to_int(form.get("distance")), to_int(form.get("range"))
+    distance, max_range = (game_whole_number(form.get(key)) for key in ("distance", "range"))
     if distance is None or max_range is None or distance <= 0 or distance > max_range:
         return None
-    fee = to_int(form["fee"])
+    fee = game_whole_number(form.get("fee"), currency=True)
+    if fee is None or fee <= 0:
+        return None
+    return distance, fee, occupied
+
+
+def _prepare_form(bot, aircraft_id, origin, destination):
+    dest_id = destination["id"]
+    panel = bot.ajax(f"new_route_info.php?id={aircraft_id}&airportId={dest_id}&mode=res", "newRouteInfo")
+    verified = read_direct_form(bot, aircraft_id, origin, destination)
+    if verified is None:
+        return None
+    _, fee, _ = verified
     balance = bot.read_money()
     reserve = bot.config.get_int("settings", "cash_reserve", 0)
-    if fee is None or fee <= 0 or balance is None or balance - fee < reserve:
+    if balance is None or balance - fee < reserve:
         return None
     auto = panel.find_elements(By.ID, "introAuto")
     if len(auto) != 1:

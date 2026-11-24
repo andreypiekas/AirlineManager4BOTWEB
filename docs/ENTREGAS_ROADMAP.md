@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A5, pré-checagem da criação de rotas (G0)
+
+- A criação de rota direta de aeronave estacionada reutiliza o contrato estrutural do formulário de redirecionamento para verificar vínculo com a aeronave, aeroportos de origem e destino, distância, alcance, ocupação e uma única taxa positiva. A distância deve concordar com a pesquisa em até 5 km. Com duplicidades desativadas, ocupação desconhecida ou diferente de zero impede a criação; a política é propagada ao formulário final.
+- Os valores monetários e contagens do formulário de rota direta e com escala exigem números inteiros completos. Texto misturado, sinais negativos, decimais e agrupamento inválido são rejeitados. A rota direta revalida a cotação, a ocupação, os aeroportos e o saldo disponível imediatamente antes de submeter; divergências interrompem a ação. Quando o formulário inicial não confirma a rota, o ciclo pode testar outra candidata.
+- Validação Windows: 1.906 testes aprovados, nenhum reprovado e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX); 49 testes direcionados aprovados. Ruff nos arquivos modificados e `git diff --check` aprovados.
+- A validação reutiliza o contrato do redirecionamento e ainda requer homologação autenticada específica do formulário de aeronave estacionada. A frota observada anteriormente não possuía aeronaves estacionadas; nenhuma compra, criação ou alteração de rota foi executada para obter o formulário. A taxa de uma rota candidata para aeronave ainda não adquirida permanece desconhecida; o subtotal indicativo não passa a ser elegível para compra. G0 e o objetivo integral permanecem ativos.
+
 ## 2026-11-24 — Autonomia Total A3/A4/A7, composição indicativa do investimento (G0)
 
 - A fila de pesquisa de hubs próprios e externos apresenta o preço exibido da variante identificada ou, na sua ausência, o preço indicativo do catálogo do modelo. Para uma única aeronave, utiliza a disponibilidade atual do hangar de passageiros ou a cotação exibida para ampliar uma vaga. Hubs externos acrescentam o preço monetário observado do hub quando disponível.
