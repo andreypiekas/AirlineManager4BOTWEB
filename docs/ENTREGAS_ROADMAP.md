@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A1/A2/A5, identidade do aeroporto e da entrega (G0)
+
+- A comparação autenticada dos seletores `#hubSelect` (pesquisa) e `#hubSelection` (encomenda de A380-800) encontrou 30 opções em cada um, zero IDs iguais e zero rótulos textuais exatamente iguais entre os conjuntos. A pesquisa inclui país no rótulo; o formulário de encomenda usa outra representação. O seletor da pesquisa só expôs o atributo `value` nas opções. A relação individual não foi comprovada; quantidade, ordem e semelhança do nome não constituem prova de correspondência.
+- O pré-checkout separa o aeroporto do planejamento e o identificador de entrega. Exige uma correspondência explícita de fonte independente, vinculada ao perfil e ao snapshot, com validade máxima de 120 segundos e relações unívocas. Ausência, expiração, conflito, origem simulada em operação real ou seleção divergente bloqueiam a validação. A simulação também utiliza IDs de namespaces distintos e evidência explícita.
+- A navegação adicional não revelou uma relação nativa explícita; a leitura do gerenciamento de bases adquiridas permanece pendente. Os nomes das fontes de correspondência definem o contrato para uma futura coleta homologada. Nenhum vínculo real foi inferido, nenhum ID de entrega da conta foi registrado nesta documentação e nenhuma encomenda foi realizada. A execução planejada permanece indisponível em G0.
+- Validação Windows: 131 testes direcionados aprovados, incluindo pré-checkout, divergência, correspondência ausente/ambígua/vencida, isolamento por perfil e snapshot, simulação de execução e expansão em duas etapas. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A1/A5, identidade do checkout e seletor de entrega (G0)
 
 - No detalhe autenticado do A380-800 (modelo 2), o painel não possuía `data-model-id`, mas continha a declaração nativa `acId`. Foram observadas 30 opções de entrega, uma única selecionada. A troca reversível entre as duas primeiras opções preservou o ID do modelo, a variante 7 e o preço exibido de US$ 215.629.503. A seleção inicial foi restaurada.

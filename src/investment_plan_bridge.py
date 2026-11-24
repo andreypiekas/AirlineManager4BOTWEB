@@ -39,6 +39,8 @@ def build_aircraft_intent_plan(
 
     Requires the exact A3 economics record used for the global A4 winner. The
     journal reserves total capex, whereas checkout quotes only aircraft+engine.
+    ``hub_id`` remains the research airport ID. A5 must independently resolve
+    the native delivery option at checkout.
     """
     if (not isinstance(portfolio, Mapping) or not isinstance(evaluation, Mapping)
             or portfolio.get("status") != "comparacao_concluida"

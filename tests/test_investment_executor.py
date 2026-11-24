@@ -29,7 +29,7 @@ def checkout(*, profile="principal", **changes):
     result = {
         "source": "simulation_checkout", "simulated": True,
         "profile_id": profile, "snapshot_id": plan()["snapshot_id"],
-        "observed_at": time.time(), "hub_selection_id": "123",
+        "observed_at": time.time(), "hub_selection_id": "800001",
         "origin_id": "123", "destination_id": "456", "model_id": "A320",
         "engine_selected_id": "motor-2", "hub_selection_confirmed": True,
         "model_available": True, "engine_available": True,
@@ -37,6 +37,12 @@ def checkout(*, profile="principal", **changes):
         "capacity_available": True, "price_includes_engine": True,
         "checkout_cost": 10000, "cash": 50000,
         "commitments_verified": True, "pending_commitments": 2000,
+    }
+    result["delivery_hub_mapping"] = {
+        "source": "simulation_hub_crosswalk", "verified": True,
+        "profile_id": profile, "snapshot_id": plan()["snapshot_id"],
+        "observed_at": result["observed_at"],
+        "pairs": [{"airport_id": "123", "delivery_hub_id": "800001"}],
     }
     result.update(changes)
     return result

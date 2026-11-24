@@ -73,7 +73,13 @@ def _ownership(intent):
 def _aircraft_checkout():
     return {"source": "simulation_checkout", "simulated": True,
             "profile_id": "main", "snapshot_id": NEW_SNAPSHOT,
-            "observed_at": time.time(), "hub_selection_id": "123",
+            "observed_at": time.time(), "hub_selection_id": "800001",
+            "delivery_hub_mapping": {
+                "source": "simulation_hub_crosswalk", "verified": True,
+                "profile_id": "main", "snapshot_id": NEW_SNAPSHOT,
+                "observed_at": time.time(),
+                "pairs": [{"airport_id": "123", "delivery_hub_id": "800001"}],
+            },
             "origin_id": "123", "destination_id": "456", "model_id": "A380-800",
             "engine_selected_id": "EA1", "hub_selection_confirmed": True,
             "model_available": True, "engine_available": True,

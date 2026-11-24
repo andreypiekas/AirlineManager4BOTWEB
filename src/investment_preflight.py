@@ -7,11 +7,63 @@ execution remains disabled until the observations and controls are homologated.
 from __future__ import annotations
 
 import math
+import re
 import time
 from collections.abc import Mapping
 
 
 MAX_CHECKOUT_AGE_SECONDS = 120
+_NATIVE_ID = re.compile(r"[1-9][0-9]{0,13}")
+
+
+def _fresh_timestamp(value: object, now: float) -> bool:
+    return (type(now) in (int, float) and math.isfinite(now)
+            and type(value) in (int, float) and math.isfinite(value)
+            and 0 <= now - value <= MAX_CHECKOUT_AGE_SECONDS)
+
+
+def _delivery_hub_reasons(intent: Mapping, observation: Mapping, *,
+                          now: float, simulation: bool) -> list[str]:
+    """Resolve airport IDs to order-option IDs using independent explicit evidence.
+
+    The native selectors use distinct identifier namespaces. Neither equal IDs
+    nor matching labels or option positions establish the association. A future
+    authenticated crosswalk collector must supply explicit pairs; its existence
+    is not assumed by this read-only validator.
+    """
+    mapping = observation.get("delivery_hub_mapping")
+    source = "simulation_hub_crosswalk" if simulation else "game_owned_hub_crosswalk"
+    if (not isinstance(mapping, Mapping) or mapping.get("source") != source
+            or mapping.get("verified") is not True
+            or not intent.get("profile_id") or mapping.get("profile_id") != intent["profile_id"]
+            or not intent.get("snapshot_id") or mapping.get("snapshot_id") != intent["snapshot_id"]
+            or not _fresh_timestamp(mapping.get("observed_at"), now)):
+        return ["correspondencia_hub_entrega_nao_verificada"]
+
+    pairs = mapping.get("pairs")
+    if not isinstance(pairs, list) or not pairs:
+        return ["correspondencia_hub_entrega_nao_verificada"]
+    airport_to_delivery: dict[str, str] = {}
+    delivery_ids: set[str] = set()
+    for pair in pairs:
+        if not isinstance(pair, Mapping):
+            return ["correspondencia_hub_entrega_nao_verificada"]
+        airport = pair.get("airport_id")
+        delivery = pair.get("delivery_hub_id")
+        if (not isinstance(airport, str) or not _NATIVE_ID.fullmatch(airport)
+                or not isinstance(delivery, str) or not _NATIVE_ID.fullmatch(delivery)):
+            return ["correspondencia_hub_entrega_nao_verificada"]
+        if airport in airport_to_delivery or delivery in delivery_ids:
+            return ["correspondencia_hub_entrega_ambigua"]
+        airport_to_delivery[airport] = delivery
+        delivery_ids.add(delivery)
+
+    planned_airport = intent.get("hub_id")
+    if not isinstance(planned_airport, str) or planned_airport not in airport_to_delivery:
+        return ["correspondencia_hub_entrega_nao_verificada"]
+    if observation.get("hub_selection_id") != airport_to_delivery[planned_airport]:
+        return ["hub_de_entrega_divergente"]
+    return []
 
 
 def validate_aircraft_preflight(
@@ -44,16 +96,12 @@ def validate_aircraft_preflight(
         return {"ready": False, "reasons": reasons + ["checkout_nao_verificado"],
                 "read_only": True, "execution_available": False}
 
-    timestamp = observation.get("observed_at")
-    if (type(now) not in (int, float) or not math.isfinite(now)
-            or type(timestamp) not in (int, float) or not math.isfinite(timestamp)
-            or not 0 <= now - timestamp <= MAX_CHECKOUT_AGE_SECONDS):
+    if not _fresh_timestamp(observation.get("observed_at"), now):
         reasons.append("checkout_desatualizado")
 
     for observed, planned, reason in (
         ("profile_id", "profile_id", "perfil_divergente"),
         ("snapshot_id", "snapshot_id", "snapshot_divergente"),
-        ("hub_selection_id", "hub_id", "hub_de_entrega_divergente"),
         ("origin_id", "origin_id", "origem_divergente"),
         ("destination_id", "destination_id", "destino_divergente"),
         ("model_id", "model_id", "modelo_divergente"),
@@ -61,6 +109,8 @@ def validate_aircraft_preflight(
     ):
         if not intent.get(planned) or observation.get(observed) != intent[planned]:
             reasons.append(reason)
+
+    reasons.extend(_delivery_hub_reasons(intent, observation, now=now, simulation=simulation))
 
     for check, reason in (
         ("hub_selection_confirmed", "hub_nao_confirmado"),

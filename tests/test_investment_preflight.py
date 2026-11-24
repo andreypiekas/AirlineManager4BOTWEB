@@ -27,7 +27,15 @@ def checkout(intent, **overrides):
     observation = {
         "source": "game_checkout_dom", "session_authenticated": True,
         "profile_id": intent["profile_id"], "observed_at": NOW,
-        "snapshot_id": intent["snapshot_id"], "hub_selection_id": intent["hub_id"],
+        "snapshot_id": intent["snapshot_id"], "hub_selection_id": "800001",
+        "delivery_hub_mapping": {
+            "source": "game_owned_hub_crosswalk", "verified": True,
+            "profile_id": intent["profile_id"], "snapshot_id": intent["snapshot_id"],
+            "observed_at": NOW, "pairs": [
+                {"airport_id": intent["hub_id"], "delivery_hub_id": "800001"},
+                {"airport_id": "789", "delivery_hub_id": "800002"},
+            ],
+        },
         "origin_id": intent["origin_id"], "destination_id": intent["destination_id"],
         "model_id": intent["model_id"], "engine_selected_id": intent["engine_id"],
         "hub_selection_confirmed": True, "model_available": True,
@@ -61,6 +69,8 @@ def test_complete_preflight_is_only_read_only_provisional_evidence(tmp_path):
     ({"profile_id": "outro"}, "perfil_divergente"),
     ({"snapshot_id": "sha256:" + "e" * 64}, "snapshot_divergente"),
     ({"hub_selection_id": "999"}, "hub_de_entrega_divergente"),
+    ({"hub_selection_id": "123"}, "hub_de_entrega_divergente"),
+    ({"delivery_hub_mapping": None}, "correspondencia_hub_entrega_nao_verificada"),
     ({"origin_id": "999"}, "origem_divergente"),
     ({"destination_id": "999"}, "destino_divergente"),
     ({"model_id": "B737"}, "modelo_divergente"),
@@ -97,3 +107,39 @@ def test_without_approved_intent_or_independent_checkout_preflight_fails(tmp_pat
     assert "intencao_sem_aprovacao" in result["reasons"]
     assert validate_aircraft_preflight(intent, None)["ready"] is False
     assert validate_aircraft_preflight({}, checkout(intent))["ready"] is False
+
+
+@pytest.mark.parametrize(("changes", "reason"), [
+    ({"source": "simulation_hub_crosswalk"}, "correspondencia_hub_entrega_nao_verificada"),
+    ({"verified": False}, "correspondencia_hub_entrega_nao_verificada"),
+    ({"profile_id": "outro"}, "correspondencia_hub_entrega_nao_verificada"),
+    ({"snapshot_id": "outro"}, "correspondencia_hub_entrega_nao_verificada"),
+    ({"observed_at": NOW - 121}, "correspondencia_hub_entrega_nao_verificada"),
+    ({"observed_at": NOW + 1}, "correspondencia_hub_entrega_nao_verificada"),
+    ({"pairs": [{"airport_id": "789", "delivery_hub_id": "800001"}]},
+     "correspondencia_hub_entrega_nao_verificada"),
+    ({"pairs": [{"airport_id": "123", "delivery_hub_id": "800001"},
+                {"airport_id": "123", "delivery_hub_id": "800002"}]},
+     "correspondencia_hub_entrega_ambigua"),
+    ({"pairs": [{"airport_id": "123", "delivery_hub_id": "800001"},
+                {"airport_id": "789", "delivery_hub_id": "800001"}]},
+     "correspondencia_hub_entrega_ambigua"),
+    ({"pairs": [{"airport_id": "123", "delivery_hub_id": True}]},
+     "correspondencia_hub_entrega_nao_verificada"),
+])
+def test_crosswalk_must_be_unique_fresh_and_bound_to_intent(tmp_path, changes, reason):
+    intent = approved_intent(tmp_path)
+    observation = checkout(intent)
+    observation["delivery_hub_mapping"].update(changes)
+    result = validate_aircraft_preflight(intent, observation, now=NOW)
+    assert not result["ready"]
+    assert reason in result["reasons"]
+
+
+def test_matching_selector_value_without_crosswalk_is_not_identity_proof(tmp_path):
+    intent = approved_intent(tmp_path)
+    observation = checkout(intent, hub_selection_id=intent["hub_id"])
+    del observation["delivery_hub_mapping"]
+    assert validate_aircraft_preflight(intent, observation, now=NOW)["reasons"] == [
+        "correspondencia_hub_entrega_nao_verificada"
+    ]

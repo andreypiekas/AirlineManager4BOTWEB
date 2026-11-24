@@ -1718,6 +1718,12 @@ def order_aircraft(
     *, expected_checkout_cost: int | None = None,
     expected_engine_id: str | None = None,
 ) -> bool:
+    """Order using the native #hubSelection value when a delivery ID is supplied.
+
+    For a planned purchase, the caller must resolve the plan's airport ID via
+    verified delivery-hub mapping before passing it as ``hub_id``. The two
+    native selectors use distinct identifier namespaces.
+    """
     plan_requested = any(value is not None for value in (
         hub_id, expected_checkout_cost, expected_engine_id,
     ))
