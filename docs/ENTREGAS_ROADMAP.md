@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4, capacidade global do hangar de passageiros (G0)
+
+- O planejador auditado utiliza as vagas livres do hangar de passageiros da companhia, observadas no jogo e vinculadas ao perfil, ao snapshot e ao instante original da coleta. A mesma capacidade restringe todas as alternativas de hubs próprios. A antiga evidência por hub permanece apenas para compatibilidade dos registros existentes.
+- Ausência de evidência, contagens inconsistentes, fonte incorreta, coleta vencida ou hangar cheio impedem a sugestão de aquisição. O painel apresenta a quantidade global de vagas quando confirmada; a conciliação após compras também considera a idade dessa evidência. Uma eventual ampliação de hangar requer avaliação e validação próprias.
+- Validação: 149 testes direcionados e 2.024 testes da suíte Windows aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Nenhuma transação real executada. Permanecem pendentes a cobertura econômica integral, os custos finais e a demanda residual, a alimentação produtiva do registro A3 e a homologação autenticada das fases A0–A9.
+
 ## 2026-11-24 — Autonomia Total A4, vinculação à coleta atual da frota (G0)
 
 - O planejamento global passa a exigir uma coleta atual, válida e vinculada ao mesmo snapshot das avaliações A3. A cobertura da frota usa a observação do jogo e sua validade temporal, inclusive quando ainda não há avaliações registradas. A cobertura de pesquisa exige simultaneamente os escopos de hubs, rotas, modelos, motores e preços e a comprovação independente do registro A4.

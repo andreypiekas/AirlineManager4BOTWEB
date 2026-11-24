@@ -3354,6 +3354,11 @@ function renderAuditedExpansionPlanner(audited, hubs) {
     if (observed.scopes?.fleet !== true) {
       explanation.textContent += " · " + tr("Cobertura da frota não confirmada");
     }
+    const hangar = observed.passenger_hangar_control;
+    if (hangar?.verified === true && Number.isSafeInteger(hangar.value) && hangar.value >= 0) {
+      explanation.textContent += " · " + tr("Hangar de passageiros") + ": " +
+        tr("Vagas livres") + " " + nf.format(hangar.value);
+    }
   }
   if (portfolio.excluded && typeof portfolio.excluded === "object") {
     const exclusions = Object.entries(portfolio.excluded)

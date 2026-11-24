@@ -125,7 +125,11 @@ class AuditedEconomicsRegistry:
                                   commitments_verified: bool = False,
                                   confidence_evidence: Mapping[str, Any] | None = None,
                                   diversification_evidence: Mapping[str, Any] | None = None) -> bool:
-        """Persist separately sourced A4 proof, validated again at read time."""
+        """Persist separately sourced A4 proof, validated again at read time.
+
+        The legacy hub_capacity field is retained for stored-record compatibility.
+        The planner now requires the current company-wide passenger hangar capture.
+        """
         if (not isinstance(controls, Mapping) or not isinstance(hub_capacity, Mapping)
                 or not all(type(value) is bool for value in (
                     fleet_coverage_verified, research_coverage_verified, commitments_verified))

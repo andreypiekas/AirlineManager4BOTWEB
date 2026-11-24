@@ -509,12 +509,10 @@ def a4_controls(**changes):
 
 
 def a4_compare(*evaluations, controls=None, capacities=None, **changes):
-    hub_ids = {row["identity"]["hub_id"] for row in evaluations}
-    default_capacities = {hub: a4_proof(2, "game_hub_select", hub_id=hub)
-                          for hub in hub_ids}
+    default_capacity = a4_proof(2, "game_hangar_and_fleet_status")
     settings = {"profile_id": PROFILE, "snapshot_id": SNAPSHOT,
                 "controls": a4_controls() if controls is None else controls,
-                "hub_capacity": default_capacities if capacities is None else capacities,
+                "passenger_hangar": default_capacity if capacities is None else capacities,
                 "fleet_coverage_verified": True, "research_coverage_verified": True,
                 "commitments_verified": True, "max_single_investment": 9000,
                 "now": NOW}
@@ -633,7 +631,7 @@ def test_a4_hangar_unrouted_aircraft_and_per_purchase_limit_fail_closed():
     assert "vagas_hangar_a_confirmar" in missing["blocking_reasons"]
     assert missing["excluded"]["vagas_hangar_a_confirmar"] == 1
 
-    no_space = a4_compare(evaluated, capacities={"123": a4_proof(0, "game_hub_select", hub_id="123")})
+    no_space = a4_compare(evaluated, capacities=a4_proof(0, "game_hangar_and_fleet_status"))
     assert no_space["best"] is None
     assert no_space["excluded"]["hangar_sem_vaga"] == 1
     assert no_space["decision"] == "nao_comprar"

@@ -121,7 +121,7 @@ def _block_portfolio(portfolio: dict, blockers: list[str]) -> None:
 
 
 def _current_audited_finance_blockers(bot, evaluation: dict, record: dict, journal: dict,
-                                      controls: dict) -> list[str]:
+                                      controls: dict, passenger_hangar: dict) -> list[str]:
     """Require the audited snapshot to agree with the current account and ledger."""
     blockers = []
     money, observed_at = recent_verified_money(bot)
@@ -139,8 +139,9 @@ def _current_audited_finance_blockers(bot, evaluation: dict, record: dict, journ
         else:
             evidence = {**record["portfolio_evidence"], "controls": controls}
             timestamps = [row["observed_at_oldest"] for row in record["evaluations"]]
-            for group in ("controls", "hub_capacity", "confidence_evidence", "diversification_evidence"):
+            for group in ("controls", "confidence_evidence", "diversification_evidence"):
                 timestamps.extend(proof["observed_at"] for proof in evidence.get(group, {}).values())
+            timestamps.append(passenger_hangar["observed_at"])
             if any(last_confirmed > stamp for stamp in timestamps):
                 blockers.append("snapshot_anterior_compra_confirmada")
     return blockers
@@ -441,12 +442,13 @@ class WebDashboard:
         controls.pop("unrouted_aircraft_count", None)
         if fleet_verified and game_snapshot.get("unrouted_aircraft_control") is not None:
             controls["unrouted_aircraft_count"] = game_snapshot["unrouted_aircraft_control"]
+        passenger_hangar = game_snapshot.get("passenger_hangar_control") if matching_capture else None
         portfolio = compare_audited_portfolio(
             evaluations,
             profile_id=paths.current().label,
             snapshot_id=snapshot_id,
             controls=controls,
-            hub_capacity=proof.get("hub_capacity"),
+            passenger_hangar=passenger_hangar,
             confidence_evidence=proof.get("confidence_evidence"),
             diversification_evidence=proof.get("diversification_evidence"),
             fleet_coverage_verified=fleet_verified,
@@ -495,7 +497,7 @@ class WebDashboard:
             else:
                 try:
                     finance_blockers = _current_audited_finance_blockers(
-                        self.bot, matches[0], record, journal, controls,
+                        self.bot, matches[0], record, journal, controls, passenger_hangar,
                     )
                 except (AttributeError, ValueError, TypeError, KeyError):
                     finance_blockers = ["conciliacao_financeira_a_confirmar"]

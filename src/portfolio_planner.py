@@ -19,7 +19,7 @@ from expansion_economics import (
     rank_expansion_economics,
 )
 from opportunity_models import DEFAULT_MAX_AGE_SECONDS
-from fleet_commitment_observations import _hangar
+from fleet_commitment_observations import SOURCE as HANGAR_SOURCE, _hangar
 
 
 DEFAULT_PROFIT_WEIGHT = 0.6
@@ -521,7 +521,7 @@ def _a4_risk_index(row: Mapping[str, Any], profit: float) -> float | None:
 def compare_audited_portfolio(
     evaluations: Sequence[Mapping[str, Any]], *, profile_id: str, snapshot_id: str,
     controls: Mapping[str, Any] | None = None,
-    hub_capacity: Mapping[str, Any] | None = None,
+    passenger_hangar: Mapping[str, Any] | None = None,
     diversification_evidence: Mapping[str, Any] | None = None,
     confidence_evidence: Mapping[str, Any] | None = None,
     fleet_coverage_verified: bool = False,
@@ -545,8 +545,8 @@ def compare_audited_portfolio(
     the names in ``_A4_CONTROL_SOURCES``. Pending orders and future commitments
     are *additional amounts not yet included* in A3 ``cash.committed``. They
     must be reconciled by the ledger before setting ``commitments_verified``.
-    ``hub_capacity`` contains one ``game_hub_select`` envelope per hub with
-    available hangar slots. Unknown controls or slots exclude a purchase.
+    ``passenger_hangar`` is the company-wide native passenger hangar's free
+    slot count, bound to this snapshot. Unknown controls or slots exclude a purchase.
 
     Risk, when weighted, uses the worst A3 stress scenario (individual or
     combined) relative to the base profit. Optional confidence and diversification require their
@@ -657,7 +657,12 @@ def compare_audited_portfolio(
         if observed["period_spent"] >= observed["period_limit"]:
             blockers.append("limite_periodo_esgotado")
 
-    hub_capacity = hub_capacity if isinstance(hub_capacity, Mapping) else {}
+    slots = _audited_value(passenger_hangar, source=HANGAR_SOURCE,
+                           profile_id=profile_id, snapshot_id=snapshot_id, now=now)
+    if slots is None or not slots.is_integer():
+        blockers.append("vagas_hangar_a_confirmar")
+    elif slots < 1:
+        blockers.append("hangar_sem_vaga")
     confidence_evidence = confidence_evidence if isinstance(confidence_evidence, Mapping) else {}
     diversification_evidence = (diversification_evidence
                                 if isinstance(diversification_evidence, Mapping) else {})
@@ -691,11 +696,7 @@ def compare_audited_portfolio(
         if budget is None or investment > budget:
             excluded["orcamento_global_insuficiente_ou_desconhecido"] += 1
             continue
-        slots = _audited_value(hub_capacity.get(hub_id), source="game_hub_select",
-                               profile_id=profile_id, snapshot_id=snapshot_id, now=now,
-                               hub_id=hub_id)
         if slots is None or not slots.is_integer():
-            blockers.append("vagas_hangar_a_confirmar")
             excluded["vagas_hangar_a_confirmar"] += 1
             continue
         if slots < 1:

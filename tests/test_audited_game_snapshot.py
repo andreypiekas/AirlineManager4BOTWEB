@@ -140,6 +140,38 @@ def test_summary_certifies_zero_unrouted_and_expires_older_route_scan(tmp_path, 
     assert summary["unrouted_aircraft_control"] is None
 
 
+def test_summary_binds_global_passenger_hangar_to_capture_and_source_age(tmp_path, monkeypatch):
+    from fleet_commitment_observations import SOURCE
+
+    evidence = observations()
+    commitments = {"status": "partial", "source": SOURCE, "observed_at": NOW - 100,
+                   "passenger_hangar": {"capacity": 3, "occupied": 3, "free": 0}}
+    evidence["inventory"]["fleet_commitment_observations"] = commitments
+    path = tmp_path / "observed.json"
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+
+    def save():
+        snapshot = compose_snapshot(**evidence)
+        path.write_text(json.dumps(snapshot), encoding="utf-8")
+        return snapshot["snapshot_id"]
+
+    snapshot_id = save()
+    assert snapshot_summary(now=NOW, path=path)["passenger_hangar_control"] == {
+        "source": SOURCE, "profile_id": "principal", "snapshot_id": snapshot_id,
+        "verified": True, "observed_at": NOW - 100, "value": 0,
+    }
+    assert snapshot_summary(now=NOW + 801, path=path)["passenger_hangar_control"] is None
+    commitments["passenger_hangar"]["free"] = 1
+    save()
+    assert snapshot_summary(now=NOW, path=path)["passenger_hangar_control"] is None
+    commitments["passenger_hangar"]["occupied"] = 2
+    save()
+    assert snapshot_summary(now=NOW, path=path)["passenger_hangar_control"]["value"] == 1
+    commitments["source"] = "game_hub_select"
+    save()
+    assert snapshot_summary(now=NOW, path=path)["passenger_hangar_control"] is None
+
+
 def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, monkeypatch):
     from test_owned_hub_research_feed import _fleet_report, _inventory, _market, _preview_engines, _sample
 

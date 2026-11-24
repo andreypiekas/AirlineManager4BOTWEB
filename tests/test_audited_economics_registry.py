@@ -62,6 +62,7 @@ def matching_capture(snapshot_id, *, unrouted=0, research=True, fleet=True):
                    "routes": research, "prices": research},
         "unrouted_aircraft_control": (proof(unrouted, "game_fleet_scan", snapshot_id)
                                       if fleet else None),
+        "passenger_hangar_control": proof(2, "game_hangar_and_fleet_status", snapshot_id),
     }
 
 
@@ -72,7 +73,7 @@ def compare_registry(registry):
         stored["evaluations"], profile_id="principal",
         snapshot_id=stored["snapshot_id"] or "",
         controls=evidence.get("controls"),
-        hub_capacity=evidence.get("hub_capacity"),
+        passenger_hangar=matching_capture(stored["snapshot_id"])["passenger_hangar_control"],
         fleet_coverage_verified=evidence.get("fleet_coverage_verified") is True,
         research_coverage_verified=evidence.get("research_coverage_verified") is True,
         commitments_verified=evidence.get("commitments_verified") is True,
@@ -179,6 +180,8 @@ def test_authenticated_a3_api_exposes_only_read_only_analysis(tmp_path, monkeypa
     ("partial", "cobertura_pesquisa_a_confirmar", "cobertura_frota_a_confirmar"),
     ("unverified", "evidencia_unrouted_aircraft_count_a_confirmar", "aeronaves_sem_rota_a_resolver"),
     ("different", "snapshot_a3_divergente_coleta", "aeronaves_sem_rota_a_resolver"),
+    ("hangar_full", "hangar_sem_vaga", "vagas_hangar_a_confirmar"),
+    ("hangar_missing", "vagas_hangar_a_confirmar", "hangar_sem_vaga"),
 ])
 def test_a4_uses_current_capture_instead_of_stored_fleet_claims(
     registry, monkeypatch, scenario, expected, absent,
@@ -200,6 +203,10 @@ def test_a4_uses_current_capture_instead_of_stored_fleet_claims(
         unrouted=1 if scenario in ("empty", "positive", "different") else 0,
         research=False, fleet=scenario != "unverified",
     )
+    if scenario == "hangar_full":
+        capture["passenger_hangar_control"]["value"] = 0
+    elif scenario == "hangar_missing":
+        capture["passenger_hangar_control"] = None
 
     class SnapshotRegistry:
         def snapshot(self):
