@@ -1,5 +1,10 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, comparação econômica com referência nativa de assentos (G0)
+
+- A simulação inclui a configuração Y/J/F observada e correlacionada ao modelo e motor como referência econômica, deduplicando configurações iguais. Cada alternativa informa sua diferença de contribuição diária em relação à referência, nos cenários base e stress, tanto com preços observados quanto com os limites configurados, quando disponíveis. Havendo projeção de A-check, a comparação utiliza a contribuição após a reserva. O painel PT/EN identifica a referência como não confirmada.
+- Validação: 167 testes direcionados aprovados, Ruff e git diff --check aprovados. A suíte completa não foi executada nesta entrega. A configuração permanece observacional e inelegível para aquisição; demanda residual, configuração efetivamente selecionável e custos finais continuam pendentes. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A3, observação nativa dos assentos (G0)
 
 - A leitura estável do detalhe de cada variante captura os assentos Y/J/F dentro de `#step2`, diferenciando o modelo oculto do formulário visível. Exige campos únicos, contagens inteiras e capacidade ponderada coerente. A informação acompanha o motor correlacionado, o registro de pesquisa e a reprodução histórica; o painel PT/EN sinaliza que a configuração ainda não está confirmada.

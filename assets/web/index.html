@@ -1394,6 +1394,9 @@ const EN = {
   "Ocupação observada no formulário (intervalo)": "Observed form occupancy (range)",
   "Otimizada para cenário base": "Optimized for base scenario",
   "Otimizada para stress": "Optimized for stress",
+  "Referência nativa de assentos (não confirmada)": "Native seat reference (unconfirmed)",
+  "Diferença diária ante referência nativa (base / stress)": "Daily difference from native reference (base / stress)",
+  "Diferença ante referência nativa com preços configurados (base / stress)": "Difference from native reference with configured prices (base / stress)",
   "Detalhe da variante observado": "Observed variant detail",
   "Assentos Y/J/F do modelo oculto (sem confirmação)": "Hidden template Y/J/F seats (unconfirmed)",
   "Assentos Y/J/F do formulário visível (sem confirmação)": "Visible form Y/J/F seats (unconfirmed)",
@@ -2139,6 +2142,7 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
     const layout = [row.layout.y, row.layout.j, row.layout.f].map(value => nf.format(value)).join(" / ");
     const strategies = Array.isArray(row.strategies) ? row.strategies : [];
     const optimized = [
+      ["native_seat_reference", "Referência nativa de assentos (não confirmada)"],
       ["optimized_base", "Otimizada para cenário base"], ["optimized_stress", "Otimizada para stress"],
       ["optimized_configured_base", "Otimizada para preços configurados"],
       ["optimized_configured_stress", "Otimizada para stress dos preços configurados"],
@@ -2150,6 +2154,20 @@ function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) 
       addHubMetric(metrics, tr("Após reserva adicional A-check (base / stress)") + " · " + layout,
         hubMoney(row.base.conditional_contribution_after_a_check_per_day) + " / " +
         hubMoney(row.stress.conditional_contribution_after_a_check_per_day));
+    }
+    const comparison = row.native_seat_comparison;
+    const native = preview.native_seat_reference;
+    if (native?.configuration_verified === false &&
+        ["hidden_native_template", "visible_native_form"].includes(native.source) &&
+        comparison?.contribution_basis === (hasCheck ? "conditional_contribution_after_a_check_per_day" : "projected_contribution_per_day") &&
+        [comparison.base_delta_per_day, comparison.stress_delta_per_day].every(Number.isFinite)) {
+      addHubMetric(metrics, tr("Diferença diária ante referência nativa (base / stress)") + " · " + layout,
+        hubMoney(comparison.base_delta_per_day) + " / " + hubMoney(comparison.stress_delta_per_day));
+      const configuredDelta = comparison.configured_delta_per_day;
+      if (hasConfigured && configuredDelta && [configuredDelta.base, configuredDelta.stress].every(Number.isFinite)) {
+        addHubMetric(metrics, tr("Diferença ante referência nativa com preços configurados (base / stress)") + " · " + layout,
+          hubMoney(configuredDelta.base) + " / " + hubMoney(configuredDelta.stress));
+      }
     }
     if (row.sensitivity) {
       const key = hasCheck ? "conditional_contribution_after_a_check_per_day" : "projected_contribution_per_day";

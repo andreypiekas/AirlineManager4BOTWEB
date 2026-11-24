@@ -1180,6 +1180,41 @@ def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress()
     assert set(first["excluded_costs"]) == {"maintenance", "a_check", "other_recurring", "capex"}
 
 
+@pytest.mark.parametrize("source", ["hidden_native_template", "visible_native_form"])
+@pytest.mark.parametrize("check", [False, True])
+def test_native_seat_reference_compares_same_engine_and_scenarios(source, check):
+    engines = _preview_engines()
+    metrics = {"capacity_pax": 180}
+    if check:
+        metrics.update(a_check_cost_usd=2341, maintenance_interval_hours=400)
+    seats = {"source": source, "y": 120, "j": 15, "f": 10}
+    engines["models"]["11"]["variant_details"] = {
+        "1": {"observed_at": NOW, "metrics": metrics, "seat_observation": seats}}
+    page = build_owned_hub_research_queue(_inventory(), [_sample()], _market(), engines=engines,
+                                         now=NOW, operating_market_stats=_preview_stats(),
+                                         configured_prices={"fuel": 650, "co2": 125})
+    items = {row["engine_id"]: row for row in page["items"]}
+    preview = items["1"]["economics_preview"]
+    assert preview["native_seat_reference"] == {**seats, "configuration_verified": False}
+    assert "native_seat_reference" not in items["3"]["economics_preview"]
+    native = next(row for row in preview["layouts"] if "native_seat_reference" in row["strategies"])
+    assert native["layout"] == {"y": 120, "j": 15, "f": 10}
+    assert len({tuple(row["layout"].values()) for row in preview["layouts"]}) == len(preview["layouts"])
+    key = "conditional_contribution_after_a_check_per_day" if check else "projected_contribution_per_day"
+    for row in preview["layouts"]:
+        comparison = row["native_seat_comparison"]
+        assert comparison["contribution_basis"] == key
+        for scenario in ("base", "stress"):
+            assert comparison[f"{scenario}_delta_per_day"] == pytest.approx(
+                row[scenario][key] - native[scenario][key], abs=.01)
+            assert comparison["configured_delta_per_day"][scenario] == pytest.approx(
+                row["configured_price_scenarios"][scenario][key] -
+                native["configured_price_scenarios"][scenario][key], abs=.01)
+    assert native["native_seat_comparison"]["base_delta_per_day"] == 0
+    assert not items["1"]["purchase_eligible"]
+    assert items["1"]["daily_net_profit"] is None
+
+
 @pytest.mark.parametrize("check", [False, True])
 def test_capital_recovery_uses_observed_variant_and_hangar_subtotal(check):
     inventory, engines = _inventory(), _preview_engines()

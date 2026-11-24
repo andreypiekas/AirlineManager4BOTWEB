@@ -4,6 +4,7 @@ from __future__ import annotations
 from math import ceil, isfinite
 from types import SimpleNamespace
 
+from engine_detail import validate_seat_observation
 from expansion_economics import DEFAULT_STRESS
 from gamemode import EASY, REALISM
 from route_optimizer import CLASS_WEIGHTS, CO2_PER_PAX_KM, TURNAROUND_H, estimate_route
@@ -238,6 +239,10 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
         return None
     add_layout(economy, "economy")
     add_layout(estimate(True), "premium")
+    native_seats = validate_seat_observation(detail.get("seat_observation"), observed_capacity)
+    if native_seats is not None:
+        native_layout = tuple(native_seats[key] for key in ("y", "j", "f"))
+        add_layout(estimate(True, native_layout), "native_seat_reference")
     optimization_scenarios = [
         ("optimized_base", candidate, load, co2),
         ("optimized_stress", stressed_candidate, load * stress["occupancy"], co2 * stress["co2_price"]),
@@ -257,6 +262,26 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
         add_layout(estimate(True, layout), strategy)
     if not layouts:
         return None
+    native_reference = next((row for row in layouts if "native_seat_reference" in row["strategies"]), None)
+    if native_reference is not None:
+        contribution_key = ("conditional_contribution_after_a_check_per_day" if a_check is not None
+                            else "projected_contribution_per_day")
+        for row in layouts:
+            comparison = {
+                "contribution_basis": contribution_key,
+                "base_delta_per_day": round(row["base"][contribution_key] -
+                                            native_reference["base"][contribution_key], 2),
+                "stress_delta_per_day": round(row["stress"][contribution_key] -
+                                              native_reference["stress"][contribution_key], 2),
+            }
+            configured_row = row.get("configured_price_scenarios")
+            configured_reference = native_reference.get("configured_price_scenarios")
+            if configured_row is not None and configured_reference is not None:
+                comparison["configured_delta_per_day"] = {
+                    name: round(configured_row[name][contribution_key] -
+                                configured_reference[name][contribution_key], 2)
+                    for name in ("base", "stress")}
+            row["native_seat_comparison"] = comparison
     expiry = min(quotes[k]["expires_at"] for k in ("fuel", "co2"))
     excluded = ["maintenance", "a_check", "other_recurring", "capex"]
     if via_stop:
@@ -280,5 +305,7 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
             "co2_kg_per_pax_km": co2_rate,
             "co2_rate_source": "observed_variant" if observed_co2 is not None else "assumed_default",
             **({"a_check_projection": a_check} if a_check is not None else {}),
+            **({"native_seat_reference": {**native_seats, "configuration_verified": False}}
+               if native_reference is not None else {}),
             "excluded_costs": excluded,
             "layouts": layouts}

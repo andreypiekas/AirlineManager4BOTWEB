@@ -378,6 +378,9 @@ const translations = {
   'Sem recuperação projetada': 'No projected recovery',
   'Sensibilidade isolada (combustível / CO₂ / ocupação / demanda)': 'Individual sensitivity (fuel / CO₂ / occupancy / demand)',
   'Preços hipotéticos pelos limites de compra (combustível / CO₂)': 'Hypothetical purchase-threshold prices (fuel / CO₂)',
+  'Referência nativa de assentos (não confirmada)': 'Native seat reference (unconfirmed)',
+  'Diferença diária ante referência nativa (base / stress)': 'Daily difference from native reference (base / stress)',
+  'Diferença ante referência nativa com preços configurados (base / stress)': 'Difference from native reference with configured prices (base / stress)',
   'Contribuição com preços configurados (base / stress)': 'Contribution at configured prices (base / stress)',
   'Otimizada para preços configurados': 'Optimized for configured prices',
   'Otimizada para stress dos preços configurados': 'Optimized for configured-price stress',
@@ -567,6 +570,16 @@ assert.equal(configuredMetrics.children[1].children[0].textContent, 'Hypothetica
 assert.equal(configuredMetrics.children[1].children[1].textContent, '$650 / $125 · USD/1000');
 assert.ok(configuredMetrics.children[2].children[0].textContent.includes('Optimized for configured prices'));
 assert.equal(configuredMetrics.children[3].children[1].textContent, '$100 / $-40');
+const nativeComparison = document.createElement('div');
+appendResearchEconomicsPreview(nativeComparison, {economics_preview:{...configuredPreview,
+  native_seat_reference:{source:'hidden_native_template',configuration_verified:false,y:10,j:2,f:1},
+  layouts:[{...configuredPreview.layouts[0], strategies:['native_seat_reference'],
+    native_seat_comparison:{contribution_basis:'projected_contribution_per_day',
+      base_delta_per_day:0,stress_delta_per_day:0,configured_delta_per_day:{base:0,stress:0}}}]}});
+assert.ok(nativeComparison.children[2].children[0].textContent.includes('Native seat reference (unconfirmed)'));
+assert.match(nativeComparison.children[3].children[0].textContent,/Daily difference from native reference/);
+assert.equal(nativeComparison.children[3].children[1].textContent,'$0 / $0');
+assert.match(nativeComparison.children[4].children[0].textContent,/Difference from native reference with configured prices/);
 const invalidConfigured = document.createElement('div');
 appendResearchEconomicsPreview(invalidConfigured, {economics_preview:{...configuredPreview,
   configured_price_assumptions:{...configuredPreview.configured_price_assumptions,verified:true}}});
