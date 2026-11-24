@@ -935,7 +935,8 @@ def test_physical_screening_never_substitutes_uncorrelated_runway_or_market_rang
 
 
 @pytest.mark.parametrize("external", [False, True])
-def test_stopover_is_exploratory_and_bound_to_the_current_engine(external):
+@pytest.mark.parametrize("obstacle", [None, "leg_range", "runway", "engine", "conflict", "event", "occupied"])
+def test_stopover_is_exploratory_and_bound_to_the_current_engine(external, obstacle):
     from owned_hub_research_feed import engine_variants
     from stopover_research import SOURCE, subject_for
 
@@ -954,9 +955,28 @@ def test_stopover_is_exploratory_and_bound_to_the_current_engine(external):
         "stop_id": "2941", "map_direct_km": 2000, "first_km": 1200, "second_km": 1300,
         "origin_runway_ft": 6500, "destination_runway_ft": 6500, "stop_runway_ft": 7000,
         "purchase_eligible": False, "game_rules_verified": False}]
+    proof = sample["stopover_research"][0]
+    if obstacle == "leg_range":
+        proof["first_km"] = 1501
+    elif obstacle == "runway":
+        proof["stop_runway_ft"] = 4999
+    elif obstacle == "engine":
+        proof["engine_id"] = "2"
+    elif obstacle == "conflict":
+        sample["route_detail_conflict"] = True
+    elif obstacle == "event":
+        sample["event_demand_boosted"] = True
+    elif obstacle == "occupied":
+        sample["route_detail"] = {"source": "game_route_detail", "observed_at": NOW,
+                                  "origin_id": origin, "destination_id": destination,
+                                  "origin_runway_ft": 6500, "destination_runway_ft": 6500,
+                                  "observed_aircraft_on_route": 1}
 
     def build(now):
-        kwargs = dict(engines=engines, now=now, operating_market_stats=_preview_stats())
+        stats = SimpleNamespace(mode="realista", mode_read_at=now,
+                                fuel_quote=MarketQuote(600, now, now + 60),
+                                co2_quote=MarketQuote(100, now, now + 90))
+        kwargs = dict(engines=engines, now=now, operating_market_stats=stats)
         if external:
             catalog = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
                        "candidate_inventory": [{"id": origin, "code": "SBL", "observed_at": NOW}],
@@ -966,12 +986,38 @@ def test_stopover_is_exploratory_and_bound_to_the_current_engine(external):
         return build_owned_hub_research_queue(_inventory(), [sample], _market(), **kwargs)
 
     rows = {row["engine_id"]: row for row in build(NOW)["items"]}
-    assert rows["1"]["stopover_research"]["stop_id"] == "2941"
     assert "stopover_research" not in rows["3"]
-    assert rows["1"]["economics_preview"] is None
+    assert rows["3"]["economics_preview"] is None
+    if obstacle is not None:
+        assert rows["1"]["economics_preview"] is None
+        if obstacle not in ("event", "occupied"):
+            assert "stopover_research" not in rows["1"]
+    else:
+        assert rows["1"]["stopover_research"]["stop_id"] == "2941"
+        preview = rows["1"]["economics_preview"]
+        assert preview["route_kind"] == "exploratory_stopover"
+        assert preview["game_rules_verified"] is preview["purchase_eligible"] is False
+        assert preview["travel_distance_km"] == 2500
+        assert preview["fare_distance_km"] == 2000
+        assert preview["assumed_turnaround_hours"] == .2
+        assert preview["estimated_fares"] == {"y": 750, "j": 1700, "f": 2800}
+        assert "stopover_specific_charges" in preview["excluded_costs"]
+        from route_optimizer import ENGINE_FUEL
+        speed = rows["1"]["engine_speed"]
+        rate = rows["1"]["engine_fuel"]
+        departures = 24 / (2500 / speed + .2)
+        base = preview["layouts"][0]["base"]
+        assert base["departures_per_day"] == pytest.approx(departures, abs=.0001)
+        assert base["fuel_cost_per_day"] == pytest.approx(departures * rate * ENGINE_FUEL * 2500 * .6, abs=.01)
+        assert base["co2_cost_per_day"] == pytest.approx(base["passengers_per_day"]["y"] * .18 * 2500 * .1, abs=.25)
+        near_expiry = next(row for row in build(NOW + 890)["items"] if row["engine_id"] == "1")
+        assert near_expiry["economics_preview"]["expires_at"] == NOW + 900
     assert "escala_e_trechos_a_confirmar" in rows["1"]["pending"]
     assert rows["1"]["purchase_eligible"] is False
-    assert all("stopover_research" not in row for row in build(NOW + 901)["items"])
+    assert rows["1"]["daily_net_profit"] is None
+    expired = build(NOW + 901)["items"]
+    assert all("stopover_research" not in row for row in expired)
+    assert next(row for row in expired if row["engine_id"] == "1")["economics_preview"] is None
 
 
 def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress():
@@ -986,6 +1032,8 @@ def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress()
     assert first["safety_margin_fraction"] == .15
     assert first["purchase_eligible"] is False
     assert first["mode"] == "realism"
+    assert first["route_kind"] == "direct"
+    assert first["travel_distance_km"] == first["fare_distance_km"] == 2000
     assert first["range_source"] == first["capacity_source"] == "catalog_model"
     assert items["2"]["economics_preview"] is None
     assert items[None]["economics_preview"] is None

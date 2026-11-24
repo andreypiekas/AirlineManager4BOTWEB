@@ -283,6 +283,11 @@ const translations = {
       'Capacidade utilizada na simulação': 'Capacity used in simulation',
       'Variante observada': 'Observed variant',
       'Catálogo do modelo': 'Model catalog',
+      'Simulação exploratória com escala': 'Exploratory stopover simulation',
+      'Distância utilizada nos custos': 'Distance used for costs',
+      'Tarifa estimada pela distância direta': 'Fare estimated from direct distance',
+      'Encargos específicos da escala a confirmar': 'Stopover-specific charges unverified',
+      'Não confirmado': 'Unverified',
       'Preço exibido no detalhe': 'Displayed detail price',
       'Triagem física direta': 'Direct physical screening',
       'Escala exploratória': 'Exploratory stopover',
@@ -533,6 +538,15 @@ assert.equal(variantPreview.children[3].children[0].textContent, 'Range used in 
 assert.equal(variantPreview.children[3].children[1].textContent, '2,000 km · Observed variant');
 assert.equal(variantPreview.children[4].children[0].textContent, 'Capacity used in simulation');
 assert.equal(variantPreview.children[4].children[1].textContent, '180 pax · Model catalog');
+const stopoverPreview = document.createElement('div');
+appendResearchEconomicsPreview(stopoverPreview, {economics_preview:{...preview,
+  route_kind:'exploratory_stopover', game_rules_verified:false,
+  travel_distance_km:2500, fare_distance_km:2000}});
+assert.equal(stopoverPreview.children[4].children[0].textContent, 'Exploratory stopover simulation');
+assert.equal(stopoverPreview.children[4].children[1].textContent, 'Stopover rules unverified');
+assert.equal(stopoverPreview.children[5].children[1].textContent, '2,500 km');
+assert.equal(stopoverPreview.children[6].children[1].textContent, '2,000 km');
+assert.equal(stopoverPreview.children[7].children[0].textContent, 'Stopover-specific charges unverified');
 const expiredMetrics = document.createElement('div');
 appendResearchEconomicsPreview(expiredMetrics, {economics_preview:{...preview, expires_at:marketNow-1}});
 assert.equal(expiredMetrics.children.length, 0);

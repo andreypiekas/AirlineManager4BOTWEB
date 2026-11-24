@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A7, projeção exploratória de rotas com escala (G0)
+
+- A pesquisa de hubs próprios e externos passou a calcular cenários econômicos com uma escala somente quando os dois trechos e as três pistas estão correlacionados à variante do motor e à amostra da rota. O cálculo utiliza a distância total percorrida para combustível, CO₂ e frequência, adiciona uma parada segundo a hipótese existente de tempo em solo e conserva a distância direta como referência para as tarifas estimadas. As tarifas, as regras nativas e os encargos específicos da escala ainda dependem de confirmação. O cenário permanece inelegível para compra.
+- A simulação base e o stress preservam a mesma configuração de assentos, a margem de segurança e os bloqueios por ocupação observada, demanda temporária e evidência conflitante. A validade é limitada também pela expiração da observação da escala. O painel PT/EN identifica o cenário exploratório e as distâncias utilizadas para custo e tarifa.
+- Validação Windows: 1.868 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). 175 testes direcionados aprovados, incluindo alcance por trecho, pista de escala insuficiente, motor divergente, ocupação, eventos, expiração e cálculos de custos. Ruff e `git diff --check` aprovados.
+- Permanecem pendentes a homologação autenticada de escala, a demanda residual, os custos completos por rota, os compromissos financeiros e a cobertura integral do portfólio. Nenhuma transação real foi executada. G0 continua ativo.
+
 ## 2026-11-24 — Autonomia Total A3/A7, dimensões específicas por variante (G0)
 
 - A fila de pesquisa dos hubs próprios e externos passou a priorizar o alcance observado no detalhe correlacionado do motor. Uma variante com alcance inferior ao trecho direto exige pesquisa de escala mesmo que o alcance genérico do modelo seja suficiente. A projeção direta também considera a capacidade observada da variante e pode utilizar o detalhe válido quando o catálogo genérico está incompleto. Na ausência do detalhe, o catálogo continua como hipótese de simulação identificada; a triagem física mantém as dimensões não confirmadas.

@@ -558,7 +558,7 @@ def _build_hub_research_queue(
                         pending.append("contagem_rota_divergente")
                 economics = research_economics_preview(
                     sample, model, variant, engine_evidence, operating_market, mode_key, preview_margin,
-                    physical=physical)
+                    physical=physical, stopover=stopover)
                 if economics is not None:
                     economics["expires_at"] = min(economics["expires_at"],
                                                   operating_market_stats.mode_read_at + 900,

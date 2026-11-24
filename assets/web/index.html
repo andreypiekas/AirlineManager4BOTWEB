@@ -1347,6 +1347,10 @@ const EN = {
   "Capacidade utilizada na simulação": "Capacity used in simulation",
   "Variante observada": "Observed variant",
   "Catálogo do modelo": "Model catalog",
+  "Simulação exploratória com escala": "Exploratory stopover simulation",
+  "Distância utilizada nos custos": "Distance used for costs",
+  "Tarifa estimada pela distância direta": "Fare estimated from direct distance",
+  "Encargos específicos da escala a confirmar": "Stopover-specific charges unverified",
   "Consumo da variante": "Variant fuel burn",
   "Pista exigida pela aeronave": "Aircraft runway requirement",
   "Alcance da variante": "Variant range",
@@ -2053,6 +2057,12 @@ function appendResearchEconomicsPreview(metrics, task) {
       " kg/pax/km · " + tr(preview.co2_rate_source === "observed_variant" ? "Coeficiente observado" : "Hipótese padrão"));
   }
   addHubMetric(metrics, "Custos excluídos", tr("Manutenção, A-check, outras despesas e investimento"));
+  if (preview.route_kind === "exploratory_stopover" && preview.game_rules_verified === false) {
+    addHubMetric(metrics, "Simulação exploratória com escala", tr("Regras da escala a confirmar"));
+    addHubMetric(metrics, "Distância utilizada nos custos", nf.format(preview.travel_distance_km) + " km");
+    addHubMetric(metrics, "Tarifa estimada pela distância direta", nf.format(preview.fare_distance_km) + " km");
+    addHubMetric(metrics, "Encargos específicos da escala a confirmar", tr("Não confirmado"));
+  }
 }
 function appendPhysicalFeasibility(metrics, task) {
   const proof = task.physical_feasibility;
