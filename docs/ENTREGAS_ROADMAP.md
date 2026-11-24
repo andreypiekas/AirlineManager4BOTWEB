@@ -3,7 +3,7 @@
 ## 2026-11-24 — Autonomia Total A3, avaliação individual de layouts (G0)
 
 - A pesquisa histórica passa a identificar e avaliar cada configuração hipotética Y/J/F separadamente, vinculando sua identidade econômica à combinação de hub, rota, modelo, motor e snapshot. O validador conserva os impedimentos comuns e rejeita a configuração ainda não confirmada pela loja do jogo. A interface PT/EN exibe os motivos de bloqueio por layout.
-- Testes direcionados: 203 aprovados, Ruff e git diff --check aprovados. As configurações continuam inelegíveis para compra; a coleta de configuração nativa, demanda residual, custos finais e demais evidências para avaliação financeira completa permanece pendente.
+- Testes direcionados: 203 aprovados. Suíte Windows: 2.001 aprovados, nenhum erro e 1 ignorado (testes de instalação Linux excluídos). Ruff e git diff --check aprovados. As configurações continuam inelegíveis para compra; a coleta de configuração nativa, demanda residual, custos finais e demais evidências para avaliação financeira completa permanece pendente.
 
 ## 2026-11-24 — Autonomia Total A3, preços configurados e stress reproduzível (G0)
 
