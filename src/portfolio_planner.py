@@ -132,6 +132,15 @@ def compare_portfolio(
         blockers.append("cobertura_pesquisa_a_confirmar")
     if commitments_verified is not True:
         blockers.append("pedidos_pendentes_a_conciliar")
+    if "fleet_commitment_observations" in report:
+        observations = report.get("fleet_commitment_observations")
+        hangar = (observations.get("passenger_hangar") if isinstance(observations, Mapping)
+                  and observations.get("status") in ("observed", "partial") else None)
+        if (not isinstance(hangar, Mapping) or type(hangar.get("free")) is not int
+                or hangar["free"] < 0):
+            blockers.append("vagas_hangar_a_confirmar")
+        elif hangar["free"] == 0:
+            blockers.append("hangar_sem_vaga")
 
     available_cash = _number(report.get("available_cash"))
     obligations = _number(committed_cash) if commitments_verified is True else None

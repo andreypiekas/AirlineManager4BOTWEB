@@ -280,6 +280,7 @@ class WebDashboard:
             "coverage": "partial", "read_only": True,
         }
         report["engine_order_list_coverage"] = engines.get("order_list_coverage")
+        report["fleet_commitment_observations"] = inventory.get("fleet_commitment_observations")
         owned_ids = {hub["id"] for hub in inventory.get("hubs", [])
                      if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
         demand_snapshot = HubExpansionRegistry().demand_research_snapshot(owned_ids)

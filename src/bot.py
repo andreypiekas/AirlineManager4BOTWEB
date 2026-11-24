@@ -677,6 +677,11 @@ class Bot:
             self._guard(self._check_market, "verificar o mercado de combustível / CO₂")
         if opt("auto_checklist"):
             self._guard(lambda: check_checklist(self), "verificar a lista de tarefas")
+        if self.config.get_bool("investment", "planning_enabled"):
+            from fleet_commitment_observations import collect_fleet_commitment_observations
+
+            self._guard(lambda: collect_fleet_commitment_observations(self),
+                        "conferir hangar e pendências da frota")
         if (self.config.get_bool("investment", "planning_enabled")
                 and opt("telegram_expansion")):
             from expansion_alerts import publish_expansion_alert

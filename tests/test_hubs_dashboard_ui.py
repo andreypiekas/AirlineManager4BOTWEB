@@ -328,6 +328,13 @@ const translations = {
   'Variantes observadas entre as identificadas': 'Observed variants among identified variants',
   'Lista de modelos a confirmar': 'Model list pending verification',
   'Preços finais não confirmados': 'Final prices unverified',
+  'Hangar de passageiros': 'Passenger hangar',
+  'Vagas livres': 'Free slots',
+  'Aeronaves pendentes na frota': 'Pending aircraft in fleet',
+  'Em manutenção pendente': 'Pending maintenance',
+  'Pendências sem classificação': 'Unclassified pending statuses',
+  'Aeronaves estacionadas': 'Parked aircraft',
+  'Encomendas e compromissos financeiros a conciliar': 'Orders and financial commitments need reconciliation',
   'Cotação de combustível (USD/1000)': 'Fuel quote (USD/1000)',
   'Cotação de CO₂ (USD/1000)': 'CO₂ quote (USD/1000)',
   'Pesquisa ainda pendente': 'Research pending',
@@ -424,6 +431,18 @@ report.engine_order_list_coverage = {status:'unverified'};
 renderHubRecommendations(report);
 assert.match($('hubResearchQueueStatus').textContent, /Model list pending verification/);
 delete report.engine_order_list_coverage;
+report.fleet_commitment_observations = {status:'observed', passenger_hangar:{capacity:223,occupied:223,free:0},
+  pending_fleet:{total:11,maintenance:11,unclassified:0}, parked_count:0};
+renderHubRecommendations(report);
+assert.match($('hubResearchQueueStatus').textContent, /Passenger hangar: Free slots 0\/223/);
+assert.match($('hubResearchQueueStatus').textContent, /Pending aircraft in fleet: 11 \(Pending maintenance: 11, Unclassified pending statuses: 0\)/);
+assert.match($('hubResearchQueueStatus').textContent, /Parked aircraft: 0/);
+assert.match($('hubResearchQueueStatus').textContent, /Orders and financial commitments need reconciliation/);
+report.fleet_commitment_observations = {status:'unverified', passenger_hangar:null, pending_fleet:null, parked_count:null};
+renderHubRecommendations(report);
+assert.match($('hubResearchQueueStatus').textContent, /Passenger hangar: Unavailable/);
+assert.match($('hubResearchQueueStatus').textContent, /Parked aircraft: Unavailable/);
+delete report.fleet_commitment_observations;
 renderHubRecommendations(report);
 const marketNow = Date.now() / 1000;
 const fleetMetrics = document.createElement('div');

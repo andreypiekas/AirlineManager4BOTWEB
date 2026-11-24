@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A7, capacidade de hangar e pendências da frota (G0)
+
+- Na navegação autenticada, `hangars.php` exibiu a categoria PAX ativa, capacidade de 223, 223 aeronaves e zero vagas disponíveis. A tela `fleet_pending.php` apresentou 11 linhas únicas, em concordância com o cabeçalho e o contador da aba; todas estavam em manutenção pendente. A tela `fleet_parked.php` apresentou cabeçalho de zero aeronaves e mensagem explícita de lista vazia. A leitura não comprova o número de encomendas em trânsito nem o valor de obrigações futuras. Nenhuma compra, manutenção ou alteração de rota foi acionada.
+- O ciclo de planejamento passou a coletar os fragmentos nativos de hangar de passageiros, frota pendente e frota estacionada com dupla leitura estável e janela de até 120 segundos. O contrato valida categoria, rótulos, capacidade, ocupação, vagas, contadores independentes, quantidade de linhas, identidades únicas e estado explícito de lista vazia. Pendências de manutenção são classificadas separadamente; estados diferentes ficam sem classificação. O registro por perfil guarda exclusivamente contagens, revoga a coleta anterior antes de nova tentativa e expira em 15 minutos.
+- As APIs `/api/hubs` e `/api/hubs/recommendations` expõem essas observações e o painel PT/EN mostra vagas livres, pendências por classificação e aeronaves estacionadas. O planejador de comparação sinaliza falta de vagas ou ausência de leitura de hangar. O ranking exploratório permanece disponível para análise; a decisão financeira continua inconclusiva até comprovação independente dos pedidos, compromissos, custo de expansão de hangar e demais controles A4. A execução planejada continua em G0 e a coleta Selenium integrada ainda requer homologação.
+- Validação Windows: 1.813 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX); 114 testes direcionados aprovados. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A1/A2/A7, cobertura do catálogo de encomendas (G0)
 
 - A inspeção autenticada da lista nativa de encomendas encontrou 311 cartões visíveis, com 311 IDs distintos, nomes distintos e seções consecutivas. Os 311 manipuladores de detalhe apontavam para `ac_orders.php?mode=detail` com `charter=0`. A lista permaneceu com o mesmo conjunto de identidades após acionar a ordenação por preço. Não foi efetuada nenhuma encomenda.

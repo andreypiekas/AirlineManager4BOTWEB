@@ -1167,6 +1167,12 @@ const EN = {
   "Variantes observadas entre as identificadas": "Observed variants among identified variants",
   "Lista de modelos a confirmar": "Model list pending verification",
   "Preços finais não confirmados": "Final prices unverified",
+  "Hangar de passageiros": "Passenger hangar",
+  "Vagas livres": "Free slots",
+  "Aeronaves pendentes na frota": "Pending aircraft in fleet",
+  "Em manutenção pendente": "Pending maintenance",
+  "Pendências sem classificação": "Unclassified pending statuses",
+  "Encomendas e compromissos financeiros a conciliar": "Orders and financial commitments need reconciliation",
   "Pesquisa ainda pendente": "Research pending",
   "Indisponível": "Unavailable",
   "Mais possibilidades aguardam pesquisa.": "Additional possibilities await research.",
@@ -2620,6 +2626,25 @@ function renderHubRecommendations(report) {
         " · " + tr("Modelos com detalhes de todas as variantes disponíveis") + " " + nf.format(counts[2]) + "/" + nf.format(counts[0]) +
         " · " + tr("Variantes observadas entre as identificadas") + " " + nf.format(counts[4]) + "/" + nf.format(counts[3])
         : tr("Lista de modelos a confirmar")) + " · " + tr("Preços finais não confirmados");
+  }
+  const fleetCommitments = report.fleet_commitment_observations;
+  if (fleetCommitments) {
+    const hangar = fleetCommitments.passenger_hangar;
+    const pending = fleetCommitments.pending_fleet;
+    const parked = fleetCommitments.parked_count;
+    const validCount = value => Number.isSafeInteger(value) && value >= 0;
+    const hangarKnown = hangar && [hangar.capacity, hangar.occupied, hangar.free].every(validCount) &&
+      hangar.occupied + hangar.free === hangar.capacity;
+    const pendingKnown = pending && [pending.total, pending.maintenance, pending.unclassified].every(validCount) &&
+      pending.maintenance + pending.unclassified === pending.total;
+    $("hubResearchQueueStatus").textContent += " · " + tr("Hangar de passageiros") + ": " +
+      (hangarKnown ? tr("Vagas livres") + " " + nf.format(hangar.free) + "/" + nf.format(hangar.capacity)
+        : tr("Indisponível")) + " · " + tr("Aeronaves pendentes na frota") + ": " +
+      (pendingKnown ? nf.format(pending.total) + " (" + tr("Em manutenção pendente") + ": " +
+        nf.format(pending.maintenance) + ", " + tr("Pendências sem classificação") + ": " +
+        nf.format(pending.unclassified) + ")" : tr("Indisponível")) + " · " +
+      tr("Aeronaves estacionadas") + ": " + (validCount(parked) ? nf.format(parked) : tr("Indisponível")) +
+      " · " + tr("Encomendas e compromissos financeiros a conciliar");
   }
   $("hubResearchPrev").disabled = !paged || researchQueue.offset <= 0;
   $("hubResearchNext").disabled = !paged || researchQueue.next_offset == null;
