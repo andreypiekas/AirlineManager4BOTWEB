@@ -277,6 +277,10 @@ const translations = {
       'Velocidade da variante': 'Variant cruise speed',
       'Preço exibido no detalhe': 'Displayed detail price',
       'Triagem física direta': 'Direct physical screening',
+      'Escala exploratória': 'Exploratory stopover',
+      'Trechos estimados pelo mapa': 'Map-estimated legs',
+      'Pista da escala': 'Stopover runway',
+      'Regras da escala a confirmar': 'Stopover rules unverified',
       'Dimensões insuficientes': 'Dimensions insufficient',
       'Alcance direto': 'Direct range',
       'Insuficiente': 'Insufficient',
@@ -449,6 +453,18 @@ assert.equal(physicalMetrics.children[0].children[1].textContent, 'Dimensions in
 assert.equal(physicalMetrics.children[1].children[1].textContent, 'Insufficient · 1,999 / 2,000 km');
 appendPhysicalFeasibility(physicalMetrics, {physical_feasibility:{...physical, expires_at:marketNow-1}});
 assert.equal(physicalMetrics.children.length, 5);
+const stopMetrics = document.createElement('div');
+const stop = {source:'game_map_and_leg_details_v1', purchase_eligible:false, game_rules_verified:false,
+  expires_at:marketNow+30, stop_id:'2601', stop_code:'ANC', first_km:1200, second_km:1300, stop_runway_ft:7000};
+appendPhysicalFeasibility(stopMetrics, {physical_feasibility:physical, stopover_research:stop});
+assert.equal(stopMetrics.children[5].children[0].textContent, 'Exploratory stopover');
+assert.equal(stopMetrics.children[5].children[1].textContent, 'ANC');
+assert.equal(stopMetrics.children[6].children[0].textContent, 'Map-estimated legs');
+assert.equal(stopMetrics.children[6].children[1].textContent, '1,200 + 1,300 km');
+const expiredStop = document.createElement('div');
+appendPhysicalFeasibility(expiredStop, {physical_feasibility:physical,
+  stopover_research:{...stop, expires_at:marketNow-1}});
+assert.equal(expiredStop.children.length, 5);
 assert.equal($('hubResearchPrev').disabled, true);
 assert.equal($('hubResearchNext').disabled, true);
 Object.assign(report.research_queue, {

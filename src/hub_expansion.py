@@ -967,13 +967,19 @@ class HubExpansionRegistry:
                     for key, conflict in conflicts.items()),
                 "coverage": "partial",
             })
-        return {"samples": self.route_detail_registry().enrich(rows, now=now),
+        details = self.route_detail_registry().enrich(rows, now=now)
+        return {"samples": self.stopover_research_registry().enrich(details, now),
                 "hub_progress": progress, "coverage": "partial"}
 
     def route_detail_registry(self):
         from route_detail_evidence import RouteDetailRegistry
 
         return RouteDetailRegistry(self.path.with_name(self.path.stem + "_route_details.json"))
+
+    def stopover_research_registry(self):
+        from stopover_research import StopoverResearchRegistry
+
+        return StopoverResearchRegistry(self.path.with_name(self.path.stem + "_stopovers.json"))
 
     def external_demand_registry(self):
         """Keep pre-purchase observations and cursors separate from owned hubs."""

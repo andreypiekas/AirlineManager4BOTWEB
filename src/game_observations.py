@@ -543,6 +543,45 @@ def _collect_hub_route_details(bot: object, *, external: bool) -> int:
     return count
 
 
+def collect_hub_stopovers(bot: object) -> int:
+    """Bound research per scope; use the same correlated engine catalogue as planning."""
+    from economy import load_market_evidence
+    from owned_hub_research_feed import _models, engine_variants
+    from stopover_research import collect_stopover, subject_for
+
+    if getattr(bot, "stopping", False) or not bot.config.get_bool("investment", "planning_enabled"):
+        return 0
+    inventory = HubRegistry().snapshot()
+    market = load_market_evidence()
+    if not inventory.get("hub_catalog_fresh") or not market.get("fresh"):
+        return 0
+    owned = {hub["id"] for hub in inventory["hubs"]}
+    engines = EngineCatalogRegistry().snapshot()
+    now = time.time()
+    options = [(model, variant) for model in _models(market.get("models"))
+               for variant in engine_variants(engines, model, now)[0]
+               if variant["engine_available"] and variant.get("engine_detail")
+               and variant["engine_detail"]["model_identity_verified"]]
+    if not options:
+        return 0
+    expansion = HubExpansionRegistry()
+    count = 0
+    for registry, snapshot in (
+        (expansion, expansion.demand_research_snapshot(owned)),
+        (expansion.external_demand_registry(), expansion.external_demand_snapshot(owned)),
+    ):
+        if getattr(bot, "stopping", False):
+            break
+        subjects = ((subject, sample) for sample in snapshot["samples"]
+                    if sample.get("source") == "game_route_search"
+                    for model, variant in options
+                    if (subject := subject_for(sample, model, variant, now)) is not None)
+        count += collect_stopover(bot, registry.stopover_research_registry(), subjects)
+    if count:
+        log.info("Pesquisa de escalas: %d combinações dimensionais observadas.", count)
+    return count
+
+
 def _variant_signature(catalog):
     return (catalog.selector_type, catalog.dom_id, catalog.selector_name,
             tuple((v.engine_id, v.label, v.available) for v in catalog.variants))

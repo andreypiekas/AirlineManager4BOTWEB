@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A2/A3/A7, pesquisa exploratória de escalas por variante (G0)
+
+- O ciclo de planejamento pesquisa escalas para combinações de hub, rota, modelo e motor com alcance direto insuficiente e dimensões da variante correlacionadas. A busca usa duas leituras estáveis do mapa do jogo e compara a distância direta com a pesquisa da rota antes de consultar os detalhes de cada trecho. As duas respostas de cada trecho precisam concordar, inclusive quanto à identidade dos aeroportos, unidade de pista e comprimento da pista intermediária observado pelos dois lados.
+- A pesquisa fica limitada a uma combinação por escopo (hubs próprios e candidatos externos) e duas sugestões por combinação em cada ciclo. Os registros independentes por perfil e escopo alternam hubs, combinações e sugestões; novas tentativas invalidam imediatamente a evidência anterior, inclusive quando inconclusivas. A validade máxima da evidência de escala é de 15 minutos, limitada também pela validade dos dados de rota e motor.
+- As filas PT/EN apresentam o aeroporto intermediário, as distâncias estimadas pelo mapa e a pista observada, com as regras do jogo ainda pendentes. A evidência é vinculada à identidade e aos dados atuais da variante e não é reutilizada para outro motor. Não altera o fluxo operacional de criação de rotas e não libera simulação econômica direta, disponibilidade, demanda residual ou elegibilidade de aquisição.
+- Permanecem pendentes a homologação autenticada da leitura do mapa e dos dois detalhes, a correlação da identidade exata de modelos no formulário, a distância oficial dos trechos, regras por modo, custos e viabilidade da escala no fluxo de aquisição. O registro exploratório não certifica escala no formulário de uma aeronave futura. G0 permanece ativo.
+- Validação Windows: 1.758 testes aprovados e 1 ignorado, excluído `tests/test_instalacao_linux.py` (requisito POSIX). A validação direcionada final aprovou 124 testes, incluindo filas próprias e externas, incompatibilidades de pista/alcance, identidade de motor, expiração, revogação, rodízio e apresentação em inglês. Ruff, compilação Python, execução JavaScript do coletor com mapa sintético e `git diff --check` aprovados.
+
 ## 2026-11-23 — Autonomia Total A3/A7, dimensões atuais no ranking de aquisição (G0)
 
 - O ranking de hubs próprios reutiliza a normalização do catálogo de motores e recalcula a triagem física por modelo, motor e par de aeroportos. O painel passa a mostrar alcance e pistas, validade da evidência e pendências também nos candidatos persistidos. Um motor explicitamente indisponível com identidade confirmada ou uma dimensão observada insuficiente impede a recomendação até a confirmação correspondente.

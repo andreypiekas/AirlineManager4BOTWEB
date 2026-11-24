@@ -20,6 +20,7 @@ from market import recent_market_quotes
 from research_economics_preview import research_economics_preview, research_mode
 from research_physical_feasibility import assess_direct_route
 from research_route_occupancy import FleetRouteOccupancy
+from stopover_research import current_stopover, subject_for
 
 MAX_EVIDENCE_AGE = 3 * 86400
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
@@ -350,6 +351,9 @@ def _build_hub_research_queue(
                                 expected_runway=sample.get("destination_runway_ft"))
         if detail:
             sample["route_detail"] = detail
+        if isinstance(row.get("stopover_research"), list):
+            sample["stopover_research"] = [proof for proof in row["stopover_research"]
+                                           if isinstance(proof, dict)]
         occupancy = fleet_occupancy.evidence(origin, destination, detail)
         if occupancy is not None:
             sample["fleet_occupancy"] = occupancy
@@ -505,6 +509,9 @@ def _build_hub_research_queue(
                            if item != "motor_a_pesquisar" or variant is None]
                 physical = assess_direct_route(sample, variant, engine_evidence,
                                                max_evidence_age=MAX_EVIDENCE_AGE)
+                subject = subject_for(sample, model, variant, now)
+                stopover = next((proof for raw in sample.get("stopover_research", [])
+                                 if (proof := current_stopover(raw, subject, sample, now))), None)
                 if "short" in (physical["checks"]["origin_runway"],
                                physical["checks"]["destination_runway"]):
                     pending.append("pista_observada_insuficiente")
@@ -578,6 +585,7 @@ def _build_hub_research_queue(
                     "engine_fuel": variant["engine_fuel"] if variant else None,
                     "engine_detail": variant["engine_detail"] if variant else None,
                     "physical_feasibility": physical,
+                    **({"stopover_research": stopover} if stopover else {}),
                     "final_aircraft_price": None,
                     **({"external_cost_preview": preview} if external else {}),
                     "economics_preview": economics,

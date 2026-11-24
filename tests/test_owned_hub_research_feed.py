@@ -931,6 +931,46 @@ def test_physical_screening_never_substitutes_uncorrelated_runway_or_market_rang
     assert row["purchase_eligible"] is False
 
 
+@pytest.mark.parametrize("external", [False, True])
+def test_stopover_is_exploratory_and_bound_to_the_current_engine(external):
+    from owned_hub_research_feed import engine_variants
+    from stopover_research import SOURCE, subject_for
+
+    engines = _preview_engines()
+    engines["models"]["11"]["variant_details"] = {
+        "1": {"observed_at": NOW, "metrics": {"range_km": 1500, "required_runway_ft": 5000}},
+        "3": {"observed_at": NOW, "metrics": {"range_km": 1500, "required_runway_ft": 5000}},
+    }
+    origin, destination = ("3139", "2926") if external else ("2926", "3139")
+    sample = _sample(origin, destination)
+    model = {"id": "11", "name": "A320"}
+    variants, _ = engine_variants(engines, model, NOW)
+    subject = subject_for(sample, model, variants[0], NOW)
+    assert subject and subject["engine_id"] == "1"
+    sample["stopover_research"] = [{**subject, "source": SOURCE, "observed_at": NOW,
+        "stop_id": "2941", "map_direct_km": 2000, "first_km": 1200, "second_km": 1300,
+        "origin_runway_ft": 6500, "destination_runway_ft": 6500, "stop_runway_ft": 7000,
+        "purchase_eligible": False, "game_rules_verified": False}]
+
+    def build(now):
+        kwargs = dict(engines=engines, now=now, operating_market_stats=_preview_stats())
+        if external:
+            catalog = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                       "candidate_inventory": [{"id": origin, "code": "SBL", "observed_at": NOW}],
+                       "samples": [sample]}
+            return build_external_hub_research_queue({**_inventory(), "hub_catalog_fresh": True},
+                                                     catalog, _market(), **kwargs)
+        return build_owned_hub_research_queue(_inventory(), [sample], _market(), **kwargs)
+
+    rows = {row["engine_id"]: row for row in build(NOW)["items"]}
+    assert rows["1"]["stopover_research"]["stop_id"] == "2941"
+    assert "stopover_research" not in rows["3"]
+    assert rows["1"]["economics_preview"] is None
+    assert "escala_e_trechos_a_confirmar" in rows["1"]["pending"]
+    assert rows["1"]["purchase_eligible"] is False
+    assert all("stopover_research" not in row for row in build(NOW + 901)["items"])
+
+
 def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress():
     stats, engines = _preview_stats(), _preview_engines()
     page = build_owned_hub_research_queue(_inventory(), [_sample()], _market(), engines=engines,

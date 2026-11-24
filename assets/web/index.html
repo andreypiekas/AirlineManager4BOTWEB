@@ -1181,6 +1181,10 @@ const EN = {
   "Compatibilidade da pista não confirmada": "Runway compatibility unverified",
   "Pista observada inferior à exigida": "Observed runway shorter than required",
   "Triagem física direta": "Direct physical screening",
+  "Escala exploratória": "Exploratory stopover",
+  "Trechos estimados pelo mapa": "Map-estimated legs",
+  "Pista da escala": "Stopover runway",
+  "Regras da escala a confirmar": "Stopover rules unverified",
   "Dimensões suficientes": "Dimensions sufficient",
   "Dimensões insuficientes": "Dimensions insufficient",
   "Dimensões pendentes": "Dimensions pending",
@@ -1995,6 +1999,16 @@ function appendPhysicalFeasibility(metrics, task) {
   }
   if (proof.stopover_research_required === true) {
     addHubMetric(metrics, "Escala e trechos a confirmar", tr("Não confirmado"));
+  }
+  const stop = task.stopover_research;
+  if (stop && stop.source === "game_map_and_leg_details_v1" && stop.purchase_eligible === false &&
+      stop.game_rules_verified === false && Number.isFinite(stop.expires_at) &&
+      Date.now() / 1000 < stop.expires_at && Number.isFinite(stop.first_km) &&
+      Number.isFinite(stop.second_km) && Number.isFinite(stop.stop_runway_ft)) {
+    addHubMetric(metrics, "Escala exploratória", String(stop.stop_code || stop.stop_id));
+    addHubMetric(metrics, "Trechos estimados pelo mapa", nf.format(stop.first_km) + " + " + nf.format(stop.second_km) + " km");
+    addHubMetric(metrics, "Pista da escala", nf.format(stop.stop_runway_ft) + " ft");
+    addHubMetric(metrics, "Regras da escala a confirmar", tr("Não confirmado"));
   }
 }
 function appendEngineDetail(metrics, task) {

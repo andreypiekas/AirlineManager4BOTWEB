@@ -648,6 +648,10 @@ class Bot:
                 self, per_cycle=max(1, min(10, self.config.get_int("settings", "engine_models_per_cycle", 2)))),
                 "pesquisar motores de aeronaves")
         if opt("collect_market_observations") or opt("collect_engine_catalog"):
+            if opt("collect_market_observations") and self.config.get_bool("investment", "planning_enabled"):
+                from game_observations import collect_hub_stopovers
+
+                self._guard(lambda: collect_hub_stopovers(self), "pesquisar escalas e pistas por trecho")
             from owned_hub_research_ingestion import ingest_owned_hub_research_inputs
 
             self._guard(ingest_owned_hub_research_inputs,
