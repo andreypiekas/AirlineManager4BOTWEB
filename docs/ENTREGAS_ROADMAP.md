@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A9/A7, histórico financeiro correlacionado à rota (G0)
+
+- A leitura financeira passou a exigir inventário recente, identidade da aeronave, identificador de rota e aeroportos observados no jogo. Registros de outras rotas são excluídos da amostra de 24 horas, inclusive após trocas de rota. A leitura inválida revoga a amostra anterior; caches legados sem correlação não aparecem como evidência financeira da rota atual.
+- A amostra conserva receita observada, consumo de combustível e CO₂, preços usados e margem operacional estimada. O painel PT/EN identifica a soma como amostra parcial de registros, sem presumir cobertura integral, identificadores únicos de voo ou custos contábeis efetivamente incorridos. A calibração conclusiva continua dependente de histórico completo e independente, entregas e custos reais conciliados.
+- Validação Windows: 1.878 testes aprovados, nenhum reprovado e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). 122 testes direcionados aprovados. Ruff e `git diff --check` aprovados.
+- A leitura autenticada integrada e a comprovação de demanda residual, despesas reais e histórico integral permanecem pendentes. Nenhuma transação no jogo foi realizada. G0 permanece ativo.
+
 ## 2026-11-24 — Autonomia Total A2/A3/A4, conciliação de ocupação da frota (G0)
 
 - A auditoria de ocupação utilizada pela pesquisa de hubs próprios, externos e pelo ranking de aeronaves passou a exigir a conciliação de identidades das aeronaves pendentes e estacionadas quando elas existem. Contagens coincidentes, evidências incompletas ou divergentes preservam os vínculos de rota comprovados, mas não certificam ausência de aeronaves em outras rotas. Uma auditoria integral com todas as aeronaves em rota continua suficiente para a contagem própria quando não há evidência nativa contraditória.

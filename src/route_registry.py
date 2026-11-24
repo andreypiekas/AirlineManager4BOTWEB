@@ -94,6 +94,16 @@ def same_route(first: dict, second: dict) -> bool:
                 (endpoint_matches(a, d) and endpoint_matches(b, c)))
 
 
+def _flight_matches_route(label: object, route: dict) -> bool:
+    if not isinstance(label, str):
+        return False
+    match = re.fullmatch(r"([A-Z]{3,4})\s*[-–]\s*([A-Z]{3,4})", label.strip())
+    if not match or match[1] == match[2]:
+        return False
+    return same_route(route, {"origin": endpoint(code=match[1]),
+                              "destination": endpoint(code=match[2])})
+
+
 def reroute_block_reason(row: dict, now: Optional[float] = None,
                          *, verified_hub: bool = False) -> Optional[str]:
     """Return the exact reason a duplicate cannot be moved safely.
@@ -332,7 +342,11 @@ class RouteRegistry:
         saved = 0
         with _LOCK:
             data = _state(self.path)
-            roster = (data.get("game_roster") or {}).get("aircraft") or {}
+            roster_observation = data.get("game_roster") or {}
+            stamp = roster_observation.get("observed_at")
+            if type(stamp) not in (int, float) or not 0 <= now - stamp <= _LIVE_ROSTER_MAX_AGE:
+                return 0
+            roster = roster_observation.get("aircraft") or {}
             for row in rows[:8]:
                 identity = str(row.get("aircraft_id") or "")
                 if (not _GAME_AIRCRAFT_ID_RE.fullmatch(identity) or identity not in roster
@@ -341,20 +355,30 @@ class RouteRegistry:
                     continue
                 entry = dict(data["aircraft"].get(identity) or {"aircraft_id": identity})
                 entry["flight_finance_checked_at"] = now
+                # Each read supersedes the previous sample. A route change or
+                # incomplete response cannot renew financial observations.
+                entry.pop("last_flight", None)
+                entry.pop("last_24h", None)
+                data["aircraft"][identity] = entry
+                seen = entry.get("last_seen")
+                route_id = roster[identity]["route_id"]
+                if (entry.get("source") != "game" or entry.get("observed_route_id") != route_id
+                        or entry.get("registration") != roster[identity].get("registration")
+                        or not entry.get("route_key") or type(seen) not in (int, float)
+                        or not 0 <= now - seen <= _SCAN_WINDOW_SECONDS):
+                    continue
                 amount, fuel, co2 = (row.get(key) for key in ("flight_value", "fuel_lbs", "co2_quotas"))
                 if not all(type(value) is int and 0 <= value <= 100000000000
                            for value in (amount, fuel, co2)):
-                    data["aircraft"][identity] = entry
                     continue
                 label = row.get("flight_route")
-                if not isinstance(label, str) or not re.fullmatch(
-                        r"[A-Z]{3,4}\s*[-–]\s*[A-Z]{3,4}", label.strip()):
-                    data["aircraft"][identity] = entry
+                if not _flight_matches_route(label, entry):
                     continue
                 cost = fuel * float(fuel_price) / 1000 + co2 * float(co2_price) / 1000
                 entry["last_flight"] = {
                     "observed_at": now, "route": label.strip(), "value": amount,
-                    "game_route_id": roster[identity]["route_id"],
+                    "game_route_id": route_id, "route_key": entry["route_key"],
+                    "route_correlation": "observed_endpoints",
                     "fuel_lbs": fuel, "co2_quotas": co2,
                     "estimated_operating_margin": round(amount - cost, 2),
                     "fuel_price_per_1000": round(float(fuel_price), 2),
@@ -363,7 +387,7 @@ class RouteRegistry:
                 }
                 recent_flights = row.get("recent_flights")
                 if isinstance(recent_flights, list) and len(recent_flights) <= 20:
-                    recent_total = 0.0
+                    revenue_total = fuel_total = co2_total = 0
                     valid = 0
                     for flight in recent_flights:
                         if not isinstance(flight, dict):
@@ -371,24 +395,31 @@ class RouteRegistry:
                         age = flight.get("age_hours")
                         values = [flight.get(key) for key in
                                   ("flight_value", "fuel_lbs", "co2_quotas")]
-                        if (not isinstance(age, (int, float)) or not 0 <= age < 24
+                        if (type(age) not in (int, float) or not 0 <= age < 24
+                                or not _flight_matches_route(flight.get("flight_route"), entry)
                                 or not all(type(value) is int and 0 <= value <= 100000000000
                                            for value in values)):
                             continue
                         revenue, used_fuel, used_co2 = values
-                        recent_total += (revenue - used_fuel * float(fuel_price) / 1000
-                                         - used_co2 * float(co2_price) / 1000)
+                        revenue_total += revenue
+                        fuel_total += used_fuel
+                        co2_total += used_co2
                         valid += 1
                     if valid:
+                        recent_total = (revenue_total - fuel_total * float(fuel_price) / 1000
+                                        - co2_total * float(co2_price) / 1000)
                         entry["last_24h"] = {
-                            "observed_at": now, "game_route_id": roster[identity]["route_id"],
+                            "observed_at": now, "game_route_id": route_id,
+                            "route_key": entry["route_key"], "route_correlation": "observed_endpoints",
+                            "coverage_complete": False,
                             "flight_count": valid,
+                            "observed_revenue": revenue_total,
+                            "fuel_lbs": fuel_total, "co2_quotas": co2_total,
+                            "fuel_price_per_1000": round(float(fuel_price), 2),
+                            "co2_price_per_1000": round(float(co2_price), 2),
                             "estimated_operating_margin": round(recent_total, 2),
                             "source": "game_flight_history",
                         }
-                    else:
-                        entry.pop("last_24h", None)
-                data["aircraft"][identity] = entry
                 saved += 1
             if rows:
                 self._save(data)
@@ -1079,8 +1110,10 @@ class RouteRegistry:
                     item.pop("profit_per_day", None)
                 for financial_key in ("last_flight", "last_24h"):
                     financial = item.get(financial_key)
-                    if (not roster_verified or not isinstance(financial, dict)
-                            or financial.get("game_route_id") != observed.get("route_id")):
+                    if (not roster_verified or item["route_data_stale"] or not isinstance(financial, dict)
+                            or financial.get("game_route_id") != observed.get("route_id")
+                            or financial.get("route_key") != item.get("route_key")
+                            or financial.get("route_correlation") != "observed_endpoints"):
                         item.pop(financial_key, None)
                 current_rows.append(item)
             current_rows.sort(key=lambda r: (r.get("registration", ""), r["aircraft_id"]))

@@ -244,13 +244,15 @@ def test_expired_roster_remains_visible_but_marked_unverified(tmp_path, monkeypa
 def test_last_flight_value_and_margin_are_distinct_from_daily_profit(tmp_path):
     registry = RouteRegistry(tmp_path / "routes.json")
     assert registry.record_game_roster(game_rows(), 3)
+    observe_route(registry)
     assert registry.next_flight_read_ids() == ["101", "102"]
     assert registry.record_flight_readings([{
-        "aircraft_id": "101", "flight_route": "TAS-GRU", "flight_value": 2000,
+        "aircraft_id": "101", "flight_route": "XAP-GRU", "flight_value": 2000,
         "fuel_lbs": 1000, "co2_quotas": 100,
         "recent_flights": [
-            {"flight_value": 2000, "fuel_lbs": 1000, "co2_quotas": 100, "age_hours": 1},
-            {"flight_value": 3000, "fuel_lbs": 2000, "co2_quotas": 100, "age_hours": 22},
+            {"flight_route": "XAP-GRU", "flight_value": 2000, "fuel_lbs": 1000, "co2_quotas": 100, "age_hours": 1},
+            {"flight_route": "GRU-XAP", "flight_value": 3000, "fuel_lbs": 2000, "co2_quotas": 100, "age_hours": 22},
+            {"flight_route": "TAS-GRU", "flight_value": 9999, "fuel_lbs": 1000, "co2_quotas": 100, "age_hours": 2},
         ],
     }], fuel_price=800, co2_price=120) == 1
     snapshot = registry.snapshot()
@@ -258,9 +260,14 @@ def test_last_flight_value_and_margin_are_distinct_from_daily_profit(tmp_path):
     assert row["last_flight"]["value"] == 2000
     assert row["last_flight"]["game_route_id"] == 801
     assert row["last_flight"]["estimated_operating_margin"] == 1188
-    assert row["last_flight"]["route"] == "TAS-GRU"
+    assert row["last_flight"]["route"] == "XAP-GRU"
+    assert row["last_flight"]["route_correlation"] == "observed_endpoints"
     assert row["last_24h"]["flight_count"] == 2
     assert row["last_24h"]["estimated_operating_margin"] == 2576
+    assert row["last_24h"]["observed_revenue"] == 5000
+    assert row["last_24h"]["fuel_lbs"] == 3000
+    assert row["last_24h"]["co2_quotas"] == 200
+    assert row["last_24h"]["coverage_complete"] is False
     assert "profit_per_day" not in row
     assert registry.next_flight_read_ids()[0] == "102"
     assert json.loads(registry.path.read_text(encoding="utf-8"))["aircraft"]["101"]["last_flight"]["source"] == "game_flight_history"
@@ -269,6 +276,7 @@ def test_last_flight_value_and_margin_are_distinct_from_daily_profit(tmp_path):
 def test_reassigned_route_does_not_show_previous_flight_margin(tmp_path):
     registry = RouteRegistry(tmp_path / "routes.json")
     assert registry.record_game_roster(game_rows(), 3)
+    observe_route(registry)
     assert registry.record_flight_readings([{
         "aircraft_id": "101", "flight_route": "XAP-GRU", "flight_value": 3000,
         "fuel_lbs": 1000, "co2_quotas": 100,
@@ -279,6 +287,34 @@ def test_reassigned_route_does_not_show_previous_flight_margin(tmp_path):
     aircraft = {row["aircraft_id"]: row for row in registry.snapshot()["current_relations"]}
     assert "last_flight" not in aircraft["101"]
     assert "last_flight" in registry.snapshot()["relations"][0]
+
+
+def test_flight_history_requires_current_route_and_revokes_mismatched_sample(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes.json")
+    assert registry.record_game_roster(game_rows(), 3)
+    sample = {"aircraft_id": "101", "flight_route": "XAP-GRU", "flight_value": 3000,
+              "fuel_lbs": 1000, "co2_quotas": 100}
+    sample["recent_flights"] = [{**sample, "age_hours": 1}]
+    assert registry.record_flight_readings([sample], fuel_price=800, co2_price=120) == 0
+    observe_route(registry)
+    assert registry.record_flight_readings([sample], fuel_price=800, co2_price=120) == 1
+    assert registry.record_flight_readings([{**sample, "flight_route": "TAS-GRU"}],
+                                           fuel_price=800, co2_price=120) == 0
+    row = next(row for row in registry.snapshot()["current_relations"] if row["aircraft_id"] == "101")
+    assert "last_flight" not in row
+    assert "last_24h" not in row
+
+
+def test_legacy_uncorrelated_finance_is_not_current_route_evidence(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes.json")
+    assert registry.record_game_roster(game_rows(), 3)
+    observe_route(registry)
+    data = json.loads(registry.path.read_text(encoding="utf-8"))
+    data["aircraft"]["101"]["last_24h"] = {
+        "game_route_id": 801, "source": "game_flight_history", "estimated_operating_margin": 1000}
+    registry.path.write_text(json.dumps(data), encoding="utf-8")
+    row = next(row for row in registry.snapshot()["current_relations"] if row["aircraft_id"] == "101")
+    assert "last_24h" not in row
 
 
 def test_duplicate_panel_uses_verified_current_fleet_only(tmp_path):
