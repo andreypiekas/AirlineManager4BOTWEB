@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2, cobertura de rotas no ciclo de planejamento (G0)
+
+**Objetivo:** tornar a tentativa de auditoria integral parte da operação normal do planejador, com validade temporal e detecção de alterações nas evidências mesmo quando os IDs permanecem iguais.
+
+### Implementação e evidências
+
+- `src/fleet.py`: com `investment.planning_enabled=on`, a auditoria tenta percorrer todas as páginas quando existem até 25, independentemente do orçamento incremental padrão de três páginas. A ordem de navegação parte da página atual, visita as demais e realiza uma releitura em ordem inversa antes de restaurar a tela inicial. Para frotas com mais de 25 páginas, permanece a coleta parcial. O prazo de 120 segundos é conferido entre navegações e antes de publicar o lote, inclusive após a restauração; chamadas de navegação já iniciadas dependem dos seus próprios timeouts. Cancelamentos ou expiração descartam o lote.
+- `src/route_registry.py`: a impressão digital das observações estáveis por página inclui identidade, matrícula, modelo, extremos da rota, ID da rota e evidência de base. Mudanças durante a mesma auditoria invalidam a prova, inclusive se a observação voltar ao estado anterior. A ordem dos IDs e o estado momentâneo de voo não alteram essa impressão. O snapshot deixa de apresentar cobertura integral atual após a janela de uma hora, preservando separadamente a última auditoria integral histórica.
+- Regressões comprovam o fluxo com 11 páginas e início em posições diferentes, a coleta parcial acima do limite de páginas, a restauração após prazo vencido, a revogação de evidência com os mesmos IDs e a expiração sem nova coleta.
+
+### Verificação, limites e reversão
+
+- 143 testes direcionados aprovados. Suíte Windows: 1.625 aprovados, 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Ruff em `src`, `tests` e `scripts`, compilação Python e `git diff --check` aprovados.
+- **Gate G0.** A cobertura integral de páginas de rotas ainda precisa ser correlacionada ao inventário atual do jogo, incluindo aeronaves estacionadas e pendentes, antes de habilitar decisões de aquisição. As evidências de base permanente, o catálogo de hubs candidatos e a pesquisa externa permanecem pendentes. A validação desta entrega utiliza cenários de teste, sem nova homologação autenticada de paginação.
+- Reversão pelo commit desta entrega na branch `codex/autonomia-a0-a1-20261122`, considerando dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A1/A3, seletor autenticado de motores e custos operacionais (G0)
 
 **Objetivo:** reconhecer o controle real de variantes no formulário de aeronaves e impedir pesquisa ou classificação de rotas com preços operacionais inválidos.

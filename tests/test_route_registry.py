@@ -200,6 +200,34 @@ def test_complete_stable_audit_keeps_current_snapshot_partial(tmp_path):
     assert not any("home_hub_id" in row for row in report["relations"])
 
 
+def test_same_ids_changed_route_evidence_revokes_audit(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    run_id = "c" * 32
+    original = {"model": "A320", "observed_route_id": 5}
+    _scan_audit_page(registry, run_id, 1, 2, 40, metadata=original)
+    _scan_audit_page(registry, run_id, 2, 2, 40, metadata=original)
+    assert registry.snapshot()["scan_coverage"]["full_page_coverage_verified"] is True
+    _scan_audit_page(registry, run_id, 1, 2, 40, metadata={**original, "observed_route_id": 6})
+    _scan_audit_page(registry, run_id, 1, 2, 40, metadata=original)
+    report = registry.snapshot()
+    assert report["scan_coverage"]["audit_run"]["invalidated"] is True
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+    assert report["last_verified_full_audit"] is None
+
+
+def test_current_coverage_expires_without_another_scan(tmp_path, monkeypatch):
+    clock = [10000]
+    monkeypatch.setattr("route_registry.time.time", lambda: clock[0])
+    registry = RouteRegistry(tmp_path / "routes_registry.json")
+    _scan_audit_page(registry, "c" * 32, 1, 1, 20)
+    assert registry.snapshot()["scan_coverage"]["full_page_coverage_verified"] is True
+    clock[0] += 3600
+    report = registry.snapshot()
+    assert report["scan_coverage"]["full_page_coverage_verified"] is False
+    assert report["scan_coverage"]["expired"] is True
+    assert report["last_verified_full_audit"]["unique_aircraft"] == 20
+
+
 def test_same_run_page_count_changes_cannot_be_recertified(tmp_path):
     registry = RouteRegistry(tmp_path / "routes_registry.json")
     run_id = "d" * 32

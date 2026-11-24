@@ -6,6 +6,7 @@ not prove removal. The registry is a cache/audit trail, not game authority.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -605,6 +606,20 @@ class RouteRegistry:
                                   if isinstance(previous_coverage, dict) else {})
                 previous_page = (previous_pages.get(str(page))
                                  if isinstance(previous_pages, dict) and page else None)
+                # Preserve stable identity and assignment evidence across reads,
+                # independently of row order or the aircraft's flight status.
+                fingerprint = None
+                if route_observations is not None and page_ids_verified:
+                    fields = ("aircraft_id", "registration", "model", "origin", "destination",
+                              "observed_route_id", "home_hub_id", "home_hub_evidence",
+                              "home_hub_evidence_aircraft_id")
+                    stable_rows = sorted(
+                        ({field: row.get(field) for field in fields} for row in route_observations),
+                        key=lambda row: str(row["aircraft_id"]),
+                    )
+                    fingerprint = hashlib.sha256(json.dumps(
+                        stable_rows, sort_keys=True, ensure_ascii=False, default=str,
+                    ).encode("utf-8")).hexdigest()
                 if audit_run_id:
                     same_run = (isinstance(prior_run, dict)
                                 and prior_run.get("id") == audit_run_id)
@@ -618,7 +633,8 @@ class RouteRegistry:
                         and previous_page.get("audit_run_id") == audit_run_id
                         and (set(previous_page.get("aircraft_ids") or []) != set(recorded_ids)
                              or previous_page.get("visible") != visible
-                             or previous_page.get("page_ids_verified") is not True)
+                             or previous_page.get("page_ids_verified") is not True
+                             or previous_page.get("observation_fingerprint") != fingerprint)
                     )
                     audit_run["invalidated"] = bool(
                         audit_run.get("invalidated") or not pagination_verified
@@ -645,6 +661,8 @@ class RouteRegistry:
                 }
                 if audit_run_id:
                     observation["audit_run_id"] = audit_run_id
+                if fingerprint is not None:
+                    observation["observation_fingerprint"] = fingerprint
                 if page:
                     coverage["sequence"] = max(0, int(coverage.get("sequence") or 0)) + 1
                     observation["sequence"] = coverage["sequence"]
@@ -811,6 +829,14 @@ class RouteRegistry:
     def snapshot(self, *, allow_duplicates: bool = True) -> dict:
         with _LOCK:
             data = deepcopy(_state(self.path))
+        coverage = data.get("scan_coverage")
+        if isinstance(coverage, dict) and coverage.get("full_page_coverage_verified"):
+            run = coverage.get("audit_run") or {}
+            started_at = run.get("started_at")
+            if (not isinstance(started_at, (int, float))
+                    or not 0 <= time.time() - started_at < _SCAN_WINDOW_SECONDS):
+                coverage["full_page_coverage_verified"] = False
+                coverage["expired"] = True
         rows = list(data["aircraft"].values())
         rows.sort(key=lambda r: (r.get("registration", ""), r.get("aircraft_id", "")))
         roster = data.get("game_roster") or {}

@@ -469,11 +469,17 @@ return Array.from(document.querySelectorAll('#popContent .pagination [onclick]')
 """
 
 
-def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cycle: int = 3) -> list[int]:
+def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cycle: int = 3,
+                            attempt_full: bool = False) -> list[int]:
     """Audit verified AJAX pages across bounded cycles, restoring the initial view."""
 
     if pages_per_cycle <= 0 or getattr(bot, "stopping", False):
         return []
+
+    deadline = time.monotonic() + 120 if attempt_full else None
+
+    def expired() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
 
     def snapshot(expected_total: Optional[int] = None,
                  expected_count: Optional[int] = None) -> Optional[tuple[int, int, list[dict]]]:
@@ -504,7 +510,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
 
     try:
         initial = snapshot()
-        if initial is None:
+        if initial is None or expired() or getattr(bot, "stopping", False):
             return []
         start, total, initial_rows = initial
         route_count = initial_rows[0].get("scan_route_count")
@@ -571,7 +577,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
 
     def load(page: int, *, restore: bool = False) -> bool:
         nonlocal unverified_navigation, verified_rows
-        if not restore and getattr(bot, "stopping", False):
+        if not restore and (getattr(bot, "stopping", False) or expired()):
             return False
         try:
             captured = snapshot(None if restore else total,
@@ -584,7 +590,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
                 return True
 
             for _ in range(max(total, current)):
-                if not restore and getattr(bot, "stopping", False):
+                if not restore and (getattr(bot, "stopping", False) or expired()):
                     return False
                 if current == page:
                     verified_rows = current_rows
@@ -617,7 +623,19 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     staged_ids: set[str] = set()
     restored: Optional[tuple[int, int, list[dict]]] = None
     try:
-        for page in registry.next_scan_pages(total, limit=pages_per_cycle, max_pages=25):
+        full_attempt = attempt_full and total <= 25
+        if full_attempt:
+            # Travel to one end first, then sweep the remaining pages in order.
+            if start <= (total + 1) / 2:
+                selected_pages = list(range(start, 0, -1)) + list(range(start + 1, total + 1))
+            else:
+                selected_pages = list(range(start, total + 1)) + list(range(start - 1, 0, -1))
+        else:
+            selected_pages = registry.next_scan_pages(total, limit=pages_per_cycle, max_pages=25)
+            if attempt_full:
+                log.info("Auditoria integral adiada: %d páginas excedem o limite de 25; "
+                         "mantendo cobertura parcial.", total)
+        for page in selected_pages:
             if not load(page):
                 break
             # Keep page evidence until the original view and total are verified.
@@ -634,7 +652,8 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
             # A stable route count alone cannot prove a coherent fleet snapshot:
             # aircraft may move between pages without changing the total.
             # Revisit every page before publishing a full-cycle audit.
-            for page, original_rows in staged:
+            recheck = reversed(staged) if full_attempt else staged
+            for page, original_rows in recheck:
                 if not load(page) or verified_rows != original_rows:
                     log.warning("Auditoria paginada: conteúdo da página %d mudou na "
                                 "releitura integral; lote descartado.", page)
@@ -675,6 +694,9 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
         return []
     if unverified_navigation:
         log.warning("Auditoria paginada: navegação AJAX não confirmada; lote descartado.")
+        return []
+    if expired() or getattr(bot, "stopping", False):
+        log.info("Auditoria paginada interrompida por prazo ou cancelamento; lote descartado.")
         return []
     if (len(staged) == total and
             {page for page, _ in staged} == set(range(1, total + 1))):
@@ -780,9 +802,11 @@ def manage_fleet(bot: "Bot") -> None:
     log_fleet.info("%d aeronaves estacionadas sem rota, %d pendentes de entrega.", parked, pending)
 
     audit_routes(bot, registry)
-    if cfg.get_bool("options", "audit_route_pages", False):
+    planning_enabled = cfg.get_bool("investment", "planning_enabled", False)
+    if planning_enabled or cfg.get_bool("options", "audit_route_pages", False):
         audit_routes_live_pages(bot, registry,
-                                pages_per_cycle=cfg.get_int("settings", "fleet_audit_pages_per_cycle", 3))
+                                pages_per_cycle=cfg.get_int("settings", "fleet_audit_pages_per_cycle", 3),
+                                attempt_full=planning_enabled)
     budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))
     if not cfg.get_bool("options", "allow_duplicate_routes", True):
         if reroute_ready:

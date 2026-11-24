@@ -201,6 +201,40 @@ def test_all_eleven_pages_can_be_audited_in_one_read_only_cycle(tmp_path):
     assert registry.snapshot()["last_verified_full_audit"]["expected_routes"] == 204
 
 
+@pytest.mark.parametrize("initial_page", [1, 6, 11])
+def test_planning_audits_all_pages_despite_incremental_budget(tmp_path, initial_page):
+    bot = LiveRoutesBot(initial_page=initial_page, page_counts={11: 4})
+    registry = RouteRegistry(tmp_path / "routes.json")
+    visited = audit_routes_live_pages(bot, registry, pages_per_cycle=3, attempt_full=True)
+    assert sorted(visited) == list(range(1, 12))
+    assert bot.page == initial_page
+    assert registry.snapshot()["scan_coverage"]["full_page_coverage_verified"] is True
+
+
+def test_planning_over_page_limit_stays_partial(tmp_path):
+    bot = LiveRoutesBot(total_pages=26, page_counts={26: 4})
+    registry = RouteRegistry(tmp_path / "routes.json")
+    assert len(audit_routes_live_pages(bot, registry, pages_per_cycle=3, attempt_full=True)) == 3
+    assert bot.page == 1
+    assert registry.snapshot()["scan_coverage"]["full_page_coverage_verified"] is False
+
+
+def test_planning_deadline_discards_capture_and_restores_view(tmp_path, monkeypatch):
+    clock = [0]
+    monkeypatch.setattr("fleet.time.monotonic", lambda: clock[0])
+
+    class SlowRoutesBot(LiveRoutesBot):
+        def ajax(self, url, target):
+            super().ajax(url, target)
+            clock[0] += 121
+
+    bot = SlowRoutesBot(page_counts={11: 4})
+    registry = RouteRegistry(tmp_path / "routes.json")
+    assert audit_routes_live_pages(bot, registry, attempt_full=True) == []
+    assert bot.page == 1
+    assert registry.snapshot()["last_verified_full_audit"] is None
+
+
 def test_same_total_page_movement_during_full_recheck_discards_audit(tmp_path):
     class MovingAircraftBot(LiveRoutesBot):
         shifted = False
