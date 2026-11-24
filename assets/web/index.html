@@ -1265,6 +1265,8 @@ const EN = {
   "Compromissos de caixa a confirmar": "Cash commitments require verification",
   "Saldo insuficiente para o hub": "Insufficient cash for the hub",
   "Caixa acima da reserva antes de compromissos": "Cash above reserve before commitments",
+  "Cotação de combustível (USD/1000)": "Fuel quote (USD/1000)",
+  "Cotação de CO₂ (USD/1000)": "CO₂ quote (USD/1000)",
   "Última pesquisa externa": "Last external research",
   "Pesquisa externa aguarda confirmação dos hubs próprios.": "External research awaits confirmation of owned hubs.",
   "tentativas inconclusivas": "inconclusive attempts",
@@ -1905,6 +1907,13 @@ activateWorkspaceFromHash();
 const hubDate = seconds => Number.isFinite(seconds) && seconds > 0
   ? new Date(seconds * 1000).toLocaleString(LANG === "en" ? "en-GB" : "pt-BR") : tr("Sem dados");
 const hubMoney = value => Number.isFinite(value) ? money(value) : tr("Sem dados");
+function operatingMarketText(market) {
+  const now = Date.now() / 1000;
+  const format = quote => quote && Number.isFinite(quote.price) && quote.price > 0 &&
+    quote.observed_at <= now && now < quote.expires_at ? hubMoney(quote.price) : tr("Desconhecido");
+  return tr("Cotação de combustível (USD/1000)") + ": " + format(market?.fuel) +
+    " · " + tr("Cotação de CO₂ (USD/1000)") + ": " + format(market?.co2);
+}
 const hubName = hub => (hub.code ? hub.code + " · " : "") + (hub.name || (hub.id ? "#" + hub.id : tr("Sem dados")));
 const hubSearchText = value => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
 const hubMeanProfit = hub => Number.isFinite(hub.estimated_profit_per_day) &&
@@ -2436,6 +2445,7 @@ function renderHubRecommendations(report) {
     " · " + tr("Rotas observadas") + ": " + (researchQueue.sampled_routes || 0) +
     (conflictedRoutes ? " · " + tr("Rotas com amostras conflitantes") + ": " + conflictedRoutes : "") +
     " · " + tr("Cobertura parcial") +
+    (researchQueue.operating_market ? " · " + operatingMarketText(researchQueue.operating_market) : "") +
     (paged ? " · " + tr("Possibilidades") + ": " + nf.format(researchQueue.total_candidates) +
       " (" + nf.format(researchQueue.offset + (researchItems.length ? 1 : 0)) +
       "–" + nf.format(researchQueue.offset + researchItems.length) + ")" : "");
@@ -3155,7 +3165,7 @@ function renderExternalHubResearch(page) {
     (page.items.length ? nf.format(page.offset + 1) + "–" + nf.format(page.offset + page.items.length) : "0") +
     " / " + nf.format(page.total_candidates) + " · " +
     tr("Caixa acima da reserva antes de compromissos") + ": " +
-    hubMoney(page.external_budget?.available_before_commitments);
+    hubMoney(page.external_budget?.available_before_commitments) + " · " + operatingMarketText(page.operating_market);
   for (const reason of page.blocking_reasons || []) {
     const item = document.createElement("li");
     item.textContent = hubResearchBlocker(reason);

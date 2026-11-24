@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A3/A7, cotações operacionais de combustível e CO₂ (G0)
+
+- Com planejamento e coleta de mercado ativos, o ciclo consulta os dois mercados mesmo quando as compras automáticas estão desativadas. Os modos de compra são independentes e as regras existentes continuam disponíveis quando habilitadas.
+- A cotação operacional utiliza o preço do seletor dedicado e duas leituras consistentes do temporizador da janela. Cada mercado possui horário próprio, expiração conservadora (máximo de 15 minutos) e invalidação em caso de nova leitura inconclusiva. Preço histórico, limite configurado e leitura genérica do painel não são utilizados como cotação observada.
+- As filas de pesquisa de hubs próprios e externos expõem cotações em USD por mil unidades, fonte e validade na API autenticada. A interface PT/EN diferencia cotações atuais de valores desconhecidos. O cursor de evidência considera a cotação, preservando a identidade das combinações para a ingestão de pesquisas pendentes.
+- As cotações estão disponíveis em memória por instância do bot. Ainda são necessárias a homologação dos seletores e temporizadores em sessão autenticada, a composição com consumo e demanda residual comprovados, a validação de taxas recorrentes e a integração completa ao cálculo de lucro, retorno e decisão de compra. Nenhuma compra real foi executada.
+- Validação Windows: 1.688 testes aprovados e 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Os testes cobrem validade independente, preços ambíguos, mudança de janela, modo de consulta sem compra, combinações de opções, paginação e apresentação PT/EN. Ruff, compilação Python, sintaxe JavaScript e `git diff --check` aprovados.
+
 ## 2026-11-23 — Autonomia Total A3/A6/A7, evidências financeiras de hubs externos (G0)
 
 - O catálogo externo agora fornece preço em dinheiro e custo em pontos com horários independentes, excluindo cada valor vencido ou conflitante. Valores explicitamente iguais a zero continuam válidos; atualização de preço não renova a validade do custo em pontos.

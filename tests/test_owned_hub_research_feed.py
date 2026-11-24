@@ -2,11 +2,13 @@
 
 import json
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 
 from economy import load_market, load_market_evidence
 from hub_expansion import HubExpansionRegistry
+from market import MarketQuote
 from owned_hub_research_feed import build_external_hub_research_queue, build_owned_hub_research_queue
 
 
@@ -37,6 +39,30 @@ def _sample(origin="2926", dest="3139", *, observed_at=NOW, distance=2000):
     return {"source": "game_route_search", "observed_at": observed_at,
             "origin_id": origin, "destination_id": dest, "distance_km": distance,
             "y": 100, "j": 20, "f": 5}
+
+
+def test_market_quote_changes_evidence_cursor_without_changing_research_layout():
+    inventory = _inventory()
+    samples = [_sample()]
+    stats = SimpleNamespace(fuel_quote=MarketQuote(600, NOW - 5, NOW + 10), co2_price=105)
+    page = build_owned_hub_research_queue(inventory, samples, _market(), now=NOW,
+                                         max_items=1, operating_market_stats=stats)
+    assert page["operating_market"]["fuel"]["price"] == 600
+    assert page["operating_market"]["co2"] is None
+    assert page["purchase_eligible"] is False
+    expired = build_owned_hub_research_queue(inventory, samples, _market(), now=NOW + 11,
+                                            max_items=1, operating_market_stats=stats, offset=1,
+                                            expected_fingerprint=page["snapshot_fingerprint"])
+    assert expired["operating_market"]["fuel"] is None
+    assert expired["cursor_reset"] is True
+    assert expired["layout_fingerprint"] == page["layout_fingerprint"]
+    external = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                "candidate_inventory": [{"id": "3139", "code": "SBL", "observed_at": NOW}],
+                "samples": [_sample("3139", "2926")]}
+    other = build_external_hub_research_queue({**inventory, "hub_catalog_fresh": True}, external,
+                                              _market(), now=NOW, operating_market_stats=stats)
+    assert other["operating_market"] == page["operating_market"]
+    assert other["purchase_eligible"] is False
 
 
 def test_external_queue_keeps_ownership_and_financial_evidence_separate(tmp_path):

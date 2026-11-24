@@ -230,12 +230,14 @@ class WebDashboard:
                  if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
         external = HubExpansionRegistry().external_demand_snapshot(owned)
         cash, observed_at = recent_verified_money(self.bot, load_state())
+        stats_reader = getattr(self.bot, "stats", None)
         return build_external_hub_research_queue(
             inventory, external, load_market_evidence(),
             engines=EngineCatalogRegistry().snapshot(), offset=research_offset,
             expected_fingerprint=research_fingerprint,
             cash=cash, cash_observed_at=observed_at,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
+            operating_market_stats=stats_reader() if callable(stats_reader) else None,
         )
 
     def hub_recommendations(self, *, research_offset: int = 0,
@@ -262,6 +264,7 @@ class WebDashboard:
         owned_ids = {hub["id"] for hub in inventory.get("hubs", [])
                      if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
         demand_snapshot = HubExpansionRegistry().demand_research_snapshot(owned_ids)
+        stats_reader = getattr(self.bot, "stats", None)
         report["research_queue"] = build_owned_hub_research_queue(
             inventory,
             demand_snapshot["samples"],
@@ -270,6 +273,7 @@ class WebDashboard:
             hub_progress=demand_snapshot["hub_progress"],
             offset=research_offset,
             expected_fingerprint=research_fingerprint,
+            operating_market_stats=stats_reader() if callable(stats_reader) else None,
         )
         investment_policy = InvestmentPolicy.from_config(self.cfg)
         report["investment_policy"] = investment_policy.report()

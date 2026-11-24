@@ -15,6 +15,7 @@ from collections import defaultdict
 from typing import Optional
 
 from route_detail_evidence import current_detail
+from market import recent_market_quotes
 
 MAX_EVIDENCE_AGE = 3 * 86400
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
@@ -179,10 +180,12 @@ def build_owned_hub_research_queue(
     now: Optional[float] = None, max_items: int = 40, engines: Optional[dict] = None,
     offset: int = 0, expected_fingerprint: Optional[str] = None,
     hub_progress: Optional[list[dict]] = None,
+    operating_market_stats: Optional[object] = None,
 ) -> dict:
     return _build_hub_research_queue(
         inventory, route_samples, market, now=now, max_items=max_items, engines=engines,
-        offset=offset, expected_fingerprint=expected_fingerprint, hub_progress=hub_progress)
+        offset=offset, expected_fingerprint=expected_fingerprint, hub_progress=hub_progress,
+        operating_market_stats=operating_market_stats)
 
 
 def build_external_hub_research_queue(
@@ -191,6 +194,7 @@ def build_external_hub_research_queue(
     offset: int = 0, expected_fingerprint: Optional[str] = None,
     cash: Optional[float] = None, cash_observed_at: Optional[float] = None,
     reserve: Optional[float] = None,
+    operating_market_stats: Optional[object] = None,
 ) -> dict:
     """Join external catalog evidence with route and engine research, never owned inputs."""
     now = _positive_number(time.time() if now is None else now) or 0.0
@@ -225,7 +229,8 @@ def build_external_hub_research_queue(
         inventory, external.get("samples", []), market, now=now, max_items=max_items,
         engines=engines, offset=offset, expected_fingerprint=expected_fingerprint,
         hub_progress=external.get("hub_progress"), external=True,
-        external_budget=_external_budget(cash, cash_observed_at, reserve, now))
+        external_budget=_external_budget(cash, cash_observed_at, reserve, now),
+        operating_market_stats=operating_market_stats)
 
 
 def _build_hub_research_queue(
@@ -234,6 +239,7 @@ def _build_hub_research_queue(
     offset: int = 0, expected_fingerprint: Optional[str] = None,
     hub_progress: Optional[list[dict]] = None, external: bool = False,
     external_budget: Optional[dict] = None,
+    operating_market_stats: Optional[object] = None,
 ) -> dict:
     """Produce bounded, balanced per-hub tasks from independent cached reads.
 
@@ -243,6 +249,7 @@ def _build_hub_research_queue(
     # The route observer saves a subsecond timestamp from its stable DOM read.
     # Truncating the clock or accepting integers only drops valid live samples.
     now = _positive_number(time.time() if now is None else now) or 0.0
+    operating_market = recent_market_quotes(operating_market_stats, now)
     max_items = max_items if type(max_items) is int and 1 <= max_items <= 200 else 40
     inventory = inventory if isinstance(inventory, dict) else {}
     market = market if isinstance(market, dict) else {}
@@ -380,6 +387,7 @@ def _build_hub_research_queue(
             "external_budget": external_budget} if external else {}),
         "market_source": market.get("source"),
         "market_observed_at": market.get("observed_at"),
+        **({"operating_market": operating_market} if any(operating_market.values()) else {}),
         "blockers": blockers, "models": models,
         "options": model_options, "routes": dict(samples_by_hub),
         "conflicts": dict(conflicts_by_hub),
@@ -540,6 +548,7 @@ def _build_hub_research_queue(
         "conflicted_routes": sum(conflicts_by_hub.values()),
         "hub_coverage": hub_coverage,
         "market_models": len(models), "market_observed_at": market.get("observed_at"),
+        "operating_market": operating_market,
         "items": queue, "has_more": has_more,
         "total_candidates": total_candidates, "offset": offset,
         "page_size": max_items,

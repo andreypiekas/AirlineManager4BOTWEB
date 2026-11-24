@@ -303,6 +303,8 @@ const translations = {
   'Ocupação da rota': 'Route occupancy',
   'Rotas com amostras conflitantes': 'Routes with conflicting samples',
   'Cobertura parcial': 'Partial coverage',
+  'Cotação de combustível (USD/1000)': 'Fuel quote (USD/1000)',
+  'Cotação de CO₂ (USD/1000)': 'CO₂ quote (USD/1000)',
   'Pesquisa ainda pendente': 'Research pending',
   'Indisponível': 'Unavailable',
   'Mais possibilidades aguardam pesquisa.': 'Additional possibilities await research.',
@@ -385,6 +387,10 @@ $('hubRecommendationSort').value = 'profit';
 renderHubRecommendations(report);
 assert.equal($('hubResearchQueueStatus').textContent,
   'Suggested research tasks: 1 · Hubs with samples: 1 · Observed routes: 2 · Partial coverage');
+const marketNow = Date.now() / 1000;
+assert.equal(operatingMarketText({fuel:{price:600, observed_at:marketNow-5, expires_at:marketNow+60},
+  co2:{price:100, observed_at:marketNow-60, expires_at:marketNow-1}}),
+  'Fuel quote (USD/1000): $600 · CO₂ quote (USD/1000): Unknown');
 assert.equal($('hubResearchPrev').disabled, true);
 assert.equal($('hubResearchNext').disabled, true);
 Object.assign(report.research_queue, {

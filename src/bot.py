@@ -42,7 +42,7 @@ from helpers import clean_response, first_int, fmt, fmt_duration, timer_seconds,
 from economy import (add_money_sample, fmt_days, fmt_money, goal_progress, income_per_day, revenue_per_day, state_file,
                      usage_per_day)
 from maintenance import run_maintenance
-from market import PriceHistory, buy_thresholds, chart_prices
+from market import MarketQuote, PriceHistory, buy_thresholds, chart_prices, observed_market_quote
 from marketing import run_marketing
 from notify import Telegram, esc
 from paths import write_atomic
@@ -112,6 +112,8 @@ class Stats:
     co2: Optional[int] = None
     co2_capacity: Optional[int] = None
     co2_price: Optional[int] = None
+    fuel_quote: Optional[MarketQuote] = None
+    co2_quote: Optional[MarketQuote] = None
     fuel_buy_at: Optional[int] = None
     co2_buy_at: Optional[int] = None
     fleet_size: Optional[int] = None
@@ -661,7 +663,9 @@ class Bot:
                 "mode": "desativado",
                 "simulation": self.dry_run,
             }), "registrar status de decolagem")
-        if opt("autobuy_fuel") or opt("autobuy_co2"):
+        if (opt("autobuy_fuel") or opt("autobuy_co2")
+                or (opt("collect_market_observations")
+                    and self.config.get_bool("investment", "planning_enabled"))):
             self._guard(self._check_market, "verificar o mercado de combustível / CO₂")
         if opt("auto_checklist"):
             self._guard(lambda: check_checklist(self), "verificar a lista de tarefas")
@@ -1099,18 +1103,31 @@ class Bot:
         self.close_popup()
 
     def _check_market(self) -> None:
+        planning = (self.config.get_bool("investment", "planning_enabled")
+                    and self.config.get_bool("options", "collect_market_observations"))
+        buy_fuel = self.config.get_bool("options", "autobuy_fuel")
+        buy_co2 = self.config.get_bool("options", "autobuy_co2")
+        with self._stats_lock:
+            if planning or buy_fuel:
+                self._stats.fuel_quote = None
+            if planning or buy_co2:
+                self._stats.co2_quote = None
         self.open_popup("fuel.php", "Fuel", "nav_fuel")
-        if self.config.get_bool("options", "autobuy_fuel"):
-            self._trade("fuel")
-        if self.config.get_bool("options", "autobuy_co2"):
-            self._click(self._sel("co2_tab"))
-            WebDriverWait(self.driver, 10).until(
-                EC.visibility_of_element_located((By.XPATH, self._sel("co2_main")))
-            )
-            self._trade("co2")
-        self.close_popup()
+        try:
+            if planning or buy_fuel:
+                self._trade("fuel", allow_purchase=buy_fuel)
+            if planning or buy_co2:
+                self._click(self._sel("co2_tab"))
+                WebDriverWait(self.driver, 10).until(
+                    EC.visibility_of_element_located((By.XPATH, self._sel("co2_main")))
+                )
+                self._trade("co2", allow_purchase=buy_co2)
+        finally:
+            self.close_popup()
 
-    def _trade(self, kind: str) -> None:
+    def _trade(self, kind: str, *, allow_purchase: bool = True) -> None:
+        with self._stats_lock:
+            setattr(self._stats, f"{kind}_quote", None)
         label = "CO₂" if kind == "co2" else "combustível"
         tlog = logging.getLogger(f"am4bot.{kind}")
         panel = self._find(self._sel(f"{kind}_main"), timeout=10)
@@ -1119,7 +1136,15 @@ class Bot:
             return
         panel_text = panel.text
 
-        price = to_int(self._text(self._sel(f"{kind}_price"), timeout=5))
+        started = time.time()
+        timer_before = self._text(self._sel(f"{kind}_timer"), timeout=2)
+        price_text = self._text(self._sel(f"{kind}_price"), timeout=5)
+        timer_after = self._text(self._sel(f"{kind}_timer"), timeout=2)
+        finished = time.time()
+        quote = observed_market_quote(price_text, timer_before, timer_after, started, finished)
+        with self._stats_lock:
+            setattr(self._stats, f"{kind}_quote", quote)
+        price = to_int(price_text)
         if price is None:
             price = first_int(_PRICE_RE, panel_text)
         holding = to_int(self._text(self._sel(f"{kind}_holding"), timeout=2))
@@ -1135,6 +1160,9 @@ class Bot:
         change_in = timer_seconds(self._text(self._sel(f"{kind}_timer"), timeout=2))
         self.update_stats(**{f"{kind}_price": price, kind: holding, f"{kind}_capacity": capacity})
         self.note_event(change_in, f"a mudança do preço de {label}")
+
+        if not allow_purchase:
+            return
 
         if price is None:
             tlog.warning("Não consegui consultar o preço de %s.", label)
