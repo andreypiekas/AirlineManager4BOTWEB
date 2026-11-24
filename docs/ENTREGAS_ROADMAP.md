@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A5, confirmação independente e validade do saldo (G0)
+
+- A leitura do saldo exige um valor monetário inteiro completo e não negativo. Gastos com valores inválidos são recusados. A atualização estimada do caixa após despesa e uma tentativa de sincronização sem leitura válida revogam a data de confirmação do saldo em memória.
+- A criação de rotas diretas e com escala verifica novamente a cotação e o saldo imediatamente antes do envio. A confirmação de criação consulta os detalhes da própria aeronave e exige a rota correspondente ativa, incluindo a escala prevista quando aplicável. A resposta visual de sucesso ou uma queda isolada do saldo não basta para contabilizar a rota direta.
+- Validação Windows: 1.924 testes aprovados, nenhum reprovado e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX); 70 testes direcionados aprovados. Ruff e `git diff --check` aprovados.
+- Permanecem pendentes a homologação autenticada do formulário estacionado e da identificação de escala nos detalhes, a conciliação persistente de criação incerta após timeout/reinício e a revisão do fallback de amostras históricas do caixa no painel de investimentos. Nenhuma mutação real no jogo foi realizada. O objetivo integral e G0 permanecem ativos.
+
 ## 2026-11-24 — Autonomia Total A3/A5, pré-checagem da criação de rotas (G0)
 
 - A criação de rota direta de aeronave estacionada reutiliza o contrato estrutural do formulário de redirecionamento para verificar vínculo com a aeronave, aeroportos de origem e destino, distância, alcance, ocupação e uma única taxa positiva. A distância deve concordar com a pesquisa em até 5 km. Com duplicidades desativadas, ocupação desconhecida ou diferente de zero impede a criação; a política é propagada ao formulário final.

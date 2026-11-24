@@ -85,3 +85,21 @@ def test_parked_direct_route_aborts_before_submit_when_form_or_cash_changes(monk
     assert fleet.create_route(bot, aircraft, candidate, origin_id=by_code("LAX").game_id,
                               allow_duplicates=False) == "stop"
     assert actions == ["autoprice"]
+
+
+@pytest.mark.parametrize("codes,paused,via,expected", [
+    (("LAX", "MIA"), False, "", True),
+    (("MIA", "LAX"), False, "", True),
+    (("LAX", "JFK"), False, "", False),
+    (("LAX", "MIA"), True, "", False),
+    (("LAX", "MIA"), False, "ANC", False),
+])
+def test_direct_confirmation_requires_independent_matching_active_route(monkeypatch, codes, paused, via, expected):
+    live = reroute.LiveRoute("101", paused, codes, True, via)
+    monkeypatch.setattr(reroute, "_check_route", lambda *_: live)
+    assert reroute.confirm_direct_route(object(), "5", endpoint(code="LAX"), endpoint(code="MIA")) is expected
+
+
+def test_direct_confirmation_requires_readback(monkeypatch):
+    monkeypatch.setattr(reroute, "_check_route", lambda *_: None)
+    assert not reroute.confirm_direct_route(object(), "5", endpoint(code="LAX"), endpoint(code="MIA"))

@@ -133,11 +133,24 @@ def _live_route(bot, aircraft_id: str) -> LiveRoute | None:
 
 def confirm_stopover(bot, aircraft_id, origin, destination, stopover) -> bool:
     relation = {"origin": origin, "destination": destination}
-    live = _check_route(
-        bot, aircraft_id,
-        lambda route: route.matches(relation) and endpoint_matches(stopover, endpoint(code=route.stopover)),
-    )
-    return bool(live and live.matches(relation) and endpoint_matches(stopover, endpoint(code=live.stopover)))
+
+    def matches(route):
+        return (not route.paused and route.matches(relation)
+                and endpoint_matches(stopover, endpoint(code=route.stopover)))
+
+    live = _check_route(bot, aircraft_id, matches)
+    return bool(live and matches(live))
+
+
+def confirm_direct_route(bot, aircraft_id, origin, destination) -> bool:
+    """Confirm the route through the aircraft's independent detail view."""
+    relation = {"origin": origin, "destination": destination}
+
+    def matches(route):
+        return not route.paused and not route.stopover and route.matches(relation)
+
+    live = _check_route(bot, aircraft_id, matches)
+    return bool(live and matches(live))
 
 
 def landed_departure(bot, row) -> str:

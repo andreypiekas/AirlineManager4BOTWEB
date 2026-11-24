@@ -38,7 +38,7 @@ from config import AppConfig
 from driver import create_driver
 from fleet import manage_fleet
 from gamemode import EASY, GameMode, from_difficulty
-from helpers import clean_response, first_int, fmt, fmt_duration, timer_seconds, to_int
+from helpers import clean_response, first_int, fmt, fmt_duration, game_whole_number, timer_seconds, to_int
 from economy import (add_money_sample, fmt_days, fmt_money, goal_progress, income_per_day, revenue_per_day, state_file,
                      usage_per_day)
 from maintenance import run_maintenance
@@ -285,6 +285,8 @@ class Bot:
 
     def update_stats(self, **values: Optional[int]) -> None:
         with self._stats_lock:
+            if "money" in values or "money_read_at" in values:
+                self._stats.money_read_at = values.get("money_read_at")
             for key, value in values.items():
                 if value is not None:
                     setattr(self._stats, key, value)
@@ -296,11 +298,11 @@ class Bot:
         The reserve is the cushion for what keeps the fleet flying: *essential* spending (repairs, A-checks,
         the route of an aircraft already bought) may use it, everything else stays above it.
         """
-        if cost is None:
+        if type(cost) is not int or cost < 0:
             log_money.warning("Não consegui ler o custo de %s; operação ignorada.", what)
             return False
         money = self.stats().money
-        if money is None:
+        if type(money) is not int or money < 0:
             log_money.warning("Saldo desconhecido; ignorando %s.", what)
             return False
         reserve = 0 if essential else self.config.get_int("settings", "cash_reserve", 0)
@@ -332,7 +334,7 @@ class Bot:
     def read_money(self) -> Optional[int]:
         """The balance the game header shows right now (None when it cannot be read)."""
         try:
-            return to_int(self._text(self._sel("money"), timeout=2))
+            return game_whole_number(self._text(self._sel("money"), timeout=2), currency=True)
         except WebDriverException:
             return None
 
@@ -734,6 +736,7 @@ class Bot:
         """
         if self._stop.is_set() or self.driver is None:
             return False
+        self.update_stats(money_read_at=None)
         self.driver.refresh()
         if self._stop.is_set():
             return False
@@ -976,7 +979,7 @@ class Bot:
         self.update_stats(mode=mode.label, mode_read_at=time.time() if str(difficulty) in ("1", "1.0", "1.5") else None)
 
     def _read_header(self) -> None:
-        money = to_int(self._text(self._sel("money"), timeout=5))
+        money = game_whole_number(self._text(self._sel("money"), timeout=5), currency=True)
         points = to_int(self._text(self._sel("points"), timeout=3))
         self.update_stats(money=money, points=points,
                           money_read_at=time.time() if money is not None else None)

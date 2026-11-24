@@ -41,7 +41,7 @@ from airport_catalog import by_code, game_code
 from hub_registry import HubRegistry
 from hub_expansion import HubExpansionRegistry
 from route_registry import HOME_HUB_EVIDENCE, RouteRegistry, reroute_block_reason, endpoint, route_key
-from reroute import (aircraft_details_missing, confirm_stopover, has_pending_reroute,
+from reroute import (aircraft_details_missing, confirm_direct_route, confirm_stopover, has_pending_reroute,
                      landed_departure, read_direct_form, recover_pending, replace_route)
 from reroute_preflight import check_existing_route
 from route_stopover import Stopover, find_stopover, parked_specs, read_form, research_details
@@ -1546,25 +1546,28 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
     if bot.stopping:
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
-    before = bot.read_money() if not stop else None
-    if not stop:
+    before = bot.read_money()
+    if stopover:
+        current = read_form(bot, aircraft.id, origin_id, candidate.arr_id, stopover)
+        unchanged = current == verified
+    else:
         current = read_direct_form(bot, aircraft.id, origin, destination, allow_duplicates=allow_duplicates)
-        reserve = bot.config.get_int("settings", "cash_reserve", 0) if reroute else 0
-        if current != direct or before is None or before - fee < reserve:
-            log.warning("%s: formulário ou saldo da rota direta mudou antes da criação.", aircraft.reg)
-            bot.js("$('#newRouteInfo').hide();")
-            return "stop"
+        unchanged = current == direct
+    reserve = bot.config.get_int("settings", "cash_reserve", 0) if reroute else 0
+    if not unchanged or before is None or before - fee < reserve:
+        log.warning("%s: formulário ou saldo da rota mudou antes da criação.", aircraft.reg)
+        bot.js("$('#newRouteInfo').hide();")
+        return "stop"
     RouteRegistry().invalidate_fleet_coverage()
     bot.click_element(panel.find_element(By.XPATH, ".//*[@id='btnCreateNewRoute']"))
     response = bot.wait_text("//*[@id='routeNewAction']", timeout=15)
     if stop:
         confirmed = confirm_stopover(bot, aircraft.id, origin, destination, stop)
-        if not confirmed:
-            log.warning("%s: o jogo ainda não confirmou a rota %s. Será conferida na próxima leitura da frota.",
-                        aircraft.reg, name)
     else:
-        confirmed = bot.confirm_purchase(before, fee, f"a rota {candidate.name}", "routeNewAction")
+        confirmed = confirm_direct_route(bot, aircraft.id, origin, destination)
     if not confirmed:
+        log.warning("%s: o jogo ainda não confirmou a rota %s. Será conferida na próxima leitura da frota.",
+                    aircraft.reg, name)
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
     bot.spent(fee, invest=True)

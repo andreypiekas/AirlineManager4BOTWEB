@@ -145,6 +145,9 @@ def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, mo
         def can_spend(self, *_args, **_kwargs):
             return True
 
+        def read_money(self):
+            return 2000000
+
         def click_element(self, element):
             actions.append(element)
 
