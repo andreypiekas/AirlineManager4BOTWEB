@@ -201,6 +201,7 @@ class HubRegistry:
         from owned_delivery_coverage import coverage_snapshot
         from fleet_commitment_observations import FILENAME, observations_snapshot, reconcile_route_coverage
         from finance_observations import FILENAME as FINANCE_FILENAME, finance_snapshot
+        from staff_observations import FILENAME as STAFF_FILENAME, staff_snapshot
 
         commitments = observations_snapshot(self.path.with_name(FILENAME), now=now)
         return {"hubs": result, "unconfirmed_aircraft": unknown,
@@ -209,6 +210,7 @@ class HubRegistry:
                 "fleet_route_reconciliation": reconcile_route_coverage(
                     commitments, fleet_coverage if fleet_verified else None, now=now),
                 "finance_observations": finance_snapshot(self.path.with_name(FINANCE_FILENAME), now=now),
+                "staff_observations": staff_snapshot(self.path.with_name(STAFF_FILENAME), now=now),
                 "observed_at": saved.get("observed_at"), "source": saved.get("source"),
                 "partial_fleet": not links_verified, "known_aircraft": len(relations),
                 "fleet_coverage": fleet_coverage if fleet_verified else None,

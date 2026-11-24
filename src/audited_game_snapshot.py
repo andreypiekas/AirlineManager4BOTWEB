@@ -155,6 +155,7 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                     },
                     "fleet_commitments": inventory.get("fleet_commitment_observations"),
                     "finance_history": inventory.get("finance_observations"),
+                    "staff_salary": inventory.get("staff_observations"),
                     "cash": {"available": cash if cash_verified else None,
                              "observed_at": cash_at if cash_verified else None,
                              "committed": None, "reserve": None},
@@ -243,7 +244,8 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
         hubs = snapshot["hubs"]
         inventory = {"source": "game_hub_select", "hubs": hubs,
                      "observed_at": min((hub["observed_at"] for hub in hubs), default=None),
-                     "fleet_commitment_observations": observed["fleet_commitments"]}
+                     "fleet_commitment_observations": observed["fleet_commitments"],
+                     "staff_observations": observed.get("staff_salary")}
         demand = observed["route_research"]
         result = build_owned_hub_research_queue(
             inventory, demand["samples"], observed["aircraft_market"], now=captured,

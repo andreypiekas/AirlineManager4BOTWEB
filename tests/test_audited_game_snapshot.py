@@ -215,6 +215,7 @@ def test_replay_rejects_legacy_or_modified_snapshot(tmp_path, monkeypatch):
 
 def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, monkeypatch):
     from test_owned_hub_research_feed import _fleet_report, _inventory, _market, _preview_engines, _sample
+    from test_staff_observations import STAFF
 
     monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
     evidence = observations()
@@ -231,7 +232,9 @@ def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, mo
                               "origin_id": "2926", "destination_id": "3139",
                               "origin_runway_ft": 6500, "destination_runway_ft": 6499,
                               "observed_aircraft_on_route": 0}
-    evidence.update(inventory={**_inventory(), "hub_catalog_fresh": True}, routes=_fleet_report(),
+    evidence.update(inventory={**_inventory(), "hub_catalog_fresh": True,
+                               "staff_observations": {"source": "game_staff_salary", "status": "observed",
+                                                      "observed_at": NOW - 10, "staff": STAFF}}, routes=_fleet_report(),
                     market=_market(), engines=engines,
                     mode="realista", mode_at=NOW - 10,
                     quotes={"fuel": {"source": "game_market", "unit": "USD/1000", "price": 600,
@@ -248,6 +251,9 @@ def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, mo
         "source": "hidden_native_template", "y": 180, "j": 0, "f": 0}
     assert row["engine_detail"]["operational_requirements"] == {
         "delivery_seconds": 600, "pilots": 2, "cabin_crew": 4, "engineers": 2, "technicians": 1}
+    assert row["staff_salary_reference"] == {"source": "game_staff_salary", "observed_at": NOW - 10,
+                                             "expires_at": NOW + 890, "daily_salary_if_all_additional": 2000,
+                                             "incremental_cost_verified": False}
     assert not row["purchase_eligible"]
     assert gate["verified_accounting_inputs"] == ["capacity", "co2_price_per_1000"]
     codes = {reason["code"] for reason in gate["blocking_reasons"]}
@@ -256,6 +262,7 @@ def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, mo
     assert row["economics_preview"] is None
     other = next(item for item in page["items"] if item["engine_id"] == "3")
     assert other["accounting_gate"]["verified_accounting_inputs"] == ["co2_price_per_1000"]
+    assert "staff_salary_reference" not in other
 
 
 

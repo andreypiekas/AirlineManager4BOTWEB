@@ -1218,6 +1218,31 @@ def test_native_seat_reference_compares_same_engine_and_scenarios(source, check)
     assert items["1"]["daily_net_profit"] is None
 
 
+def test_staff_salary_reference_is_variant_bound_and_changes_evidence_cursor():
+    from test_staff_observations import STAFF
+
+    inventory, engines = _inventory(), _preview_engines()
+    inventory["staff_observations"] = {
+        "source": "game_staff_salary", "status": "observed", "observed_at": NOW - 900, "staff": STAFF}
+    engines["models"]["11"]["variant_details"] = {
+        "1": {"observed_at": NOW, "metrics": {"capacity_pax": 180},
+              "operational_requirements": {"delivery_seconds": 600, "pilots": 2,
+                                           "cabin_crew": 4, "engineers": 2, "technicians": 1}}}
+    page = build_owned_hub_research_queue(inventory, [_sample()], _market(), engines=engines, now=NOW)
+    rows = {row["engine_id"]: row for row in page["items"]}
+    assert rows["1"]["staff_salary_reference"]["daily_salary_if_all_additional"] == 2000
+    assert rows["1"]["staff_salary_reference"]["incremental_cost_verified"] is False
+    assert "staff_salary_reference" not in rows["3"]
+    assert rows["1"]["daily_net_profit"] is None and not rows["1"]["purchase_eligible"]
+    expired = build_owned_hub_research_queue(
+        inventory, [_sample()], _market(), engines=engines, now=NOW + 1,
+        offset=1, expected_fingerprint=page["snapshot_fingerprint"])
+    assert expired["cursor_reset"]
+    assert expired["snapshot_fingerprint"] != page["snapshot_fingerprint"]
+    assert expired["layout_fingerprint"] == page["layout_fingerprint"]
+    assert all("staff_salary_reference" not in row for row in expired["items"])
+
+
 @pytest.mark.parametrize("check", [False, True])
 def test_capital_recovery_uses_observed_variant_and_hangar_subtotal(check):
     inventory, engines = _inventory(), _preview_engines()

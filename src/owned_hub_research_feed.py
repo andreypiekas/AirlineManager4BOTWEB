@@ -23,6 +23,7 @@ from research_economics_preview import (
 )
 from research_physical_feasibility import assess_direct_route
 from research_route_occupancy import FleetRouteOccupancy
+from staff_observations import salary_reference
 from stopover_research import select_current_stopover
 
 MAX_EVIDENCE_AGE = 3 * 86400
@@ -317,7 +318,8 @@ def build_external_hub_research_queue(
                  "observed_at": max((row["observed_at"] for row in hubs), default=None),
                  "hubs": hubs, "ownership_observed_at": ownership.get("observed_at")
                  if ownership_verified else None,
-                 "fleet_commitment_observations": ownership.get("fleet_commitment_observations")}
+                 "fleet_commitment_observations": ownership.get("fleet_commitment_observations"),
+                 "staff_observations": ownership.get("staff_observations")}
     return _build_hub_research_queue(
         inventory, external.get("samples", []), market, now=now, max_items=max_items,
         engines=engines, offset=offset, expected_fingerprint=expected_fingerprint,
@@ -494,6 +496,9 @@ def _build_hub_research_queue(
             else:
                 effective_model = model
             model_options.append((effective_model, variant, engine_evidence))
+    staff_references = [salary_reference(inventory.get("staff_observations"),
+                                         variant.get("engine_detail") if variant else None, now=now)
+                        for _, variant, _ in model_options]
     ordered_hubs = sorted(samples_by_hub, key=int)
     lengths = {hub_id: len(samples_by_hub[hub_id]) * len(model_options)
                for hub_id in ordered_hubs}
@@ -506,6 +511,7 @@ def _build_hub_research_queue(
         "market_source": market.get("source"),
         "market_observed_at": market.get("observed_at"),
         "hangar_quote": hangar_quote,
+        **({"staff_references": staff_references} if any(staff_references) else {}),
         **({"operating_market": operating_market} if any(operating_market.values()) else {}),
         **({"configured_prices": configured_prices} if configured_prices is not None else {}),
         **({"preview_mode": mode_key, "preview_margin": preview_margin,
@@ -655,6 +661,8 @@ def _build_hub_research_queue(
                     "engine_speed": variant["engine_speed"] if variant else None,
                     "engine_fuel": variant["engine_fuel"] if variant else None,
                     "engine_detail": variant["engine_detail"] if variant else None,
+                    **({"staff_salary_reference": staff_references[model_index]}
+                       if staff_references[model_index] is not None else {}),
                     "physical_feasibility": physical,
                     **({"stopover_research": stopover} if stopover else {}),
                     "final_aircraft_price": None,

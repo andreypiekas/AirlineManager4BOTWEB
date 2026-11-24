@@ -700,9 +700,12 @@ class Bot:
         if self.config.get_bool("investment", "planning_enabled"):
             from audited_game_snapshot import capture_game_snapshot
             from finance_observations import collect_finance_observations
+            from staff_observations import collect_staff_observations
 
             self._guard(lambda: collect_finance_observations(self),
                         "conferir resumo financeiro das últimas 24 horas")
+            self._guard(lambda: collect_staff_observations(self),
+                        "conferir quadro de pessoal e salários diários")
             self._guard(self._read_header, "atualizar saldo para o planejamento")
             self._guard(lambda: capture_game_snapshot(self), "consolidar snapshot de evidências A3")
         if (self.config.get_bool("investment", "planning_enabled")

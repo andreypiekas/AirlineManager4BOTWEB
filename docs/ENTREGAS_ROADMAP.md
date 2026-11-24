@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, referência salarial por variante (G0)
+
+- A observação nativa de pessoal captura quantidade, salário diário unitário e total por função, exigindo as quatro categorias únicas e a consistência aritmética. A leitura autenticada anterior identificou os quatro cartões e as respectivas linhas de salário diário, sem alterações no jogo. A coleta Selenium automatizada ainda requer homologação autenticada. Os registros permanecem isolados por perfil, em arquivo privado, com invalidação antes de nova tentativa e validade de 900 segundos.
+- A pesquisa atual de hubs próprios e externos e a reprodução histórica compartilham o cálculo do salário diário caso todos os profissionais exigidos pela variante sejam adicionais. A referência expira com a evidência mais antiga, integra o fingerprint da paginação e aparece no painel PT/EN. Não comprova déficit ou excedente de pessoal, custo incremental ou despesa realizada, não altera o lucro auditado e não torna uma proposta elegível. As fixtures utilizam valores sintéticos; nenhuma informação salarial da conta foi publicada no repositório.
+- Validação: 172 testes direcionados aprovados; suíte Windows completa com 2.014 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Nenhuma transação real executada. Permanecem pendentes a comprovação do custo incremental de pessoal, demanda residual, custos finais e homologação integral das fases A0–A9.
+
 ## 2026-11-24 — Autonomia Total A3/A5, requisitos operacionais por variante (G0)
 
 - A leitura autenticada do detalhe da aeronave passa a registrar o tempo de entrega exibido e os quantitativos de pilotos, tripulação de cabine, engenheiros e técnicos. A observação opcional exige as cinco linhas únicas, valores inteiros válidos e duração positiva. O catálogo mantém os dados por variante de motor, associados à identidade do modelo e ao instante da coleta. O painel PT/EN e a reprodução histórica apresentam somente os requisitos correlacionados à variante.

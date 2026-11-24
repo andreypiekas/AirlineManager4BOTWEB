@@ -1401,6 +1401,7 @@ const EN = {
   "Detalhe da variante observado": "Observed variant detail",
   "Tripulação exigida (pilotos / cabine / engenheiros / técnicos)": "Required staff (pilots / cabin crew / engineers / technicians)",
   "Tempo indicativo de entrega (sem confirmação)": "Displayed delivery time (unconfirmed)",
+  "Salário diário se todo o pessoal exigido for adicional (estimativa)": "Daily salary if all required staff are additional (estimate)",
   "Assentos Y/J/F do modelo oculto (sem confirmação)": "Hidden template Y/J/F seats (unconfirmed)",
   "Assentos Y/J/F do formulário visível (sem confirmação)": "Visible form Y/J/F seats (unconfirmed)",
   "Identidade do modelo confirmada": "Model identity confirmed",
@@ -2306,6 +2307,15 @@ function appendEngineDetail(metrics, task, now = Date.now() / 1000) {
     const seconds = duration % 60;
     addHubMetric(metrics, "Tempo indicativo de entrega (sem confirmação)",
       [hours, minutes, seconds].map(value => String(value).padStart(2, "0")).join(":"));
+    const salary = task.staff_salary_reference;
+    if (salary && salary.source === "game_staff_salary" && salary.incremental_cost_verified === false &&
+        Number.isFinite(salary.observed_at) && salary.observed_at <= now && now - salary.observed_at <= 900 &&
+        Number.isFinite(salary.expires_at) && now <= salary.expires_at &&
+        salary.expires_at <= Math.min(salary.observed_at + 900, evidence.observed_at + 3 * 86400) &&
+        Number.isSafeInteger(salary.daily_salary_if_all_additional) && salary.daily_salary_if_all_additional >= 0) {
+      addHubMetric(metrics, "Salário diário se todo o pessoal exigido for adicional (estimativa)",
+        hubMoney(salary.daily_salary_if_all_additional));
+    }
   }
   const seats = evidence.seat_observation;
   if (evidence.model_identity_verified && seats &&

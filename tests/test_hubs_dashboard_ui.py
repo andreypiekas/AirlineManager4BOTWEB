@@ -277,6 +277,7 @@ const translations = {
       'Assentos Y/J/F do modelo oculto (sem confirmação)': 'Hidden template Y/J/F seats (unconfirmed)',
       'Tripulação exigida (pilotos / cabine / engenheiros / técnicos)': 'Required staff (pilots / cabin crew / engineers / technicians)',
       'Tempo indicativo de entrega (sem confirmação)': 'Displayed delivery time (unconfirmed)',
+      'Salário diário se todo o pessoal exigido for adicional (estimativa)': 'Daily salary if all required staff are additional (estimate)',
       'Velocidade da variante': 'Variant cruise speed',
       'Emissão de CO₂ da variante': 'Variant CO₂ emission',
       'Coeficiente de CO₂ na simulação': 'CO₂ coefficient in simulation',
@@ -667,6 +668,16 @@ assert.equal(requirementMetrics.children[1].children[0].textContent, 'Required s
 assert.equal(requirementMetrics.children[1].children[1].textContent, '1 / 0 / 1 / 1');
 assert.equal(requirementMetrics.children[2].children[0].textContent, 'Displayed delivery time (unconfirmed)');
 assert.equal(requirementMetrics.children[2].children[1].textContent, '00:00:30');
+const salaryMetrics = document.createElement('div');
+const salary = {source:'game_staff_salary', observed_at:marketNow-20, expires_at:marketNow+880,
+  daily_salary_if_all_additional:2000, incremental_cost_verified:false};
+appendEngineDetail(salaryMetrics, {engine_detail:{...detailEvidence, model_identity_verified:true,
+  operational_requirements:requirements}, staff_salary_reference:salary});
+assert.equal(salaryMetrics.children[3].children[0].textContent, 'Daily salary if all required staff are additional (estimate)');
+const expiredSalaryMetrics = document.createElement('div');
+appendEngineDetail(expiredSalaryMetrics, {engine_detail:{...detailEvidence, model_identity_verified:true,
+  operational_requirements:requirements}, staff_salary_reference:{...salary, expires_at:marketNow-1}});
+assert.equal(expiredSalaryMetrics.children.length, requirementMetrics.children.length);
 const unverifiedRequirements = document.createElement('div');
 appendEngineDetail(unverifiedRequirements, {engine_detail:{...detailEvidence, operational_requirements:requirements}});
 assert.equal(unverifiedRequirements.children.length, 5);
