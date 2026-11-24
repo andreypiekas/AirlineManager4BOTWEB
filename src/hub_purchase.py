@@ -203,8 +203,10 @@ class SimulatedHubExecutor:
                     >= self.policy.max_acquisitions_per_day):
                 return {"state": "BLOCKED", "intent_key": key,
                         "reasons": ["limite_de_aquisicoes"], "simulated": True}
-            if intent["state"] == "PROPOSED":
-                self.journal.transition(key, "PROPOSED", "APPROVED")
+            cycle_reason = self.journal.approve_in_cycle(key, owner, self.policy.max_cycle_spend)
+            if cycle_reason:
+                return {"state": "BLOCKED", "intent_key": key,
+                        "reasons": [cycle_reason], "simulated": True}
             preflight = validate_hub_preflight(intent, gateway.read_checkout(),
                                                reserve=reserve)
             if not preflight["ready"]:

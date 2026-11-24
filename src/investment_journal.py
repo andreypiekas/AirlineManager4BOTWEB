@@ -18,6 +18,7 @@ import time
 from collections.abc import Mapping
 from contextlib import closing
 from pathlib import Path
+from uuid import uuid4
 
 import paths
 
@@ -191,6 +192,15 @@ class InvestmentJournal:
                     owner_pid INTEGER,
                     owner_host TEXT
                 );
+                CREATE TABLE IF NOT EXISTS investment_cycles (
+                    profile_id TEXT NOT NULL,
+                    cycle_id TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    finished_at REAL,
+                    PRIMARY KEY (profile_id, cycle_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS investment_active_cycle
+                    ON investment_cycles(profile_id) WHERE finished_at IS NULL;
             """)
             # Serialize schema migration across executors starting with the
             # same journal, including installations created before PID fields.
@@ -202,6 +212,9 @@ class InvestmentJournal:
                 conn.execute("ALTER TABLE executor_guards ADD COLUMN owner_pid INTEGER")
             if "owner_host" not in guard_columns:
                 conn.execute("ALTER TABLE executor_guards ADD COLUMN owner_host TEXT")
+            intent_columns = {row["name"] for row in conn.execute("PRAGMA table_info(intents)")}
+            if "cycle_id" not in intent_columns:
+                conn.execute("ALTER TABLE intents ADD COLUMN cycle_id TEXT")
             environment = "simulation" if self.simulation else "game"
             row = conn.execute("SELECT environment FROM journal_environment").fetchone()
             if row is None:
@@ -426,6 +439,87 @@ class InvestmentJournal:
                  guard["owner_host"]),
             ).rowcount == 1
 
+    def active_cycle(self) -> dict | None:
+        """The persistent cycle survives process restarts and snapshot changes."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT cycle_id, started_at FROM investment_cycles "
+                "WHERE profile_id=? AND finished_at IS NULL", (self.profile_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def _require_executor(self, conn, owner_token: str) -> None:
+        guard = conn.execute(
+            "SELECT owner_token FROM executor_guards WHERE profile_id=?",
+            (self.profile_id,),
+        ).fetchone()
+        if guard is None or guard["owner_token"] != owner_token:
+            raise ValueError("Executor sem exclusividade sobre o perfil.")
+
+    def approve_in_cycle(self, intent_key: str, owner_token: str, limit: int) -> str | None:
+        """Reserve estimated exposure and approve atomically in the active cycle."""
+        if type(limit) is not int or limit <= 0:
+            return "limite_ciclo_nao_configurado"
+        with self._connect() as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self._require_executor(conn, owner_token)
+            row = conn.execute(
+                "SELECT state, plan_json, cycle_id FROM intents WHERE profile_id=? AND intent_key=?",
+                (self.profile_id, intent_key),
+            ).fetchone()
+            if row is None or row["state"] not in ("PROPOSED", "APPROVED", "PRECHECKED"):
+                return "intencao_invalida_para_ciclo"
+            cycle = conn.execute(
+                "SELECT cycle_id FROM investment_cycles WHERE profile_id=? AND finished_at IS NULL",
+                (self.profile_id,),
+            ).fetchone()
+            stamp = time.time()
+            cycle_id = cycle["cycle_id"] if cycle else uuid4().hex
+            if cycle is None:
+                conn.execute(
+                    "INSERT INTO investment_cycles VALUES (?, ?, ?, NULL)",
+                    (self.profile_id, cycle_id, stamp),
+                )
+            if row["cycle_id"] not in (None, cycle_id):
+                return "intencao_de_outro_ciclo"
+            commitments = conn.execute(
+                "SELECT plan_json FROM intents WHERE profile_id=? AND intent_key<>? "
+                "AND (state IN ('APPROVED','PRECHECKED','SUBMITTED','UNKNOWN') "
+                "OR (state='CONFIRMED' AND cycle_id=?))",
+                (self.profile_id, intent_key, cycle_id),
+            )
+            exposure = sum(json.loads(item["plan_json"])["estimated_cost"] for item in commitments)
+            if exposure + json.loads(row["plan_json"])["estimated_cost"] > limit:
+                return "limite_ciclo_esgotado"
+            conn.execute(
+                "UPDATE intents SET cycle_id=? WHERE profile_id=? AND intent_key=?",
+                (cycle_id, self.profile_id, intent_key),
+            )
+            if row["state"] == "PROPOSED":
+                conn.execute(
+                    "UPDATE intents SET state='APPROVED', updated_at=? WHERE profile_id=? AND intent_key=?",
+                    (stamp, self.profile_id, intent_key),
+                )
+                self._event(conn, intent_key, "PROPOSED", "APPROVED", stamp)
+            return None
+
+    def finish_cycle(self, cycle_id: str, owner_token: str) -> bool:
+        """Close only the expected cycle, once every reservation is resolved."""
+        with self._connect() as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self._require_executor(conn, owner_token)
+            if conn.execute(
+                "SELECT 1 FROM intents WHERE profile_id=? "
+                "AND state IN ('APPROVED','PRECHECKED','SUBMITTED','UNKNOWN') LIMIT 1",
+                (self.profile_id,),
+            ).fetchone():
+                return False
+            return conn.execute(
+                "UPDATE investment_cycles SET finished_at=? "
+                "WHERE profile_id=? AND cycle_id=? AND finished_at IS NULL",
+                (time.time(), self.profile_id, cycle_id),
+            ).rowcount == 1
+
     def claim_submission(self, intent_key: str, owner_token: str) -> bool:
         """Claim one submission only under the profile lock and no unknown orders."""
         if (not isinstance(intent_key, str) or _INTENT_KEY.fullmatch(intent_key) is None
@@ -433,12 +527,7 @@ class InvestmentJournal:
             raise ValueError("Identidade de compra ou executor inválida.")
         with self._connect() as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
-            guard = conn.execute(
-                "SELECT owner_token FROM executor_guards WHERE profile_id=?",
-                (self.profile_id,),
-            ).fetchone()
-            if guard is None or guard["owner_token"] != owner_token:
-                raise ValueError("Executor sem exclusividade sobre o perfil.")
+            self._require_executor(conn, owner_token)
             row = conn.execute(
                 "SELECT state FROM intents WHERE profile_id=? AND intent_key=?",
                 (self.profile_id, intent_key),

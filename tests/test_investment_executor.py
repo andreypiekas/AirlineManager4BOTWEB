@@ -51,7 +51,7 @@ def checkout(*, profile="principal", **changes):
 def executor(tmp_path, *, profile="principal", mode="autonomous", **policy_changes):
     policy = {"enabled": True, "mode": mode, "auto_buy_aircraft": True,
               "max_single_investment": 50000, "max_daily_spend": 50000,
-              "max_acquisitions_per_day": 5}
+              "max_acquisitions_per_day": 5, "max_cycle_spend": 50000}
     policy.update(policy_changes)
     ledger = InvestmentJournal(tmp_path / "simulation.sqlite3", profile_id=profile,
                                simulation=True)
@@ -196,6 +196,7 @@ def test_restart_reconciles_after_os_proves_previous_executor_exited(tmp_path, m
     ({"max_single_investment": 9000}, False, "limite_por_compra"),
     ({"max_daily_spend": 0}, False, "limite_de_24h_nao_configurado"),
     ({"max_acquisitions_per_day": 0}, False, "maximo_de_aquisicoes_nao_configurado"),
+    ({"max_cycle_spend": 0}, False, "limite_ciclo_nao_configurado"),
 ])
 def test_disabled_modes_and_limits_do_not_write_simulated_orders(
         tmp_path, policy_changes, approved, expected):
@@ -218,6 +219,39 @@ def test_explicit_approval_and_spending_cap_across_routes(tmp_path):
     assert second["state"] == "BLOCKED"
     assert second["reasons"] == ["limite_de_24h"]
     assert worker.journal.budget_exposure_since(time.time() - 86400) == 10000
+
+
+def test_cycle_limit_persists_after_restart_until_explicit_close(tmp_path):
+    worker = executor(tmp_path, max_cycle_spend=15000)
+    assert worker.run(plan(), SimulatedAircraftGateway(checkout()))["state"] == "CONFIRMED"
+    cycle = worker.journal.active_cycle()
+    restarted = executor(tmp_path, max_cycle_spend=15000)
+    assert restarted.journal.active_cycle() == cycle
+    second_plan = plan(plan_id="plan-2", destination_id="789")
+    second_gateway = SimulatedAircraftGateway(checkout(destination_id="789"), purchase_id="987654322")
+    assert restarted.run(second_plan, second_gateway)["reasons"] == ["limite_ciclo_esgotado"]
+    assert second_gateway.submit_calls == 0
+    with pytest.raises(ValueError, match="exclusividade"):
+        restarted.journal.finish_cycle(cycle["cycle_id"], "unowned")
+    assert restarted.journal.acquire_executor("coordinator")
+    assert not restarted.journal.finish_cycle("wrong-cycle", "coordinator")
+    assert restarted.journal.finish_cycle(cycle["cycle_id"], "coordinator")
+    assert restarted.journal.release_executor("coordinator")
+    assert restarted.journal.active_cycle() is None
+    assert restarted.run(second_plan, second_gateway)["state"] == "CONFIRMED"
+    assert restarted.journal.active_cycle()["cycle_id"] != cycle["cycle_id"]
+    assert restarted.journal.budget_exposure_since(time.time() - 86400) == 20000
+
+
+def test_cycle_cannot_close_with_unresolved_reservation(tmp_path):
+    worker = executor(tmp_path, max_cycle_spend=15000)
+    gateway = SimulatedAircraftGateway(checkout(engine_selected_id="other"))
+    assert worker.run(plan(), gateway)["state"] == "APPROVED"
+    cycle = worker.journal.active_cycle()
+    assert worker.journal.acquire_executor("coordinator")
+    assert not worker.journal.finish_cycle(cycle["cycle_id"], "coordinator")
+    assert worker.journal.release_executor("coordinator")
+    assert worker.journal.active_cycle() == cycle
 
 
 def test_daily_count_blocks_second_simulated_acquisition_even_when_cash_allows(tmp_path):

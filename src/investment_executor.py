@@ -202,8 +202,10 @@ class SimulatedInvestmentExecutor:
                 return {"state": "BLOCKED", "intent_key": key,
                         "reasons": ["limite_de_aquisicoes_em_24h"], "simulated": True}
 
-            if intent["state"] == "PROPOSED":
-                self.journal.transition(key, "PROPOSED", "APPROVED")
+            cycle_reason = self.journal.approve_in_cycle(key, owner, self.policy.max_cycle_spend)
+            if cycle_reason:
+                return {"state": "BLOCKED", "intent_key": key,
+                        "reasons": [cycle_reason], "simulated": True}
             intent = self.journal.get(key)
             # Recheck a previously prechecked plan against a new checkout after
             # restart or retry. Its stored submission count is still zero.

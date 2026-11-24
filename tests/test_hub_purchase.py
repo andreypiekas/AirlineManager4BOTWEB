@@ -2,6 +2,7 @@
 
 import sys
 import time
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -43,7 +44,8 @@ def _checkout():
 def _policy(*, mode="approval", auto_buy_hub=False):
     return InvestmentPolicy(enabled=True, valid=True, mode=mode,
                             auto_buy_hub=auto_buy_hub, max_single_investment=100000,
-                            max_daily_spend=200000, max_acquisitions_per_day=2)
+                            max_daily_spend=200000, max_acquisitions_per_day=2,
+                            max_cycle_spend=200000)
 
 
 def _env(tmp_path, *, outcome="confirmed", mode="approval", auto_buy_hub=False):
@@ -138,6 +140,27 @@ def test_two_stage_coordinator_revalidates_new_snapshot_and_never_resubmits(tmp_
     )
     assert repeat["state"] == "CONFIRMED"
     assert hub_gateway.submit_calls == aircraft_gateway.submit_calls == 1
+
+
+def test_hub_and_aircraft_share_cycle_budget_across_snapshots_and_restart(tmp_path):
+    journal = InvestmentJournal(tmp_path / "journal.sqlite3", profile_id="main", simulation=True)
+    policy = replace(_policy(), max_cycle_spend=75000)
+    coordinator = SimulatedExpansionCoordinator(journal, policy)
+    hub_gateway = SimulatedHubGateway(_checkout(), ownership_store=tmp_path / "owned.sqlite3")
+    hub_result = coordinator.acquire_hub(_plan(), hub_gateway, approved=True)
+    assert hub_result["state"] == "CONFIRMED"
+    cycle = journal.active_cycle()
+    reopened = InvestmentJournal(tmp_path / "journal.sqlite3", profile_id="main", simulation=True)
+    restarted = SimulatedExpansionCoordinator(reopened, policy)
+    aircraft_gateway = SimulatedAircraftGateway(_aircraft_checkout())
+    aircraft_plan = {**_aircraft_plan(), "estimated_cost": 30000}
+    blocked = restarted.acquire_aircraft(
+        hub_result["intent_key"], aircraft_plan, _ownership(journal.get(hub_result["intent_key"])),
+        aircraft_gateway, approved=True,
+    )
+    assert blocked["reasons"] == ["limite_ciclo_esgotado"]
+    assert aircraft_gateway.submit_calls == 0
+    assert reopened.active_cycle() == cycle
 
 
 def test_two_stage_coordinator_blocks_unknown_hub_and_keeps_hub_after_aircraft_refusal(

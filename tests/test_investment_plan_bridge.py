@@ -152,7 +152,7 @@ def test_full_exposure_governs_simulated_acquisition_limits(tmp_path):
                                 simulation=True)
     policy = InvestmentPolicy(enabled=True, mode="autonomous", auto_buy_aircraft=True,
                               max_single_investment=10600, max_daily_spend=20000,
-                              max_acquisitions_per_day=2)
+                              max_acquisitions_per_day=2, max_cycle_spend=20000)
     gateway = SimulatedAircraftGateway(checkout)
     assert "limite_por_compra" in SimulatedInvestmentExecutor(journal, policy).run(
         plan, gateway)["reasons"]
@@ -160,7 +160,7 @@ def test_full_exposure_governs_simulated_acquisition_limits(tmp_path):
 
     policy = InvestmentPolicy(enabled=True, mode="autonomous", auto_buy_aircraft=True,
                               max_single_investment=20000, max_daily_spend=20000,
-                              max_acquisitions_per_day=2)
+                              max_acquisitions_per_day=2, max_cycle_spend=20000)
     executor = SimulatedInvestmentExecutor(journal, policy)
     gateway.checkout["cash"] = 17600
     blocked = executor.run(plan, gateway, reserve=5000)

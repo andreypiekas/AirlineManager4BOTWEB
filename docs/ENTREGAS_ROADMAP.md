@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A5/A7, diário persistente por ciclo (G0)
+
+- O diário SQLite mantém um único ciclo ativo por perfil, com identidade própria e abertura/encerramento persistentes. Sob exclusividade do executor, a aprovação e a vinculação da intenção ao ciclo ocorrem na mesma transação que verifica o teto configurado. O cálculo soma reservas ainda abertas e aquisições confirmadas no ciclo, compartilhando o orçamento entre aeronaves e hubs. O limite diário continua independente.
+- Reiniciar o processo ou atualizar o snapshot não reinicia o orçamento. O encerramento exige o identificador do ciclo esperado, a exclusividade do executor e ausência de reservas pendentes. Registros anteriores à migração continuam preservados: reservas antigas entram no cálculo e confirmações antigas sem vínculo permanecem sujeitas ao controle de 24 horas. O novo controle usa os custos estimados registrados, não o desembolso real comprovado pelo jogo.
+- Os dois executores simulados usam o controle antes do checkout. Testes cobrem limite ausente, reinício, encerramento explícito, reservas pendentes e expansão hub/aeronave com snapshots distintos. Suíte Windows: 2.045 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. A abertura e o encerramento ainda precisam ser integrados ao orquestrador produtivo e a exposição do ciclo ao planejamento auditado. A execução autenticada e a homologação A0–A9 continuam pendentes; nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A4, teto financeiro por ciclo (G0)
 
 - A política de investimento passa a oferecer `max_cycle_spend`, configurável no painel PT/EN e validado pela API. O padrão zero exige configuração explícita antes de uma proposta auditada. O teto vigente e o teto comprovado pelo registro A4 são comparados, adotando-se o menor e descontando-se o gasto de ciclo registrado.
