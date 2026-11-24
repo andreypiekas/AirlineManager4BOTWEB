@@ -17,6 +17,7 @@ from typing import Optional
 from route_detail_evidence import current_detail
 from market import recent_market_quotes
 from research_economics_preview import research_economics_preview, research_mode
+from research_route_occupancy import FleetRouteOccupancy
 
 MAX_EVIDENCE_AGE = 3 * 86400
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
@@ -183,11 +184,13 @@ def build_owned_hub_research_queue(
     hub_progress: Optional[list[dict]] = None,
     operating_market_stats: Optional[object] = None,
     preview_margin: float = 0.10,
+    route_report: Optional[dict] = None,
 ) -> dict:
     return _build_hub_research_queue(
         inventory, route_samples, market, now=now, max_items=max_items, engines=engines,
         offset=offset, expected_fingerprint=expected_fingerprint, hub_progress=hub_progress,
-        operating_market_stats=operating_market_stats, preview_margin=preview_margin)
+        operating_market_stats=operating_market_stats, preview_margin=preview_margin,
+        route_report=route_report)
 
 
 def build_external_hub_research_queue(
@@ -198,6 +201,7 @@ def build_external_hub_research_queue(
     reserve: Optional[float] = None,
     operating_market_stats: Optional[object] = None,
     preview_margin: float = 0.10,
+    route_report: Optional[dict] = None,
 ) -> dict:
     """Join external catalog evidence with route and engine research, never owned inputs."""
     now = _positive_number(time.time() if now is None else now) or 0.0
@@ -233,7 +237,8 @@ def build_external_hub_research_queue(
         engines=engines, offset=offset, expected_fingerprint=expected_fingerprint,
         hub_progress=external.get("hub_progress"), external=True,
         external_budget=_external_budget(cash, cash_observed_at, reserve, now),
-        operating_market_stats=operating_market_stats, preview_margin=preview_margin)
+        operating_market_stats=operating_market_stats, preview_margin=preview_margin,
+        route_report=route_report)
 
 
 def _build_hub_research_queue(
@@ -244,6 +249,7 @@ def _build_hub_research_queue(
     external_budget: Optional[dict] = None,
     operating_market_stats: Optional[object] = None,
     preview_margin: float = 0.10,
+    route_report: Optional[dict] = None,
 ) -> dict:
     """Produce bounded, balanced per-hub tasks from independent cached reads.
 
@@ -255,6 +261,7 @@ def _build_hub_research_queue(
     now = _positive_number(time.time() if now is None else now) or 0.0
     operating_market = recent_market_quotes(operating_market_stats, now)
     mode_key = research_mode(operating_market_stats, now)
+    fleet_occupancy = FleetRouteOccupancy(route_report, now)
     max_items = max_items if type(max_items) is int and 1 <= max_items <= 200 else 40
     inventory = inventory if isinstance(inventory, dict) else {}
     market = market if isinstance(market, dict) else {}
@@ -315,6 +322,9 @@ def _build_hub_research_queue(
                                 expected_runway=sample.get("destination_runway_ft"))
         if detail:
             sample["route_detail"] = detail
+        occupancy = fleet_occupancy.evidence(origin, destination, detail)
+        if occupancy is not None:
+            sample["fleet_occupancy"] = occupancy
         key = (origin, destination)
         prior = latest_routes.get(key)
         if prior is None or sample["observed_at"] > prior["sample"]["observed_at"]:
@@ -487,11 +497,19 @@ def _build_hub_research_queue(
                     pending.append("alcance_modelo_a_confirmar")
                 if model["capacity"] is None:
                     pending.append("capacidade_modelo_a_confirmar")
+                occupancy = sample.get("fleet_occupancy")
+                if occupancy:
+                    if occupancy["own_aircraft_count"] > 0:
+                        pending.append("rota_ocupada_frota_propria")
+                    if occupancy["game_count_disagrees"]:
+                        pending.append("contagem_rota_divergente")
                 economics = research_economics_preview(
                     sample, model, variant, engine_evidence, operating_market, mode_key, preview_margin)
                 if economics is not None:
                     economics["expires_at"] = min(economics["expires_at"],
                                                   operating_market_stats.mode_read_at + 900)
+                    if occupancy:
+                        economics["expires_at"] = min(economics["expires_at"], occupancy["expires_at"])
                 queue.append({
                     "hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
                     "destination_id": sample["destination_id"],
@@ -502,6 +520,7 @@ def _build_hub_research_queue(
                     "event_demand_boosted": sample.get("event_demand_boosted"),
                     "destination_runway_ft": sample.get("destination_runway_ft"),
                     "route_detail": sample.get("route_detail"),
+                    "fleet_occupancy": occupancy,
                     "model_id": model["id"], "model": model["name"],
                     "range_km": model["range_km"], "capacity": model["capacity"],
                     "catalog_price": model["catalog_price"],

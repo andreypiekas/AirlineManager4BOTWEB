@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A3/A7, ocupação de rotas pela frota própria (G0)
+
+- As pesquisas de hubs próprios e externos cruzam as combinações de aeroportos com o roster atual e as relações de rotas da frota do perfil. O par de aeroportos é independente do sentido da rota e admite códigos IATA/ICAO resolvidos de forma inequívoca. Identidades conflitantes, relações vencidas ou aeronaves duplicadas impedem a certificação de ausência de ocupação.
+- Uma observação parcial permite informar o mínimo positivo encontrado. A contagem exata, inclusive zero, exige roster recente e auditoria de todas as rotas atribuídas, com cobertura e contagens consistentes. A evidência expira em até 15 minutos do roster e antes, caso uma observação de rota vença.
+- O painel PT/EN mostra a contagem da frota própria separadamente da contagem observada no jogo. Ocupação positiva ou divergência entre contagens bloqueia a simulação econômica exploratória; a divergência exige confirmação da semântica do contador do jogo. A validade da simulação também fica limitada à validade da evidência de ocupação, quando disponível.
+- As alterações da evidência invalidam o cursor de pesquisa, preservando a identidade das combinações. A demanda residual, disponibilidade da rota e lucro líquido continuam sem confirmação e nenhuma aquisição é autorizada. Ainda são necessárias homologação autenticada do cruzamento e integração das demais evidências exigidas pelo planejamento de aquisições.
+- Validação Windows: 1.710 testes aprovados e 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Regressões cobrem rotas inversas, aliases IATA/ICAO, auditoria parcial e completa, evidência vencida e conflitante, duplicidades, bloqueio da simulação própria/externa, cursores e apresentação em inglês. Ruff, compilação Python, sintaxe JavaScript e `git diff --check` aprovados.
+
 ## 2026-11-23 — Autonomia Total A3/A7, simulação econômica por motor e rota (G0)
 
 - As filas próprias e externas calculam cenários exploratórios por variante com identidade de modelo confirmada, capacidade inteira, velocidade, consumo, alcance direto, modo de jogo recém-observado e cotações operacionais atuais. Dados de eventos ou contagem positiva de aeronaves na rota suprimem a simulação. A demanda observada é total e ainda exige verificação de demanda residual e ocupação.

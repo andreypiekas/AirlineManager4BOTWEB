@@ -301,6 +301,9 @@ const translations = {
   'Pista da origem no detalhe': 'Origin runway in route details',
   'Pista do destino no detalhe': 'Destination runway in route details',
   'Ocupação da rota': 'Route occupancy',
+  'Aeronaves da frota própria na rota': 'Own-fleet aircraft on route',
+  'Auditoria completa': 'Complete audit',
+  'Mínimo observado': 'Observed minimum',
   'Rotas com amostras conflitantes': 'Routes with conflicting samples',
   'Cobertura parcial': 'Partial coverage',
   'Cotação de combustível (USD/1000)': 'Fuel quote (USD/1000)',
@@ -388,6 +391,16 @@ renderHubRecommendations(report);
 assert.equal($('hubResearchQueueStatus').textContent,
   'Suggested research tasks: 1 · Hubs with samples: 1 · Observed routes: 2 · Partial coverage');
 const marketNow = Date.now() / 1000;
+const fleetMetrics = document.createElement('div');
+const fleetEvidence = {own_aircraft_count:1, count_complete:false, observed_at:marketNow-5, expires_at:marketNow+60};
+appendFleetRouteOccupancy(fleetMetrics, {fleet_occupancy:fleetEvidence});
+assert.equal(fleetMetrics.children[0].children[0].textContent, 'Own-fleet aircraft on route');
+assert.equal(fleetMetrics.children[0].children[1].textContent, '1 · Observed minimum');
+appendFleetRouteOccupancy(fleetMetrics, {fleet_occupancy:{...fleetEvidence, own_aircraft_count:0, count_complete:true}});
+assert.equal(fleetMetrics.children[1].children[1].textContent, '0 · Complete audit');
+appendFleetRouteOccupancy(fleetMetrics, {fleet_occupancy:{...fleetEvidence, expires_at:marketNow-1}});
+appendFleetRouteOccupancy(fleetMetrics, {fleet_occupancy:{...fleetEvidence, own_aircraft_count:0}});
+assert.equal(fleetMetrics.children.length, 2);
 assert.equal(operatingMarketText({fuel:{price:600, observed_at:marketNow-5, expires_at:marketNow+60},
   co2:{price:100, observed_at:marketNow-60, expires_at:marketNow-1}}),
   'Fuel quote (USD/1000): $600 · CO₂ quote (USD/1000): Unknown');

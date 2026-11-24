@@ -41,6 +41,92 @@ def _sample(origin="2926", dest="3139", *, observed_at=NOW, distance=2000):
             "y": 100, "j": 20, "f": 5}
 
 
+def _fleet_report():
+    return {"current_roster_verified": True, "current_roster_observed_at": NOW - 5,
+            "current_roster_total": 1, "current_fleet_coverage_verified": True,
+            "fleet_coverage": {"source": "game_roster_and_route_audit", "roster_observed_at": NOW - 5,
+                               "observed_at": NOW - 3, "total": 1, "routes": 1, "parked": 0, "pending": 0},
+            "current_relations": [{"aircraft_id": "1", "game_route_id": 123, "observed_route_id": 123,
+                                   "source": "game", "route_data_stale": False, "last_seen": NOW - 4,
+                                   "origin": {"code": "SLSA"}, "destination": {"id": "2926", "code": "XAP"}}]}
+
+
+def test_fleet_route_occupancy_reconciles_inverse_route_and_airport_aliases():
+    from research_route_occupancy import FleetRouteOccupancy
+
+    report = _fleet_report()
+    occupancy = FleetRouteOccupancy(report, NOW)
+    observed = occupancy.evidence("2926", "3139", {"observed_aircraft_on_route": 0})
+    assert observed == {"source": "game_roster_and_route_audit", "observed_at": NOW - 5,
+                        "expires_at": NOW + 895, "own_aircraft_count": 1,
+                        "count_complete": True, "game_count_disagrees": True}
+    assert occupancy.evidence("3139", "2926", {"observed_aircraft_on_route": 1})["game_count_disagrees"] is False
+    assert occupancy.evidence("2941", "3139", None)["own_aircraft_count"] == 0
+    report["current_fleet_coverage_verified"] = False
+    partial = FleetRouteOccupancy(report, NOW)
+    assert partial.evidence("2941", "3139", None) is None
+    assert partial.evidence("3139", "2926", {"observed_aircraft_on_route": 2})["game_count_disagrees"] is False
+    assert partial.evidence("3139", "2926", None)["count_complete"] is False
+
+
+@pytest.mark.parametrize("invalid", ["stale_roster", "stale_route", "wrong_route", "boolean_route",
+                                     "missing_airport", "conflicting_airport", "duplicate_aircraft", "missing_identity"])
+def test_invalid_fleet_evidence_cannot_create_exact_zero_or_known_match(invalid):
+    from research_route_occupancy import FleetRouteOccupancy
+
+    report = _fleet_report()
+    row = report["current_relations"][0]
+    if invalid == "stale_roster":
+        report["current_roster_observed_at"] = NOW - 901
+    elif invalid == "stale_route":
+        row["last_seen"] = NOW - 3601
+    elif invalid == "wrong_route":
+        row["observed_route_id"] = 124
+    elif invalid == "boolean_route":
+        row.update(game_route_id=1, observed_route_id=True)
+    elif invalid == "missing_airport":
+        row["origin"] = {"code": "?"}
+    elif invalid == "conflicting_airport":
+        row["origin"] = {"id": "3139", "code": "XAP"}
+    elif invalid == "duplicate_aircraft":
+        report["current_relations"].append(deepcopy(row))
+    else:
+        row["aircraft_id"] = ""
+    occupancy = FleetRouteOccupancy(report, NOW)
+    assert occupancy.evidence("2926", "3139", None) is None
+    assert occupancy.evidence("2941", "3139", None) is None
+
+
+def test_own_and_external_queues_share_fleet_occupancy_and_block_preview():
+    inventory = {**_inventory(), "hub_catalog_fresh": True}
+    report = _fleet_report()
+    sample = _sample()
+    sample["route_detail"] = {"source": "game_route_detail", "observed_at": NOW,
+                              "origin_id": "2926", "destination_id": "3139",
+                              "origin_runway_ft": 8000, "destination_runway_ft": 5000,
+                              "observed_aircraft_on_route": 0}
+    kwargs = {"now": NOW, "engines": _preview_engines(), "operating_market_stats": _preview_stats()}
+    original = build_owned_hub_research_queue(inventory, [sample], _market(), **kwargs)
+    owned = build_owned_hub_research_queue(inventory, [sample], _market(), route_report=report, **kwargs)
+    external = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                "candidate_inventory": [{"id": "3139", "code": "SBL", "observed_at": NOW}],
+                "samples": [_sample("3139", "2926")]}
+    other = build_external_hub_research_queue(inventory, external, _market(), route_report=report, **kwargs)
+    assert any(row["economics_preview"] for row in original["items"])
+    assert original["layout_fingerprint"] == owned["layout_fingerprint"]
+    assert original["snapshot_fingerprint"] != owned["snapshot_fingerprint"]
+    for page in (owned, other):
+        assert page["items"]
+        for item in page["items"]:
+            assert item["fleet_occupancy"]["own_aircraft_count"] == 1
+            assert "rota_ocupada_frota_propria" in item["pending"]
+            assert "demanda_residual_a_confirmar" in item["pending"]
+            assert item["economics_preview"] is None
+            assert item["daily_net_profit"] is None
+            assert item["purchase_eligible"] is False
+    assert all("contagem_rota_divergente" in item["pending"] for item in owned["items"])
+
+
 def test_market_quote_changes_evidence_cursor_without_changing_research_layout():
     inventory = _inventory()
     samples = [_sample()]

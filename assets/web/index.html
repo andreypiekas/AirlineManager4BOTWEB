@@ -1146,6 +1146,11 @@ const EN = {
   "Pista do destino no detalhe": "Destination runway in route details",
   "Ocupação da rota": "Route occupancy",
   "Aeronaves na rota (leitura do jogo)": "Aircraft on route (game reading)",
+  "Aeronaves da frota própria na rota": "Own-fleet aircraft on route",
+  "Auditoria completa": "Complete audit",
+  "Mínimo observado": "Observed minimum",
+  "Rota ocupada pela frota própria": "Route occupied by own fleet",
+  "Divergência entre contagem do jogo e frota própria": "Disagreement between game count and own fleet",
   "Demanda elevada por evento temporário": "Demand boosted by a temporary event",
   "Evento de demanda": "Demand event",
   "Rotas com amostras conflitantes": "Routes with conflicting samples",
@@ -1919,6 +1924,17 @@ function operatingMarketText(market) {
   return tr("Cotação de combustível (USD/1000)") + ": " + format(market?.fuel) +
     " · " + tr("Cotação de CO₂ (USD/1000)") + ": " + format(market?.co2);
 }
+function appendFleetRouteOccupancy(metrics, task) {
+  const evidence = task.fleet_occupancy;
+  const now = Date.now() / 1000;
+  if (!evidence || !Number.isSafeInteger(evidence.own_aircraft_count) || evidence.own_aircraft_count < 0 ||
+      !Number.isFinite(evidence.observed_at) || !Number.isFinite(evidence.expires_at) ||
+      evidence.observed_at > now || now >= evidence.expires_at ||
+      (evidence.count_complete !== true && evidence.own_aircraft_count === 0)) { return; }
+  const qualifier = evidence.count_complete === true ? "Auditoria completa" : "Mínimo observado";
+  addHubMetric(metrics, "Aeronaves da frota própria na rota",
+    nf.format(evidence.own_aircraft_count) + " · " + tr(qualifier));
+}
 function appendResearchEconomicsPreview(metrics, task) {
   const preview = task.economics_preview;
   if (!preview || preview.purchase_eligible !== false || preview.source !== "route_optimizer_what_if_v1" ||
@@ -2042,6 +2058,8 @@ const hubResearchBlockerLabels = {
   motor_a_pesquisar: "Motor ainda não pesquisado no jogo",
   preco_final_motor_a_confirmar: "Preço final do motor e da aeronave não verificado",
   demanda_residual_a_confirmar: "Demanda residual da rota não confirmada",
+  rota_ocupada_frota_propria: "Rota ocupada pela frota própria",
+  contagem_rota_divergente: "Divergência entre contagem do jogo e frota própria",
   demanda_evento_temporario: "Demanda elevada por evento temporário",
   disponibilidade_da_rota_a_confirmar: "Disponibilidade da rota não confirmada",
   pista_a_confirmar: "Compatibilidade da pista não confirmada",
@@ -2554,6 +2572,7 @@ function renderHubRecommendations(report) {
     if (Number.isSafeInteger(observedCount) && observedCount >= 0) {
       addHubMetric(metrics, "Aeronaves na rota (leitura do jogo)", nf.format(observedCount));
     }
+    appendFleetRouteOccupancy(metrics, task);
     if (task.event_demand_boosted === true) {
       addHubMetric(metrics, "Evento de demanda", tr("Demanda elevada por evento temporário"));
     }
@@ -3210,6 +3229,7 @@ function renderExternalHubResearch(page) {
     if (Number.isSafeInteger(detail.observed_aircraft_on_route)) {
       addHubMetric(metrics, "Aeronaves na rota (leitura do jogo)", nf.format(detail.observed_aircraft_on_route));
     }
+    appendFleetRouteOccupancy(metrics, task);
     if (task.event_demand_boosted === true) {
       addHubMetric(metrics, "Evento de demanda", tr("Demanda elevada por evento temporário"));
     }

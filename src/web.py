@@ -225,6 +225,7 @@ class WebDashboard:
     def external_hub_research(self, *, research_offset: int = 0,
                               research_fingerprint: str | None = None) -> dict:
         """Serve external combinations from independent, read-only cached evidence."""
+        routes = RouteRegistry().snapshot()
         inventory = HubRegistry().snapshot()
         owned = {hub["id"] for hub in inventory.get("hubs", [])
                  if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
@@ -239,6 +240,7 @@ class WebDashboard:
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
             operating_market_stats=stats_reader() if callable(stats_reader) else None,
             preview_margin=max(0, min(100, self.cfg.get_int("investment", "preview_margin_pct", 10))) / 100,
+            route_report=routes,
         )
 
     def hub_recommendations(self, *, research_offset: int = 0,
@@ -276,6 +278,7 @@ class WebDashboard:
             expected_fingerprint=research_fingerprint,
             operating_market_stats=stats_reader() if callable(stats_reader) else None,
             preview_margin=max(0, min(100, self.cfg.get_int("investment", "preview_margin_pct", 10))) / 100,
+            route_report=routes,
         )
         investment_policy = InvestmentPolicy.from_config(self.cfg)
         report["investment_policy"] = investment_policy.report()

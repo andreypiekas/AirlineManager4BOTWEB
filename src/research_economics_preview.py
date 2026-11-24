@@ -24,6 +24,8 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
             or not engine_evidence.get("model_detail_identity_verified")
             or not variant["engine_available"] or sample.get("event_demand_boosted") is True
             or ((sample.get("route_detail") or {}).get("observed_aircraft_on_route") or 0) > 0
+            or ((sample.get("fleet_occupancy") or {}).get("own_aircraft_count") or 0) > 0
+            or (sample.get("fleet_occupancy") or {}).get("game_count_disagrees") is True
             or not model["range_km"] or sample["distance_km"] > model["range_km"]
             or not model["capacity"] or not float(model["capacity"]).is_integer()
             or model["capacity"] > 10000 or not variant["engine_speed"] or not variant["engine_fuel"]
