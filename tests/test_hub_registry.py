@@ -337,6 +337,35 @@ def test_hubs_report_preserves_historical_full_audit_without_claiming_current_co
     assert hubs.snapshot({"relations": []})["last_verified_full_audit"] is None
 
 
+def test_hub_coverage_requires_current_fleet_and_every_permanent_assignment(tmp_path):
+    hubs = HubRegistry(tmp_path / "hubs.json")
+    assert hubs.record_options([{"id": "123", "text": "Base A"}])
+    now = int(time.time())
+    row = {"aircraft_id": "101", "home_hub_id": "123", "home_hub_source": "game",
+           "home_hub_verified_at": now, **_game_evidence("101")}
+    routes = {"current_roster_available": True, "current_fleet_coverage_verified": True,
+              "fleet_coverage": {"total": 1, "source": "game_roster_and_route_audit"},
+              "current_relations": [row],
+              "relations": [{"aircraft_id": "999"}]}
+    report = hubs.snapshot(routes, now=now)
+    assert report["current_fleet_coverage_verified"] is True
+    assert report["home_hub_coverage_verified"] is True
+    assert report["partial_fleet"] is False
+    assert report["known_aircraft"] == 1
+    assert report["hubs"][0]["aircraft_count"] == 1
+    unproven = hubs.snapshot({**routes, "current_relations": [{"aircraft_id": "101"}]}, now=now)
+    assert unproven["current_fleet_coverage_verified"] is True
+    assert unproven["partial_fleet"] is True
+    assert unproven["home_hub_coverage_verified"] is False
+    expired = hubs.snapshot(routes, now=now + 3 * 86400 + 1)
+    assert expired["partial_fleet"] is True
+    assert expired["hub_catalog_fresh"] is False
+    duplicated = hubs.snapshot({**routes, "current_relations": [row, row],
+                                "fleet_coverage": {**routes["fleet_coverage"], "total": 2}}, now=now)
+    assert duplicated["current_fleet_coverage_verified"] is False
+    assert duplicated["partial_fleet"] is True
+
+
 def test_hubs_web_workspace_is_read_only():
     from conftest import ROOT
 

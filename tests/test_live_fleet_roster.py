@@ -28,6 +28,123 @@ def observe_route(registry):
                                 }])
 
 
+def _audit_roster_routes(registry, run_id="a" * 32):
+    rows = [{**row, "model": "A320", "observed_route_id": row["route_id"],
+             "origin": endpoint(code="XAP"), "destination": endpoint(code="GRU")}
+            for row in game_rows() if row["route_id"]]
+    registry.record_scan(2, 2, 0, aircraft_ids=["101", "102"], page=1,
+                         total_pages=1, expected_routes=2, audit_run_id=run_id,
+                         route_observations=rows)
+
+
+def test_correlated_fleet_requires_fresh_matching_roster_and_routes(tmp_path, monkeypatch):
+    clock = [1900000000]
+    monkeypatch.setattr(route_registry.time, "time", lambda: clock[0])
+    registry = RouteRegistry(tmp_path / "routes.json")
+    counts = {"routes": 2, "parked": 1, "pending": 0}
+    assert registry.record_game_roster(game_rows(), 3)
+    _audit_roster_routes(registry)
+    assert registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
+                                           after_counts=counts, audited_pages=[1])
+    assert registry.snapshot()["current_fleet_coverage_verified"]
+    registry.note("101", "troca_automatica_desativada")
+    assert registry.snapshot()["current_fleet_coverage_verified"]
+    clock[0] += 901
+    assert not registry.snapshot()["current_fleet_coverage_verified"]
+
+
+def test_correlated_fleet_cannot_reuse_audit_from_same_second(tmp_path, monkeypatch):
+    monkeypatch.setattr(route_registry.time, "time", lambda: 1900000000)
+    registry = RouteRegistry(tmp_path / "routes.json")
+    counts = {"routes": 2, "parked": 1, "pending": 0}
+    assert registry.record_game_roster(game_rows(), 3)
+    _audit_roster_routes(registry)
+    assert registry.record_game_roster(game_rows(), 3)
+    assert not registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
+                                               after_counts=counts, audited_pages=[1])
+    _audit_roster_routes(registry, "b" * 32)
+    assert registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
+                                           after_counts=counts, audited_pages=[1])
+    changed = game_rows()
+    changed[0]["route_id"] = 999
+    assert not registry.confirm_fleet_coverage(changed, before_counts=counts,
+                                               after_counts=counts, audited_pages=[1])
+    assert not registry.snapshot()["current_fleet_coverage_verified"]
+    assert not registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
+                                               after_counts={**counts, "parked": 0, "pending": 1},
+                                               audited_pages=[1])
+
+
+def test_certified_coverage_survives_compatible_reads_but_not_mutation(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes.json")
+    counts = {"routes": 2, "parked": 1, "pending": 0}
+    registry.record("999", "PP-999", "A320", endpoint(code="DAC"), endpoint(code="OSL"))
+    assert registry.record_game_roster(game_rows(), 3)
+    _audit_roster_routes(registry)
+    assert registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
+                                           after_counts=counts, audited_pages=[1])
+    proof = registry.snapshot()["fleet_coverage"]
+    assert registry.unassign("103", "PP-103", "A320")
+    historical = next(row for row in registry.snapshot()["relations"] if row["aircraft_id"] == "999")
+    assert registry.retire_missing_assignment("999", expected_route=historical["route_key"])
+    _audit_roster_routes(registry, None)
+    assert registry.snapshot()["fleet_coverage"] == proof
+    registry.record("101", "PP-101", "A320", endpoint(code="XAP"), endpoint(code="GRU"),
+                    observed_route_id=801)
+    assert registry.snapshot()["fleet_coverage"] == proof
+    registry.invalidate_fleet_coverage()
+    assert not registry.snapshot()["current_fleet_coverage_verified"]
+    assert not registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
+                                               after_counts=counts, audited_pages=[1])
+
+
+def test_certified_coverage_revoked_when_a_parked_read_contradicts_roster(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes.json")
+    counts = {"routes": 2, "parked": 1, "pending": 0}
+    assert registry.record_game_roster(game_rows(), 3)
+    _audit_roster_routes(registry)
+    assert registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
+                                           after_counts=counts, audited_pages=[1])
+    registry.unassign("101", "PP-101", "A320")
+    assert not registry.snapshot()["current_fleet_coverage_verified"]
+
+
+def test_certified_coverage_revoked_when_detail_route_id_changes(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes.json")
+    counts = {"routes": 2, "parked": 1, "pending": 0}
+    assert registry.record_game_roster(game_rows(), 3)
+    _audit_roster_routes(registry)
+    assert registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
+                                           after_counts=counts, audited_pages=[1])
+    registry.record("101", "PP-101", "A320", endpoint(code="XAP"), endpoint(code="GRU"),
+                    observed_route_id=901)
+    assert not registry.snapshot()["current_fleet_coverage_verified"]
+    assert next(row for row in registry.snapshot()["current_relations"]
+                if row["aircraft_id"] == "101")["route_data_stale"] is True
+
+
+def test_zero_routes_cannot_be_certified_after_contradictory_scan(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes.json")
+    counts = {"routes": 0, "parked": 1, "pending": 0}
+    rows = [game_rows()[-1]]
+    assert registry.record_game_roster(rows, 1)
+    observe_route(registry)
+    assert not registry.confirm_fleet_coverage(rows, before_counts=counts,
+                                               after_counts=counts, audited_pages=[])
+
+
+@pytest.mark.parametrize("rows", [[], [game_rows()[-1]]])
+def test_correlated_fleet_without_routes(tmp_path, rows):
+    registry = RouteRegistry(tmp_path / "routes.json")
+    counts = {"routes": 0, "parked": len(rows), "pending": 0}
+    assert registry.record_game_roster(rows, len(rows))
+    assert registry.confirm_fleet_coverage(rows, before_counts=counts,
+                                           after_counts=counts, audited_pages=[])
+    assert registry.snapshot()["fleet_coverage"]["total"] == len(rows)
+    registry.invalidate_fleet_coverage()
+    assert not registry.snapshot()["current_fleet_coverage_verified"]
+
+
 def test_current_screen_uses_only_exact_roster_and_keeps_history(tmp_path):
     registry = RouteRegistry(tmp_path / "routes.json")
     registry.record("999", "PP-999", "A320", endpoint(code="DAC"), endpoint(code="OSL"))
@@ -158,7 +275,10 @@ def test_statusdata_roster_js_reads_route_ids_and_registration():
 globalThis.window = {statusData: {
   '101': {reg: 'PP-101', routeId: 801},
   '102': {reg: 'PP-102', routeId: 0},
-  '103': {reg: 'PP-103', routeId: null}
+  '103': {reg: 'PP-103', routeId: null},
+  '104': {reg: 'PP-104'},
+  '105': {reg: 'PP-105', routeId: ''},
+  '106': {reg: 'PP-106', routeId: false}
 }};
 console.log(JSON.stringify(new Function(process.argv[1])()));
 """
@@ -168,7 +288,10 @@ console.log(JSON.stringify(new Function(process.argv[1])()));
     assert rows == [
         {"aircraft_id": "101", "registration": "PP-101", "route_id": 801},
         {"aircraft_id": "102", "registration": "PP-102", "route_id": 0},
-        {"aircraft_id": "103", "registration": "PP-103", "route_id": 0},
+        {"aircraft_id": "103", "registration": "PP-103", "route_id": None},
+        {"aircraft_id": "104", "registration": "PP-104", "route_id": None},
+        {"aircraft_id": "105", "registration": "PP-105", "route_id": None},
+        {"aircraft_id": "106", "registration": "PP-106", "route_id": None},
     ]
 
 

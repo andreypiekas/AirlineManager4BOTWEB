@@ -962,6 +962,9 @@ const EN = {
   "estimativas válidas": "valid estimates",
   "Inventário parcial: apenas vínculos individuais confirmados entram na contagem.":
     "Partial inventory: only individually verified assignments are counted.",
+  "Cobertura integral de aeronaves e rotas confirmada.": "Complete aircraft and route coverage verified.",
+  "aeronaves no inventário atual": "aircraft in current inventory",
+  "Catálogo de bases desatualizado ou não confirmado.": "Hub catalog outdated or unverified.",
   "Bases exibidas": "Hubs shown", "Nenhuma base corresponde à busca.": "No hubs match the search.",
   "Nenhuma aeronave corresponde à busca.": "No aircraft match the search.",
   "Candidatos exibidos": "Candidates shown", "Nenhum candidato corresponde aos filtros.": "No candidates match the filters.",
@@ -2046,7 +2049,10 @@ function renderHubs(report) {
     : tr("Aguardando leitura de bases no jogo.");
   const coverage = report.partial_fleet === true
     ? [tr("Inventário parcial: apenas vínculos individuais confirmados entram na contagem.")] : [];
-  const liveFleet = report.fleet_counts;
+  const correlated = report.current_fleet_coverage_verified === true ? report.fleet_coverage : null;
+  if (correlated) coverage.push(tr("Cobertura integral de aeronaves e rotas confirmada."));
+  if (report.hub_catalog_fresh === false) coverage.push(tr("Catálogo de bases desatualizado ou não confirmado."));
+  const liveFleet = correlated ? {...correlated, count_verified: true, size: correlated.total} : report.fleet_counts;
   if (liveFleet && liveFleet.count_verified && Number.isFinite(liveFleet.size)) {
     coverage.push(tr("Frota total no jogo") + ": " + nf.format(liveFleet.size) +
       " (" + tr("{x} com rota", liveFleet.routes) + ", " +
@@ -2055,7 +2061,8 @@ function renderHubs(report) {
       (liveFleet.count_stale ? " " + tr("última contagem desatualizada") + "." : ""));
   }
   if (Number.isFinite(report.known_aircraft)) {
-    coverage.push(nf.format(report.known_aircraft) + " " + tr("registros históricos de rotas") + ".");
+    coverage.push(nf.format(report.known_aircraft) + " " + tr(report.current_roster_available === true
+      ? "aeronaves no inventário atual" : "registros históricos de rotas") + ".");
   }
   const scan = report.last_fleet_scan;
   if (scan && Number.isFinite(scan.visible) && Number.isFinite(scan.identified)) {

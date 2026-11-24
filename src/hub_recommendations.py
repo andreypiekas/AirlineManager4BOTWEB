@@ -164,6 +164,8 @@ def rank_next_aircraft(
                  if cash_value is not None and reserve_value is not None else None)
 
     relations = route_report.get("relations") if isinstance(route_report, dict) else None
+    if isinstance(route_report, dict) and route_report.get("current_fleet_coverage_verified") is True:
+        relations = route_report.get("current_relations")
     relations_known = (isinstance(relations, list)
                        and all(isinstance(item, dict) for item in relations))
     known_routes = relations if relations_known else []

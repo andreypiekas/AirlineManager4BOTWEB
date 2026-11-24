@@ -80,7 +80,9 @@ if (!status || typeof status !== 'object' || Array.isArray(status)) return null;
 return Object.entries(status).map(([id, row]) => ({
   aircraft_id: id,
   registration: typeof row?.reg === 'string' ? row.reg : '',
-  route_id: Number.isSafeInteger(Number(row?.routeId)) && Number(row.routeId) >= 0
+  route_id: row?.routeId !== null && row?.routeId !== undefined &&
+    /^[0-9]{1,14}$/.test(String(row.routeId)) &&
+    Number.isSafeInteger(Number(row.routeId)) && Number(row.routeId) >= 0
     ? Number(row.routeId) : null
 }));
 """
@@ -385,7 +387,7 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
         if not identity or identity in seen_aircraft:
             continue
         seen_aircraft.add(identity)
-        registration = row.get("registration") or identity
+        registration = row.get("registration")
         model = row.get("model") or ""
         base = row.get("at_base")
         if identity in grounded:
@@ -777,10 +779,14 @@ return {routes: Number(routeLabel[1]), parked, pending};
 def manage_fleet(bot: "Bot") -> None:
     cfg = bot.config
     registry = RouteRegistry()
+    planning_enabled = cfg.get_bool("investment", "planning_enabled", False)
+    if planning_enabled:
+        registry.invalidate_fleet_coverage()
     reroute_ready = recover_pending(bot, registry)
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
     measure_load(bot)
     counters = bot.js(_GAME_FLEET_COUNTS_JS)
+    roster_verified = False
     if (isinstance(counters, dict) and all(
             type(counters.get(key)) is int and 0 <= counters[key] <= 50000
             for key in ("routes", "parked", "pending"))):
@@ -790,7 +796,8 @@ def manage_fleet(bot: "Bot") -> None:
         log_fleet.info("Contagem do jogo: %d com rota + %d estacionadas + %d pendentes = %d aeronaves.",
                        counters["routes"], parked, pending, counters["routes"] + parked + pending)
         roster = bot.js(_GAME_ROSTER_JS)
-        if not registry.record_game_roster(roster, counters["routes"] + parked + pending):
+        roster_verified = registry.record_game_roster(roster, counters["routes"] + parked + pending)
+        if not roster_verified:
             log_fleet.warning("Lista completa de IDs do jogo não comprovada; mantendo última coleta válida.")
     else:
         parked = to_int(bot.js("return $('#hParked').text();")) or 0
@@ -802,11 +809,18 @@ def manage_fleet(bot: "Bot") -> None:
     log_fleet.info("%d aeronaves estacionadas sem rota, %d pendentes de entrega.", parked, pending)
 
     audit_routes(bot, registry)
-    planning_enabled = cfg.get_bool("investment", "planning_enabled", False)
     if planning_enabled or cfg.get_bool("options", "audit_route_pages", False):
-        audit_routes_live_pages(bot, registry,
-                                pages_per_cycle=cfg.get_int("settings", "fleet_audit_pages_per_cycle", 3),
-                                attempt_full=planning_enabled)
+        visited = audit_routes_live_pages(
+            bot, registry, pages_per_cycle=cfg.get_int("settings", "fleet_audit_pages_per_cycle", 3),
+            attempt_full=planning_enabled)
+        if (planning_enabled and roster_verified and reroute_ready
+                and not getattr(bot, "stopping", False)):
+            after_counts = bot.js(_GAME_FLEET_COUNTS_JS)
+            after_roster = bot.js(_GAME_ROSTER_JS)
+            confirmed = registry.confirm_fleet_coverage(
+                after_roster, before_counts=counters, after_counts=after_counts, audited_pages=visited)
+            log_fleet.info("Inventário e auditoria de rotas: cobertura %s.",
+                           "integral correlacionada" if confirmed else "parcial")
     budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))
     if not cfg.get_bool("options", "allow_duplicate_routes", True):
         if reroute_ready:
@@ -1516,6 +1530,7 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
     destination_code = game_code(candidate.arr_id, "" if stop else candidate.code)
     destination = endpoint(candidate.arr_id, code=destination_code, name=candidate.name)
     before = bot.read_money() if not stop else None
+    RouteRegistry().invalidate_fleet_coverage()
     bot.click_element(panel.find_element(By.XPATH, ".//*[@id='btnCreateNewRoute']"))
     response = bot.wait_text("//*[@id='routeNewAction']", timeout=15)
     if stop:
@@ -1859,6 +1874,7 @@ def order_aircraft(
             return False
 
     before = bot.read_money()
+    RouteRegistry().invalidate_fleet_coverage()
     bot.click_element(detail.find_element(By.XPATH, ".//*[@id='btnPurchaseIntro']"))
     response = bot.wait_text("//*[@id='orderAction']", timeout=15)
     if not bot.confirm_purchase(before, confirmed_cost, f"o pedido de {choice.name}", "orderAction"):

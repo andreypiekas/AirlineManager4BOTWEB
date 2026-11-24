@@ -287,6 +287,16 @@ def test_occupied_route_is_rejected_even_on_partial_page():
     assert result["recommendations"] == []
 
 
+def test_verified_current_fleet_supersedes_historical_route_occupancy():
+    old_route = {"origin": endpoint("456"), "destination": endpoint("123")}
+    result = rank_next_aircraft(
+        _inventory("123"), [_scenario()],
+        route_report={"relations": [old_route], "current_relations": [],
+                      "current_fleet_coverage_verified": True},
+        cash=20000, cash_observed_at=NOW, now=NOW)
+    assert result["candidates"][0]["status"] == "viavel"
+
+
 def test_route_occupancy_needs_snapshot_and_positive_game_availability():
     without_routes = rank_next_aircraft(
         _inventory("123"), [_scenario()], cash=20000,

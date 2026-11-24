@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2, conciliação integral da frota e dos hubs (G0)
+
+**Objetivo:** correlacionar a auditoria de rotas com o inventário atual do jogo antes de admitir que a rede existente foi integralmente identificada.
+
+### Implementação e evidências
+
+- `src/fleet.py` e `src/route_registry.py`: leituras do inventário antes e depois da auditoria integral são correlacionadas por identidade, matrícula e ID de rota. A certificação exige contagens coerentes de aeronaves com rota, estacionadas e pendentes, todas as páginas verificadas e evidência individual compatível. Valores ausentes de ID de rota são tratados como informação incompleta. A observação do inventário expira em 15 minutos e a auditoria em uma hora; a última auditoria histórica fica separada da prova vigente.
+- A prova é revogada antes de mutações de compra ou alteração de rota e quando há evidências incompatíveis. Leituras de detalhes e atualizações compatíveis podem preservá-la sem renovar seu prazo. Recuperação de redirecionamento pendente impede nova certificação.
+- `src/hub_registry.py` distingue cobertura da frota atual e cobertura do vínculo permanente por hub. A segunda exige catálogo de hubs vigente (até três dias) e evidência explícita de base para cada aeronave. `src/hub_recommendations.py` utiliza somente relações atuais para ocupação de rotas quando a cobertura é comprovada, mantendo tratamento conservador em pesquisas parciais. O painel exibe os estados e as contagens correspondentes em português e inglês.
+- Os testes exercitam divergências entre leituras, registros pendentes, expiração, alterações de rota, preservação compatível da prova e ausência de evidência de base permanente.
+
+### Verificação, limites e reversão
+
+- 399 testes direcionados aprovados. Suíte Windows: 1.638 aprovados, 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Ruff em `src`, `tests` e `scripts`, compilação Python e `git diff --check` aprovados.
+- **Gate G0.** Os contratos desta entrega foram verificados por testes com observações simuladas. A homologação autenticada da conciliação e a fonte individual de base permanente ainda são necessárias. A pesquisa integral de oportunidades por hub, rota, modelo e motor segue pendente. Nenhuma compra real, implantação ou merge na `main` foi executado.
+- Reversão pelo commit desta entrega na branch `codex/autonomia-a0-a1-20261122`, considerando dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A2, cobertura de rotas no ciclo de planejamento (G0)
 
 **Objetivo:** tornar a tentativa de auditoria integral parte da operação normal do planejador, com validade temporal e detecção de alterações nas evidências mesmo quando os IDs permanecem iguais.

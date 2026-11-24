@@ -313,6 +313,7 @@ def _resolve(bot, registry, job, *, poll=False) -> str:
                 )
                 if stable:
                     _save_job(job, "restoring")
+                    registry.invalidate_fleet_coverage()
                     _toggle(bot, stable.id)
                     live = _check_route(
                         bot, aircraft_id, lambda route: old_route(route) and not route.paused
@@ -383,6 +384,7 @@ def replace_route(bot, registry, row, origin, destination, *, keeper_id, expecte
                registration=row["registration"], model=row["model"], origin=origin, destination=destination,
                profit=profit, fee=form[1])
     _save_job(job, "grounding")
+    registry.invalidate_fleet_coverage()
     try:
         if _toggle(bot, first.id):
             _save_job(job, "ground_answered")
