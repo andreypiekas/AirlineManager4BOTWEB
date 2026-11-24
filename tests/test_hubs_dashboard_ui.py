@@ -1168,6 +1168,9 @@ const translations = {
   'Varredura de hubs próprios inconclusiva': 'Owned-hub scan inconclusive',
   'Priorizar oportunidades nos hubs próprios': 'Prioritize owned hubs',
   'Expansão externa em avaliação': 'External expansion under evaluation',
+  'Hubs dentro dos limites individuais': 'Hubs within individual limits',
+  'Primeiro hub dentro dos limites': 'Highest-ranked hub within limits',
+  'limite por compra de hub': 'Hub purchase limit',
   'Hubs próprios pesquisados': 'Owned hubs researched',
   'tentativas inconclusivas': 'inconclusive attempts',
   'Rotas com demanda contraditória': 'Routes with conflicting demand',
@@ -1227,7 +1230,9 @@ const report = {
     {hub_id:'2941', last_attempt_at:null, last_attempt_status:'unattempted',
      sample_count:0, fresh_sample_count:0, coverage:'partial'}],
   expansion_decision:{status:'avaliacao_expansao', owned_hubs_evaluated:2,
-    external_pending_count:0, blocking_reasons:[], top_three:[candidate]}
+    external_pending_count:0, blocking_reasons:[], top_three:[candidate],
+    hub_limit_selection:{eligible_count:0, selected_hub_id:null,
+      excluded:[{hub_id:'789', reasons:['limite_por_compra_de_hub']}]}}
 };
 const labels = metrics => Object.fromEntries(metrics.children.map(item =>
   [item.children[0].textContent, item.children[1].textContent]));
@@ -1244,10 +1249,12 @@ assert.match($('hubDemandProgressList').children[0].textContent, /quarantined ro
 assert.match($('hubDemandProgressList').children[1].textContent,
   /#2941 · research not started · sampled destinations: 0/);
 assert.match($('hubExpansionDecision').textContent, /External expansion under evaluation/);
+assert.match($('hubExpansionDecision').textContent, /Hubs within individual limits: 0/);
 assert.match($('hubExpansionDecision').textContent, /Read-only/);
 assert.equal($('hubExpansionRanking').children.length, 1);
 const ranked = $('hubExpansionRanking').children[0];
 assert.equal(ranked.children[0].textContent, '1. XAP · Hub <untrusted>');
+assert.match(ranked.children[2].textContent, /Hub purchase limit/);
 const rankedCosts = labels(ranked.children[1]);
 assert.equal(rankedCosts['Motor pesquisado'], 'Motor <script>');
 assert.equal(rankedCosts['Custo adicional do motor'], '$400');

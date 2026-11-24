@@ -6,6 +6,7 @@ import json
 import logging
 
 from expansion_reporting import ExpansionAlertDeduplicator, build_expansion_report
+from investment_policy import InvestmentPolicy
 from notify import MAX_LENGTH, esc
 from web import WebDashboard
 
@@ -40,6 +41,7 @@ def publish_expansion_alert(bot) -> str:
         snapshot_id=snapshot_id, owned_inventory=inventory,
         owned_research=research,
         opportunity_coverage=research.get("opportunity_coverage"),
+        policy=InvestmentPolicy.from_config(config),
     )
     if not report["alertable"]:
         return report["status"]

@@ -15,8 +15,8 @@ class Config:
                       ("options", "telegram_expansion"): expansion,
                       ("options", "telegram"): telegram}
 
-    def get_bool(self, section, key):
-        return self.flags.get((section, key), False)
+    def get_bool(self, section, key, fallback=False):
+        return self.flags.get((section, key), fallback)
 
 
 class Client:

@@ -296,6 +296,7 @@ class WebDashboard:
             report,
             coverage=owned_research.get("opportunity_coverage")
             if isinstance(owned_research, dict) else None,
+            policy=InvestmentPolicy.from_config(self.cfg),
         )
         return report
 

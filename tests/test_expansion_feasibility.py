@@ -5,6 +5,7 @@ import time
 import pytest
 
 from expansion_feasibility import assess_expansion
+from investment_policy import InvestmentPolicy
 from portfolio_planner import compare_portfolio
 
 
@@ -89,6 +90,47 @@ def test_only_after_complete_owned_sweep_rank_three_evidence_backed_external_opt
     assert result["read_only"] is True
     assert result["execution_available"] is False
     assert data == original
+
+
+def test_hub_selection_filters_full_ranking_without_suppressing_analysis():
+    data = inputs()
+    # The fourth-ranked candidate fits the hub cap even when the entire
+    # hub/aircraft/route investment exceeds it.
+    row = data[3]["candidates"][-1]
+    row["hub_price"] = row["cost_breakdown"]["hub_price"] = 1000
+    row["investment"] -= 4000
+    row["cost_breakdown"]["total"] -= 4000
+    row["cost_breakdown"]["cash_required"] -= 4000
+    row["payback_days"] = round(row["investment"] / row["profit_per_day"], 1)
+    result = evaluate(data, policy=InvestmentPolicy(max_hub_investment=1000))
+    assert [item["id"] for item in result["top_three"]] == ["888", "777", "789"]
+    selection = result["hub_limit_selection"]
+    assert selection["eligible_count"] == 1
+    assert selection["selected_hub_id"] == "666"
+    assert selection["eligible_hub_ids"] == ["666"]
+    assert selection["execution_available"] is False
+    assert all(item["reasons"] == ["limite_por_compra_de_hub"] for item in selection["excluded"])
+
+
+@pytest.mark.parametrize("policy", [None, InvestmentPolicy(),
+                                  InvestmentPolicy(valid=False, max_hub_investment=5000),
+                                  InvestmentPolicy(max_hub_investment=5000, max_hub_points=-1)])
+def test_hub_selection_defaults_and_invalid_limits_do_not_suppress_a6(policy):
+    result = evaluate(inputs(), policy=policy)
+    assert len(result["top_three"]) == 3
+    assert result["hub_limit_selection"]["selected_hub_id"] is None
+    assert len(result["hub_limit_selection"]["excluded"]) == 4
+
+
+def test_hub_selection_preserves_evidence_gate_and_ranking():
+    data = inputs()
+    policy = InvestmentPolicy(max_hub_investment=5000, max_hub_points=0)
+    result = evaluate(data, policy=policy)
+    assert result["hub_limit_selection"]["eligible_hub_ids"] == ["888", "777", "789", "666"]
+    data[4]["complete"] = False
+    result = evaluate(data, policy=policy)
+    assert result["hub_limit_selection"]["eligible_count"] == 0
+    assert result["hub_limit_selection"]["selected_hub_id"] is None
 
 
 def _timestamps(data):

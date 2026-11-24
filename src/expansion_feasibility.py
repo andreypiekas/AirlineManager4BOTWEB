@@ -11,6 +11,7 @@ import time
 from collections.abc import Mapping
 
 from hub_expansion import MAX_AGE_SECONDS
+from investment_policy import InvestmentPolicy
 
 
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
@@ -142,6 +143,7 @@ def assess_expansion(
     max_age_seconds: int = MAX_AGE_SECONDS,
     profile_id: str | None = None,
     snapshot_id: str | None = None,
+    policy: InvestmentPolicy | None = None,
 ) -> dict:
     """Evaluate full owned-hub exhaustion before suggesting external hubs.
 
@@ -239,12 +241,42 @@ def assess_expansion(
         rankable = []
     pending_count = sum(not valid(row) for row in all_external)
 
+    # A6 remains useful in analysis mode. A8 filters the full evidence-backed
+    # ranking before selecting a hub, including candidates below the top three.
+    eligible = []
+    excluded = []
+    for row in rankable:
+        vetoes = []
+        if policy is None or not policy.valid:
+            vetoes.append("politica_invalida_ou_ausente")
+        else:
+            if (type(policy.max_hub_investment) is not int
+                    or not 0 < policy.max_hub_investment <= 10**15
+                    or not 0 < row["hub_price"] <= policy.max_hub_investment
+                    or row["hub_price"] % 1 != 0):
+                vetoes.append("limite_por_compra_de_hub")
+            if (type(policy.max_hub_points) is not int
+                    or not 0 <= policy.max_hub_points <= 10**9
+                    or row["hub_points"] > policy.max_hub_points):
+                vetoes.append("limite_de_pontos_de_hub")
+        if vetoes:
+            excluded.append({"hub_id": row["id"], "reasons": vetoes})
+        else:
+            eligible.append(row)
+
     return {
         "status": status,
         "blocking_reasons": list(dict.fromkeys(reasons)),
         "owned_hubs_evaluated": len(owned_ids) if not reasons else None,
         "owned_eligible_count": portfolio.get("eligible_count"),
         "top_three": rankable[:3],
+        "hub_limit_selection": {
+            "eligible_count": len(eligible),
+            "selected_hub_id": eligible[0]["id"] if eligible else None,
+            "eligible_hub_ids": [row["id"] for row in eligible],
+            "excluded": excluded,
+            "execution_available": False,
+        },
         "external_pending_count": pending_count,
         "read_only": True,
         "execution_available": False,

@@ -1491,6 +1491,11 @@ const EN = {
   "Expansão externa em avaliação": "External expansion under evaluation",
   "Varredura própria comprovada": "Owned-hub scan verified",
   "Candidatos externos pendentes": "External candidates awaiting evidence",
+  "Hubs dentro dos limites individuais": "Hubs within individual limits",
+  "Primeiro hub dentro dos limites": "Highest-ranked hub within limits",
+  "politica invalida ou ausente": "Invalid or missing policy",
+  "limite por compra de hub": "Hub purchase limit",
+  "limite de pontos de hub": "Hub points limit",
   "Impedimentos": "Blockers",
   "Nenhum candidato externo passou pela validação de evidências.": "No external candidate passed evidence validation.",
   "Somente análise. Nenhuma compra autorizada.": "Read-only analysis. No purchase authorized.",
@@ -2740,6 +2745,12 @@ function renderHubExpansion(report) {
   if (Number.isSafeInteger(decision.external_pending_count) && decision.external_pending_count > 0) {
     decisionParts.push(tr("Candidatos externos pendentes") + ": " + nf.format(decision.external_pending_count));
   }
+  const selection = decision.hub_limit_selection || {};
+  if (decision.status === "avaliacao_expansao" && Number.isSafeInteger(selection.eligible_count)) {
+    decisionParts.push(tr("Hubs dentro dos limites individuais") + ": " + nf.format(selection.eligible_count));
+    const selected = allCandidates.find(hub => hub.id === selection.selected_hub_id);
+    if (selected) decisionParts.push(tr("Primeiro hub dentro dos limites") + ": " + hubName(selected));
+  }
   const blockers = Array.isArray(decision.blocking_reasons) ? decision.blocking_reasons : [];
   if (blockers.length) {
     decisionParts.push(tr("Impedimentos") + ": " + blockers.map(reason =>
@@ -2777,6 +2788,10 @@ function renderHubExpansion(report) {
       ? excluded.join(", ") : tr("Sem despesas declaradas"));
     const note = document.createElement("p"); note.className = "hub-context";
     note.textContent = tr("Somente análise. Nenhuma compra autorizada.");
+    const exclusion = Array.isArray(selection.excluded) && selection.excluded.find(item => item.hub_id === hub.id);
+    if (exclusion && Array.isArray(exclusion.reasons)) {
+      note.textContent += " · " + exclusion.reasons.map(reason => tr(String(reason).replaceAll("_", " "))).join(", ");
+    }
     card.append(heading, metrics, note);
     ranking.append(card);
   }

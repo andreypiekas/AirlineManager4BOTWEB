@@ -13,6 +13,7 @@ from expansion_reporting import (
     ExpansionAlertDeduplicator,
     build_expansion_report,
 )
+from investment_policy import InvestmentPolicy
 
 
 NOW = 1_800_000_000
@@ -127,6 +128,18 @@ def test_full_breakdown_and_proof_gate_yield_top_three():
     assert "Pontos 0" in message and "Pendências: nenhuma identificada" in message
     assert "Nenhuma compra aprovada ou executada" in message
     assert source == original
+
+
+def test_alert_preserves_recommendation_when_hub_limit_blocks_selection():
+    report = build(policy=InvestmentPolicy(max_hub_investment=4999))
+    assert report["alertable"] is True
+    assert report["purchase_allowed"] is False
+    assert report["expansion_decision"]["hub_limit_selection"]["eligible_count"] == 0
+    assert "Hubs dentro dos limites individuais de capital e pontos: 0." in report["html"]
+    eligible = build(policy=InvestmentPolicy(max_hub_investment=5000))
+    assert eligible["alertable"] is True
+    assert eligible["material"]["hub_limit_selection"]["selected_hub_id"] == "789"
+    assert "Hubs dentro dos limites individuais de capital e pontos: 1." in eligible["html"]
 
 
 def test_ranked_candidate_displays_independent_sources_and_observation_dates():

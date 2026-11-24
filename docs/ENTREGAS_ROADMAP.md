@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A6/A8, seleção externa por limites de hub (G0)
+
+- O seletor percorre o ranking completo de candidatos externos com evidência conclusiva, aplicando os limites individuais de capital e pontos por perfil ao custo do hub. A seleção pode alcançar candidatos abaixo do Top 3 e preserva a comparação econômica para análise, mesmo com os limites zerados ou inválidos. A exigência de pontos positivos continua pendente de comprovação do saldo correspondente.
+- A API, o painel PT/EN e o relatório de expansão passam a distinguir as sugestões econômicas dos hubs dentro dos limites individuais. O painel mostra o primeiro candidato dentro dos limites e os motivos de exclusão; mudanças na seleção participam da deduplicação dos alertas. A seleção é somente leitura e não autoriza nem registra uma compra.
+- Validação direcionada: 215 testes aprovados; suíte Windows com 2.094 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Rollback por reversão deste commit. Permanecem pendentes a evidência de demanda residual, preço final, conciliação, saldo de pontos quando exigidos e a homologação do executor real. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A7/A8, limites independentes de aquisição de hubs (G0)
 
 - A política por perfil passa a oferecer `max_hub_investment` (capital máximo por hub, em moeda do jogo) e `max_hub_points` (máximo de pontos exigidos por hub), com configuração e validação no painel PT/EN e na API autenticada. O limite individual de aeronaves permanece independente; os limites financeiros de ciclo e de 24 horas continuam compartilhados para proteger o caixa global.

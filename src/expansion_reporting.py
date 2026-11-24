@@ -28,6 +28,7 @@ from typing import Any
 
 from expansion_feasibility import assess_expansion
 from hub_expansion import MAX_AGE_SECONDS
+from investment_policy import InvestmentPolicy
 
 
 MAX_HTML_LENGTH = 3900  # notify.py sends at most 4000 of Telegram's 4096 characters.
@@ -379,6 +380,7 @@ def build_expansion_report(
     owned_inventory: Mapping[str, Any] | None = None,
     owned_research: Mapping[str, Any] | None = None,
     opportunity_coverage: Mapping[str, Any] | None = None,
+    policy: InvestmentPolicy | None = None,
 ) -> dict:
     """Prepare a top-three Telegram HTML analysis without granting approval.
 
@@ -415,6 +417,7 @@ def build_expansion_report(
         coverage=opportunity_coverage, now=int(now),
         max_age_seconds=max_age_seconds, profile_id=profile_id,
         snapshot_id=snapshot_id,
+        policy=policy,
     )
     # Incomplete external catalog evidence cannot invalidate an otherwise
     # conclusive owned-hub sweep. Keep its independent outcome visible.
@@ -472,6 +475,9 @@ def build_expansion_report(
         lines.append("<b>Top 3 hubs externos em estudo</b>")
         lines.append("Critério do ranking: lucro diário por capital investido, com desempate por lucro e custo.")
         lines.extend(_candidate_html(candidate, rank) for rank, candidate in enumerate(candidates, 1))
+        if policy is not None:
+            count = decision["hub_limit_selection"]["eligible_count"]
+            lines.append(f"Hubs dentro dos limites individuais de capital e pontos: {count}.")
     if invalid_count:
         lines.append(f"Registros externos sem identificação válida: {invalid_count}.")
     if decision["external_pending_count"]:
@@ -501,6 +507,8 @@ def build_expansion_report(
         "candidates": [{key: item[key] for key in (*_MATERIAL_FIELDS, *_NUMERIC_FIELDS)} for item in candidates],
         "invalid_count": invalid_count,
     }
+    if policy is not None:
+        material["hub_limit_selection"] = decision["hub_limit_selection"]
     return {"profile_id": profile_id, "snapshot_id": snapshot_id, "status": status,
             "html": message, "candidates": candidates, "material": material,
             "alertable": alertable, "read_only": True, "approved": False,
@@ -509,7 +517,7 @@ def build_expansion_report(
 
 def _material_changed(previous: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
     if any(previous.get(key) != current.get(key) for key in
-           ("status", "owned_summary", "owned_reasons", "invalid_count")):
+           ("status", "owned_summary", "owned_reasons", "invalid_count", "hub_limit_selection")):
         return True
     old_rows, new_rows = previous.get("candidates"), current.get("candidates")
     if not isinstance(old_rows, list) or not isinstance(new_rows, list) or len(old_rows) != len(new_rows):
