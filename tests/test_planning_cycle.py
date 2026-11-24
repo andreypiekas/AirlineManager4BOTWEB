@@ -30,6 +30,9 @@ def test_worker_replans_after_capture_with_real_a4_and_no_game_mutations(worker,
     assert result["status"] == "concluido"
     assert result["decision"] == "nao_comprar"
     assert result["evaluated_count"] == result["eligible_count"] == 0
+    assert result["research"]["examined_combinations"] == 0
+    assert result["research"]["sample_sweep_complete"] is False
+    assert result["research"]["queue_blocking_reasons"]
     assert result["read_only"] and result["historical_only"]
     assert result["blocking_reasons"]
     assert not (tmp_path / "investment_journal.sqlite3").exists()
@@ -81,6 +84,47 @@ def test_worker_summary_rejects_wrong_profile_and_invalid_record(worker, tmp_pat
     path.write_text(json.dumps({**record, "profile_id": "other"}), encoding="utf-8")
     assert planning_cycle.planning_cycle_summary()["status"] == "registro_invalido"
     path.write_text(json.dumps({**record, "eligible_count": 5}), encoding="utf-8")
+    assert planning_cycle.planning_cycle_summary()["status"] == "registro_invalido"
+
+
+def test_worker_evaluates_sampled_combinations_and_layouts_with_real_replay(worker, monkeypatch, tmp_path):
+    from audited_game_snapshot import FILENAME, compose_snapshot
+    from test_audited_game_snapshot import NOW, observations
+    from test_owned_hub_research_feed import _fleet_report, _inventory, _market, _preview_engines, _sample
+
+    monkeypatch.setattr(time, "time", lambda: NOW)
+    evidence = observations()
+    evidence.update(profile_id="isolated", inventory={**_inventory(), "hub_catalog_fresh": True},
+                    routes=_fleet_report(), market=_market(), engines=_preview_engines(),
+                    mode="realista", mode_at=NOW - 10,
+                    quotes={kind: {"source": "game_market", "unit": "USD/1000", "price": price,
+                                   "observed_at": NOW - 5, "expires_at": NOW + 60}
+                            for kind, price in (("fuel", 600), ("co2", 100))})
+    evidence["demand"]["samples"] = [_sample(dest=str(i)) for i in range(3139, 3200)]
+    snapshot = compose_snapshot(**evidence)
+
+    def capture(bot):
+        (tmp_path / FILENAME).write_text(json.dumps(snapshot), encoding="utf-8")
+        return snapshot
+
+    monkeypatch.setattr(planning_cycle, "capture_game_snapshot", capture)
+    planning_cycle.capture_and_plan(worker)
+    result = planning_cycle.planning_cycle_summary()
+    research = result["research"]
+    assert result["snapshot_id"] == snapshot["snapshot_id"]
+    assert research["pages"] == 2
+    assert research["examined_combinations"] == research["blocked_combinations"] == 80
+    assert research["total_sampled_combinations"] > 80
+    assert research["hypothetical_layouts"] > 0
+    assert research["sample_sweep_complete"] is False
+    assert research["coverage"] == "partial"
+    assert research["accounting_blocker_counts"]["DEMAND_UNVERIFIED"] >= 80
+    assert result["evaluated_count"] == result["eligible_count"] == 0
+    assert result["decision"] == "nao_comprar"
+    path = tmp_path / planning_cycle.FILENAME
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["research"]["examined_combinations"] += 1
+    path.write_text(json.dumps(record), encoding="utf-8")
     assert planning_cycle.planning_cycle_summary()["status"] == "registro_invalido"
 
 

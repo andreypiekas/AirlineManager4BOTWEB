@@ -1169,6 +1169,10 @@ const EN = {
   "Cenários avaliados": "Evaluated scenarios",
   "Escopos auditados atuais": "Current audited scopes",
   "Cenários registrados A3": "Recorded A3 scenarios",
+  "Combinações pesquisadas pelo worker (amostra parcial)": "Worker-researched combinations (partial sample)",
+  "Combinações bloqueadas na pesquisa": "Blocked research combinations",
+  "Configurações hipotéticas avaliadas": "Hypothetical configurations evaluated",
+  "Impedimentos da fila de pesquisa": "Research queue blockers",
   "Candidatos A4": "A4 candidates",
   "Decisão auditada A3/A4": "Audited A3/A4 decision",
   "Sem decisão auditada atual": "No current audited decision",
@@ -3661,6 +3665,11 @@ async function loadInvestmentMetrics() {
         [tr("Última execução automática do planejamento"), workerStatus
           ? tr(workerStatus) + " · " + hubDate(worker.finished_at ?? worker.started_at)
           : tr("Sem execução atual do planejamento")],
+        [tr("Combinações pesquisadas pelo worker (amostra parcial)"), !worker?.research || worker.research.queue_blocking_reasons.length ? null :
+          nf.format(worker.research.examined_combinations) + " / " + nf.format(worker.research.total_sampled_combinations)],
+        [tr("Impedimentos da fila de pesquisa"), worker?.research?.queue_blocking_reasons?.length],
+        [tr("Combinações bloqueadas na pesquisa"), worker?.research?.blocked_combinations],
+        [tr("Configurações hipotéticas avaliadas"), worker?.research?.hypothetical_layouts],
         [tr("Escopos auditados atuais"), scopes == null ? null :
           nf.format(Object.values(scopes).filter(value => value === true).length) + " / " + nf.format(Object.keys(scopes).length)],
         [tr("Cenários registrados A3"), audited?.evaluated_count],

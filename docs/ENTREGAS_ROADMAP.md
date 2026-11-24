@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A9, avaliação econômica no worker (G0)
+
+- O ciclo de planejamento executa automaticamente o replay contábil das combinações pesquisadas antes da decisão global A4. A avaliação utiliza exclusivamente o snapshot capturado no mesmo ciclo, valida identidade e paginação, e agrega impedimentos por código. Configurações de assentos hipotéticas permanecem não verificadas e inelegíveis.
+- A API e o painel PT/EN distinguem combinações examinadas, bloqueadas e configurações hipotéticas dos cenários registrados A3 e dos candidatos A4. A falta de fontes na fila não significa ausência de oportunidades. O limite inicial de duas páginas (até 80 combinações por execução) protege a latência do worker; a varredura começa no início de cada snapshot e não comprova cobertura total. A progressão entre ciclos permanece pendente.
+- Inspeção autenticada somente leitura do catálogo de encomendas: o detalhe de uma aeronave expõe seleção de motor e hub e os botões Order e Configuration. Ambos são controles de submissão; a inspeção não comprovou a semântica de Configuration nem o preço final. Nenhum desses controles foi acionado e nenhuma compra real foi executada.
+- Validação: 45 testes direcionados iniciais e 7 testes do worker após a nova regressão aprovados; suíte Windows com 2.079 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Rollback por reversão deste commit. Permanecem pendentes a demanda residual, preço final, cobertura integral, registro produtivo de casos elegíveis, conciliação e homologação A0–A9.
+
 ## 2026-11-24 — Autonomia Total A4/A9, isolamento do histórico financeiro (G0)
 
 - Inspeção autenticada, somente leitura, em Finances > History > Expenses: a tabela visível em `#transactionContainer` apresenta idade relativa, descrição e valor. As linhas não expõem identificador estável, data absoluta, vínculo com pedido ou voo, nem controle visível de paginação. Não há comprovação da cobertura integral das despesas nem deduplicação confiável entre coletas. O resumo nativo de 24 horas continua sendo uma observação histórica parcial; o detalhamento não foi promovido a diário conciliado.
