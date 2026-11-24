@@ -53,6 +53,39 @@ def test_correlated_fleet_requires_fresh_matching_roster_and_routes(tmp_path, mo
     assert not registry.snapshot()["current_fleet_coverage_verified"]
 
 
+@pytest.mark.parametrize("native_ids,expected", [(frozenset({"103"}), "matched"),
+                                                 (frozenset({"101"}), "different"),
+                                                 (frozenset({"999"}), "different")])
+def test_native_identity_proof_is_bound_to_audit_and_observation(tmp_path, monkeypatch, native_ids, expected):
+    from fleet_commitment_observations import SOURCE, reconcile_route_coverage
+    from portfolio_planner import compare_portfolio
+
+    clock = [1900000000]
+    monkeypatch.setattr(route_registry.time, "time", lambda: clock[0])
+    registry = RouteRegistry(tmp_path / "routes.json")
+    counts = {"routes": 2, "parked": 0, "pending": 1}
+    assert registry.record_game_roster(game_rows(), 3)
+    _audit_roster_routes(registry)
+    clock[0] += 5
+    evidence = {"observation_id": "b" * 32, "observed_at": clock[0] - 2, "observed_until": clock[0] - 1,
+                "pending_ids": native_ids, "parked_ids": frozenset()}
+    assert registry.confirm_fleet_coverage(game_rows(), before_counts=counts, after_counts=counts,
+                                           audited_pages=[1], native_identity_evidence=evidence)
+    coverage = registry.snapshot()["fleet_coverage"]
+    assert coverage["native_identity_status"] == expected
+    assert "pending_ids" not in coverage and "parked_ids" not in coverage
+    observation = {"source": SOURCE, "status": "observed", "observation_id": evidence["observation_id"],
+                   "observed_at": evidence["observed_at"], "observed_until": evidence["observed_until"],
+                   "parked_count": 0, "pending_fleet": {"total": 1, "maintenance": 1, "delivery": 0, "unclassified": 0}}
+    result = reconcile_route_coverage(observation, coverage, now=clock[0])
+    assert result["status"] == "matched" and result["identity_status"] == expected
+    blockers = compare_portfolio({"fleet_route_reconciliation": result})["blocking_reasons"]
+    assert ("identidades_frota_divergentes" in blockers) == (expected == "different")
+    assert "pedidos_pendentes_a_conciliar" in blockers
+    observation["observation_id"] = "c" * 32
+    assert reconcile_route_coverage(observation, coverage, now=clock[0])["identity_status"] == "unverified"
+
+
 def test_correlated_fleet_cannot_reuse_audit_from_same_second(tmp_path, monkeypatch):
     monkeypatch.setattr(route_registry.time, "time", lambda: 1900000000)
     registry = RouteRegistry(tmp_path / "routes.json")

@@ -809,6 +809,7 @@ def manage_fleet(bot: "Bot") -> None:
     log_fleet.info("%d aeronaves estacionadas sem rota, %d pendências na frota.", parked, pending)
 
     audit_routes(bot, registry)
+    native_identity_evidence = {}
     if planning_enabled or cfg.get_bool("options", "audit_route_pages", False):
         visited = audit_routes_live_pages(
             bot, registry, pages_per_cycle=cfg.get_int("settings", "fleet_audit_pages_per_cycle", 3),
@@ -818,7 +819,7 @@ def manage_fleet(bot: "Bot") -> None:
 
             # Read the independent lists immediately before the final roster
             # check, before any route repairs or aircraft purchases in this step.
-            bot._guard(lambda: collect_fleet_commitment_observations(bot),
+            bot._guard(lambda: collect_fleet_commitment_observations(bot, identity_evidence=native_identity_evidence),
                        "conferir hangar e pendências da frota")
             if getattr(bot, "stopping", False):
                 return
@@ -828,7 +829,8 @@ def manage_fleet(bot: "Bot") -> None:
             after_counts = bot.js(_GAME_FLEET_COUNTS_JS)
             after_roster = bot.js(_GAME_ROSTER_JS)
             confirmed = registry.confirm_fleet_coverage(
-                after_roster, before_counts=counters, after_counts=after_counts, audited_pages=visited)
+                after_roster, before_counts=counters, after_counts=after_counts, audited_pages=visited,
+                native_identity_evidence=native_identity_evidence)
             log_fleet.info("Inventário e auditoria de rotas: cobertura %s.",
                            "integral correlacionada" if confirmed else "parcial")
     budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))

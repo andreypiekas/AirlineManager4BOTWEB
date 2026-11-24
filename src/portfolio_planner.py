@@ -158,6 +158,10 @@ def compare_portfolio(
             blockers.append("contagens_frota_divergentes")
         elif reconciliation.get("status") != "matched" or not complete_counts:
             blockers.append("aeronaves_sem_rota_a_confirmar")
+        if reconciliation.get("identity_status") == "different":
+            blockers.append("identidades_frota_divergentes")
+        elif reconciliation.get("identity_status") != "matched":
+            blockers.append("identidades_frota_a_confirmar")
 
     available_cash = _number(report.get("available_cash"))
     obligations = _number(committed_cash) if commitments_verified is True else None

@@ -1207,6 +1207,10 @@ const EN = {
   "Estacionadas na auditoria": "Parked in audit",
   "Pendentes na auditoria": "Pending in audit",
   "Contagens agregadas não comprovam identidades ou encomendas": "Aggregate counts do not verify identities or orders",
+  "Identidades da frota conciliadas": "Fleet identities reconciled",
+  "Identidades da frota divergentes": "Fleet identities differ",
+  "Identidades da frota a confirmar": "Fleet identities need verification",
+  "Identidades conciliadas não comprovam encomendas": "Reconciled identities do not verify orders",
   "Pesquisa ainda pendente": "Research pending",
   "Indisponível": "Unavailable",
   "Mais possibilidades aguardam pesquisa.": "Additional possibilities await research.",
@@ -2248,6 +2252,8 @@ const hubResearchBlockerLabels = {
   evidencia_period_limit_a_confirmar: "Prova do limite do período não confirmada",
   aeronaves_sem_rota_a_resolver: "Aeronaves sem rota precisam de solução",
   contagens_frota_divergentes: "Contagens da frota divergentes",
+  identidades_frota_divergentes: "Identidades da frota divergentes",
+  identidades_frota_a_confirmar: "Identidades da frota a confirmar",
   aeronaves_sem_rota_a_confirmar: "Aeronaves sem rota a confirmar",
   formato_avaliacoes_a3_invalido: "Formato das avaliações A3 inválido",
   avaliacoes_a3_invalidas_ou_conflitantes: "Avaliações A3 inválidas ou conflitantes",
@@ -2710,7 +2716,10 @@ function renderHubRecommendations(report) {
     $("hubResearchQueueStatus").textContent += " · " + tr("Conciliação das contagens da frota") + ": " +
       tr(labels[reconciliation.status] || "Indisponível") + " · " + tr("Estacionadas na auditoria") + ": " +
       countText(reconciliation.audited_parked_count) + " · " + tr("Pendentes na auditoria") + ": " +
-      countText(reconciliation.audited_pending_count) + " · " + tr("Contagens agregadas não comprovam identidades ou encomendas");
+      countText(reconciliation.audited_pending_count) + " · " +
+      tr(reconciliation.identity_status === "matched" ? "Identidades da frota conciliadas" :
+        reconciliation.identity_status === "different" ? "Identidades da frota divergentes" : "Identidades da frota a confirmar") + " · " +
+      tr(reconciliation.identity_status === "matched" ? "Identidades conciliadas não comprovam encomendas" : "Contagens agregadas não comprovam identidades ou encomendas");
   }
   $("hubResearchPrev").disabled = !paged || researchQueue.offset <= 0;
   $("hubResearchNext").disabled = !paged || researchQueue.next_offset == null;

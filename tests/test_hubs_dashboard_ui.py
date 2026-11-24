@@ -349,6 +349,10 @@ const translations = {
   'Estacionadas na auditoria': 'Parked in audit',
   'Pendentes na auditoria': 'Pending in audit',
   'Contagens agregadas não comprovam identidades ou encomendas': 'Aggregate counts do not verify identities or orders',
+  'Identidades da frota conciliadas': 'Fleet identities reconciled',
+  'Identidades da frota divergentes': 'Fleet identities differ',
+  'Identidades da frota a confirmar': 'Fleet identities need verification',
+  'Identidades conciliadas não comprovam encomendas': 'Reconciled identities do not verify orders',
   'Cotação de combustível (USD/1000)': 'Fuel quote (USD/1000)',
   'Cotação de CO₂ (USD/1000)': 'CO₂ quote (USD/1000)',
   'Pesquisa ainda pendente': 'Research pending',
@@ -461,6 +465,13 @@ assert.match($('hubResearchQueueStatus').textContent, /Orders and financial comm
 assert.match($('hubResearchQueueStatus').textContent, /Fleet count reconciliation: Matching counts/);
 assert.match($('hubResearchQueueStatus').textContent, /Parked in audit: 0.*Pending in audit: 11/);
 assert.match($('hubResearchQueueStatus').textContent, /Aggregate counts do not verify identities or orders/);
+assert.match($('hubResearchQueueStatus').textContent, /Fleet identities need verification/);
+report.fleet_route_reconciliation.identity_status = 'matched';
+renderHubRecommendations(report);
+assert.match($('hubResearchQueueStatus').textContent, /Fleet identities reconciled.*Reconciled identities do not verify orders/);
+report.fleet_route_reconciliation.identity_status = 'different';
+renderHubRecommendations(report);
+assert.match($('hubResearchQueueStatus').textContent, /Fleet identities differ/);
 report.fleet_route_reconciliation.status = 'different';
 renderHubRecommendations(report);
 assert.match($('hubResearchQueueStatus').textContent, /Fleet count reconciliation: Fleet counts differ/);

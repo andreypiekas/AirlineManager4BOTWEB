@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A7, conciliação de identidades da frota (G0)
+
+- A consulta autenticada e somente leitura do inventário por modelo encontrou 223 aeronaves distintas (120, 37 e 66 nas três listas) e os sete identificadores observados em Pending coincidiram com os identificadores dos controles nativos de detalhe do inventário (duas entregas e cinco manutenções). Nenhum identificador individual foi registrado neste documento.
+- A coleta estável de Pending e Parked conserva os identificadores somente em memória até a confirmação final do inventário e da auditoria de rotas. A confirmação exige que os dois conjuntos sejam disjuntos, tenham os tamanhos esperados e formem exatamente o complemento das aeronaves com rota auditada. A prova fica vinculada à observação nativa por um identificador aleatório de coleta e ao inventário certificado no mesmo ciclo, dentro da janela temporal de 120 segundos. Somente o resultado agregado e o identificador da coleta são persistidos adicionalmente.
+- A API e o painel PT/EN distinguem identidades conciliadas, divergentes e a confirmar, inclusive quando as contagens coincidem. O comparador global bloqueia a decisão sem a conciliação de identidade, e caches anteriores continuam disponíveis como observações de contagem sem fabricar uma prova de identidade. O conjunto de pendências não representa valores a pagar ou a identificação financeira de uma encomenda.
+- Validação Windows: 1.851 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). 129 testes direcionados aprovados, incluindo divergências com o mesmo total, observações distintas, privacidade e interface. Ruff, compilação Python e `git diff --check` aprovados.
+- A execução integrada do coletor Selenium e a partição completa entre rotas, estacionadas e pendências ainda requerem homologação autenticada. Na consulta ao jogo a lista de estacionadas tinha zero aeronaves. Compromissos financeiros, demanda residual, custos finais e cobertura dos hubs continuam pendentes. Nenhuma compra ou alteração real foi executada no jogo. G0 continua ativo.
+
 ## 2026-11-24 — Autonomia Total A4, revogação de observações após mutações (G0)
 
 - A revogação da cobertura integral do inventário agora invalida também o cache nativo de hangar, aeronaves estacionadas e pendentes do mesmo perfil. O início de uma nova auditoria de planejamento, criação ou substituição de rota e encomenda de aeronave deixam de publicar a observação anterior como atual, mesmo quando a tentativa de alteração termina sem confirmação do jogo.

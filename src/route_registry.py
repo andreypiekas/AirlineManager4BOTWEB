@@ -206,7 +206,7 @@ class RouteRegistry:
                 self._save(data)
 
     def confirm_fleet_coverage(self, rows: object, *, before_counts: dict,
-                               after_counts: object, audited_pages: list[int]) -> bool:
+                               after_counts: object, audited_pages: list[int], native_identity_evidence=None) -> bool:
         """Correlate the roster before and after the paginated route audit."""
         # An observation can certify coverage only once. Revoking an existing
         # proof must never allow a previous audit to certify it again.
@@ -287,11 +287,15 @@ class RouteRegistry:
                         and type(last_scan.get("at")) is int and last_scan["at"] >= started_at
                         and last_scan.get("visible") != 0)):
                     return False
+            from fleet_commitment_observations import native_identity_proof
+
             data["fleet_coverage"] = {
                 "source": "game_roster_and_route_audit", "observed_at": now,
                 "roster_observed_at": started_at, "audit_run_id": run_id,
                 "roster_observation_id": roster["observation_id"],
                 "total": total, **{key: before_counts[key] for key in keys},
+                **native_identity_proof(native_identity_evidence, aircraft, before_counts,
+                                        started_at=started_at, now=now),
             }
             roster["coverage_finalized"] = True
             self._save(data)

@@ -108,7 +108,7 @@ def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
     monkeypatch.setattr(fleet, "has_pending_reroute", lambda: not reroute_ready)
     monkeypatch.setattr(RouteRegistry, "next_flight_read_ids", lambda self, **kwargs: [])
 
-    def collect(bot):
+    def collect(bot, *, identity_evidence):
         assert bot.events == ["roster"]
         bot.events.append("native_lists")
         bot.close_popup()

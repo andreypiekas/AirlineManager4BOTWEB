@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import uuid
 from pathlib import Path
 
 import paths
@@ -13,6 +14,7 @@ MAX_AGE = 900
 MAX_WINDOW = 120
 FILENAME = "fleet_commitment_observations.json"
 _ROW_ID = re.compile(r"[1-9][0-9]{0,13}")
+_OBSERVATION_ID = re.compile(r"[0-9a-f]{32}")
 
 _DOM_HELPERS = r"""
 const norm = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -173,6 +175,27 @@ def _pending_counts(value):
     return {key: value[key] for key in keys}
 
 
+def native_identity_proof(evidence, aircraft, counts, *, started_at, now):
+    """Compare ephemeral native row identities with the certified roster partition."""
+    if not isinstance(evidence, dict):
+        return {}
+    observation_id = evidence.get("observation_id")
+    start, end = evidence.get("observed_at"), evidence.get("observed_until")
+    if (not isinstance(observation_id, str) or not _OBSERVATION_ID.fullmatch(observation_id)
+            or type(start) is not int or type(end) is not int
+            or not started_at <= start <= end <= now or now - start > MAX_WINDOW):
+        return {}
+    pending, parked = evidence.get("pending_ids"), evidence.get("parked_ids")
+    if not all(isinstance(ids, frozenset) and all(isinstance(identity, str) and _ROW_ID.fullmatch(identity)
+               for identity in ids) for ids in (pending, parked)):
+        return {}
+    unrouted = {identity for identity, row in aircraft.items() if row["route_id"] == 0}
+    matched = (len(pending) == counts["pending"] and len(parked) == counts["parked"]
+               and not pending & parked and pending | parked == unrouted)
+    return {"native_observation_id": observation_id,
+            "native_identity_status": "matched" if matched else "different"}
+
+
 def invalidate_observations(path: Path | None = None) -> None:
     """Withdraw native fleet and hangar evidence before a refresh or mutation."""
     path = Path(path) if path is not None else paths.current().data / FILENAME
@@ -208,13 +231,15 @@ def observations_snapshot(path: Path | None = None, *, now: float | None = None)
     return {**result, "status": "observed" if all(value is not None for value in (hangar, pending, parked)) else "partial",
             "source": SOURCE, "observed_at": stamp, "passenger_hangar": hangar,
             **({"observed_until": end} if end is not None else {}),
+            **({"observation_id": saved["observation_id"]} if isinstance(saved.get("observation_id"), str)
+               and _OBSERVATION_ID.fullmatch(saved["observation_id"]) else {}),
             "pending_fleet": pending,
             "parked_count": parked}
 
 
 def reconcile_route_coverage(observations: dict, coverage: dict | None, *, now: float) -> dict:
     """Compare current native lists with the independently audited roster counts."""
-    result = {"status": "unverified", "native_parked_count": None, "native_pending_count": None,
+    result = {"status": "unverified", "identity_status": "unverified", "native_parked_count": None, "native_pending_count": None,
               "audited_parked_count": None, "audited_pending_count": None,
               "unrouted_or_pending_count": None}
 
@@ -257,6 +282,12 @@ def reconcile_route_coverage(observations: dict, coverage: dict | None, *, now: 
         else:
             result["status"] = ("matched" if parked == coverage["parked"] and pending["total"] == coverage["pending"]
                                 else "different")
+            observation_id = observations.get("observation_id")
+            identity_status = coverage.get("native_identity_status")
+            if (bracketed and isinstance(observation_id, str) and _OBSERVATION_ID.fullmatch(observation_id)
+                    and observation_id == coverage.get("native_observation_id")
+                    and identity_status in ("matched", "different")):
+                result["identity_status"] = ("different" if result["status"] == "different" else identity_status)
     elif result["status"] == "unverified":
         result["status"] = "audit_only"
     else:
@@ -264,10 +295,12 @@ def reconcile_route_coverage(observations: dict, coverage: dict | None, *, now: 
     return result
 
 
-def collect_fleet_commitment_observations(bot, *, path=None):
+def collect_fleet_commitment_observations(bot, *, path=None, identity_evidence=None):
     """Refresh native fragments without maintenance, route, or purchase mutations."""
     from game_observations import _stable_read
 
+    if identity_evidence is not None:
+        identity_evidence.clear()
     if getattr(bot, "stopping", False):
         return False
     path = Path(path) if path is not None else paths.current().data / FILENAME
@@ -284,17 +317,23 @@ def collect_fleet_commitment_observations(bot, *, path=None):
     try:
         bot.open_popup("routes_main.php", "Routes", "nav_routes")
         bot.ajax("fleet_pending.php", "routesContainer")
-        pending = _fleet_list(_stable_read(bot, PENDING_FLEET_JS))
+        pending_rows = _stable_read(bot, PENDING_FLEET_JS)
+        pending = _fleet_list(pending_rows)
         if getattr(bot, "stopping", False):
             return False
         bot.ajax("fleet_parked.php", "routesContainer")
-        parked = _fleet_list(_stable_read(bot, PARKED_FLEET_JS))
+        parked_rows = _stable_read(bot, PARKED_FLEET_JS)
+        parked = _fleet_list(parked_rows)
     finally:
         bot.close_popup(quiet=True)
     finished = time.time()
     if getattr(bot, "stopping", False) or not 0 <= finished - started <= MAX_WINDOW:
         return False
-    paths.write_atomic(path, json.dumps({"source": SOURCE, "observed_at": int(started), "observed_until": int(finished),
+    observation = {"observation_id": uuid.uuid4().hex, "observed_at": int(started), "observed_until": int(finished)}
+    paths.write_atomic(path, json.dumps({"source": SOURCE, **observation,
                                         "passenger_hangar": hangar,
                                         "pending_fleet": pending, "parked_count": parked["total"] if parked else None}))
+    if identity_evidence is not None and pending is not None and parked is not None:
+        identity_evidence.update(observation, pending_ids=frozenset(row["id"] for row in pending_rows["rows"]),
+                                 parked_ids=frozenset(row["id"] for row in parked_rows["rows"]))
     return all(value is not None for value in (hangar, pending, parked))

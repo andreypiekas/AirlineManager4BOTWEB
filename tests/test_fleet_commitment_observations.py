@@ -61,7 +61,11 @@ def test_collector_and_profile_snapshot(tmp_path, monkeypatch):
                                                    {"id": "23456789", "status": "delivery"}]},
             PARKED_FLEET_JS: {"total": 0, "rows": []}}
     monkeypatch.setattr(game_observations, "_stable_read", lambda _, script: data[script])
-    assert collect_fleet_commitment_observations(bot, path=path)
+    evidence = {}
+    assert collect_fleet_commitment_observations(bot, path=path, identity_evidence=evidence)
+    assert evidence["pending_ids"] == frozenset({"12345678", "23456789"})
+    assert evidence["parked_ids"] == frozenset()
+    assert json.loads(path.read_text(encoding="utf-8"))["observation_id"] == evidence["observation_id"]
     assert bot.calls == ["maintenance_main.php", "hangars.php?type=pax", "close", "routes_main.php",
                          "fleet_pending.php", "fleet_parked.php", "close"]
     assert "12345678" not in path.read_text(encoding="utf-8")
@@ -213,7 +217,7 @@ def test_reconcile_counts_and_portfolio_blockers(parked, pending, audited_parked
                 "roster_observed_at": now - 30, "total": 10 + audited_parked + audited_pending,
                 "routes": 10, "parked": audited_parked, "pending": audited_pending}
     result = reconcile_route_coverage(observations, coverage, now=now)
-    assert result == {"status": status, "native_parked_count": parked, "native_pending_count": pending,
+    assert result == {"status": status, "identity_status": "unverified", "native_parked_count": parked, "native_pending_count": pending,
                       "audited_parked_count": audited_parked, "audited_pending_count": audited_pending,
                       "unrouted_or_pending_count": audited_parked + audited_pending}
     report = {"partial_fleet": False, "available_cash": 100, "fleet_route_reconciliation": result}
