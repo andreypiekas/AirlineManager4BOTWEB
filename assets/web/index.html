@@ -3146,6 +3146,14 @@ function renderAuditedExpansionPlanner(audited, hubs) {
       ? tr("Cálculos A3 comprovados. Planejamento global A4 pendente de validação.")
       : tr("Aguardando provas completas de rota, motor, demanda e custos.");
   }
+  const observed = audited.game_observation_snapshot;
+  if (observed?.status === "parcial") {
+    explanation.textContent += " · " + tr("Cobertura parcial dos dados de jogo") +
+      " · " + tr("Amostras de rotas") + ": " + nf.format(observed.route_samples || 0);
+    if (observed.scopes?.fleet !== true) {
+      explanation.textContent += " · " + tr("Cobertura da frota não confirmada");
+    }
+  }
   if (portfolio.excluded && typeof portfolio.excluded === "object") {
     const exclusions = Object.entries(portfolio.excluded)
       .filter(([, count]) => Number.isSafeInteger(count) && count > 0);

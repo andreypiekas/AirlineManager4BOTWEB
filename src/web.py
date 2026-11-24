@@ -61,6 +61,7 @@ from portfolio_planner import compare_portfolio
 from portfolio_planner import compare_audited_portfolio
 from expansion_economics import rank_expansion_economics
 from audited_economics_registry import AuditedEconomicsRegistry
+from audited_game_snapshot import snapshot_summary
 from expansion_feasibility import assess_expansion
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
@@ -484,6 +485,7 @@ class WebDashboard:
         return {
             "status": record["status"], "snapshot_id": record["snapshot_id"],
             "profile_id": paths.current().label,
+            "game_observation_snapshot": snapshot_summary(),
             "evaluation_count": len(evaluations),
             "evaluations": evaluations,
             "a3_ranking": ranking,

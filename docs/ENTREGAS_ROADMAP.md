@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A4/A7, captura automática de evidências do jogo (G0)
+
+- Com o planejamento habilitado, o ciclo atualiza o saldo após as operações e consolida um snapshot local por perfil com hash canônico. Preserva as datas originais do seletor de hubs, auditoria da frota, amostras de demanda e detalhes de rotas, catálogo de motores, mercado, compromissos e histórico financeiro. O arquivo é gravado atomicamente com permissão privada quando suportada.
+- A cobertura da frota exige auditoria corrente, páginas coerentes e identidade conciliada das aeronaves pendentes/estacionadas quando existentes. O seletor de hubs próprios exige leitura recente. Pesquisas limitadas, catálogo indicativo e ausência de preço final não certificam cobertura de rotas, modelos, motores ou preços. Caixa confirmado não implica compromissos ou reserva confirmados.
+- A API auditada e o painel de expansão exibem a coleta parcial e a quantidade de amostras, sem publicar os IDs da frota do snapshot. Leitura verifica perfil, hash e idade. Nenhuma avaliação econômica elegível ou autorização de compra é criada a partir desta captura parcial.
+- Validação Windows: 1.956 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX), seguida de 23 testes direcionados aprovados após o ajuste final e inclusão do teste de captura persistente. Ruff e `git diff --check` aprovados.
+- Ainda pendentes a produção de candidatos A3 a partir das evidências completas, a cobertura integral de pesquisa, o preço final por configuração, demanda residual, taxas e compromissos independentes, além da homologação autenticada. Nenhuma transação real executada. O objetivo integral permanece ativo.
+
 ## 2026-11-24 — Autonomia Total A4/A5, conciliação financeira atual do plano auditado (G0)
 
 - Antes de emitir uma prévia A5, o painel exige saldo vivo válido, lido em momento igual ou posterior à evidência de caixa do snapshot A3, e exatamente compatível com o valor auditado. Divergência ou ausência de confirmação mantém a comparação inconclusiva e impede o plano.
