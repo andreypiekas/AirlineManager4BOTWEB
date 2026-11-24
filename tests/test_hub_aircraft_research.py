@@ -298,6 +298,8 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_p
     assert result["investment_policy"]["release_gate"] == "G0"
     assert result["investment_journal"]["count"] == 1
     assert result["investment_journal"]["estimated_exposure"] == 6000
+    assert result["investment_journal"]["period_usage"]["estimated_exposure"] == 6000
+    assert result["investment_journal"]["period_usage"]["acquisition_count"] == 1
     assert result["investment_journal"]["execution_available"] is False
     research = result["research_queue"]
     assert research["purchase_eligible"] is False

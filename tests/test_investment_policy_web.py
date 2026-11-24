@@ -307,7 +307,7 @@ def test_recommendations_use_saved_weights_and_reject_unverified_dimensions(tmp_
                 return {}
 
         class EmptyJournal:
-            def unresolved(self):
+            def unresolved(self, *, since=None):
                 return {"intents": [], "count": 0, "estimated_exposure": 0}
 
         candidate = {
@@ -353,8 +353,10 @@ def test_local_journal_reservations_reduce_candidate_budget(tmp_path, monkeypatc
                 return {}
 
         class ReservedJournal:
-            def unresolved(self):
-                return {"intents": [], "count": 1, "estimated_exposure": 9000}
+            def unresolved(self, *, since=None):
+                return {"intents": [], "count": 1, "estimated_exposure": 9000,
+                        "period_usage": {"source": "local_investment_journal", "since": since,
+                                         "estimated_exposure": 12000, "acquisition_count": 2}}
 
         monkeypatch.setattr(web_module, "HubRegistry", EmptySource)
         monkeypatch.setattr(web_module, "HubAircraftResearchRegistry", EmptySource)
@@ -376,3 +378,11 @@ def test_local_journal_reservations_reduce_candidate_budget(tmp_path, monkeypatc
         assert result["budget_upper_bound"] == 1000
         assert result["best"] is None
         assert result["excluded"]["caixa_apos_reservas_locais_insuficiente"] == 1
+
+        config.set("investment", "planning_enabled", "on")
+        config.set("investment", "max_daily_spend", 12500)
+        config.set("investment", "max_acquisitions_per_day", 2)
+        period = dashboard.hub_recommendations()["portfolio"]["local_period_limits"]
+        assert period["remaining_spend"] == 500
+        assert period["remaining_acquisitions"] == 0
+        assert period["source"] == "local_investment_journal"

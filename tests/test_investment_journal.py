@@ -80,6 +80,27 @@ def test_registration_is_durable_idempotent_and_conflicts_on_replanned_route(tmp
     assert isolated.history(own_intent["intent_key"])[0]["new_state"] == "PROPOSED"
 
 
+def test_period_snapshot_counts_reservations_and_confirmations_once(tmp_path):
+    ledger = journal(tmp_path)
+    key = ready(ledger)
+    assert ledger.acquire_executor("period-test")
+    assert ledger.claim_submission(key, "period-test")
+    assert ledger.release_executor("period-test")
+    assert ledger.transition(key, "SUBMITTED", "CONFIRMED", confirmation=aircraft_proof())
+    pending = ready(ledger, aircraft_plan(plan_id="candidate-789", destination_id="789", estimated_cost=3000))
+    ready(journal(tmp_path, "secundario"))
+    since = time.time() - 86400
+    result = ledger.unresolved(since=since)
+    assert result["count"] == 1 and result["intents"][0]["intent_key"] == pending
+    assert result["estimated_exposure"] == 3000
+    assert result["period_usage"]["estimated_exposure"] == ledger.budget_exposure_since(since) == 13000
+    assert result["period_usage"]["acquisition_count"] == ledger.acquisition_count_since(since) == 2
+    future = ledger.unresolved(since=time.time() + 1)
+    assert future["period_usage"]["estimated_exposure"] == 3000
+    assert future["period_usage"]["acquisition_count"] == 1
+    assert "period_usage" not in ledger.unresolved()
+
+
 def test_explicit_plan_profile_must_match_journal_profile(tmp_path):
     ledger = journal(tmp_path)
     with pytest.raises(ValueError, match="perfil"):

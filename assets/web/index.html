@@ -1019,6 +1019,9 @@ const EN = {
   "Intenções de compra em aberto": "Open purchase intents",
   "Exposição estimada no diário": "Estimated ledger exposure",
   "Teto de caixa após reservas locais": "Cash upper bound after local reservations",
+  "Limite de 24 horas restante (diário local)": "Remaining 24-hour spending limit (local ledger)",
+  "Aquisições restantes em 24 horas (diário local)": "Remaining acquisitions in 24 hours (local ledger)",
+  "Uso dos limites de 24 horas a confirmar": "24-hour limit usage unverified",
   "Diário de investimentos indisponível.": "Investment ledger unavailable.",
   "Planejador de Expansão": "Expansion Planner",
   "Prévia do plano de compra": "Purchase plan preview",
@@ -1105,6 +1108,10 @@ const EN = {
   "Retorno acima do limite": "Payback above limit",
   "Investimento excede limite por aquisição": "Investment exceeds per-purchase limit",
   "Caixa insuficiente após reservas locais": "Insufficient cash after local reservations",
+  "Limites do período inválidos": "Invalid period limits",
+  "Uso do período não confirmado": "Period usage unverified",
+  "Investimento excede limite de 24 horas": "Investment exceeds 24-hour spending limit",
+  "Limite de aquisições em 24 horas esgotado": "24-hour acquisition limit exhausted",
   "Provas do ranking incompletas": "Incomplete ranking evidence",
   "Pesquisas conflitantes": "Conflicting research observations",
   "Avaliação A3 inválida ou conflitante": "Invalid or conflicting A3 evaluation",
@@ -2252,6 +2259,10 @@ const hubResearchBlockerLabels = {
   limite_por_aquisicao: "Investimento excede limite por aquisição",
   caixa_apos_compromissos_insuficiente: "Saldo após compromissos insuficiente",
   caixa_apos_reservas_locais_insuficiente: "Caixa insuficiente após reservas locais",
+  limites_periodo_invalidos: "Limites do período inválidos",
+  uso_periodo_a_confirmar: "Uso do período não confirmado",
+  limite_de_24h: "Investimento excede limite de 24 horas",
+  limite_de_aquisicoes_em_24h: "Limite de aquisições em 24 horas esgotado",
   evidencia_ranking_incompleta: "Provas do ranking incompletas",
   pesquisas_conflitantes: "Pesquisas conflitantes",
   avaliacao_a3_invalida_ou_conflitante: "Avaliação A3 inválida ou conflitante",
@@ -2830,6 +2841,21 @@ function renderHubRecommendations(report) {
       $("hubRecommendationsScope").textContent += " " +
         tr("Teto de caixa após reservas locais") + ": " +
         hubMoney(report.portfolio.budget_upper_bound) + ".";
+    }
+    const period = report.portfolio.local_period_limits;
+    if (period) {
+      if (period.estimated_exposure == null || period.acquisition_count == null) {
+        $("hubRecommendationsScope").textContent += " " + tr("Uso dos limites de 24 horas a confirmar") + ".";
+      } else {
+        if (Number.isFinite(period.remaining_spend)) {
+          $("hubRecommendationsScope").textContent += " " + tr("Limite de 24 horas restante (diário local)") +
+            ": " + hubMoney(period.remaining_spend) + ".";
+        }
+        if (Number.isSafeInteger(period.remaining_acquisitions)) {
+          $("hubRecommendationsScope").textContent += " " + tr("Aquisições restantes em 24 horas (diário local)") +
+            ": " + nf.format(period.remaining_acquisitions) + ".";
+        }
+      }
     }
     const expansion = report.portfolio.hangar_expansion;
     if (expansion?.required === true && Array.isArray(expansion.displayed_quotes)) {

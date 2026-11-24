@@ -98,6 +98,9 @@ def compare_portfolio(
     commitments_verified: bool = False,
     committed_cash: object = None,
     known_local_commitments: object = None,
+    local_period_usage: object = None,
+    max_daily_spend: object = None,
+    max_acquisitions_per_day: object = None,
     max_single_investment: object = None,
     min_daily_profit: object = 0,
     max_payback_days: object = None,
@@ -153,6 +156,34 @@ def compare_portfolio(
         blockers.append("compromissos_invalidos")
     if known_local_commitments is not None and local_commitments is None:
         blockers.append("reservas_locais_invalidas")
+    period = None
+    remaining_spend = None
+    remaining_acquisitions = None
+    if max_daily_spend is not None or max_acquisitions_per_day is not None:
+        daily_limit = _number(max_daily_spend, positive=True) if max_daily_spend is not None else None
+        count_limit = (max_acquisitions_per_day if type(max_acquisitions_per_day) is int
+                       and max_acquisitions_per_day > 0 else None)
+        if ((max_daily_spend is not None and daily_limit is None)
+                or (max_acquisitions_per_day is not None and count_limit is None)):
+            blockers.append("limites_periodo_invalidos")
+        usage = local_period_usage if isinstance(local_period_usage, Mapping) else {}
+        exposure = usage.get("estimated_exposure")
+        count = usage.get("acquisition_count")
+        since = _number(usage.get("since"), positive=True)
+        if (usage.get("source") != "local_investment_journal" or since is None
+                or type(exposure) is not int or exposure < 0
+                or type(count) is not int or count < 0
+                or local_commitments is None or exposure < local_commitments):
+            exposure = count = None
+            blockers.append("uso_periodo_a_confirmar")
+        if exposure is not None and daily_limit is not None:
+            remaining_spend = max(0, daily_limit - exposure)
+        if count is not None and count_limit is not None:
+            remaining_acquisitions = max(0, count_limit - count)
+        period = {"source": "local_investment_journal", "since": since,
+                  "estimated_exposure": exposure, "acquisition_count": count,
+                  "max_daily_spend": daily_limit, "max_acquisitions_per_day": count_limit,
+                  "remaining_spend": remaining_spend, "remaining_acquisitions": remaining_acquisitions}
     budget = (max(0.0, available_cash - obligations)
               if available_cash is not None and obligations is not None else None)
     budget_upper_bound = (max(0.0, available_cash - local_commitments)
@@ -249,6 +280,12 @@ def compare_portfolio(
         if budget_upper_bound is not None and investment > budget_upper_bound:
             excluded["caixa_apos_reservas_locais_insuficiente"] += 1
             continue
+        if remaining_spend is not None and investment > remaining_spend:
+            excluded["limite_de_24h"] += 1
+            continue
+        if remaining_acquisitions == 0:
+            excluded["limite_de_aquisicoes_em_24h"] += 1
+            continue
 
         identity = (hub_id, route_key, model.casefold(), engine_id)
         item = dict(row)
@@ -333,6 +370,7 @@ def compare_portfolio(
         "budget_after_commitments": budget,
         "known_local_commitments": local_commitments,
         "budget_upper_bound": budget_upper_bound,
+        "local_period_limits": period,
         "hangar_expansion": hangar_expansion,
         "criteria": {
             "minimum_daily_profit": minimum_profit,

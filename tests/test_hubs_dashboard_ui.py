@@ -297,6 +297,9 @@ const translations = {
   'Intenções de compra em aberto': 'Open purchase intents',
   'Exposição estimada no diário': 'Estimated ledger exposure',
   'Teto de caixa após reservas locais': 'Cash upper bound after local reservations',
+  'Limite de 24 horas restante (diário local)': 'Remaining 24-hour spending limit (local ledger)',
+  'Aquisições restantes em 24 horas (diário local)': 'Remaining acquisitions in 24 hours (local ledger)',
+  'Uso dos limites de 24 horas a confirmar': '24-hour limit usage unverified',
   'Diário de investimentos indisponível.': 'Investment ledger unavailable.',
   'Nenhum cenário global comparável.': 'No globally comparable scenario.',
   'Saldo a confirmar.': 'Cash balance pending verification.',
@@ -659,6 +662,8 @@ assert.match($('hubRecommendationsScope').textContent,
 assert.match($('hubRecommendationsScope').textContent, /Planning conclusion pending/);
 report.investment_journal = {count:2, estimated_exposure:15500};
 report.portfolio.budget_upper_bound = 4500;
+report.portfolio.local_period_limits = {estimated_exposure:15500, acquisition_count:2,
+  remaining_spend:500, remaining_acquisitions:0};
 report.portfolio.hangar_expansion = {required:true, displayed_quotes:[
   {additional_slots:1,cost:1000,fits_budget_upper_bound:true},
   {additional_slots:10,cost:10000,fits_budget_upper_bound:false}]};
@@ -667,11 +672,15 @@ assert.match($('hubRecommendationsScope').textContent,
   /Open purchase intents: 2 · Estimated ledger exposure: \$15500/);
 assert.match($('hubRecommendationsScope').textContent,
   /Cash upper bound after local reservations: \$4500/);
+assert.match($('hubRecommendationsScope').textContent, /Remaining 24-hour spending limit \(local ledger\): \$500/);
+assert.match($('hubRecommendationsScope').textContent, /Remaining acquisitions in 24 hours \(local ledger\): 0/);
 assert.match($('hubRecommendationsScope').textContent, /Hangar expansion \(displayed quote\) \+1: \$1000 · Within cash upper bound/);
 assert.match($('hubRecommendationsScope').textContent, /Hangar expansion \(displayed quote\) \+10: \$10000 · Above cash upper bound/);
 report.investment_journal = {count:null, estimated_exposure:null};
+report.portfolio.local_period_limits = {estimated_exposure:null, acquisition_count:null};
 renderHubRecommendations(report);
 assert.match($('hubRecommendationsScope').textContent, /Investment ledger unavailable/);
+assert.match($('hubRecommendationsScope').textContent, /24-hour limit usage unverified/);
 report.portfolio = {status:'inconclusivo', best:null};
 renderHubRecommendations(report);
 assert.match($('hubRecommendationsScope').textContent, /No globally comparable scenario/);

@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A7, limites de investimento e aquisições em 24 horas (G0)
+
+- O diário de investimentos passou a retornar, em uma única consulta isolada por perfil, as reservas atuais e as intenções confirmadas nas últimas 24 horas. Os estados APPROVED, PRECHECKED, SUBMITTED e UNKNOWN mantêm a reserva mesmo quando anteriores à janela. As confirmações são contabilizadas uma única vez, seguindo a mesma regra dos executores.
+- A comparação global aplica os limites configurados de gasto e quantidade de aquisições antes do ranking, preservando a restrição independente de caixa e reserva. O painel PT/EN apresenta os limites restantes e indica quando o diário não fornece dados válidos. Foram traduzidos também os novos motivos de exclusão e bloqueio.
+- O uso da janela é uma estimativa do diário local, sem equivalência com o gasto real da companhia. Compromissos externos ao diário, aeronaves sem rota, cobertura integral e homologação do executor continuam pendentes. A política permanece no gate G0, sem execução real.
+- Validação Windows: 1.830 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). Quatro testes direcionados aprovados após correção da importação de `time` e da cobertura de traduções do teste de interface. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A4/A9, resumo financeiro observado de 24 horas (G0)
 
 - A inspeção autenticada do resumo nativo de transações confirmou o período explícito de 24 horas e nove indicadores monetários: despesas, receitas, resultado, combustível, cotas, taxas de rota, encomendas de aeronaves, hubs e passagens. A leitura agregada observada apresentou consistência entre receitas, despesas e resultado. O histórico individual exibido tem cobertura limitada e não comprova a razão financeira completa.

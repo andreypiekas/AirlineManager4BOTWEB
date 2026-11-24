@@ -28,6 +28,7 @@ import re
 import sqlite3
 import socket
 import threading
+import time
 import urllib.request
 from configparser import ConfigParser
 from http import HTTPStatus
@@ -302,19 +303,25 @@ class WebDashboard:
         report["investment_policy"] = investment_policy.report()
         try:
             report["investment_journal"] = {
-                **InvestmentJournal().unresolved(),
+                **InvestmentJournal().unresolved(since=time.time() - 86400),
                 "read_only": True, "execution_available": False,
             }
-        except (OSError, sqlite3.Error):
+        except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
             # An unavailable ledger must not be mistaken for zero commitments.
             report["investment_journal"] = {
                 "intents": [], "count": None, "estimated_exposure": None,
+                "period_usage": None,
                 "read_only": True, "execution_available": False,
                 "blocking_reasons": ["diario_indisponivel"],
             }
         report["portfolio"] = compare_portfolio(
             report,
             known_local_commitments=report["investment_journal"]["estimated_exposure"],
+            local_period_usage=report["investment_journal"].get("period_usage"),
+            max_daily_spend=(investment_policy.max_daily_spend
+                             if investment_policy.enabled and investment_policy.max_daily_spend > 0 else None),
+            max_acquisitions_per_day=(investment_policy.max_acquisitions_per_day
+                                      if investment_policy.enabled and investment_policy.max_acquisitions_per_day > 0 else None),
             max_single_investment=(investment_policy.max_single_investment
                                    if investment_policy.enabled and investment_policy.max_single_investment > 0
                                    else None),

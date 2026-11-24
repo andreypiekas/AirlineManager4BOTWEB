@@ -139,6 +139,28 @@ def test_known_local_reservations_restrict_budget_without_proving_global_commitm
     assert "reservas_locais_invalidas" in invalid["blocking_reasons"]
 
 
+def test_local_period_limits_filter_global_candidates_independently_of_cash():
+    data = report(candidate(cost=7000), candidate("789", "999", "2", cost=2000), cash=30000)
+    usage = {"source": "local_investment_journal", "since": NOW - 86400,
+             "estimated_exposure": 8000, "acquisition_count": 2}
+    args = {"known_local_commitments": 1000, "local_period_usage": usage,
+            "max_daily_spend": 10000, "max_acquisitions_per_day": 3}
+    result = compare_portfolio(data, **args)
+    assert result["budget_upper_bound"] == 29000
+    assert result["local_period_limits"]["remaining_spend"] == 2000
+    assert result["local_period_limits"]["remaining_acquisitions"] == 1
+    assert result["best"]["hub_id"] == "789"
+    assert result["excluded"]["limite_de_24h"] == 1
+    exhausted = compare_portfolio(data, **{**args, "max_acquisitions_per_day": 2})
+    assert exhausted["best"] is None
+    assert exhausted["excluded"]["limite_de_aquisicoes_em_24h"] == 1
+    unknown = compare_portfolio(data, **{**args, "local_period_usage": None})
+    assert "uso_periodo_a_confirmar" in unknown["blocking_reasons"]
+    assert unknown["local_period_limits"]["remaining_spend"] is None
+    invalid = compare_portfolio(data, **{**args, "local_period_usage": {**usage, "estimated_exposure": 999}})
+    assert "uso_periodo_a_confirmar" in invalid["blocking_reasons"]
+
+
 def test_unverified_engine_route_ids_and_invalid_financials_are_excluded():
     data = report(candidate(engine=None),
                   candidate("789", "999", "2", origin={"id": "unknown"}),

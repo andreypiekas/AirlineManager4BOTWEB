@@ -525,19 +525,30 @@ class InvestmentJournal:
                 self._event(conn, key, "SUBMITTED", "UNKNOWN", stamp)
         return len(rows)
 
-    def unresolved(self) -> dict:
-        """Return conservative committed exposure, including uncertain orders."""
+    def unresolved(self, *, since: float | None = None) -> dict:
+        """Return reservations and optionally the local period usage in one read."""
+        if since is not None and (type(since) not in (int, float) or not math.isfinite(since) or since < 0):
+            raise ValueError("Início de janela inválido.")
         placeholders = ",".join("?" for _ in _RESERVED_STATES)
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT * FROM intents WHERE profile_id=? AND state IN ({placeholders}) "
+                f"SELECT * FROM intents WHERE profile_id=? AND (state IN ({placeholders}) "
+                "OR (state='CONFIRMED' AND updated_at>=?)) "
                 "ORDER BY created_at, intent_key",
-                (self.profile_id, *_RESERVED_STATES),
+                (self.profile_id, *_RESERVED_STATES, since),
             ).fetchall()
-        intents = [self._unpack(row) for row in rows]
-        return {"intents": intents,
-                "estimated_exposure": sum(row["estimated_cost"] for row in intents),
-                "count": len(intents), "profile_id": self.profile_id}
+        intents = [self._unpack(row) for row in rows if row["state"] in _RESERVED_STATES]
+        exposure = sum(row["estimated_cost"] for row in intents)
+        result = {"intents": intents, "estimated_exposure": exposure,
+                  "count": len(intents), "profile_id": self.profile_id}
+        if since is not None:
+            confirmed = [row for row in rows if row["state"] == "CONFIRMED"]
+            result["period_usage"] = {
+                "since": since, "source": "local_investment_journal",
+                "estimated_exposure": exposure + sum(json.loads(row["plan_json"])["estimated_cost"] for row in confirmed),
+                "acquisition_count": len(intents) + len(confirmed),
+            }
+        return result
 
     def history(self, intent_key: str) -> list[dict]:
         if not isinstance(intent_key, str) or _INTENT_KEY.fullmatch(intent_key) is None:
