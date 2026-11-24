@@ -330,6 +330,10 @@ const translations = {
   'Preços finais não confirmados': 'Final prices unverified',
   'Hangar de passageiros': 'Passenger hangar',
   'Vagas livres': 'Free slots',
+  'Ampliação de hangar (cotação exibida)': 'Hangar expansion (displayed quote)',
+  'Prazo exibido': 'Displayed duration',
+  'Acima do teto de caixa': 'Above cash upper bound',
+  'Dentro do teto de caixa': 'Within cash upper bound',
   'Aeronaves pendentes na frota': 'Pending aircraft in fleet',
   'Em manutenção pendente': 'Pending maintenance',
   'Pendências sem classificação': 'Unclassified pending statuses',
@@ -431,17 +435,21 @@ report.engine_order_list_coverage = {status:'unverified'};
 renderHubRecommendations(report);
 assert.match($('hubResearchQueueStatus').textContent, /Model list pending verification/);
 delete report.engine_order_list_coverage;
-report.fleet_commitment_observations = {status:'observed', passenger_hangar:{capacity:223,occupied:223,free:0},
+report.fleet_commitment_observations = {status:'observed', passenger_hangar:{capacity:223,occupied:223,free:0,
+  upgrade_quotes:{'1':{cost:190835956,duration_seconds:1080},'10':{cost:1908359562,duration_seconds:10740}}},
   pending_fleet:{total:11,maintenance:11,unclassified:0}, parked_count:0};
 renderHubRecommendations(report);
 assert.match($('hubResearchQueueStatus').textContent, /Passenger hangar: Free slots 0\/223/);
 assert.match($('hubResearchQueueStatus').textContent, /Pending aircraft in fleet: 11 \(Pending maintenance: 11, Unclassified pending statuses: 0\)/);
 assert.match($('hubResearchQueueStatus').textContent, /Parked aircraft: 0/);
 assert.match($('hubResearchQueueStatus').textContent, /Orders and financial commitments need reconciliation/);
+assert.match($('hubResearchQueueStatus').textContent, /Hangar expansion \(displayed quote\) \+1: \$190835956 \(Displayed duration: 00:18:00\)/);
+assert.match($('hubResearchQueueStatus').textContent, /Hangar expansion \(displayed quote\) \+10: \$1908359562 \(Displayed duration: 02:59:00\)/);
 report.fleet_commitment_observations = {status:'unverified', passenger_hangar:null, pending_fleet:null, parked_count:null};
 renderHubRecommendations(report);
 assert.match($('hubResearchQueueStatus').textContent, /Passenger hangar: Unavailable/);
 assert.match($('hubResearchQueueStatus').textContent, /Parked aircraft: Unavailable/);
+assert.doesNotMatch($('hubResearchQueueStatus').textContent, /Hangar expansion/);
 delete report.fleet_commitment_observations;
 renderHubRecommendations(report);
 const marketNow = Date.now() / 1000;
@@ -651,11 +659,16 @@ assert.match($('hubRecommendationsScope').textContent,
 assert.match($('hubRecommendationsScope').textContent, /Planning conclusion pending/);
 report.investment_journal = {count:2, estimated_exposure:15500};
 report.portfolio.budget_upper_bound = 4500;
+report.portfolio.hangar_expansion = {required:true, displayed_quotes:[
+  {additional_slots:1,cost:1000,fits_budget_upper_bound:true},
+  {additional_slots:10,cost:10000,fits_budget_upper_bound:false}]};
 renderHubRecommendations(report);
 assert.match($('hubRecommendationsScope').textContent,
   /Open purchase intents: 2 · Estimated ledger exposure: \$15500/);
 assert.match($('hubRecommendationsScope').textContent,
   /Cash upper bound after local reservations: \$4500/);
+assert.match($('hubRecommendationsScope').textContent, /Hangar expansion \(displayed quote\) \+1: \$1000 · Within cash upper bound/);
+assert.match($('hubRecommendationsScope').textContent, /Hangar expansion \(displayed quote\) \+10: \$10000 · Above cash upper bound/);
 report.investment_journal = {count:null, estimated_exposure:null};
 renderHubRecommendations(report);
 assert.match($('hubRecommendationsScope').textContent, /Investment ledger unavailable/);

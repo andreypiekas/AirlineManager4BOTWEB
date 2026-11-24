@@ -43,8 +43,31 @@ const [occupied, available] = tables[0].rows;
 if (occupied.cells.length !== 3 || available.cells.length !== 3 ||
     !['pax a/c', 'aeronaves pax', 'aeronaves de passageiros'].includes(norm(occupied.cells[1].textContent)) ||
     !['available hangar slots', 'vagas disponiveis no hangar', 'vagas de hangar disponiveis'].includes(norm(available.cells[1].textContent))) return null;
-return {capacity: count(capacity[0].textContent), occupied: count(occupied.cells[2].textContent),
-        free: count(available.cells[2].textContent)};
+const quotes = {};
+for (const amount of [1, 10]) {
+    const controls = [...root.querySelectorAll('button[onclick]')].filter(button =>
+        (button.getAttribute('onclick') || '').includes(`Ajax('hangars.php?mode=upgrade&amount=${amount}&type=','runme')`));
+    if (controls.length !== 1) continue;
+    const button = controls[0];
+    if (!button.getClientRects().length || button.disabled || button.classList.contains('not-active') || button.classList.contains('disabled') ||
+        button.getAttribute('aria-disabled') === 'true' || !button.classList.contains('btn-success')) continue;
+    const price = String(button.textContent || '').trim();
+    if (!/^\$[1-9]\d{0,2}(?:,\d{3})+$|^\$[1-9]\d{0,2}$/.test(price)) continue;
+    const cost = Number(price.slice(1).replace(/,/g, ''));
+    if (!Number.isSafeInteger(cost)) continue;
+    const lines = String(button.parentElement?.innerText || '').trim().split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const labels = [`increase capacity by +${amount} a/c`, `aumentar capacidade em +${amount} aeronaves`,
+        `aumentar a capacidade em +${amount} aeronaves`];
+    if (![2, 3].includes(lines.length) || !labels.includes(norm(lines[0])) || lines.at(-1) !== price) continue;
+    const duration = lines.length === 3 ? lines[1].match(/^(\d{2,5}):([0-5]\d):([0-5]\d)$/) : null;
+    if (lines.length === 3 && !duration) continue;
+    quotes[String(amount)] = {cost, duration_seconds: duration ?
+        Number(duration[1]) * 3600 + Number(duration[2]) * 60 + Number(duration[3]) : null};
+}
+const result = {capacity: count(capacity[0].textContent), occupied: count(occupied.cells[2].textContent),
+                free: count(available.cells[2].textContent)};
+if (Object.keys(quotes).length) result.upgrade_quotes = quotes;
+return result;
 """
 
 
@@ -89,7 +112,23 @@ def _hangar(value):
     if (not isinstance(value, dict) or any(not _count(value.get(key)) for key in ("capacity", "occupied", "free"))
             or value["occupied"] + value["free"] != value["capacity"]):
         return None
-    return {key: value[key] for key in ("capacity", "occupied", "free")}
+    result = {key: value[key] for key in ("capacity", "occupied", "free")}
+    raw_quotes = value.get("upgrade_quotes")
+    quotes = {}
+    if isinstance(raw_quotes, dict):
+        for amount in ("1", "10"):
+            quote = raw_quotes.get(amount)
+            if not isinstance(quote, dict):
+                continue
+            cost = quote.get("cost")
+            duration = quote.get("duration_seconds")
+            if (type(cost) is not int or not 0 < cost <= 2**53 - 1
+                    or (duration is not None and (type(duration) is not int or not 0 <= duration <= 359999999))):
+                continue
+            quotes[amount] = {"cost": cost, "duration_seconds": duration}
+    if quotes:
+        result["upgrade_quotes"] = quotes
+    return result
 
 
 def _fleet_list(value):

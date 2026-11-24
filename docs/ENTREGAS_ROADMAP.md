@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A7, cotação e prazo de ampliação do hangar (G0)
+
+- A inspeção autenticada anterior do hangar PAX cheio (223/223) mostrou duas opções nativas habilitadas: ampliação de uma vaga por US$ 190.835.956 com prazo exibido de 00:18:00 e dez vagas por US$ 1.908.359.562 com prazo de 02:59:00. Nenhuma opção foi acionada.
+- O coletor passou a registrar as cotações exibidas na mesma leitura estável da capacidade. Valida a ação nativa, quantidade, visibilidade, habilitação, ausência de controles duplicados, valor monetário, rótulo e prazo. Uma cotação ausente ou inválida não elimina a leitura independente de capacidade. Os dados seguem a revogação e expiração de 15 minutos por perfil; caches anteriores continuam compatíveis.
+- O planejador expõe o custo exibido de ampliação quando não há vagas, confrontando cada opção separadamente com o caixa reconciliado (quando disponível) e o teto de caixa após reservas locais. O painel PT/EN exibe valores e prazos. A cotação não é contabilizada novamente sobre o investimento dos candidatos, que já pode incluir custo de hangar. Preço final, compromissos efetivos, disponibilidade após conclusão e viabilidade do investimento completo continuam pendentes; o bloqueio de hangar cheio permanece até evidência de vagas livres. A integração Selenium ainda requer homologação autenticada.
+- Validação Windows: 1.815 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX); 104 testes direcionados aprovados, incluindo contrato JavaScript, controles inválidos, expiração, compatibilidade de cache, comparação financeira e painel. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A4/A7, capacidade de hangar e pendências da frota (G0)
 
 - Na navegação autenticada, `hangars.php` exibiu a categoria PAX ativa, capacidade de 223, 223 aeronaves e zero vagas disponíveis. A tela `fleet_pending.php` apresentou 11 linhas únicas, em concordância com o cabeçalho e o contador da aba; todas estavam em manutenção pendente. A tela `fleet_parked.php` apresentou cabeçalho de zero aeronaves e mensagem explícita de lista vazia. A leitura não comprova o número de encomendas em trânsito nem o valor de obrigações futuras. Nenhuma compra, manutenção ou alteração de rota foi acionada.

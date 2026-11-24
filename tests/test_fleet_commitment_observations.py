@@ -49,7 +49,8 @@ class Bot:
 def test_collector_and_profile_snapshot(tmp_path, monkeypatch):
     path = tmp_path / FILENAME
     bot = Bot()
-    data = {PASSENGER_HANGAR_JS: {"capacity": 223, "occupied": 223, "free": 0},
+    data = {PASSENGER_HANGAR_JS: {"capacity": 223, "occupied": 223, "free": 0,
+                                "upgrade_quotes": {"1": {"cost": 190835956, "duration_seconds": 1080}}},
             PENDING_FLEET_JS: {"total": 1, "rows": [{"id": "12345678", "status": "maintenance"}]},
             PARKED_FLEET_JS: {"total": 0, "rows": []}}
     monkeypatch.setattr(game_observations, "_stable_read", lambda _, script: data[script])
@@ -60,11 +61,13 @@ def test_collector_and_profile_snapshot(tmp_path, monkeypatch):
     report = HubRegistry(tmp_path / "hubs.json").snapshot({"relations": []})["fleet_commitment_observations"]
     assert report["status"] == "observed"
     assert report["passenger_hangar"]["free"] == 0
+    assert report["passenger_hangar"]["upgrade_quotes"] == {"1": {"cost": 190835956, "duration_seconds": 1080}}
     assert report["pending_fleet"] == {"total": 1, "maintenance": 1, "unclassified": 0}
     assert report["parked_count"] == 0
     assert report["pending_orders_verified"] is False
     assert report["commitments_verified"] is False
     assert observations_snapshot(path, now=time.time() + 901)["status"] == "unverified"
+    assert observations_snapshot(path, now=time.time() + 901)["passenger_hangar"] is None
     assert observations_snapshot(tmp_path / "other" / FILENAME)["status"] == "unverified"
     data[PENDING_FLEET_JS] = None
     assert not collect_fleet_commitment_observations(bot, path=path)
@@ -100,6 +103,34 @@ def test_portfolio_exposes_missing_or_full_hangar_without_certifying_orders():
     assert "vagas_hangar_a_confirmar" in compare_portfolio(report)["blocking_reasons"]
 
 
+def test_expansion_quote_does_not_certify_capacity_or_final_cost():
+    hangar = {"capacity": 1, "occupied": 1, "free": 0, "upgrade_quotes": {
+        "1": {"cost": 50, "duration_seconds": 1080},
+        "10": {"cost": 500, "duration_seconds": 10740}}}
+    report = {"partial_fleet": False, "available_cash": 100, "fleet_commitment_observations": {
+        "status": "observed", "passenger_hangar": hangar}}
+    result = compare_portfolio(report, known_local_commitments=25)
+    assert result["hangar_expansion"] == {"required": True, "final_cost_verified": False, "displayed_quotes": [
+        {"additional_slots": 1, "cost": 50, "duration_seconds": 1080,
+         "fits_reconciled_budget": None, "fits_budget_upper_bound": True},
+        {"additional_slots": 10, "cost": 500, "duration_seconds": 10740,
+         "fits_reconciled_budget": None, "fits_budget_upper_bound": False}]}
+    assert "hangar_sem_vaga" in result["blocking_reasons"]
+    assert not result["execution_available"]
+    reconciled = compare_portfolio(report, commitments_verified=True, committed_cash=75)
+    assert reconciled["hangar_expansion"]["displayed_quotes"][0]["fits_reconciled_budget"] is False
+    hangar.update(occupied=0, free=1)
+    assert compare_portfolio(report)["hangar_expansion"] is None
+
+
+def test_invalid_quotes_preserve_verified_counts():
+    hangar = {"capacity": 1, "occupied": 1, "free": 0}
+    assert _hangar({**hangar, "upgrade_quotes": {"1": {"cost": True},
+        "10": {"cost": 100, "duration_seconds": -1}}}) == hangar
+    assert _hangar({**hangar, "upgrade_quotes": {"1": {"cost": 5, "private": "ignore"},
+        "5": {"cost": 20}}}) == {**hangar, "upgrade_quotes": {"1": {"cost": 5, "duration_seconds": None}}}
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for DOM contract")
 def test_native_dom_contract(tmp_path):
     script = tmp_path / "fleet_commitments.js"
@@ -112,8 +143,14 @@ const cell = textContent => ({textContent});
 const row = (...texts) => ({cells:texts.map(cell)});
 const pax = {getAttribute:()=>"playSound('neutral_click'); Ajax('hangars.php?type=pax','maintAction',this);"};
 const rows = [row('', 'PAX A/C', '223'), row('', 'Available hangar slots', '0')];
+let upgrades = [];
+const upgrade = (amount, price, duration) => ({textContent:price, disabled:false,
+  getClientRects:()=>[{}],
+  getAttribute:key=>key==='onclick'?`Ajax('hangars.php?mode=upgrade&amount=${amount}&type=','runme');`:null,
+  classList:{contains:key=>key==='btn-success'},
+  parentElement:{innerText:`INCREASE CAPACITY BY +${amount} A/C\\n${duration}\\n${price}`}});
 const hg = {querySelector:()=>null, querySelectorAll:key=>({
-  'button.active':[pax], '.xl-text span':[cell('223')], table:[{rows}]}[key]||[])};
+  'button.active':[pax], 'button[onclick]':upgrades, '.xl-text span':[cell('223')], table:[{rows}]}[key]||[])};
 let kind = 'pending', total = 2;
 const button = {get textContent(){return `${kind} (${total})`},
   getAttribute:()=>`Ajax('fleet_${kind}.php','routesContainer',this);`};
@@ -124,6 +161,17 @@ global.window = {jQuery:{active:0}};
 global.document = {querySelectorAll:key=>({'#maintAction':[hg], '#routesContainer':[panel],
   '#routeAction .listBtns':[button]}[key]||[])};
 assert.deepEqual(hangar(), {capacity:223,occupied:223,free:0});
+const one = upgrade(1,'$190,835,956','00:18:00');
+const ten = upgrade(10,'$1,908,359,562','02:59:00');
+upgrades = [one,ten];
+assert.deepEqual(hangar().upgrade_quotes, {'1':{cost:190835956,duration_seconds:1080},'10':{cost:1908359562,duration_seconds:10740}});
+one.disabled=true; assert.deepEqual(hangar().upgrade_quotes, {'10':{cost:1908359562,duration_seconds:10740}});
+one.disabled=false; one.getClientRects=()=>[]; assert.deepEqual(Object.keys(hangar().upgrade_quotes),['10']);
+one.getClientRects=()=>[{}];
+one.disabled=false; upgrades=[one,one,ten]; assert.deepEqual(Object.keys(hangar().upgrade_quotes),['10']);
+upgrades=[one,ten]; ten.parentElement.innerText='INCREASE CAPACITY BY +1 A/C\\n02:59:00\\n$1,908,359,562';
+assert.deepEqual(Object.keys(hangar().upgrade_quotes),['1']);
+one.textContent='$190,835,956 00:18:00'; assert.equal(hangar().upgrade_quotes,undefined);
 rows[1].cells[1].textContent = 'Other slots'; assert.equal(hangar(),null);
 assert.deepEqual(pending(), {total:2,rows:[{id:'101',status:'maintenance'},{id:'102',status:'unclassified'}]});
 total=3; assert.equal(pending(),null);

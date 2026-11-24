@@ -19,6 +19,7 @@ from expansion_economics import (
     rank_expansion_economics,
 )
 from opportunity_models import DEFAULT_MAX_AGE_SECONDS
+from fleet_commitment_observations import _hangar
 
 
 DEFAULT_PROFIT_WEIGHT = 0.6
@@ -132,12 +133,12 @@ def compare_portfolio(
         blockers.append("cobertura_pesquisa_a_confirmar")
     if commitments_verified is not True:
         blockers.append("pedidos_pendentes_a_conciliar")
+    hangar = None
     if "fleet_commitment_observations" in report:
         observations = report.get("fleet_commitment_observations")
-        hangar = (observations.get("passenger_hangar") if isinstance(observations, Mapping)
+        hangar = (_hangar(observations.get("passenger_hangar")) if isinstance(observations, Mapping)
                   and observations.get("status") in ("observed", "partial") else None)
-        if (not isinstance(hangar, Mapping) or type(hangar.get("free")) is not int
-                or hangar["free"] < 0):
+        if hangar is None:
             blockers.append("vagas_hangar_a_confirmar")
         elif hangar["free"] == 0:
             blockers.append("hangar_sem_vaga")
@@ -156,6 +157,20 @@ def compare_portfolio(
               if available_cash is not None and obligations is not None else None)
     budget_upper_bound = (max(0.0, available_cash - local_commitments)
                           if available_cash is not None and local_commitments is not None else None)
+    hangar_expansion = None
+    if hangar is not None and hangar["free"] == 0:
+        quotes = hangar.get("upgrade_quotes", {})
+        hangar_expansion = {
+            "required": True,
+            "displayed_quotes": [
+                {"additional_slots": int(amount), **quote,
+                 "fits_reconciled_budget": quote["cost"] <= budget if budget is not None else None,
+                 "fits_budget_upper_bound": (quote["cost"] <= budget_upper_bound
+                                             if budget_upper_bound is not None else None)}
+                for amount, quote in quotes.items()
+            ],
+            "final_cost_verified": False,
+        }
 
     single_limit = (_number(max_single_investment, positive=True)
                     if max_single_investment is not None else None)
@@ -318,6 +333,7 @@ def compare_portfolio(
         "budget_after_commitments": budget,
         "known_local_commitments": local_commitments,
         "budget_upper_bound": budget_upper_bound,
+        "hangar_expansion": hangar_expansion,
         "criteria": {
             "minimum_daily_profit": minimum_profit,
             "maximum_payback_days": maximum_payback,

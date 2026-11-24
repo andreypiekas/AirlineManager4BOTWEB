@@ -1169,6 +1169,10 @@ const EN = {
   "Preços finais não confirmados": "Final prices unverified",
   "Hangar de passageiros": "Passenger hangar",
   "Vagas livres": "Free slots",
+  "Ampliação de hangar (cotação exibida)": "Hangar expansion (displayed quote)",
+  "Prazo exibido": "Displayed duration",
+  "Acima do teto de caixa": "Above cash upper bound",
+  "Dentro do teto de caixa": "Within cash upper bound",
   "Aeronaves pendentes na frota": "Pending aircraft in fleet",
   "Em manutenção pendente": "Pending maintenance",
   "Pendências sem classificação": "Unclassified pending statuses",
@@ -2645,6 +2649,18 @@ function renderHubRecommendations(report) {
         nf.format(pending.unclassified) + ")" : tr("Indisponível")) + " · " +
       tr("Aeronaves estacionadas") + ": " + (validCount(parked) ? nf.format(parked) : tr("Indisponível")) +
       " · " + tr("Encomendas e compromissos financeiros a conciliar");
+    if (hangarKnown) {
+      for (const amount of [1, 10]) {
+        const quote = hangar.upgrade_quotes?.[amount];
+        if (!quote || !Number.isSafeInteger(quote.cost) || quote.cost <= 0) continue;
+        const seconds = quote.duration_seconds;
+        const duration = validCount(seconds) ? [Math.floor(seconds / 3600),
+          Math.floor(seconds / 60) % 60, seconds % 60].map(value => String(value).padStart(2, "0")).join(":") : null;
+        $("hubResearchQueueStatus").textContent += " · " + tr("Ampliação de hangar (cotação exibida)") +
+          " +" + amount + ": " + hubMoney(quote.cost) +
+          (duration ? " (" + tr("Prazo exibido") + ": " + duration + ")" : "");
+      }
+    }
   }
   $("hubResearchPrev").disabled = !paged || researchQueue.offset <= 0;
   $("hubResearchNext").disabled = !paged || researchQueue.next_offset == null;
@@ -2802,6 +2818,16 @@ function renderHubRecommendations(report) {
       $("hubRecommendationsScope").textContent += " " +
         tr("Teto de caixa após reservas locais") + ": " +
         hubMoney(report.portfolio.budget_upper_bound) + ".";
+    }
+    const expansion = report.portfolio.hangar_expansion;
+    if (expansion?.required === true && Array.isArray(expansion.displayed_quotes)) {
+      for (const quote of expansion.displayed_quotes) {
+        if (![1, 10].includes(quote.additional_slots) || !Number.isSafeInteger(quote.cost) || quote.cost <= 0) continue;
+        const fits = quote.fits_budget_upper_bound;
+        $("hubRecommendationsScope").textContent += " " + tr("Ampliação de hangar (cotação exibida)") +
+          " +" + quote.additional_slots + ": " + hubMoney(quote.cost) +
+          (typeof fits === "boolean" ? " · " + tr(fits ? "Dentro do teto de caixa" : "Acima do teto de caixa") : "") + ".";
+      }
     }
   }
   if (report.investment_journal) {
