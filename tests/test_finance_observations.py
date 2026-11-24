@@ -6,6 +6,7 @@ import time
 import pytest
 
 import game_observations
+import paths
 from expansion_metrics import build_expansion_metrics
 from finance_observations import (
     FILENAME, SOURCE, SUMMARY_JS, collect_finance_observations, finance_snapshot, validate_summary,
@@ -60,10 +61,18 @@ def test_collector_and_profile_isolation(tmp_path, monkeypatch):
     report = HubRegistry(tmp_path / "hubs.json").snapshot({"relations": []})["finance_observations"]
     assert report["status"] == "observed"
     assert report["source"] == SOURCE
+    assert report["profile_id"] == paths.current().label
     assert report["summary"] == SAMPLE
     assert report["historical_only"] is True
     assert finance_snapshot(path, now=time.time() + 901)["summary"] is None
     assert finance_snapshot(tmp_path / "other" / FILENAME)["summary"] is None
+    with monkeypatch.context() as other:
+        other.setattr(paths, "current", lambda: paths.Profile("other"))
+        assert finance_snapshot(path)["status"] == "unverified"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    saved.pop("profile_id")
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    assert finance_snapshot(path)["status"] == "unverified"
     monkeypatch.setattr(game_observations, "_stable_read", lambda *_: None)
     assert not collect_finance_observations(bot, path=path)
     assert finance_snapshot(path)["status"] == "unverified"
@@ -72,7 +81,7 @@ def test_collector_and_profile_isolation(tmp_path, monkeypatch):
 def test_metrics_preserve_historical_scope(tmp_path):
     now = time.time()
     journal = InvestmentJournal(tmp_path / "game.sqlite3", profile_id="principal", simulation=False)
-    report = {"finance_observations": {"source": SOURCE, "status": "observed",
+    report = {"finance_observations": {"source": SOURCE, "status": "observed", "profile_id": "principal",
                                      "observed_at": now, "summary": SAMPLE}}
     metrics = build_expansion_metrics(journal, now=now, opportunity_report=report)
     assert metrics["company_finance_24h"]["summary"] == SAMPLE
@@ -84,6 +93,8 @@ def test_metrics_preserve_historical_scope(tmp_path):
     assert expired["company_finance_24h"]["summary"] is None
     simulated = InvestmentJournal(tmp_path / "sim.sqlite3", profile_id="principal", simulation=True)
     assert build_expansion_metrics(simulated, now=now, opportunity_report=report)["company_finance_24h"]["summary"] is None
+    report["finance_observations"]["profile_id"] = "other"
+    assert build_expansion_metrics(journal, now=now, opportunity_report=report)["company_finance_24h"]["summary"] is None
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js required for DOM contract")

@@ -67,14 +67,16 @@ def validate_summary(raw):
 
 
 def finance_snapshot(path: Path | None = None, *, now: float | None = None) -> dict:
-    path = path if path is not None else paths.current().data / FILENAME
+    profile = paths.current()
+    path = path if path is not None else profile.data / FILENAME
     now = time.time() if now is None else now
     unknown = {"status": "unverified", "historical_only": True, "summary": None}
     try:
         saved = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return unknown
-    if not isinstance(saved, dict) or saved.get("source") != SOURCE:
+    if (not isinstance(saved, dict) or saved.get("source") != SOURCE
+            or saved.get("profile_id") != profile.label):
         return unknown
     stamp = saved.get("observed_at")
     if type(stamp) not in (int, float) or not 0 < stamp <= now or now - stamp > MAX_AGE:
@@ -82,7 +84,8 @@ def finance_snapshot(path: Path | None = None, *, now: float | None = None) -> d
     summary = validate_summary(saved.get("summary"))
     if summary is None:
         return unknown
-    return {**unknown, "status": "observed", "source": SOURCE, "observed_at": stamp, "summary": summary}
+    return {**unknown, "status": "observed", "source": SOURCE, "profile_id": profile.label,
+            "observed_at": stamp, "summary": summary}
 
 
 def collect_finance_observations(bot, *, path=None) -> bool:
@@ -90,8 +93,9 @@ def collect_finance_observations(bot, *, path=None) -> bool:
 
     if getattr(bot, "stopping", False):
         return False
-    path = Path(path) if path is not None else paths.current().data / FILENAME
-    paths.write_atomic(path, "{}")
+    profile = paths.current()
+    path = Path(path) if path is not None else profile.data / FILENAME
+    paths.write_atomic(path, "{}", private=True)
     started = time.time()
     try:
         bot.open_popup("finances.php", "Finances", "nav_finances")
@@ -101,5 +105,6 @@ def collect_finance_observations(bot, *, path=None) -> bool:
         bot.close_popup(quiet=True)
     if summary is None or getattr(bot, "stopping", False) or not 0 <= time.time() - started <= 120:
         return False
-    paths.write_atomic(path, json.dumps({"source": SOURCE, "observed_at": int(started), "summary": summary}))
+    paths.write_atomic(path, json.dumps({"source": SOURCE, "profile_id": profile.label,
+                                        "observed_at": int(started), "summary": summary}), private=True)
     return True

@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A9, isolamento do histórico financeiro (G0)
+
+- Inspeção autenticada, somente leitura, em Finances > History > Expenses: a tabela visível em `#transactionContainer` apresenta idade relativa, descrição e valor. As linhas não expõem identificador estável, data absoluta, vínculo com pedido ou voo, nem controle visível de paginação. Não há comprovação da cobertura integral das despesas nem deduplicação confiável entre coletas. O resumo nativo de 24 horas continua sendo uma observação histórica parcial; o detalhamento não foi promovido a diário conciliado.
+- O coletor grava a identidade do perfil no momento da coleta e usa escrita atômica privada. Arquivos legados sem identidade ou pertencentes a outro perfil exigem nova coleta. A captura auditada e as métricas A9 conferem a identidade original antes de aproveitar o resumo, impedindo que uma cópia de outro perfil limite o orçamento ou apareça nos relatórios.
+- Validação: 134 testes direcionados aprovados; suíte Windows com 2.078 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Rollback por reversão deste commit. Permanecem pendentes a conciliação integral dos gastos e compromissos, a demanda residual verificável, os custos finais, a produção de evidências econômicas e a homologação A0–A9. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A3, restrições físicas com coleta parcial (G0)
 
 - O contrato de viabilidade econômica preserva vetos físicos independentes: alcance direto insuficiente, pista de origem ou destino insuficiente e incompatibilidades nos trechos ou na pista de uma escala verificada. Medidas ausentes ou inválidas continuam bloqueando a recomendação; a insuficiência conhecida permanece explícita mesmo que outras medidas faltem.

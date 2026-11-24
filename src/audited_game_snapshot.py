@@ -332,6 +332,7 @@ def snapshot_summary(*, now=None, path: Path | None = None):
         historical_spending = None
         if (isinstance(finance, dict) and finance.get("status") == "observed"
                 and finance.get("source") == FINANCE_SOURCE and finance.get("historical_only") is True
+                and finance.get("profile_id") == snapshot["profile_id"]
                 and _fresh(finance.get("observed_at"), now)
                 and finance["observed_at"] <= observations["captured_at"]):
             summary = validate_summary(finance.get("summary"))

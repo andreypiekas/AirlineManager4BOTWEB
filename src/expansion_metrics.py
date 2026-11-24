@@ -97,7 +97,8 @@ def build_expansion_metrics(
     company_finance = {"status": "unverified", "historical_only": True, "summary": None}
     if isinstance(opportunity_report, Mapping):
         finance = opportunity_report.get("finance_observations")
-        if isinstance(finance, Mapping) and finance.get("source") == FINANCE_SOURCE and finance.get("status") == "observed":
+        if (isinstance(finance, Mapping) and finance.get("source") == FINANCE_SOURCE
+                and finance.get("status") == "observed" and finance.get("profile_id") == journal.profile_id):
             stamp = finance.get("observed_at")
             summary = validate_summary(finance.get("summary"))
             if (not journal.simulation and summary is not None and type(stamp) in (int, float)

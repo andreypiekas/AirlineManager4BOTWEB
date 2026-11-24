@@ -125,7 +125,8 @@ def test_daily_financial_history_and_portfolio_blockers(monkeypatch, tmp_path, a
                 "future_unknown_code",
             ]
             report["finance_observations"] = {
-                "status": "observed", "source": SOURCE, "observed_at": now - age,
+                "status": "observed", "source": SOURCE, "profile_id": bot.config.profile.label,
+                "observed_at": now - age,
                 "summary": {"window_hours": 24, "income": 1000, "expenses": 1500,
                             "result": -500, "fuel_expenses": 100, "quota_expenses": 50,
                             "route_fees": 200, "aircraft_orders": 900, "hubs": 0,

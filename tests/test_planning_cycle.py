@@ -116,7 +116,7 @@ def test_worker_applies_native_historical_spending_without_certifying_period(wor
     worker.config.set("investment", "max_cycle_spend", 1200)
     worker.config.set("investment", "max_daily_spend", 2400)
     worker.config.set("settings", "cash_reserve", 0)
-    finance = {"source": SOURCE, "observed_at": int(time.time()) - 5,
+    finance = {"source": SOURCE, "profile_id": "isolated", "observed_at": int(time.time()) - 5,
                "summary": {"window_hours": 24, "expenses": 4000, "income": 5000,
                            "result": 1000, "fuel_expenses": 100, "quota_expenses": 100,
                            "aircraft_orders": 2000, "hubs": 500, "route_fees": 200,
@@ -133,6 +133,10 @@ def test_worker_applies_native_historical_spending_without_certifying_period(wor
     assert "evidencia_period_spent_a_confirmar" in reasons
     assert "compromissos_a_conciliar" in reasons
     assert snapshot_summary(now=finance["observed_at"] + 901)["historical_investment_spending"] is None
+    path.write_text(json.dumps({**finance, "profile_id": "other"}), encoding="utf-8")
+    planning_cycle.capture_and_plan(worker)
+    assert snapshot_summary()["historical_investment_spending"] is None
+    assert "limite_periodo_esgotado_na_observacao" not in planning_cycle.planning_cycle_summary()["blocking_reasons"]
     path.write_text(json.dumps({**finance, "summary": {**finance["summary"], "result": 0}}), encoding="utf-8")
     planning_cycle.capture_and_plan(worker)
     assert snapshot_summary()["historical_investment_spending"] is None
