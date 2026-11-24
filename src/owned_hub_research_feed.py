@@ -16,6 +16,7 @@ from typing import Optional
 
 from route_detail_evidence import current_detail
 from market import recent_market_quotes
+from research_economics_preview import research_economics_preview, research_mode
 
 MAX_EVIDENCE_AGE = 3 * 86400
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
@@ -181,11 +182,12 @@ def build_owned_hub_research_queue(
     offset: int = 0, expected_fingerprint: Optional[str] = None,
     hub_progress: Optional[list[dict]] = None,
     operating_market_stats: Optional[object] = None,
+    preview_margin: float = 0.10,
 ) -> dict:
     return _build_hub_research_queue(
         inventory, route_samples, market, now=now, max_items=max_items, engines=engines,
         offset=offset, expected_fingerprint=expected_fingerprint, hub_progress=hub_progress,
-        operating_market_stats=operating_market_stats)
+        operating_market_stats=operating_market_stats, preview_margin=preview_margin)
 
 
 def build_external_hub_research_queue(
@@ -195,6 +197,7 @@ def build_external_hub_research_queue(
     cash: Optional[float] = None, cash_observed_at: Optional[float] = None,
     reserve: Optional[float] = None,
     operating_market_stats: Optional[object] = None,
+    preview_margin: float = 0.10,
 ) -> dict:
     """Join external catalog evidence with route and engine research, never owned inputs."""
     now = _positive_number(time.time() if now is None else now) or 0.0
@@ -230,7 +233,7 @@ def build_external_hub_research_queue(
         engines=engines, offset=offset, expected_fingerprint=expected_fingerprint,
         hub_progress=external.get("hub_progress"), external=True,
         external_budget=_external_budget(cash, cash_observed_at, reserve, now),
-        operating_market_stats=operating_market_stats)
+        operating_market_stats=operating_market_stats, preview_margin=preview_margin)
 
 
 def _build_hub_research_queue(
@@ -240,6 +243,7 @@ def _build_hub_research_queue(
     hub_progress: Optional[list[dict]] = None, external: bool = False,
     external_budget: Optional[dict] = None,
     operating_market_stats: Optional[object] = None,
+    preview_margin: float = 0.10,
 ) -> dict:
     """Produce bounded, balanced per-hub tasks from independent cached reads.
 
@@ -250,6 +254,7 @@ def _build_hub_research_queue(
     # Truncating the clock or accepting integers only drops valid live samples.
     now = _positive_number(time.time() if now is None else now) or 0.0
     operating_market = recent_market_quotes(operating_market_stats, now)
+    mode_key = research_mode(operating_market_stats, now)
     max_items = max_items if type(max_items) is int and 1 <= max_items <= 200 else 40
     inventory = inventory if isinstance(inventory, dict) else {}
     market = market if isinstance(market, dict) else {}
@@ -388,6 +393,8 @@ def _build_hub_research_queue(
         "market_source": market.get("source"),
         "market_observed_at": market.get("observed_at"),
         **({"operating_market": operating_market} if any(operating_market.values()) else {}),
+        **({"preview_mode": mode_key, "preview_margin": preview_margin,
+            "mode_read_at": operating_market_stats.mode_read_at} if mode_key else {}),
         "blockers": blockers, "models": models,
         "options": model_options, "routes": dict(samples_by_hub),
         "conflicts": dict(conflicts_by_hub),
@@ -480,6 +487,11 @@ def _build_hub_research_queue(
                     pending.append("alcance_modelo_a_confirmar")
                 if model["capacity"] is None:
                     pending.append("capacidade_modelo_a_confirmar")
+                economics = research_economics_preview(
+                    sample, model, variant, engine_evidence, operating_market, mode_key, preview_margin)
+                if economics is not None:
+                    economics["expires_at"] = min(economics["expires_at"],
+                                                  operating_market_stats.mode_read_at + 900)
                 queue.append({
                     "hub_id": hub_id, "hub_code": hubs[hub_id]["code"],
                     "destination_id": sample["destination_id"],
@@ -501,6 +513,7 @@ def _build_hub_research_queue(
                     "engine_fuel": variant["engine_fuel"] if variant else None,
                     "final_aircraft_price": None,
                     **({"external_cost_preview": preview} if external else {}),
+                    "economics_preview": economics,
                     "daily_net_profit": None, "status": "pesquisa_pendente",
                     "pending": pending, "purchase_eligible": False,
                     "evidence": {

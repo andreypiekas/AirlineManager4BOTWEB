@@ -129,6 +129,7 @@ class Stats:
     reputation: Optional[int] = None
     campaign_ends: Optional[int] = None   # epoch of the first running campaign's end, 0 = none running
     mode: Optional[str] = None            # game mode label: "fácil" / "realista"
+    mode_read_at: Optional[float] = None
     updated_at: Optional[float] = None
 
 
@@ -951,13 +952,16 @@ class Bot:
 
     def _read_mode(self) -> None:
         # The page's `difficulty` is the flight speed multiplier: 1.5 in easy mode, 1 in realism (gamemode.py).
-        mode = from_difficulty(self.js("return typeof difficulty === 'undefined' ? null : difficulty;"))
+        with self._stats_lock:
+            self._stats.mode_read_at = None
+        difficulty = self.js("return typeof difficulty === 'undefined' ? null : difficulty;")
+        mode = from_difficulty(difficulty)
         if mode is None:
             return
         if mode is not self.mode or self.stats().mode is None:
             log.info("Modo de jogo: %s (voos com velocidade x%s da aeronave).", mode.label, f"{mode.speed:g}")
         self.mode = mode
-        self.update_stats(mode=mode.label)
+        self.update_stats(mode=mode.label, mode_read_at=time.time() if str(difficulty) in ("1", "1.0", "1.5") else None)
 
     def _read_header(self) -> None:
         money = to_int(self._text(self._sel("money"), timeout=5))

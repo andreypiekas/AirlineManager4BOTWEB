@@ -391,6 +391,17 @@ const marketNow = Date.now() / 1000;
 assert.equal(operatingMarketText({fuel:{price:600, observed_at:marketNow-5, expires_at:marketNow+60},
   co2:{price:100, observed_at:marketNow-60, expires_at:marketNow-1}}),
   'Fuel quote (USD/1000): $600 · CO₂ quote (USD/1000): Unknown');
+const previewMetrics = document.createElement('div');
+const preview = {source:'route_optimizer_what_if_v1', purchase_eligible:false,
+  expires_at:marketNow+60, safety_margin_fraction:.1, layouts:[{
+    layout:{y:10,j:2,f:1}, base:{projected_contribution_per_day:120},
+    stress:{projected_contribution_per_day:-20}}]};
+appendResearchEconomicsPreview(previewMetrics, {economics_preview:preview});
+assert.equal(previewMetrics.children.length, 4);
+assert.equal(previewMetrics.children[1].children[1].textContent, '$120 / $-20');
+const expiredMetrics = document.createElement('div');
+appendResearchEconomicsPreview(expiredMetrics, {economics_preview:{...preview, expires_at:marketNow-1}});
+assert.equal(expiredMetrics.children.length, 0);
 assert.equal($('hubResearchPrev').disabled, true);
 assert.equal($('hubResearchNext').disabled, true);
 Object.assign(report.research_queue, {

@@ -1256,6 +1256,11 @@ const EN = {
   "Detalhes externos recentes": "Fresh external route details",
   "Pesquisa de aeronaves e rotas para novos hubs": "Aircraft and route research for new hubs",
   "Demanda observada Y/J/F": "Observed Y/J/F demand",
+  "Simulação (demanda total, não residual)": "What-if (total demand, not remaining demand)",
+  "Contribuição diária base / stress": "Daily contribution base / stress",
+  "Margem sobre receita": "Revenue margin",
+  "Custos excluídos": "Excluded costs",
+  "Manutenção, A-check, outras despesas e investimento": "Maintenance, A-check, other expenses and capital investment",
   "Catálogo externo ou propriedade a confirmar": "External catalog or ownership requires verification",
   "Demanda externa a confirmar": "External demand requires verification",
   "Custo do hub a confirmar": "Hub cost requires verification",
@@ -1914,6 +1919,20 @@ function operatingMarketText(market) {
   return tr("Cotação de combustível (USD/1000)") + ": " + format(market?.fuel) +
     " · " + tr("Cotação de CO₂ (USD/1000)") + ": " + format(market?.co2);
 }
+function appendResearchEconomicsPreview(metrics, task) {
+  const preview = task.economics_preview;
+  if (!preview || preview.purchase_eligible !== false || preview.source !== "route_optimizer_what_if_v1" ||
+      !Number.isFinite(preview.expires_at) || Date.now() / 1000 >= preview.expires_at ||
+      !Array.isArray(preview.layouts) || !preview.layouts.length) { return; }
+  addHubMetric(metrics, "Simulação (demanda total, não residual)", tr("Contribuição diária base / stress"));
+  for (const row of preview.layouts) {
+    const layout = [row.layout.y, row.layout.j, row.layout.f].map(value => nf.format(value)).join(" / ");
+    addHubMetric(metrics, "Y/J/F " + layout, hubMoney(row.base.projected_contribution_per_day) +
+      " / " + hubMoney(row.stress.projected_contribution_per_day));
+  }
+  addHubMetric(metrics, "Margem sobre receita", nf.format(preview.safety_margin_fraction * 100) + "%");
+  addHubMetric(metrics, "Custos excluídos", tr("Manutenção, A-check, outras despesas e investimento"));
+}
 const hubName = hub => (hub.code ? hub.code + " · " : "") + (hub.name || (hub.id ? "#" + hub.id : tr("Sem dados")));
 const hubSearchText = value => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
 const hubMeanProfit = hub => Number.isFinite(hub.estimated_profit_per_day) &&
@@ -2541,6 +2560,7 @@ function renderHubRecommendations(report) {
     addHubMetric(metrics, "Preço final da aeronave", tr("Não verificado"));
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
+    appendResearchEconomicsPreview(metrics, task);
     addHubMetric(metrics, "ROI", tr("Desconhecido"));
     addHubMetric(metrics, "Retorno estimado", tr("Desconhecido"));
     const pending = Array.isArray(task.pending) && task.pending.length ? task.pending : ["pesquisa_pendente"];
@@ -3199,6 +3219,7 @@ function renderExternalHubResearch(page) {
       ? nf.format(costs.hub_points) : tr("Não verificado"));
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
+    appendResearchEconomicsPreview(metrics, task);
     const reasons = document.createElement("ul"); reasons.className = "hub-research-reasons";
     for (const reason of task.pending || []) {
       const entry = document.createElement("li"); entry.textContent = hubResearchBlocker(reason);

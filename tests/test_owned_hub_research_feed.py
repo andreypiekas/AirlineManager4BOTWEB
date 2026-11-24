@@ -710,3 +710,99 @@ def test_persisted_attempts_and_conflicts_reach_research_coverage(tmp_path, monk
     assert aged["sampled_routes"] == 0
     assert aged["hub_coverage"][0]["last_attempt_status"] == "unattempted"
     assert aged["hub_coverage"][0]["status"] == "nao_pesquisado"
+
+
+def _preview_stats():
+    return SimpleNamespace(mode="realista", mode_read_at=NOW - 10,
+                           fuel_quote=MarketQuote(600, NOW - 5, NOW + 60),
+                           co2_quote=MarketQuote(100, NOW - 5, NOW + 90))
+
+
+def _preview_engines():
+    engines = _engines()
+    row = engines["models"]["11"]
+    row.update(observed_model_id="11", model_detail_identity_verified=True)
+    row["variants"].append({"engine_id": "3", "label": "Motor econômico",
+                            "available": True, "selected": False, "speed": 850, "fuel": 8})
+    return engines
+
+
+def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress():
+    stats, engines = _preview_stats(), _preview_engines()
+    page = build_owned_hub_research_queue(_inventory(), [_sample()], _market(), engines=engines,
+                                         now=NOW, operating_market_stats=stats, preview_margin=.15)
+    items = {row["engine_id"]: row for row in page["items"]}
+    first, second = (items[k]["economics_preview"] for k in ("1", "3"))
+    assert first["source"] == "route_optimizer_what_if_v1"
+    assert first["demand_basis"] == "observed_total_not_residual"
+    assert first["expires_at"] == NOW + 60
+    assert first["safety_margin_fraction"] == .15
+    assert first["purchase_eligible"] is False
+    assert first["mode"] == "realism"
+    assert items["2"]["economics_preview"] is None
+    assert items[None]["economics_preview"] is None
+    assert first["layouts"][0]["base"]["fuel_cost_per_day"] > second["layouts"][0]["base"]["fuel_cost_per_day"]
+    for row in items.values():
+        assert row["daily_net_profit"] is None
+        assert row["purchase_eligible"] is False
+    for row in first["layouts"]:
+        assert sum(row["layout"][key] * weight for key, weight in zip(("y", "j", "f"), (1, 2, 3))) <= 180
+        base, stress = row["base"], row["stress"]
+        assert stress["fuel_cost_per_day"] == pytest.approx(base["fuel_cost_per_day"] * 1.2, abs=.02)
+        assert base["margin_per_day"] == pytest.approx(base["revenue_per_day"] * .15, abs=.02)
+        assert base["projected_contribution_per_day"] == pytest.approx(
+            base["revenue_per_day"] - base["fuel_cost_per_day"] - base["co2_cost_per_day"] - base["margin_per_day"], abs=.03)
+        assert stress["projected_contribution_per_day"] < base["projected_contribution_per_day"]
+        for key, amount in stress["passengers_per_day"].items():
+            assert amount <= row["layout"][key] * .72 * stress["departures_per_day"] + .02
+    assert set(first["excluded_costs"]) == {"maintenance", "a_check", "other_recurring", "capex"}
+
+
+@pytest.mark.parametrize("missing", ["mode", "stale_mode", "future_mode", "fuel", "co2",
+                                    "unverified_engine", "event", "occupied", "range", "capacity"])
+def test_economic_preview_requires_relevant_observations(missing):
+    stats, engines, market, sample = _preview_stats(), _preview_engines(), _market(), _sample()
+    if missing == "mode":
+        stats.mode = None
+    elif missing == "stale_mode":
+        stats.mode_read_at = NOW - 901
+    elif missing == "future_mode":
+        stats.mode_read_at = NOW + 1
+    elif missing in ("fuel", "co2"):
+        setattr(stats, missing + "_quote", MarketQuote(100, NOW - 120, NOW - 1))
+    elif missing == "unverified_engine":
+        engines = _engines()
+    elif missing == "event":
+        sample["event_demand_boosted"] = True
+    elif missing == "occupied":
+        sample["route_detail"] = {"source": "game_route_detail", "observed_at": NOW,
+                                  "origin_id": "2926", "destination_id": "3139",
+                                  "origin_runway_ft": 8000, "destination_runway_ft": 5000,
+                                  "observed_aircraft_on_route": 1}
+    elif missing == "range":
+        sample["distance_km"] = 8000
+    elif missing == "capacity":
+        market["models"][0]["capacity"] = 180.5
+    result = build_owned_hub_research_queue(_inventory(), [sample], market, engines=engines,
+                                           now=NOW, operating_market_stats=stats)
+    assert result["items"]
+    assert all(row["economics_preview"] is None for row in result["items"])
+
+
+def test_external_preview_expiry_and_margin_change_reset_only_evidence_cursor():
+    inventory = {**_inventory(), "hub_catalog_fresh": True}
+    external = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                "candidate_inventory": [{"id": "3139", "code": "SBL", "observed_at": NOW}],
+                "samples": [_sample("3139", "2926")]}
+    stats = _preview_stats()
+    def build(now, **kwargs):
+        return build_external_hub_research_queue(inventory, external, _market(), now=now,
+            engines=_preview_engines(), operating_market_stats=stats, max_items=1, **kwargs)
+    page = build(NOW)
+    assert page["items"][0]["economics_preview"]["purchase_eligible"] is False
+    for refreshed in (build(NOW + 60, offset=1, expected_fingerprint=page["snapshot_fingerprint"]),
+                      build(NOW, offset=1, expected_fingerprint=page["snapshot_fingerprint"], preview_margin=.2)):
+        assert refreshed["cursor_reset"] is True
+        assert refreshed["layout_fingerprint"] == page["layout_fingerprint"]
+        assert refreshed["items"][0]["daily_net_profit"] is None
+    assert build(NOW + 60)["items"][0]["economics_preview"] is None

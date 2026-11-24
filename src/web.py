@@ -238,6 +238,7 @@ class WebDashboard:
             cash=cash, cash_observed_at=observed_at,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
             operating_market_stats=stats_reader() if callable(stats_reader) else None,
+            preview_margin=max(0, min(100, self.cfg.get_int("investment", "preview_margin_pct", 10))) / 100,
         )
 
     def hub_recommendations(self, *, research_offset: int = 0,
@@ -274,6 +275,7 @@ class WebDashboard:
             offset=research_offset,
             expected_fingerprint=research_fingerprint,
             operating_market_stats=stats_reader() if callable(stats_reader) else None,
+            preview_margin=max(0, min(100, self.cfg.get_int("investment", "preview_margin_pct", 10))) / 100,
         )
         investment_policy = InvestmentPolicy.from_config(self.cfg)
         report["investment_policy"] = investment_policy.report()

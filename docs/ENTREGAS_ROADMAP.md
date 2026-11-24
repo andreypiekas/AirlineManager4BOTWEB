@@ -1,5 +1,14 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A3/A7, simulação econômica por motor e rota (G0)
+
+- As filas próprias e externas calculam cenários exploratórios por variante com identidade de modelo confirmada, capacidade inteira, velocidade, consumo, alcance direto, modo de jogo recém-observado e cotações operacionais atuais. Dados de eventos ou contagem positiva de aeronaves na rota suprimem a simulação. A demanda observada é total e ainda exige verificação de demanda residual e ocupação.
+- O cálculo apresenta alternativas de assentos Y/J/F, receita tarifária estimada, voos/dia teóricos fracionários, combustível, CO₂, margem sobre receita e contribuição diária. O stress usa os mesmos assentos, +20% em cada cotação e −10% em demanda e ocupação. As premissas são ocupação de 80%, tarifas aproximadas do modo de jogo, 6 minutos de turnaround, fator de combustível 0,94 e CO₂ de 0,18 por passageiro equivalente/km. Pista, horários, custos finais e taxas ainda precisam de confirmação.
+- A margem de segurança da simulação é configurável por perfil em `[investment] preview_margin_pct` (padrão 10%, intervalo 0–100). Manutenção, A-check, outras despesas e investimento inicial estão explicitamente excluídos. A contribuição diária não constitui lucro líquido, ROI, payback ou recomendação de compra.
+- A API e o painel PT/EN mostram a simulação separadamente da avaliação financeira verificada; a simulação expira com o modo ou com a primeira cotação vencida. Alterações das evidências ou da margem invalidam o cursor interativo sem alterar a identidade das combinações. As filas permanecem pendentes e inelegíveis para compra.
+- Permanecem pendentes a confirmação autenticada dos seletores/tarifas e premissas, a demanda residual, cobertura, viabilidade física e custos recorrentes, bem como a integração ao registro auditado de economia. Nenhuma aquisição foi executada.
+- Validação Windows: 1.700 testes aprovados e 1 ignorado, excluindo o teste de instalação Linux (permissões POSIX). Os testes cobrem variantes de motor, margem, stress com a mesma configuração de assentos, entradas ausentes ou vencidas, eventos, ocupação observada, cursores e apresentação da contribuição no painel. O teste de interface atualizado passou também em execução direcionada (9 aprovados). Ruff, compilação Python, sintaxe JavaScript e verificação do diff aprovados.
+
 ## 2026-11-23 — Autonomia Total A3/A7, cotações operacionais de combustível e CO₂ (G0)
 
 - Com planejamento e coleta de mercado ativos, o ciclo consulta os dois mercados mesmo quando as compras automáticas estão desativadas. Os modos de compra são independentes e as regras existentes continuam disponíveis quando habilitadas.
