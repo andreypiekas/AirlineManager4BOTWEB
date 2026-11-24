@@ -23,6 +23,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -106,12 +107,40 @@ def _local_investment_blockers(journal: dict) -> list[str]:
 
 
 def _block_local_investment(portfolio: dict, journal: dict) -> None:
-    blockers = _local_investment_blockers(journal)
+    _block_portfolio(portfolio, _local_investment_blockers(journal))
+
+
+def _block_portfolio(portfolio: dict, blockers: list[str]) -> None:
     if blockers:
         portfolio["blocking_reasons"] = list(dict.fromkeys([*portfolio["blocking_reasons"], *blockers]))
         portfolio["status"] = "inconclusivo"
         if "decision" in portfolio:
             portfolio["decision"] = "nao_comprar"
+
+
+def _current_audited_finance_blockers(bot, evaluation: dict, record: dict, journal: dict) -> list[str]:
+    """Require the audited snapshot to agree with the current account and ledger."""
+    blockers = []
+    money, observed_at = recent_verified_money(bot)
+    cash = evaluation["provenance"]["cash"]
+    if money is None or observed_at is None or observed_at < cash["observed_at"]:
+        blockers.append("saldo_vivo_a_confirmar")
+    elif money != cash["value"]["available"]:
+        blockers.append("saldo_vivo_divergente_a3")
+    # A new confirmation may alter the balance, hangar, fleet and spending
+    # controls even if the current balance happens to equal the old amount.
+    last_confirmed = journal["period_usage"]["last_confirmed_at"]
+    if last_confirmed is not None:
+        if type(last_confirmed) not in (int, float) or not math.isfinite(last_confirmed):
+            blockers.append("diario_indisponivel")
+        else:
+            evidence = record["portfolio_evidence"]
+            timestamps = [row["observed_at_oldest"] for row in record["evaluations"]]
+            for group in ("controls", "hub_capacity", "confidence_evidence", "diversification_evidence"):
+                timestamps.extend(proof["observed_at"] for proof in evidence.get(group, {}).values())
+            if any(last_confirmed > stamp for stamp in timestamps):
+                blockers.append("snapshot_anterior_compra_confirmada")
+    return blockers
 
 
 def _is_loopback(host: str) -> bool:
@@ -419,7 +448,8 @@ class WebDashboard:
             portfolio["blocking_reasons"].append("registro_a3_invalido")
             portfolio["status"] = "inconclusivo"
             portfolio["decision"] = "nao_comprar"
-        _block_local_investment(portfolio, _local_investment_snapshot())
+        journal = _local_investment_snapshot()
+        _block_local_investment(portfolio, journal)
         purchase_plan = None
         purchase_plan_blockers = []
         if portfolio.get("decision") == "sugestao_para_analise":
@@ -434,9 +464,18 @@ class WebDashboard:
                 purchase_plan_blockers.append("economia_a3_vencedora_ausente_ou_ambigua")
             else:
                 try:
-                    purchase_plan = build_aircraft_intent_plan(portfolio, matches[0])
-                except (ValueError, TypeError, KeyError) as exc:
-                    purchase_plan_blockers.append(str(exc))
+                    finance_blockers = _current_audited_finance_blockers(
+                        self.bot, matches[0], record, journal,
+                    )
+                except (AttributeError, ValueError, TypeError, KeyError):
+                    finance_blockers = ["conciliacao_financeira_a_confirmar"]
+                _block_portfolio(portfolio, finance_blockers)
+                purchase_plan_blockers.extend(finance_blockers)
+                if not finance_blockers:
+                    try:
+                        purchase_plan = build_aircraft_intent_plan(portfolio, matches[0])
+                    except (ValueError, TypeError, KeyError) as exc:
+                        purchase_plan_blockers.append(str(exc))
         else:
             purchase_plan_blockers.extend(portfolio.get("blocking_reasons") or [])
             if not purchase_plan_blockers:

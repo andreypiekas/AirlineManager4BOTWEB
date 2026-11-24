@@ -175,6 +175,10 @@ def test_web_dashboard_fails_closed_for_invalid_a3_storage(registry, monkeypatch
 
 @pytest.mark.parametrize("pending,blocker", [
     (None, None),
+    ("cash_missing", "saldo_vivo_a_confirmar"),
+    ("cash_old", "saldo_vivo_a_confirmar"),
+    ("cash_changed", "saldo_vivo_divergente_a3"),
+    ("confirmed_after", "snapshot_anterior_compra_confirmada"),
     ("route_creation_pending.json", "criacao_rota_a_conciliar"),
     ("reroute_pending.json", "redirecionamento_a_conciliar"),
     ("investment", "intencoes_locais_a_conciliar"),
@@ -200,6 +204,9 @@ def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
 
     monkeypatch.setattr("web.AuditedEconomicsRegistry", SnapshotRegistry)
     monkeypatch.setattr("web.compare_audited_portfolio", lambda *_args, **_kwargs: portfolio)
+    live_cash = {"cash_missing": (None, None), "cash_old": (40000, NOW - 21),
+                 "cash_changed": (39000, NOW)}.get(pending, (40000, NOW))
+    monkeypatch.setattr("web.recent_verified_money", lambda _bot: live_cash)
     monkeypatch.setattr(
         "web.build_aircraft_intent_plan",
         lambda current_portfolio, evaluation: investment_plan_bridge.build_aircraft_intent_plan(
@@ -207,18 +214,25 @@ def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
         ),
     )
 
-    if pending == "investment":
+    if pending in ("investment", "confirmed_after"):
         from investment_journal import InvestmentJournal
-        from test_investment_journal import ready
+        from test_investment_journal import ready, aircraft_proof
+        from types import SimpleNamespace
+
+        if pending == "confirmed_after":
+            monkeypatch.setattr("investment_journal.time", SimpleNamespace(time=lambda: NOW - 10))
 
         ledger = InvestmentJournal()
         key = ready(ledger)
         assert ledger.acquire_executor("pending-test")
         assert ledger.claim_submission(key, "pending-test")
         assert ledger.release_executor("pending-test")
+        if pending == "confirmed_after":
+            assert ledger.transition(key, "SUBMITTED", "CONFIRMED",
+                                     confirmation=aircraft_proof(observed_at=NOW - 10))
     elif pending == "corrupt":
         (tmp_path / "investment_journal.sqlite3").write_text("invalid", encoding="utf-8")
-    elif pending:
+    elif pending and pending.endswith(".json"):
         (tmp_path / pending).write_text("invalid", encoding="utf-8")
     before = {file.name: file.read_bytes() for file in tmp_path.glob("*.sqlite3")}
 
@@ -275,6 +289,7 @@ def test_a5_preview_fails_closed_for_missing_or_ambiguous_a3_economics(
 
     monkeypatch.setattr("web.AuditedEconomicsRegistry", SnapshotRegistry)
     monkeypatch.setattr("web.compare_audited_portfolio", lambda *_args, **_kwargs: portfolio)
+    monkeypatch.setattr("web.recent_verified_money", lambda _bot: (40000, NOW))
     monkeypatch.setattr(
         "web.build_aircraft_intent_plan",
         lambda current_portfolio, evaluation: investment_plan_bridge.build_aircraft_intent_plan(

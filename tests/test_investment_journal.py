@@ -95,9 +95,11 @@ def test_period_snapshot_counts_reservations_and_confirmations_once(tmp_path):
     assert result["estimated_exposure"] == 3000
     assert result["period_usage"]["estimated_exposure"] == ledger.budget_exposure_since(since) == 13000
     assert result["period_usage"]["acquisition_count"] == ledger.acquisition_count_since(since) == 2
+    assert result["period_usage"]["last_confirmed_at"] is not None
     future = ledger.unresolved(since=time.time() + 1)
     assert future["period_usage"]["estimated_exposure"] == 3000
     assert future["period_usage"]["acquisition_count"] == 1
+    assert future["period_usage"]["last_confirmed_at"] is None
     assert "period_usage" not in ledger.unresolved()
 
 

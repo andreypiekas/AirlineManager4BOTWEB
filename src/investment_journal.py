@@ -579,6 +579,7 @@ class InvestmentJournal:
                 "since": since, "source": "local_investment_journal",
                 "estimated_exposure": exposure + sum(json.loads(row["plan_json"])["estimated_cost"] for row in confirmed),
                 "acquisition_count": len(intents) + len(confirmed),
+                "last_confirmed_at": max((row["updated_at"] for row in confirmed), default=None),
             }
         return result
 

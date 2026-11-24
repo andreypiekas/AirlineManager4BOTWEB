@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A5, conciliação financeira atual do plano auditado (G0)
+
+- Antes de emitir uma prévia A5, o painel exige saldo vivo válido, lido em momento igual ou posterior à evidência de caixa do snapshot A3, e exatamente compatível com o valor auditado. Divergência ou ausência de confirmação mantém a comparação inconclusiva e impede o plano.
+- O diário local inclui o horário da última aquisição confirmada na janela de 24 horas. Confirmação posterior a qualquer evidência da avaliação ou dos controles do portfólio exige atualização do snapshot, inclusive se o saldo atual coincidir com o anterior. Motivos de bloqueio disponíveis em PT/EN.
+- Validação Windows: 1.953 testes aprovados, nenhum reprovado e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). Ruff e `git diff --check` aprovados. Testes cobrem saldo ausente, leitura anterior, divergência e compra confirmada após o snapshot.
+- Ainda pendentes a conciliação de compromissos reais e mutações legadas, a produção de evidências completas A3/A4 em execução e a homologação autenticada. Nenhuma transação real executada. O objetivo integral permanece ativo.
+
 ## 2026-11-24 — Autonomia Total A4/A5, bloqueio por operações locais pendentes (G0)
 
 - Os relatórios de recomendações e de expansão auditada consultam o diário de investimentos existente em modo SQLite somente leitura, por perfil e ambiente real, sem criar ou migrar o banco em consultas GET. Ausência de diário significa somente ausência de reservas locais; erro de leitura, esquema incompatível ou ambiente de simulação impede conclusão.
