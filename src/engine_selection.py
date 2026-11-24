@@ -157,10 +157,9 @@ def validate_preference(value: str) -> str:
     return f"name:{name}" if mode == "name" else mode
 
 
-def choose_engine(groups: list[dict], preference: str) -> tuple[dict, EngineChoice]:
-    mode, name = parse_preference(preference)
-    if mode == "default":
-        raise EngineSelectionError("O motor padrão não requer seleção explícita.")
+def choose_engine(
+    groups: list[dict], preference: str, *, expected_engine_id: str | None = None,
+) -> tuple[dict, EngineChoice]:
     catalog = parse_engine_catalog(groups)
     group = groups[0]
     available = [
@@ -169,6 +168,14 @@ def choose_engine(groups: list[dict], preference: str) -> tuple[dict, EngineChoi
     ]
     if not available:
         raise EngineSelectionError("Não há motores disponíveis para seleção.")
+    if expected_engine_id is not None:
+        matches = [option for option in available if option.value == expected_engine_id]
+        if len(matches) != 1:
+            raise EngineSelectionError("A variante de motor aprovada não está disponível no formulário.")
+        return group, matches[0]
+    mode, name = parse_preference(preference)
+    if mode == "default":
+        raise EngineSelectionError("O motor padrão não requer seleção explícita.")
     if mode == "name":
         exact = [o for o in available if normalize(o.label) == normalize(name)]
         matches = exact if exact else [o for o in available if normalize(name) in normalize(o.label)]
@@ -308,13 +315,15 @@ def verify_engine_selection(bot: "Bot", expected: EngineCatalog) -> str:
     return selected.label
 
 
-def prepare_engine(bot: "Bot", preference: str) -> str | None:
+def prepare_engine(
+    bot: "Bot", preference: str, *, expected_engine_id: str | None = None,
+) -> str | None:
     """Escolhe e confirma o motor. Em simulação, informa a opção sem clicar.
 
     Retorna o nome confirmado, inclusive quando o jogo já selecionou o padrão.
     Em falhas lança EngineSelectionError (order_aircraft interrompe a compra).
     """
-    mode, _ = parse_preference(preference)
+    mode = "id" if expected_engine_id is not None else parse_preference(preference)[0]
     groups = bot.js(_ENGINE_OPTIONS_JS) or []
     if not isinstance(groups, list):
         raise EngineSelectionError("O jogo não retornou uma lista válida de motores.")
@@ -325,8 +334,10 @@ def prepare_engine(bot: "Bot", preference: str) -> str | None:
         selected = next(v for v in before.variants if v.engine_id == before.selected_engine_id)
         log.info("Motorização padrão confirmada no formulário: %s.", selected.label)
         return selected.label
-    group, choice = choose_engine(groups, preference)
+    _, choice = choose_engine(groups, preference, expected_engine_id=expected_engine_id)
     log.info("Motorização para a próxima compra: %s (%s).", choice.label, mode)
+    if expected_engine_id is not None and before.selected_engine_id == choice.value:
+        return choice.label
     if bot.dry_run:
         log.info("[SIMULAÇÃO] Selecionaria o motor %s sem alterar o jogo.", choice.label)
         return choice.label
@@ -345,7 +356,9 @@ def prepare_engine(bot: "Bot", preference: str) -> str | None:
         raise EngineSelectionError("Nome ou disponibilidade dos motores mudou após a seleção.")
     if after.selected_engine_id != choice.value:
         raise EngineSelectionError("O jogo não confirmou o motor solicitado; compra cancelada.")
-    _, confirmed_choice = choose_engine(new_groups, preference)
+    _, confirmed_choice = choose_engine(
+        new_groups, preference, expected_engine_id=expected_engine_id,
+    )
     if confirmed_choice.value != choice.value:
         raise EngineSelectionError(
             "A preferência de motorização passou a indicar outra variante após a seleção; compra bloqueada."

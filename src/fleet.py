@@ -1666,7 +1666,47 @@ def save_for_goal(bot: "Bot", models: list[AircraftModel], goal_name: str, budge
 def order_aircraft(
     bot: "Bot", choice: AircraftModel, goal: bool = False,
     hub_id: str | int | None = None,
+    *, expected_checkout_cost: int | None = None,
+    expected_engine_id: str | None = None,
 ) -> bool:
+    plan_requested = any(value is not None for value in (
+        hub_id, expected_checkout_cost, expected_engine_id,
+    ))
+    if plan_requested:
+        if type(hub_id) is int:
+            normalized_hub_id = str(hub_id)
+        elif type(hub_id) is str:
+            normalized_hub_id = hub_id.strip()
+        else:
+            normalized_hub_id = ""
+        if not re.fullmatch(r"[1-9][0-9]{0,13}", normalized_hub_id):
+            log_market.warning(
+                "Compra planejada de %s bloqueada: ID de base ausente ou inválido.",
+                choice.name,
+            )
+            return False
+        if type(expected_checkout_cost) is not int or expected_checkout_cost <= 0:
+            log_market.warning(
+                "Compra planejada de %s bloqueada: preço final ausente ou inválido.",
+                choice.name,
+            )
+            return False
+        if type(expected_engine_id) is not str or not expected_engine_id.strip():
+            log_market.warning(
+                "Compra planejada de %s bloqueada: ID da variante de motor ausente ou inválido.",
+                choice.name,
+            )
+            return False
+        hub_id = normalized_hub_id
+        expected_engine_id = expected_engine_id.strip()
+        if not bot.dry_run:
+            from investment_policy import InvestmentPolicy
+
+            policy_report = InvestmentPolicy.from_config(bot.config).report()
+            if not policy_report["execution_available"]:
+                log_market.warning("Compra planejada bloqueada pelo gate %s.", policy_report["release_gate"])
+                return False
+
     detail = bot.ajax(f"ac_orders.php?mode=detail&id={choice.id}&charter=0", "acModel")
     # O motor só pode ser escolhido antes de encomendar. Uma preferência
     # explícita NÃO aceita fallback silencioso para a seleção padrão do jogo.
@@ -1679,7 +1719,12 @@ def order_aircraft(
     try:
         selected_hub_id, hub_changed = prepare_order_hub(bot, hub_id)
         preference = bot.config.get("settings", "engine_preference", "default")
-        motor = prepare_engine(bot, preference)
+        if plan_requested:
+            motor = prepare_engine(bot, preference, expected_engine_id=expected_engine_id)
+            if selected_hub_id != hub_id:
+                raise AircraftOrderHubError("O ID da base preparada diverge do plano aprovado.")
+        else:
+            motor = prepare_engine(bot, preference)
     except EngineSelectionError as exc:
         log_market.warning("Compra de %s bloqueada: %s", choice.name, exc)
         return False
@@ -1695,58 +1740,96 @@ def order_aircraft(
         log_market.info("O jogo informa que não há saldo suficiente para um %s.", choice.name)
         return False
     reg = bot.js("return $('#acReg').val();") or ""
-    summary = f"1 x {choice.name} por ${fmt(choice.price)} (matrícula {reg}, {choice.capacity} passageiros, {fmt(choice.range_km)} km de autonomia)"
+    quoted_cost = expected_checkout_cost if plan_requested else choice.price
+    summary = f"1 x {choice.name} por ${fmt(quoted_cost)} (matrícula {reg}, {choice.capacity} passageiros, {fmt(choice.range_km)} km de autonomia)"
     if motor:
         summary += f" | motor: {motor}"
     summary += f" | base: {selected_hub_id}"
-    if bot.dry_run:
+    if bot.dry_run and not plan_requested:
         log_market.info("[SIMULAÇÃO] Encomendaria %s.", summary)
         bot.notify(f"🧪 SIMULAÇÃO: encomendaria {esc(summary)}.", silent=True, category="simulation")
         return True
 
     # Releia a chave imediatamente antes do pré-voo, pois o operador pode
     # suspender a compra automática durante a pesquisa do mercado.
-    get_bool = getattr(bot.config, "get_bool", None)
-    if callable(get_bool) and not get_bool("options", "autobuy_aircraft", True):
-        log_market.warning("Encomenda de %s cancelada: compra automática desativada.", choice.name)
-        return False
+    if not bot.dry_run and not plan_requested:
+        get_bool = getattr(bot.config, "get_bool", None)
+        if callable(get_bool) and not get_bool("options", "autobuy_aircraft", True):
+            log_market.warning("Encomenda de %s cancelada: compra automática desativada.", choice.name)
+            return False
 
-    # Aquisições vindas do planejador precisam comprovar que o checkout ainda
-    # representa o mesmo modelo, motor e hub do plano. Chamadas legadas não
-    # possuem um plano com hub explícito e mantêm o fluxo anterior até que a
-    # estrutura real do checkout seja homologada.
-    if hub_id is not None:
+    confirmed_cost = choice.price
+    # Aquisições planejadas exigem preço integral modelo+motor, identidade
+    # exata aprovada e duas leituras estáveis do checkout.
+    if plan_requested:
         try:
             engine_snapshot = read_engine_catalog(bot)
             from game_source_probe import probe_game_sources
 
-            checkout = probe_game_sources(bot).get("aircraft_checkout_diagnostics")
-            if not isinstance(checkout, dict):
-                raise ValueError("O diagnóstico do formulário de encomenda está ausente.")
-            if checkout.get("detail_model_id") != str(choice.id):
-                raise ValueError("O modelo aberto no formulário não corresponde ao modelo planejado.")
-            if checkout.get("model_hub_correlated") is not True:
-                raise ValueError("A base e o modelo não foram confirmados no mesmo painel de encomenda.")
-            if (checkout.get("ajax_idle_confirmed") is not True
-                    or checkout.get("detail_loading") is not False):
-                raise ValueError("O formulário de encomenda ainda está atualizando ou carregando.")
-            if checkout.get("price_verified") is not True:
-                raise ValueError("O preço final da configuração ainda não possui fonte verificada.")
+            if engine_snapshot.selected_engine_id != expected_engine_id:
+                raise EngineSelectionError("O ID do motor selecionado diverge do plano aprovado.")
+
+            def verified_checkout() -> tuple[int, str]:
+                report = probe_game_sources(bot)
+                checkout = report.get("aircraft_checkout_diagnostics")
+                selection = report.get("aircraft_order_hub_selection")
+                if not isinstance(checkout, dict) or not isinstance(selection, dict):
+                    raise ValueError("O diagnóstico do formulário de encomenda está ausente.")
+                if checkout.get("detail_model_id") != str(choice.id):
+                    raise ValueError("O modelo aberto no formulário diverge do plano.")
+                if (checkout.get("model_hub_correlated") is not True
+                        or selection.get("selected_hub_id") != selected_hub_id
+                        or selection.get("status") != "dom_consistent"):
+                    raise ValueError("A base e o modelo não correspondem ao painel aprovado.")
+                if (checkout.get("ajax_idle_confirmed") is not True
+                        or checkout.get("detail_loading") is not False
+                        or checkout.get("ajax_active") is not False):
+                    raise ValueError("O formulário de encomenda ainda está atualizando.")
+                if checkout.get("price_verified") is not True:
+                    raise ValueError("O preço final ainda não possui fonte verificada.")
+                cost = checkout.get("checkout_cost")
+                source = checkout.get("price_source")
+                if (type(cost) is not int or cost <= 0
+                        or cost != expected_checkout_cost
+                        or checkout.get("price_includes_engine") is not True
+                        or source not in ("data_final_price", "data_total_price")):
+                    raise ValueError("O custo final com motor diverge do plano ou não foi comprovado.")
+                return cost, source
+
+            first_price = verified_checkout()
 
             verified_motor = verify_engine_selection(bot, engine_snapshot)
             if motor and verified_motor != motor:
                 raise EngineSelectionError("O motor confirmado diverge do motor preparado para o plano.")
             selected_hub_id = verify_order_hub_selection(bot, selected_hub_id)
+            second_price = verified_checkout()
+            if second_price != first_price:
+                raise ValueError("O preço final mudou durante as verificações de motor e base.")
+            verify_engine_selection(bot, engine_snapshot)
+            confirmed_cost = second_price[0]
         except Exception as exc:
             log_market.warning("Pré-voo de %s não confirmado. Encomenda bloqueada: %s", choice.name, exc)
+            return False
+
+    if bot.dry_run:
+        log_market.info("[SIMULAÇÃO] Encomendaria %s.", summary)
+        bot.notify(f"🧪 SIMULAÇÃO: encomendaria {esc(summary)}.", silent=True, category="simulation")
+        return True
+
+    if plan_requested:
+        from investment_policy import InvestmentPolicy
+
+        policy_report = InvestmentPolicy.from_config(bot.config).report()
+        if not policy_report["execution_available"]:
+            log_market.warning("Compra planejada bloqueada pelo gate %s.", policy_report["release_gate"])
             return False
 
     before = bot.read_money()
     bot.click_element(detail.find_element(By.XPATH, ".//*[@id='btnPurchaseIntro']"))
     response = bot.wait_text("//*[@id='orderAction']", timeout=15)
-    if not bot.confirm_purchase(before, choice.price, f"o pedido de {choice.name}", "orderAction"):
+    if not bot.confirm_purchase(before, confirmed_cost, f"o pedido de {choice.name}", "orderAction"):
         return False
-    bot.spent(choice.price, invest=True)
+    bot.spent(confirmed_cost, invest=True)
     bot.count("aircraft")
     free = bot.stats().hangar_free
     if free is not None:

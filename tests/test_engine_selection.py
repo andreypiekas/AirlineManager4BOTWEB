@@ -363,6 +363,42 @@ def test_selecao_exata_confirmada_apos_clique():
     assert calls[1] == ("select", "acEngine", "3")
 
 
+@pytest.mark.parametrize("preference", ["default", "economical", "name:GP7270"])
+def test_id_planejado_prevalece_sobre_preferencia_global(preference):
+    calls = []
+
+    class Bot:
+        dry_run = False
+
+        def js(self, script, *args):
+            calls.append(args)
+            if args:
+                return args == ("select", "acEngine", "3")
+            return engines(selected="3") if len(calls) > 2 else engines()
+
+        def pause(self, *_):
+            pass
+
+    assert engine_selection.prepare_engine(Bot(), preference, expected_engine_id="3") == "RR Trent 972"
+    assert calls[1] == ("select", "acEngine", "3")
+
+
+@pytest.mark.parametrize("engine_id", ["missing", "3"])
+def test_id_planejado_ausente_ou_indisponivel_bloqueia_sem_mutacao(engine_id):
+    groups = engines()
+    groups[0]["options"][2]["disabled"] = True
+
+    class Bot:
+        dry_run = False
+
+        def js(self, script, *args):
+            assert not args
+            return deepcopy(groups)
+
+    with pytest.raises(engine_selection.EngineSelectionError, match="aprovada"):
+        engine_selection.prepare_engine(Bot(), "default", expected_engine_id=engine_id)
+
+
 def test_ausencia_de_confirmacao_bloqueia_compra():
     class Bot:
         dry_run = False

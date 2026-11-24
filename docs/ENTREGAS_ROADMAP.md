@@ -1,5 +1,21 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A1/A5, variante exata e pré-checagem de checkout (G0)
+
+**Objetivo:** vincular a preparação de uma encomenda planejada à variante de motor e base aprovadas e exigir evidência estável do preço final antes de considerar a operação viável.
+
+### Implementação e evidências
+
+- `src/engine_selection.py`: o ID explícito do motor tem precedência sobre a preferência geral. Ausência, duplicidade ou indisponibilidade interrompem a seleção; após eventual atualização do formulário, a variante, a disponibilidade, as métricas e a seleção são conferidas novamente. O comportamento legado sem ID explícito permanece preservado.
+- `src/fleet.py`: a encomenda planejada exige ID válido de base, ID de motor e preço inteiro positivo. O gate G0 impede uma encomenda real antes de abrir o formulário. A simulação verifica a seleção efetiva e exige duas leituras coerentes do preço integral modelo + motor, do modelo aberto, da base e do estado AJAX. Qualquer divergência bloqueia o resultado; o preço-base do catálogo não substitui o preço final.
+- `tests/test_engine_selection.py` e `tests/test_aircraft_order_hub.py`: testes de variante explícita, disponibilidade, reconstrução do formulário, divergências de preço/identidade/base, gate antes da abertura e integração simulada dos leitores reais de motor, base e diagnóstico de checkout. O teste integrado usa respostas DOM sintéticas, incluindo tentativa de inserir um preço supostamente confirmado no diagnóstico; nenhum clique de compra, mudança de motor/base ou confirmação é permitido.
+
+### Verificação, limites e reversão
+
+- Testes direcionados (163), Ruff em `src`, `tests` e `scripts`, compilação Python e `git diff --check` aprovados. A suíte Windows integral concluiu com código 0 após as alterações finais, com um teste ignorado pela própria suíte e exclusão do teste de instalação que depende de permissões POSIX.
+- **Gate G0.** O diagnóstico autenticado ainda não foi homologado para provar preço final, variação de preço por motor ou identidade integral de checkout. `probe_game_sources()` continua retornando `price_verified=false`; o caso positivo isolado testa o contrato com dados artificiais. Não houve compra, envio real ao Telegram, implantação ou merge na `main`.
+- A leitura real dos modelos com uma, duas e três ou mais variantes e a integração do executor A5 com journal e confirmação independente permanecem pendentes. O fluxo legado conserva sua política de compra independente. Reversão pelo commit desta entrega na branch `codex/autonomia-a0-a1-20261122`, observando dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A9, notificações de transições do investimento (G0)
 
 **Objetivo:** informar individualmente as etapas de cada intenção de investimento sem perder eventos após reinícios ou falhas de transporte.
