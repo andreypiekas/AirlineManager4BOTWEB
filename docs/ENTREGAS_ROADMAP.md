@@ -1,5 +1,10 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A4, stress simultâneo no ranking global (G0)
+
+- A avaliação econômica auditada passa a recalcular receita, combustível, CO₂, lucro e retorno quando os quatro fatores de stress ocorrem simultaneamente, preservando os cenários isolados. O ranking global utiliza a menor proporção de lucro em relação ao cenário base entre os cinco cenários, limitada ao intervalo de zero a um. Quando o peso de risco é positivo, a ausência do cenário combinado impede a classificação. O painel PT/EN mostra os quatro multiplicadores e o resultado combinado.
+- Validação: 141 testes direcionados aprovados, teste da interface atualizado e aprovado, suíte Windows com 2.008 aprovados e 1 ignorado (instalação Linux excluída). Nenhuma compra executada. Os cenários continuam sendo projeções condicionadas às evidências econômicas disponíveis; a homologação real e a comprovação de demanda residual, configuração selecionável e custos finais permanecem pendentes.
+
 ## 2026-11-24 — Autonomia Total A3, comparação econômica com referência nativa de assentos (G0)
 
 - A simulação inclui a configuração Y/J/F observada e correlacionada ao modelo e motor como referência econômica, deduplicando configurações iguais. Cada alternativa informa sua diferença de contribuição diária em relação à referência, nos cenários base e stress, tanto com preços observados quanto com os limites configurados, quando disponíveis. Havendo projeção de A-check, a comparação utiliza a contribuição após a reserva. O painel PT/EN identifica a referência como não confirmada.

@@ -1078,6 +1078,7 @@ const EN = {
   "Margem de segurança": "Safety margin", "Score A4": "A4 score",
   "Prova mais antiga": "Oldest evidence", "Snapshot": "Snapshot",
   "Composição do score": "Score breakdown", "Cenários de stress": "Stress scenarios",
+  "Stress combinado": "Combined stress",
   "Cobertura da pesquisa não confirmada": "Research coverage unverified",
   "Pedidos pendentes a conciliar": "Pending orders require reconciliation",
   "Diário de investimentos indisponível": "Investment journal unavailable",
@@ -3418,8 +3419,10 @@ function renderAuditedExpansionPlanner(audited, hubs) {
         const stress = document.createElement("p"); stress.className = "hub-context";
         stress.textContent = tr("Cenários de stress") + ": " +
           Object.entries(auditedRow.sensitivity).map(([name, scenario]) =>
-            name.replaceAll("_", " ") + " ×" +
-            (Number.isFinite(scenario?.multiplier) ? nf.format(scenario.multiplier) : "?") +
+            (name === "combined" ? tr("Stress combinado") : name.replaceAll("_", " ")) + " ×" +
+            (name === "combined" ? ["fuel_price", "co2_price", "occupancy", "demand"]
+              .map(key => Number.isFinite(scenario?.multipliers?.[key]) ? nf.format(scenario.multipliers[key]) : "?").join(" / ")
+              : Number.isFinite(scenario?.multiplier) ? nf.format(scenario.multiplier) : "?") +
             " → " + hubMoney(scenario?.daily_net_profit_estimate)).join(" · ");
         details.append(stress);
       }

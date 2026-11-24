@@ -334,6 +334,11 @@ def evaluate_expansion_economics(
         for name, changed in scenarios.items():
             sensitivity[name] = {"multiplier": float(factors[name]),
                                  **_scenario(**{**parameters, **changed})}
+        combined = {key: value for changes in scenarios.values() for key, value in changes.items()}
+        sensitivity["combined"] = {
+            "multipliers": {key: float(value) for key, value in factors.items()},
+            **_scenario(**{**parameters, **combined}),
+        }
         # The v1 route-optimizer evidence must agree with the independently
         # reproducible component accounting before a financial claim is made.
         financial = candidate.get("financial")

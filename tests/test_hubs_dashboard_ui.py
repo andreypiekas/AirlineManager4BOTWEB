@@ -909,7 +909,9 @@ const proof = {economics_id:'a3-01', identity, snapshot_id:'snap-1',
     payback_days:15, roi_365d_percent:200},
   capital_costs:{total_investment:10500, aircraft_cost:9000,
     engine_delta_cost:200, route_fee:300, hangar_cost:400, hub_cost:0, other_fees:600},
-  sensitivity:{fuel_price:{multiplier:1.2,daily_net_profit_estimate:655}}};
+  sensitivity:{fuel_price:{multiplier:1.2,daily_net_profit_estimate:655},
+    combined:{multipliers:{fuel_price:1.2,co2_price:1.2,occupancy:0.9,demand:0.9},
+      daily_net_profit_estimate:-50}}};
 const a4 = {economics_id:'a3-01', identity, configuration_yjf:proof.configuration_yjf,
   profit_per_day:700, investment:10500, payback_days:15,
   roi_365d_percent:200, score:0.78,
@@ -958,6 +960,7 @@ assert.match(details.children[2].textContent, /Oldest evidence: /);
 assert.match(details.children[2].textContent, /Snapshot: snap-1/);
 assert.match(details.children[3].textContent, /Score breakdown: profit 0.4/);
 assert.match(details.children[4].textContent, /Stress scenarios: fuel price ×1.2 → \$655/);
+assert.match(details.children[4].textContent, /Combined stress ×1.2 \/ 1.2 \/ 0.9 \/ 0.9 → \$-50/);
 
 report.purchase_plan_preview = {
   hub_id:'1', model_id:'A380-800 <model>', engine_id:'Trent XWB <variant>',

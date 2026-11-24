@@ -488,7 +488,7 @@ def a4_evaluation(hub="123", destination="456", engine="engine-1", *,
         "sensitivity": {
             name: {"daily_net_profit_estimate": profit * fraction}
             for name, fraction in (("fuel_price", .8), ("co2_price", .9),
-                                   ("occupancy", .7), ("demand", .6))
+                                   ("occupancy", .7), ("demand", .6), ("combined", .5))
         },
     }
 
@@ -688,11 +688,19 @@ def test_a4_risk_uses_a3_stress_and_optional_dimensions_require_fresh_evidence()
     robust = a4_evaluation("789", "999", profit=150, cost=2000)
     fragile["sensitivity"]["demand"]["daily_net_profit_estimate"] = 10
     robust["sensitivity"]["demand"]["daily_net_profit_estimate"] = 130
+    fragile["sensitivity"]["combined"]["daily_net_profit_estimate"] = -20
+    robust["sensitivity"]["combined"]["daily_net_profit_estimate"] = 60
     other_weights = {"profit_weight": 0, "efficiency_weight": 0,
                      "risk_weight": 1}
     risk_ranked = a4_compare(fragile, robust, **other_weights)
     assert risk_ranked["best"]["hub_id"] == "789"
-    assert risk_ranked["best"]["risk_index"] == pytest.approx(.7)
+    assert risk_ranked["best"]["risk_index"] == pytest.approx(.4)
+
+    del robust["sensitivity"]["combined"]
+    missing_stress = a4_compare(robust, **other_weights)
+    assert missing_stress["best"] is None
+    assert missing_stress["decision"] == "nao_comprar"
+    robust["sensitivity"]["combined"] = {"daily_net_profit_estimate": 60}
 
     missing = a4_compare(fragile, robust, profit_weight=0, efficiency_weight=0,
                          diversification_weight=1)

@@ -159,7 +159,7 @@ def test_sensitivity_recomputes_revenue_and_emissions_from_class_demand():
     result = evaluate(fixture())
     baseline = result["components"]
     scenarios = result["sensitivity"]
-    assert set(scenarios) == {"fuel_price", "co2_price", "occupancy", "demand"}
+    assert set(scenarios) == {"fuel_price", "co2_price", "occupancy", "demand", "combined"}
     assert scenarios["fuel_price"]["fuel_cost_per_day"] == 6240
     assert scenarios["fuel_price"]["daily_net_profit_estimate"] == baseline["daily_net_profit_estimate"] - 1040
     assert scenarios["co2_price"]["co2_cost_per_day"] == 40.2
@@ -167,6 +167,14 @@ def test_sensitivity_recomputes_revenue_and_emissions_from_class_demand():
     assert scenarios["occupancy"]["co2_cost_per_day"] < baseline["co2_cost_per_day"]
     assert scenarios["demand"]["passengers_per_day"]["j"] == 27
     assert scenarios["demand"]["passengers_per_day"]["y"] == 160
+    combined = scenarios["combined"]
+    assert combined["multipliers"] == result["methodology"]["stress_factors"]
+    assert combined["fuel_cost_per_day"] == scenarios["fuel_price"]["fuel_cost_per_day"]
+    assert combined["revenue_per_day"] <= scenarios["demand"]["revenue_per_day"]
+    assert combined["revenue_per_day"] <= scenarios["occupancy"]["revenue_per_day"]
+    assert combined["daily_net_profit_estimate"] < min(
+        row["daily_net_profit_estimate"] for key, row in scenarios.items() if key != "combined"
+    )
 
 
 @pytest.mark.parametrize("field", ["layout", "daily_demand", "fares", "departures_per_day",

@@ -501,7 +501,7 @@ def _a4_risk_index(row: Mapping[str, Any], profit: float) -> float | None:
     if not isinstance(stress, Mapping):
         return None
     downside = []
-    for name in ("fuel_price", "co2_price", "occupancy", "demand"):
+    for name in ("fuel_price", "co2_price", "occupancy", "demand", "combined"):
         scenario = stress.get(name)
         if not isinstance(scenario, Mapping):
             return None
@@ -548,8 +548,8 @@ def compare_audited_portfolio(
     ``hub_capacity`` contains one ``game_hub_select`` envelope per hub with
     available hangar slots. Unknown controls or slots exclude a purchase.
 
-    Risk, when weighted, uses the worst evidenced A3 stress scenario relative
-    to the base profit. Optional confidence and diversification require their
+    Risk, when weighted, uses the worst A3 stress scenario (individual or
+    combined) relative to the base profit. Optional confidence and diversification require their
     own normalized [0, 1] verified observations keyed by ``economics_id``.
     No unstated numerical proxy is constructed from hub size or model name.
     """
