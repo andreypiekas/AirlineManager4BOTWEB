@@ -269,13 +269,14 @@ def build_owned_hub_research_queue(
     preview_margin: float = 0.10,
     configured_prices: Optional[dict] = None,
     route_report: Optional[dict] = None,
+    expected_layout_fingerprint: Optional[str] = None,
 ) -> dict:
     return _build_hub_research_queue(
         inventory, route_samples, market, now=now, max_items=max_items, engines=engines,
         offset=offset, expected_fingerprint=expected_fingerprint, hub_progress=hub_progress,
         operating_market_stats=operating_market_stats, preview_margin=preview_margin,
         configured_prices=configured_prices,
-        route_report=route_report)
+        route_report=route_report, expected_layout_fingerprint=expected_layout_fingerprint)
 
 
 def build_external_hub_research_queue(
@@ -340,6 +341,7 @@ def _build_hub_research_queue(
     preview_margin: float = 0.10,
     configured_prices: Optional[dict] = None,
     route_report: Optional[dict] = None,
+    expected_layout_fingerprint: Optional[str] = None,
 ) -> dict:
     """Produce bounded, balanced per-hub tasks from independent cached reads.
 
@@ -543,9 +545,12 @@ def _build_hub_research_queue(
         separators=(",", ":"),
     ).encode("utf-8")).hexdigest()[:24]
     requested_offset = offset if type(offset) is int and offset > 0 else 0
-    cursor_reset = requested_offset > 0 and (
-        expected_fingerprint != fingerprint or requested_offset >= total_candidates
-    )
+    # A worker may resume the ordered identities on a new capture. Within a
+    # capture, and for interactive pagination, retain strict evidence matching.
+    matches = (expected_fingerprint == fingerprint if expected_fingerprint is not None
+               or expected_layout_fingerprint is None
+               else expected_layout_fingerprint == layout_fingerprint)
+    cursor_reset = requested_offset > 0 and (not matches or requested_offset >= total_candidates)
     offset = requested_offset
     if cursor_reset:
         offset = 0

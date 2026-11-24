@@ -219,7 +219,8 @@ def _load_snapshot(path):
     return snapshot
 
 
-def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerprint=None, now=None, path=None):
+def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerprint=None,
+                         expected_layout_fingerprint=None, now=None, path=None):
     """Replay a bounded page using only the captured inputs and capture clock."""
     from types import SimpleNamespace
 
@@ -261,6 +262,7 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
             operating_market_stats=stats, preview_margin=inputs["preview_margin"],
             configured_prices=inputs.get("configured_prices"),
             route_report=inputs["route_report"], offset=offset, expected_fingerprint=expected_fingerprint,
+            expected_layout_fingerprint=expected_layout_fingerprint,
         )
         for item in result["items"]:
             stop = item.get("stopover_research")

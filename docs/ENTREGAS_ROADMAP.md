@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A9, progressão da pesquisa entre ciclos (G0)
+
+- A pesquisa contábil automática retoma o deslocamento salvo por perfil quando a ordem das identidades de hubs, rotas, modelos e motores permanece igual. Mudanças nessa composição reiniciam a paginação; ao chegar ao fim, o próximo ciclo começa novamente. A posição é persistida atomicamente junto à execução do planejador e preservada durante falhas ou indisponibilidade temporária da fila.
+- O limite de duas páginas por execução foi mantido. Cada página é avaliada com o snapshot corrente, e as continuações dentro do mesmo snapshot exigem o fingerprint completo da evidência. As contagens não são acumuladas entre coletas; o painel PT/EN mostra a faixa efetivamente avaliada na coleta atual. Percorrer as identidades em ciclos distintos não comprova cobertura econômica simultânea nem torna um candidato elegível.
+- Validação: 222 testes direcionados aprovados; 7 testes do worker aprovados após ampliação da regressão para falha, ausência temporária do catálogo, retomada, mudança de composição e reinício ao final; suíte Windows com 2.079 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída). Ruff e git diff --check aprovados. Rollback por reversão deste commit. Permanecem pendentes a comprovação da demanda residual e dos preços finais, a alimentação produtiva do registro A3, a conciliação e a homologação A0–A9. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A3/A9, avaliação econômica no worker (G0)
 
 - O ciclo de planejamento executa automaticamente o replay contábil das combinações pesquisadas antes da decisão global A4. A avaliação utiliza exclusivamente o snapshot capturado no mesmo ciclo, valida identidade e paginação, e agrega impedimentos por código. Configurações de assentos hipotéticas permanecem não verificadas e inelegíveis.

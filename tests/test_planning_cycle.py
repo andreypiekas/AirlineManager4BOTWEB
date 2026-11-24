@@ -113,6 +113,7 @@ def test_worker_evaluates_sampled_combinations_and_layouts_with_real_replay(work
     research = result["research"]
     assert result["snapshot_id"] == snapshot["snapshot_id"]
     assert research["pages"] == 2
+    assert research["first_offset"] == 0 and research["next_offset"] == 80
     assert research["examined_combinations"] == research["blocked_combinations"] == 80
     assert research["total_sampled_combinations"] > 80
     assert research["hypothetical_layouts"] > 0
@@ -122,6 +123,54 @@ def test_worker_evaluates_sampled_combinations_and_layouts_with_real_replay(work
     assert result["evaluated_count"] == result["eligible_count"] == 0
     assert result["decision"] == "nao_comprar"
     path = tmp_path / planning_cycle.FILENAME
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["research_cursor"]["next_offset"] == 80
+    saved_cursor = record["research_cursor"]
+    # A failed A4 run cannot advance the successfully committed cursor.
+    with monkeypatch.context() as context:
+        def fail(self):
+            raise ValueError("test failure")
+
+        context.setattr(WebDashboard, "audited_expansion", fail)
+        with pytest.raises(RuntimeError):
+            planning_cycle.capture_and_plan(worker)
+    assert planning_cycle.planning_cycle_summary()["status"] == "falhou"
+    assert json.loads(path.read_text(encoding="utf-8"))["research_cursor"] == saved_cursor
+    # A temporary missing catalog must also preserve the scheduling position.
+    market = evidence["market"]
+    evidence["market"] = {}
+    snapshot = compose_snapshot(**evidence)
+    planning_cycle.capture_and_plan(worker)
+    assert planning_cycle.planning_cycle_summary()["research"]["queue_blocking_reasons"]
+    assert json.loads(path.read_text(encoding="utf-8"))["research_cursor"] == saved_cursor
+    evidence["market"] = market
+    # Capture fresh financial observations with the same ordered identities.
+    evidence["cash"] = 1500
+    snapshot = compose_snapshot(**evidence)
+    planning_cycle.capture_and_plan(worker)
+    resumed = planning_cycle.planning_cycle_summary()
+    assert resumed["snapshot_id"] != result["snapshot_id"]
+    assert resumed["research"]["first_offset"] == 80
+    assert resumed["research"]["examined_combinations"] == min(80, research["total_sampled_combinations"] - 80)
+    assert resumed["research"]["sample_sweep_complete"] is False
+    # A changed set of routes resets the cursor rather than skipping new identities.
+    evidence["demand"]["samples"].pop(0)
+    snapshot = compose_snapshot(**evidence)
+    planning_cycle.capture_and_plan(worker)
+    reset = planning_cycle.planning_cycle_summary()
+    assert reset["research"]["first_offset"] == 0
+    # Finish the remaining identities and verify the next cycle starts over.
+    batch = reset["research"]
+    total = batch["total_sampled_combinations"]
+    for expected_offset in range(80, total, 80):
+        planning_cycle.capture_and_plan(worker)
+        batch = planning_cycle.planning_cycle_summary()["research"]
+        assert batch["first_offset"] == expected_offset
+        assert batch["sample_sweep_complete"] is False
+    assert batch["next_offset"] is None
+    assert json.loads(path.read_text(encoding="utf-8"))["research_cursor"] is None
+    planning_cycle.capture_and_plan(worker)
+    assert planning_cycle.planning_cycle_summary()["research"]["first_offset"] == 0
     record = json.loads(path.read_text(encoding="utf-8"))
     record["research"]["examined_combinations"] += 1
     path.write_text(json.dumps(record), encoding="utf-8")

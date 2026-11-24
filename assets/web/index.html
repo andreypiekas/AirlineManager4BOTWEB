@@ -1170,6 +1170,7 @@ const EN = {
   "Escopos auditados atuais": "Current audited scopes",
   "Cenários registrados A3": "Recorded A3 scenarios",
   "Combinações pesquisadas pelo worker (amostra parcial)": "Worker-researched combinations (partial sample)",
+  "Faixa examinada neste snapshot": "Range examined in this snapshot",
   "Combinações bloqueadas na pesquisa": "Blocked research combinations",
   "Configurações hipotéticas avaliadas": "Hypothetical configurations evaluated",
   "Impedimentos da fila de pesquisa": "Research queue blockers",
@@ -3667,6 +3668,9 @@ async function loadInvestmentMetrics() {
           : tr("Sem execução atual do planejamento")],
         [tr("Combinações pesquisadas pelo worker (amostra parcial)"), !worker?.research || worker.research.queue_blocking_reasons.length ? null :
           nf.format(worker.research.examined_combinations) + " / " + nf.format(worker.research.total_sampled_combinations)],
+        [tr("Faixa examinada neste snapshot"), worker?.research?.examined_combinations > 0 ?
+          nf.format((worker.research.first_offset ?? 0) + 1) + "–" +
+          nf.format((worker.research.first_offset ?? 0) + worker.research.examined_combinations) : null],
         [tr("Impedimentos da fila de pesquisa"), worker?.research?.queue_blocking_reasons?.length],
         [tr("Combinações bloqueadas na pesquisa"), worker?.research?.blocked_combinations],
         [tr("Configurações hipotéticas avaliadas"), worker?.research?.hypothetical_layouts],

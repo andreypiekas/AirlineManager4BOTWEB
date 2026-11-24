@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import time
 from collections import Counter
 
@@ -26,27 +27,57 @@ def _save(report):
                        json.dumps(report, ensure_ascii=False, allow_nan=False), private=True)
 
 
-def _research_summary(snapshot_id):
+def _valid_cursor(cursor):
+    return (isinstance(cursor, dict) and type(cursor.get("next_offset")) is int
+            and cursor["next_offset"] > 0
+            and isinstance(cursor.get("layout_fingerprint"), str)
+            and re.fullmatch(r"[0-9a-f]{24}", cursor["layout_fingerprint"]) is not None)
+
+
+def _load_cursor(profile):
+    """Retain only scheduling state, even after a failed or expired cycle."""
+    try:
+        previous = json.loads((profile.data / FILENAME).read_text(encoding="utf-8"))
+        cursor = previous.get("research_cursor")
+        if previous.get("profile_id") == profile.label and _valid_cursor(cursor):
+            return cursor
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return None
+
+
+def _research_summary(snapshot_id, cursor=None):
     """Evaluate sampled combinations within a bounded, single-snapshot sweep."""
-    offset = 0
+    offset = cursor["next_offset"] if cursor else 0
+    expected_layout = cursor["layout_fingerprint"] if cursor else None
+    first_offset = offset
     fingerprint = None
+    layout_fingerprint = None
     total = None
     combinations = layouts = pages = 0
     blockers = Counter()
     queue_blockers = []
     for _ in range(RESEARCH_PAGE_BUDGET):
         page = replay_research_page(offset=offset, expected_snapshot=snapshot_id,
-                                    expected_fingerprint=fingerprint)
+                                    expected_fingerprint=fingerprint,
+                                    expected_layout_fingerprint=expected_layout if not pages else None)
         if (page.get("status") != "parcial" or page.get("snapshot_id") != snapshot_id
                 or page.get("historical_replay") is not True or page.get("read_only") is not True
-                or page.get("purchase_eligible") is not False or page.get("cursor_reset") is not False
-                or page.get("offset") != offset):
+                or page.get("purchase_eligible") is not False):
             raise ValueError("Replay de pesquisa divergente.")
+        if not pages and cursor and page.get("cursor_reset") is True:
+            offset = first_offset = 0
+        elif page.get("cursor_reset") is not False:
+            raise ValueError("Cursor de pesquisa divergente.")
+        if page.get("offset") != offset:
+            raise ValueError("Deslocamento de pesquisa divergente.")
         if total is None:
             total = page["total_candidates"]
             fingerprint = page["snapshot_fingerprint"]
+            layout_fingerprint = page["layout_fingerprint"]
             queue_blockers = page["blocking_reasons"]
-        elif total != page["total_candidates"] or fingerprint != page["snapshot_fingerprint"]:
+        elif (total != page["total_candidates"] or fingerprint != page["snapshot_fingerprint"]
+              or layout_fingerprint != page["layout_fingerprint"]):
             raise ValueError("Cobertura de pesquisa alterada.")
         items = page["items"]
         if type(total) is not int or not 0 <= offset + len(items) <= total:
@@ -62,16 +93,25 @@ def _research_summary(snapshot_id):
         combinations += len(items)
         pages += 1
         next_offset = page["next_offset"]
-        if combinations == total and next_offset is None:
+        end_offset = first_offset + combinations
+        if end_offset == total and next_offset is None:
             break
-        if not items or next_offset != combinations or combinations >= total:
+        if not items or next_offset != end_offset or end_offset >= total:
             raise ValueError("Paginação de pesquisa inválida.")
         offset = next_offset
-    return {"coverage": "partial", "total_sampled_combinations": total,
+    summary = {"coverage": "partial", "total_sampled_combinations": total,
             "examined_combinations": combinations, "blocked_combinations": combinations,
             "hypothetical_layouts": layouts, "pages": pages,
-            "sample_sweep_complete": combinations == total and not queue_blockers,
+            "first_offset": first_offset, "next_offset": next_offset,
+            "sample_sweep_complete": first_offset == 0 and combinations == total and not queue_blockers,
             "queue_blocking_reasons": queue_blockers, "accounting_blocker_counts": dict(blockers)}
+    # A temporary outage must not discard the scheduling position. No results
+    # from previous captures are carried over to the accounting summary.
+    next_cursor = (cursor if queue_blockers else None if next_offset is None else
+                   {"next_offset": next_offset, "layout_fingerprint": layout_fingerprint})
+    if next_cursor is not None and not _valid_cursor(next_cursor):
+        raise ValueError("Cursor de pesquisa inválido.")
+    return summary, next_cursor
 
 
 def _valid_research_summary(research):
@@ -82,12 +122,17 @@ def _valid_research_summary(research):
         "hypothetical_layouts", "pages"))
     queue = research.get("queue_blocking_reasons")
     counts = research.get("accounting_blocker_counts")
+    first = research.get("first_offset", 0)
+    end = first + examined if type(first) is int and type(examined) is int else -1
+    next_offset = research.get("next_offset", end if type(total) is int and end < total else None)
     return (all(type(value) is int and value >= 0 for value in (total, examined, blocked, layouts, pages))
-            and blocked == examined <= total and 1 <= pages <= RESEARCH_PAGE_BUDGET
+            and type(first) is int and 0 <= first <= end <= total
+            and (next_offset is None if end == total else type(next_offset) is int and next_offset == end)
+            and blocked == examined and 1 <= pages <= RESEARCH_PAGE_BUDGET
             and isinstance(queue, list) and all(isinstance(code, str) and code for code in queue)
             and isinstance(counts, dict) and all(isinstance(code, str) and code
                 and type(value) is int and 0 < value <= examined + layouts for code, value in counts.items())
-            and research.get("sample_sweep_complete") is (examined == total and not queue))
+            and research.get("sample_sweep_complete") is (first == 0 and examined == total and not queue))
 
 
 def capture_and_plan(bot):
@@ -98,15 +143,16 @@ def capture_and_plan(bot):
     from web import WebDashboard
 
     profile = paths.current()
+    cursor = _load_cursor(profile)
     record = {"profile_id": profile.label, "status": "em_execucao", "read_only": True,
               "started_at": time.time(), "snapshot_id": None, "finished_at": None,
               "decision": None, "evaluated_count": None, "eligible_count": None,
-              "blocking_reasons": []}
+              "blocking_reasons": [], "research_cursor": cursor}
     _save(record)
     try:
         snapshot = capture_game_snapshot(bot)
         record["snapshot_id"] = snapshot["snapshot_id"]
-        research = _research_summary(record["snapshot_id"])
+        research, next_cursor = _research_summary(record["snapshot_id"], cursor)
         if not _valid_research_summary(research):
             raise ValueError("Resumo de pesquisa inválido.")
         dashboard = WebDashboard(bot, bot.config, buffer=None)
@@ -122,6 +168,7 @@ def capture_and_plan(bot):
                       decision=metrics["decision"], evaluated_count=metrics["evaluated_count"],
                       eligible_count=metrics["eligible_count"],
                       research=research,
+                      research_cursor=next_cursor,
                       blocking_reasons=metrics["blocking_reasons"])
         if metrics["decision"] is None:
             record["status"] = "inconclusivo"
@@ -132,7 +179,8 @@ def capture_and_plan(bot):
     except Exception as exc:
         # Never serialize exception text: it may contain private account data.
         record.update(status="falhou", finished_at=time.time(), decision=None,
-                      evaluated_count=None, eligible_count=None, blocking_reasons=[], research=None)
+                      evaluated_count=None, eligible_count=None, blocking_reasons=[], research=None,
+                      research_cursor=cursor)
         _save(record)
         log.warning("Falha no planejamento de expansão (%s).", type(exc).__name__)
         raise RuntimeError("Falha no planejamento de expansão.") from None
