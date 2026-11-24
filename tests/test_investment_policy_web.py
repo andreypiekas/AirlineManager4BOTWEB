@@ -318,7 +318,7 @@ def test_recommendations_use_saved_weights_and_reject_unverified_dimensions(tmp_
         }
         monkeypatch.setattr(web_module, "HubRegistry", EmptySource)
         monkeypatch.setattr(web_module, "HubAircraftResearchRegistry", EmptySource)
-        monkeypatch.setattr(web_module, "InvestmentJournal", EmptyJournal)
+        monkeypatch.setattr(web_module.InvestmentJournal, "read_existing", EmptyJournal().unresolved)
         monkeypatch.setattr(web_module, "recent_verified_money", lambda *args: (10000, 1800000000))
         monkeypatch.setattr(web_module, "load_state", lambda: {})
         monkeypatch.setattr(web_module, "rank_next_aircraft", lambda *args, **kwargs: {
@@ -360,7 +360,7 @@ def test_local_journal_reservations_reduce_candidate_budget(tmp_path, monkeypatc
 
         monkeypatch.setattr(web_module, "HubRegistry", EmptySource)
         monkeypatch.setattr(web_module, "HubAircraftResearchRegistry", EmptySource)
-        monkeypatch.setattr(web_module, "InvestmentJournal", ReservedJournal)
+        monkeypatch.setattr(web_module.InvestmentJournal, "read_existing", ReservedJournal().unresolved)
         monkeypatch.setattr(web_module, "recent_verified_money", lambda *args: (10000, 1800000000))
         monkeypatch.setattr(web_module, "load_state", lambda: {})
         monkeypatch.setattr(web_module, "rank_next_aircraft", lambda *args, **kwargs: {

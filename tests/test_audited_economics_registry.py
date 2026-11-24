@@ -18,6 +18,7 @@ from test_investment_policy_web import auth, request, served
 @pytest.fixture
 def registry(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    monkeypatch.setattr(paths.Profile, "data", property(lambda self: tmp_path))
     return AuditedEconomicsRegistry(tmp_path / "audited_expansion.json")
 
 
@@ -172,8 +173,15 @@ def test_web_dashboard_fails_closed_for_invalid_a3_storage(registry, monkeypatch
         assert "registro_a3_invalido" in result["portfolio"]["blocking_reasons"]
 
 
+@pytest.mark.parametrize("pending,blocker", [
+    (None, None),
+    ("route_creation_pending.json", "criacao_rota_a_conciliar"),
+    ("reroute_pending.json", "redirecionamento_a_conciliar"),
+    ("investment", "intencoes_locais_a_conciliar"),
+    ("corrupt", "diario_indisponivel"),
+])
 def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
-    tmp_path, registry, monkeypatch,
+    tmp_path, registry, monkeypatch, pending, blocker,
 ):
     data = record_fixture(registry)
     snapshot_id = data[0]["snapshot_id"]
@@ -199,6 +207,21 @@ def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
         ),
     )
 
+    if pending == "investment":
+        from investment_journal import InvestmentJournal
+        from test_investment_journal import ready
+
+        ledger = InvestmentJournal()
+        key = ready(ledger)
+        assert ledger.acquire_executor("pending-test")
+        assert ledger.claim_submission(key, "pending-test")
+        assert ledger.release_executor("pending-test")
+    elif pending == "corrupt":
+        (tmp_path / "investment_journal.sqlite3").write_text("invalid", encoding="utf-8")
+    elif pending:
+        (tmp_path / pending).write_text("invalid", encoding="utf-8")
+    before = {file.name: file.read_bytes() for file in tmp_path.glob("*.sqlite3")}
+
     with served(tmp_path) as (port, _config):
         denied, _ = request(port, "GET", "/api/investment/audited-expansion")
         assert denied == 403
@@ -207,6 +230,13 @@ def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
         )
 
     assert status == 200
+    assert {file.name: file.read_bytes() for file in tmp_path.glob("*.sqlite3")} == before
+    if blocker:
+        assert result["purchase_plan_preview"] is None
+        assert result["portfolio"]["decision"] == "nao_comprar"
+        assert result["portfolio"]["status"] == "inconclusivo"
+        assert blocker in result["purchase_plan_blockers"]
+        return
     assert result["purchase_plan_blockers"] == []
     assert result["purchase_plan_preview"]["plan_id"] == portfolio["best"]["plan_id"]
     assert result["purchase_plan_preview"]["engine_id"] == "engine-02"

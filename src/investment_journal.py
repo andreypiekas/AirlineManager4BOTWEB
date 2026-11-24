@@ -527,20 +527,52 @@ class InvestmentJournal:
 
     def unresolved(self, *, since: float | None = None) -> dict:
         """Return reservations and optionally the local period usage in one read."""
+        self._validate_since(since)
+        with self._connect() as conn:
+            return self._read_unresolved(conn, self.profile_id, since)
+
+    @classmethod
+    def read_existing(cls, *, since: float | None = None) -> dict:
+        """Read the active game's ledger without creating or migrating it."""
+        cls._validate_since(since)
+        profile = paths.current()
+        path = profile.data / "investment_journal.sqlite3"
+        try:
+            path.stat()
+        except FileNotFoundError:
+            # This is only the absence of local reservations, not proof of
+            # the game's outstanding orders or financial commitments.
+            return cls._summarize_unresolved([], profile.label, since)
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN")
+            environments = conn.execute("SELECT environment FROM journal_environment").fetchall()
+            if len(environments) != 1 or environments[0]["environment"] != "game":
+                raise ValueError("Diário de investimentos de ambiente incompatível.")
+            return cls._read_unresolved(conn, profile.label, since)
+
+    @classmethod
+    def _read_unresolved(cls, conn, profile_id: str, since: float | None) -> dict:
+        placeholders = ",".join("?" for _ in _RESERVED_STATES)
+        rows = conn.execute(
+            f"SELECT * FROM intents WHERE profile_id=? AND (state IN ({placeholders}) "
+            "OR (state='CONFIRMED' AND updated_at>=?)) "
+            "ORDER BY created_at, intent_key",
+            (profile_id, *_RESERVED_STATES, since),
+        ).fetchall()
+        return cls._summarize_unresolved(rows, profile_id, since)
+
+    @staticmethod
+    def _validate_since(since: float | None) -> None:
         if since is not None and (type(since) not in (int, float) or not math.isfinite(since) or since < 0):
             raise ValueError("Início de janela inválido.")
-        placeholders = ",".join("?" for _ in _RESERVED_STATES)
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM intents WHERE profile_id=? AND (state IN ({placeholders}) "
-                "OR (state='CONFIRMED' AND updated_at>=?)) "
-                "ORDER BY created_at, intent_key",
-                (self.profile_id, *_RESERVED_STATES, since),
-            ).fetchall()
-        intents = [self._unpack(row) for row in rows if row["state"] in _RESERVED_STATES]
+
+    @classmethod
+    def _summarize_unresolved(cls, rows, profile_id: str, since: float | None) -> dict:
+        intents = [cls._unpack(row) for row in rows if row["state"] in _RESERVED_STATES]
         exposure = sum(row["estimated_cost"] for row in intents)
         result = {"intents": intents, "estimated_exposure": exposure,
-                  "count": len(intents), "profile_id": self.profile_id}
+                  "count": len(intents), "profile_id": profile_id}
         if since is not None:
             confirmed = [row for row in rows if row["state"] == "CONFIRMED"]
             result["period_usage"] = {

@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A5, bloqueio por operações locais pendentes (G0)
+
+- Os relatórios de recomendações e de expansão auditada consultam o diário de investimentos existente em modo SQLite somente leitura, por perfil e ambiente real, sem criar ou migrar o banco em consultas GET. Ausência de diário significa somente ausência de reservas locais; erro de leitura, esquema incompatível ou ambiente de simulação impede conclusão.
+- Intenções reservadas (APPROVED, PRECHECKED, SUBMITTED e UNKNOWN), criação de rota ou redirecionamento pendente tornam a comparação inconclusiva e impedem a prévia de um novo plano A5. Alternativas continuam disponíveis para análise. Motivos identificados no painel PT/EN e no relatório de investimentos.
+- Validação Windows: 1.949 testes aprovados, nenhum reprovado e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX). Ruff e `git diff --check` aprovados. Testes abrangem isolamento, ausência/corrupção do diário, ambiente incorreto, leitura sem alteração e bloqueios de rotas e compra submetida.
+- Permanecem pendentes a conciliação de compromissos reais, a vinculação do saldo vivo e das confirmações posteriores ao snapshot A3/A4, as evidências completas de rentabilidade e a homologação autenticada. Nenhuma compra real executada. O objetivo integral permanece ativo.
+
 ## 2026-11-24 — Autonomia Total A4/A7, validade do saldo para investimentos (G0)
 
 - As consultas de expansão de hubs, pesquisa externa e recomendações de aeronaves passaram a usar exclusivamente o saldo inteiro não negativo confirmado pelo jogo nos últimos 900 segundos. Amostras históricas continuam disponíveis para exibição e cálculo de renda, mas não restabelecem uma evidência de saldo revogada, inclusive após gasto, falha de leitura ou reinício.

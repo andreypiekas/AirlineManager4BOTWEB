@@ -52,6 +52,8 @@ from route_detail_evidence import RouteDetailRegistry
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy, MODES
 from investment_journal import InvestmentJournal
+from route_creation import has_pending_creation
+from reroute import has_pending_reroute
 from investment_plan_bridge import build_aircraft_intent_plan
 from expansion_metrics import build_expansion_metrics
 from portfolio_planner import compare_portfolio
@@ -71,6 +73,45 @@ log = logging.getLogger("am4bot.app")
 PAGE = Path("assets/web/index.html")
 COOKIE = "am4token"
 MAX_BODY = 64 * 1024
+
+
+def _local_investment_snapshot() -> dict:
+    try:
+        return {
+            **InvestmentJournal.read_existing(since=time.time() - 86400),
+            "read_only": True, "execution_available": False,
+        }
+    except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+        return {
+            "intents": [], "count": None, "estimated_exposure": None,
+            "period_usage": None, "read_only": True, "execution_available": False,
+            "blocking_reasons": ["diario_indisponivel"],
+        }
+
+
+def _local_investment_blockers(journal: dict) -> list[str]:
+    reasons = list(journal.get("blocking_reasons", []))
+    if journal.get("estimated_exposure") is None or journal.get("count") is None:
+        reasons.append("diario_indisponivel")
+    elif journal["count"] > 0:
+        reasons.append("intencoes_locais_a_conciliar")
+    try:
+        if has_pending_creation():
+            reasons.append("criacao_rota_a_conciliar")
+        if has_pending_reroute():
+            reasons.append("redirecionamento_a_conciliar")
+    except OSError:
+        reasons.append("diario_rotas_indisponivel")
+    return list(dict.fromkeys(reasons))
+
+
+def _block_local_investment(portfolio: dict, journal: dict) -> None:
+    blockers = _local_investment_blockers(journal)
+    if blockers:
+        portfolio["blocking_reasons"] = list(dict.fromkeys([*portfolio["blocking_reasons"], *blockers]))
+        portfolio["status"] = "inconclusivo"
+        if "decision" in portfolio:
+            portfolio["decision"] = "nao_comprar"
 
 
 def _is_loopback(host: str) -> bool:
@@ -302,19 +343,7 @@ class WebDashboard:
         )
         investment_policy = InvestmentPolicy.from_config(self.cfg)
         report["investment_policy"] = investment_policy.report()
-        try:
-            report["investment_journal"] = {
-                **InvestmentJournal().unresolved(since=time.time() - 86400),
-                "read_only": True, "execution_available": False,
-            }
-        except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
-            # An unavailable ledger must not be mistaken for zero commitments.
-            report["investment_journal"] = {
-                "intents": [], "count": None, "estimated_exposure": None,
-                "period_usage": None,
-                "read_only": True, "execution_available": False,
-                "blocking_reasons": ["diario_indisponivel"],
-            }
+        report["investment_journal"] = _local_investment_snapshot()
         report["portfolio"] = compare_portfolio(
             report,
             known_local_commitments=report["investment_journal"]["estimated_exposure"],
@@ -337,9 +366,7 @@ class WebDashboard:
             diversification_weight=investment_policy.diversification_weight,
             policy_valid=investment_policy.valid,
         )
-        if report["investment_journal"]["estimated_exposure"] is None:
-            report["portfolio"]["blocking_reasons"].append("diario_indisponivel")
-            report["portfolio"]["status"] = "inconclusivo"
+        _block_local_investment(report["portfolio"], report["investment_journal"])
         return report
 
     def investment_metrics(self) -> tuple[int, dict]:
@@ -392,6 +419,7 @@ class WebDashboard:
             portfolio["blocking_reasons"].append("registro_a3_invalido")
             portfolio["status"] = "inconclusivo"
             portfolio["decision"] = "nao_comprar"
+        _block_local_investment(portfolio, _local_investment_snapshot())
         purchase_plan = None
         purchase_plan_blockers = []
         if portfolio.get("decision") == "sugestao_para_analise":

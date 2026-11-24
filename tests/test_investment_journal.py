@@ -101,6 +101,33 @@ def test_period_snapshot_counts_reservations_and_confirmations_once(tmp_path):
     assert "period_usage" not in ledger.unresolved()
 
 
+def test_read_existing_is_profile_scoped_and_never_creates_journal(tmp_path, monkeypatch):
+    monkeypatch.setattr(investment_journal.paths.Profile, "data", property(lambda self: tmp_path))
+    monkeypatch.setattr(investment_journal.paths, "current", lambda: investment_journal.paths.Profile(""))
+    path = tmp_path / "investment_journal.sqlite3"
+    assert InvestmentJournal.read_existing()["count"] == 0
+    assert not path.exists()
+    ledger = InvestmentJournal()
+    ready(ledger)
+    ready(InvestmentJournal(path, profile_id="secondary"), aircraft_plan(destination_id="789"))
+    since = time.time() - 86400
+    before = path.read_bytes()
+    assert InvestmentJournal.read_existing(since=since) == ledger.unresolved(since=since)
+    assert path.read_bytes() == before
+    with pytest.raises(ValueError, match="janela"):
+        InvestmentJournal.read_existing(since=[])
+
+
+def test_read_existing_rejects_simulation_database_in_game_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(investment_journal.paths.Profile, "data", property(lambda self: tmp_path))
+    path = tmp_path / "investment_journal.sqlite3"
+    InvestmentJournal(path, simulation=True)
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="ambiente"):
+        InvestmentJournal.read_existing()
+    assert path.read_bytes() == before
+
+
 def test_explicit_plan_profile_must_match_journal_profile(tmp_path):
     ledger = journal(tmp_path)
     with pytest.raises(ValueError, match="perfil"):

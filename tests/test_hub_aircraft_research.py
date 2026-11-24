@@ -285,7 +285,7 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_p
         "engine_id": "engine-1", "estimated_cost": 6000,
     })
     assert ledger.transition(intent["intent_key"], "PROPOSED", "APPROVED")
-    monkeypatch.setattr(web, "InvestmentJournal", lambda: ledger)
+    monkeypatch.setattr(web.InvestmentJournal, "read_existing", ledger.unresolved)
     result = dashboard.hub_recommendations()
     assert result["hubs"][0]["code"] == "XAP"
     assert result["scenarios"] == [scenario]
@@ -294,6 +294,7 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_p
     assert result["cash"] == 20000
     assert result["reserve"] == 2000
     assert result["portfolio"]["status"] == "inconclusivo"
+    assert "intencoes_locais_a_conciliar" in result["portfolio"]["blocking_reasons"]
     assert result["portfolio"]["execution_available"] is False
     assert result["investment_policy"]["release_gate"] == "G0"
     assert result["investment_journal"]["count"] == 1
@@ -319,11 +320,11 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_p
     assert details.reserve([route_sample])
     assert "route_detail" not in dashboard.hub_recommendations()["scenarios"][0]
 
-    def broken_ledger():
+    def broken_ledger(**_kwargs):
         import sqlite3
         raise sqlite3.DatabaseError("corrupt")
 
-    monkeypatch.setattr(web, "InvestmentJournal", broken_ledger)
+    monkeypatch.setattr(web.InvestmentJournal, "read_existing", broken_ledger)
     unavailable = dashboard.hub_recommendations()["investment_journal"]
     assert unavailable["estimated_exposure"] is None
     assert unavailable["count"] is None
