@@ -1161,6 +1161,12 @@ const EN = {
   "Evento de demanda": "Demand event",
   "Rotas com amostras conflitantes": "Routes with conflicting samples",
   "Cobertura parcial": "Partial coverage",
+  "Catálogo de encomenda de passageiros": "Passenger aircraft order catalog",
+  "Modelos com identidade confirmada": "Models with verified identity",
+  "Modelos com detalhes de todas as variantes disponíveis": "Models with details for all available variants",
+  "Variantes observadas entre as identificadas": "Observed variants among identified variants",
+  "Lista de modelos a confirmar": "Model list pending verification",
+  "Preços finais não confirmados": "Final prices unverified",
   "Pesquisa ainda pendente": "Research pending",
   "Indisponível": "Unavailable",
   "Mais possibilidades aguardam pesquisa.": "Additional possibilities await research.",
@@ -2601,6 +2607,20 @@ function renderHubRecommendations(report) {
     (paged ? " · " + tr("Possibilidades") + ": " + nf.format(researchQueue.total_candidates) +
       " (" + nf.format(researchQueue.offset + (researchItems.length ? 1 : 0)) +
       "–" + nf.format(researchQueue.offset + researchItems.length) + ")" : "");
+  const engineCoverage = report.engine_order_list_coverage;
+  if (engineCoverage) {
+    const counts = [engineCoverage.listed_model_count, engineCoverage.verified_model_count,
+      engineCoverage.models_with_all_variant_details, engineCoverage.available_variant_count,
+      engineCoverage.observed_variant_count];
+    const valid = ["partial", "details_observed"].includes(engineCoverage.status) &&
+      counts.every(value => Number.isSafeInteger(value) && value >= 0) &&
+      counts[0] > 0 && counts[2] <= counts[1] && counts[1] <= counts[0] && counts[4] <= counts[3];
+    $("hubResearchQueueStatus").textContent += " · " + tr("Catálogo de encomenda de passageiros") + ": " +
+      (valid ? tr("Modelos com identidade confirmada") + " " + nf.format(counts[1]) + "/" + nf.format(counts[0]) +
+        " · " + tr("Modelos com detalhes de todas as variantes disponíveis") + " " + nf.format(counts[2]) + "/" + nf.format(counts[0]) +
+        " · " + tr("Variantes observadas entre as identificadas") + " " + nf.format(counts[4]) + "/" + nf.format(counts[3])
+        : tr("Lista de modelos a confirmar")) + " · " + tr("Preços finais não confirmados");
+  }
   $("hubResearchPrev").disabled = !paged || researchQueue.offset <= 0;
   $("hubResearchNext").disabled = !paged || researchQueue.next_offset == null;
   $("hubResearchPolicyStatus").textContent = tr("Somente análise. Nenhuma compra autorizada.") +

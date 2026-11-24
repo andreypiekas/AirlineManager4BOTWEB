@@ -9,7 +9,7 @@ import time
 
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
-from engine_catalog import EngineCatalogRegistry
+from engine_catalog import EngineCatalogRegistry, MODEL_ROSTER_JS
 from engine_detail import MODEL_DETAIL_IDENTITY_JS, parse_displayed_metrics
 from engine_selection import (
     EngineSelectionError, _ENGINE_OPTIONS_JS, _SET_ENGINE_JS, parse_engine_catalog,
@@ -654,14 +654,19 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
         return 0
     registry = EngineCatalogRegistry()
     collected = 0
+    registry.revoke_roster()
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
     try:
         bot.ajax("ac_orders.php?first=true", "routeAction")
-        raw_models = _stable_read(bot, _MODELS_JS)
-        if not isinstance(raw_models, list):
-            return 0
-        models = [{"id": row.get("id"), "name": row.get("name")}
-                  for row in raw_models if isinstance(row, dict)]
+        read = _stable_read(bot, MODEL_ROSTER_JS, with_timestamp=True)
+        models = registry.record_roster(read[0], observed_at=read[1]) if isinstance(read, tuple) else None
+        if models is None:
+            # An unfamiliar list layout must not erase individual detail research.
+            # The legacy visible slice can schedule reads without certifying coverage.
+            visible = _stable_read(bot, _MODELS_JS)
+            if not isinstance(visible, list):
+                return 0
+            models = visible
         for model in registry.next_models(models, per_cycle=per_cycle):
             if getattr(bot, "stopping", False):
                 break

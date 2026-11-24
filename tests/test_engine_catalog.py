@@ -18,6 +18,88 @@ from settings_schema import AIRCRAFT_SWITCHES
 NOW = 1_900_000_000
 
 
+def _roster(*models):
+    return [{"id": mid, "name": name, "section": f"listSection{index}"}
+            for index, (mid, name) in enumerate(models, 1)]
+
+
+def test_roster_coverage_counts_exact_identities_and_available_variant_details(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    rows = _roster(("11", "A320"), ("22", "B737"))
+    assert registry.record_roster(rows, observed_at=NOW) == rows
+    catalog = engine_selection.parse_engine_catalog(_groups())
+    details = {"1": {"observed_at": NOW, "metrics": {"speed_kph": 905}}}
+    assert registry.record("11", "A320", catalog, observed_model_id="11", variant_details=details)
+    assert registry.record("22", "Wrong name", catalog, observed_model_id="22", variant_details=details)
+    assert registry.record("33", "A380", catalog, observed_model_id="33", variant_details=details)
+    coverage = registry.snapshot(now=NOW)["order_list_coverage"]
+    assert coverage == {"source": engine_catalog.ROSTER_SOURCE, "status": "partial",
+                        "observed_at": NOW, "listed_model_count": 2, "verified_model_count": 1,
+                        "available_variant_count": 1, "observed_variant_count": 1,
+                        "models_with_all_variant_details": 1, "final_prices_verified": False}
+    # A new valid observation can fill the missing identity, but cannot prove checkout prices.
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW + 1)
+    details["1"]["observed_at"] = NOW + 1
+    assert registry.record("22", "B737", catalog, observed_model_id="22", variant_details=details)
+    snapshot = engine_catalog.EngineCatalogRegistry(registry.path).snapshot(now=NOW + 1)
+    assert snapshot["coverage"] == "partial"
+    assert snapshot["order_list_coverage"]["status"] == "details_observed"
+    assert snapshot["order_list_coverage"]["final_prices_verified"] is False
+    assert registry.record_attempt("11", "A320")
+    assert registry.snapshot(now=NOW + 1)["order_list_coverage"]["verified_model_count"] == 1
+    assert registry.snapshot(now=NOW + 901)["order_list_coverage"]["status"] == "unverified"
+    registry.revoke_roster()
+    assert registry.snapshot(now=NOW + 1)["order_list_coverage"]["listed_model_count"] is None
+    assert registry.snapshot(now=NOW + 1)["model_count"] == 3
+
+
+@pytest.mark.parametrize("rows", [
+    [], _roster(("11", "A320"), ("11", "A320")),
+    [{"id": "11", "name": "A320", "section": "listSection2"}],
+    [{"id": "11", "name": "A320"}],
+    _roster(("invalid", "A320")),
+])
+def test_roster_rejects_invalid_native_list(tmp_path, monkeypatch, rows):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    assert registry.record_roster(rows, observed_at=NOW) is None
+    assert registry.snapshot(now=NOW)["order_list_coverage"]["status"] == "unverified"
+
+
+def test_roster_dom_contract_requires_idle_visible_native_cards(tmp_path):
+    if not shutil.which("node"):
+        pytest.skip("Node.js required to exercise the native roster DOM snapshot")
+    js = r"""
+const card = (id, section, name) => ({
+  id: section, offsetParent: {}, matches: selector => selector === '.acListItem',
+  querySelector: selector => selector === 'b' ? {textContent: name} : null,
+  getAttribute: () => `Ajax('ac_orders.php?mode=detail&id=${id}&charter=0','acModel',false);`
+});
+const list = {offsetParent: {}, children: [card('12','listSection1','Cessna 172'),
+  card('5','listSection2','A320-200')], querySelector: () => null};
+globalThis.document = {querySelectorAll: () => [list]};
+globalThis.window = {jQuery: {active: 0}};
+"""
+    js += "\nconst read = new Function(" + json.dumps(engine_catalog.MODEL_ROSTER_JS) + ");\n"
+    js += """
+const original = read();
+window.jQuery.active = 1; const busy = read(); window.jQuery.active = 0;
+list.children[1].offsetParent = null; const hidden = read();
+list.children[1].offsetParent = {};
+list.children[1].getAttribute = () => "Ajax('ac_orders.php?mode=detail&id=5&charter=1','acModel',false);";
+console.log(JSON.stringify({original, busy, hidden, wrong: read()}));
+"""
+    path = tmp_path / "model_roster.js"
+    path.write_text(js, encoding="utf-8")
+    result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    reads = json.loads(result.stdout)
+    assert reads["original"] == _roster(("12", "Cessna 172"), ("5", "A320-200"))
+    assert reads["busy"] is None and reads["hidden"] is None
+    assert reads["wrong"][1]["id"] is None
+
+
 def test_engine_collection_limit_is_configurable_and_clamped():
     defaults = ConfigParser(interpolation=None)
     defaults.read(Path(__file__).resolve().parents[1] / "config/defaults.ini", encoding="utf-8")
@@ -285,10 +367,8 @@ def test_collector_reads_order_details_only_and_rotates_after_failure(tmp_path, 
             if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
                 return {"detail": {"attribute_present": True, "model_id": self.model_id},
                         "groups": _groups(invalid=self.model_id == "22")}
-            from fleet import _MODELS_JS
-            assert script == _MODELS_JS
-            return [{"id": "11", "name": "A320"}, {"id": "22", "name": "B737"},
-                    {"id": "33", "name": "A380"}]
+            assert script == engine_catalog.MODEL_ROSTER_JS
+            return _roster(("11", "A320"), ("22", "B737"), ("33", "A380"))
 
     first = Bot()
     assert game_observations.collect_aircraft_engine_catalog(first, per_cycle=2) == 1
@@ -339,9 +419,8 @@ def test_collector_preserves_second_dom_read_time_when_processing_is_delayed(
             if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
                 return {"detail": {"attribute_present": True, "model_id": "11"},
                         "groups": _groups()}
-            from fleet import _MODELS_JS
-            assert script == _MODELS_JS
-            return [{"id": "11", "name": "A320"}]
+            assert script == engine_catalog.MODEL_ROSTER_JS
+            return _roster(("11", "A320"))
 
     assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == 1
     saved = engine_catalog.EngineCatalogRegistry(registry.path).snapshot(now=NOW)
@@ -371,7 +450,7 @@ def test_collector_rejects_unstable_game_reads_without_overwriting_cache(tmp_pat
             if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
                 return {"detail": {"attribute_present": False, "model_id": None},
                         "groups": []}
-            return [{"id": "11", "name": "A320"}]
+            return _roster(("11", "A320"))
 
     assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == 0
     assert registry.snapshot(now=NOW)["model_count"] == 1
@@ -401,7 +480,7 @@ def test_collector_discards_mismatched_detail_without_replacing_last_good(tmp_pa
             if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
                 return {"detail": {"attribute_present": True, "model_id": "22"},
                         "groups": _groups()}
-            return [{"id": "11", "name": "A320"}]
+            return _roster(("11", "A320"))
 
     assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == 0
     assert registry.snapshot(now=NOW)["models"]["11"] == original
@@ -434,7 +513,7 @@ def test_collector_correlates_response_script_id(tmp_path, monkeypatch, detail, 
         def js(self, script):
             if script == game_observations._ENGINE_DETAIL_SNAPSHOT_JS:
                 return {"detail": detail, "groups": _groups()}
-            return [{"id": "2", "name": "A380-800"}]
+            return _roster(("2", "A380-800"))
 
     assert game_observations.collect_aircraft_engine_catalog(Bot(), per_cycle=1) == collected
     models = registry.snapshot(now=NOW)["models"]
@@ -482,9 +561,8 @@ def test_collector_rejects_ajax_panel_change_between_snapshots(tmp_path, monkeyp
                         groups[0]["options"][0]["label"] = "Different motor"
                 return {"detail": {"attribute_present": True, "model_id": detail_id},
                         "groups": groups}
-            from fleet import _MODELS_JS
-            assert script == _MODELS_JS
-            return [{"id": "11", "name": "A320"}]
+            assert script == engine_catalog.MODEL_ROSTER_JS
+            return _roster(("11", "A320"))
 
     bot = Bot()
     assert game_observations.collect_aircraft_engine_catalog(bot, per_cycle=1) == 0

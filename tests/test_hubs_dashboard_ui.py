@@ -322,6 +322,12 @@ const translations = {
   'Ocupação da frota própria não confirmada': 'Own-fleet route occupancy not confirmed',
   'Rotas com amostras conflitantes': 'Routes with conflicting samples',
   'Cobertura parcial': 'Partial coverage',
+  'Catálogo de encomenda de passageiros': 'Passenger aircraft order catalog',
+  'Modelos com identidade confirmada': 'Models with verified identity',
+  'Modelos com detalhes de todas as variantes disponíveis': 'Models with details for all available variants',
+  'Variantes observadas entre as identificadas': 'Observed variants among identified variants',
+  'Lista de modelos a confirmar': 'Model list pending verification',
+  'Preços finais não confirmados': 'Final prices unverified',
   'Cotação de combustível (USD/1000)': 'Fuel quote (USD/1000)',
   'Cotação de CO₂ (USD/1000)': 'CO₂ quote (USD/1000)',
   'Pesquisa ainda pendente': 'Research pending',
@@ -406,6 +412,19 @@ $('hubRecommendationSort').value = 'profit';
 renderHubRecommendations(report);
 assert.equal($('hubResearchQueueStatus').textContent,
   'Suggested research tasks: 1 · Hubs with samples: 1 · Observed routes: 2 · Partial coverage');
+report.engine_order_list_coverage = {status:'partial', listed_model_count:311,
+  verified_model_count:7, models_with_all_variant_details:3,
+  available_variant_count:12, observed_variant_count:5, final_prices_verified:false};
+renderHubRecommendations(report);
+assert.match($('hubResearchQueueStatus').textContent, /Models with verified identity 7\/311/);
+assert.match($('hubResearchQueueStatus').textContent, /Models with details for all available variants 3\/311/);
+assert.match($('hubResearchQueueStatus').textContent, /Observed variants among identified variants 5\/12/);
+assert.match($('hubResearchQueueStatus').textContent, /Final prices unverified/);
+report.engine_order_list_coverage = {status:'unverified'};
+renderHubRecommendations(report);
+assert.match($('hubResearchQueueStatus').textContent, /Model list pending verification/);
+delete report.engine_order_list_coverage;
+renderHubRecommendations(report);
 const marketNow = Date.now() / 1000;
 const fleetMetrics = document.createElement('div');
 const fleetEvidence = {own_aircraft_count:1, count_complete:false, observed_at:marketNow-5, expires_at:marketNow+60};

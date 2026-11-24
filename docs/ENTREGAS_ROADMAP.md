@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A1/A2/A7, cobertura do catálogo de encomendas (G0)
+
+- A inspeção autenticada da lista nativa de encomendas encontrou 311 cartões visíveis, com 311 IDs distintos, nomes distintos e seções consecutivas. Os 311 manipuladores de detalhe apontavam para `ac_orders.php?mode=detail` com `charter=0`. A lista permaneceu com o mesmo conjunto de identidades após acionar a ordenação por preço. Não foi efetuada nenhuma encomenda.
+- O coletor registra o conjunto exato por perfil mediante dupla leitura estável, com validação das seções, IDs, nomes, visibilidade e ausência de carregamento. A evidência da lista expira em 15 minutos e é revogada antes de cada nova coleta. Se o contrato da lista não for confirmado, a pesquisa individual pode continuar pela lista visível anterior, mantendo a cobertura inconclusiva.
+- A API `/api/hubs/recommendations` e o painel PT/EN agora exibem a quantidade de modelos com identidade de detalhe confirmada, os modelos com observações de todas as variantes disponíveis e a quantidade de variantes observadas entre as identificadas. Tentativas posteriores inconclusivas retiram o modelo da contagem verificada, mesmo quando sua última leitura válida é preservada para consulta. A cobertura da lista não comprova outros catálogos, todos os campos de cada variante, preços finais, disponibilidade de entrega ou viabilidade econômica. O planejamento global continua parcial e G0 permanece ativo.
+- Validação Windows: 346 testes direcionados aprovados, incluindo contrato DOM sintético, lista inválida, identidade divergente, expiração, revogação, variantes e painel. Ruff, compilação Python e `git diff --check` aprovados. Ainda falta homologar o coletor Selenium integrado na sessão autenticada e pesquisar os demais modelos e preços finais.
+
 ## 2026-11-24 — Autonomia Total A1/A2/A7, cobertura independente dos hubs de entrega (G0)
 
 - A leitura autenticada do gerenciamento `hubs.php` encontrou 30 linhas com o manipulador nativo de consulta `hub_details.php`, todas com IDs únicos. O conjunto coincide integralmente com as 30 opções do formulário de entrega e não possui IDs em comum com o seletor de aeroportos da pesquisa. A inspeção do detalhe de um hub revelou o nome com país, mas não uma associação explícita entre os dois namespaces. A camada de mapa inspecionada também não forneceu essa associação. Nenhuma ação de alteração, abandono ou compra foi acionada.

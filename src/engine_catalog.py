@@ -23,8 +23,28 @@ _MODEL_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _ENGINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_AGE_SECONDS = 3 * 86400
 SOURCE = "game_aircraft_order_detail"
+ROSTER_SOURCE = "game_passenger_order_list"
+ROSTER_MAX_AGE_SECONDS = 900
 _MAX_EPOCH = 253402300799  # End of year 9999 (UTC).
 _UNSET = object()
+
+# The native passenger list has one container, sequential listSection IDs and
+# model-specific order-detail handlers. Read every card without changing sort.
+MODEL_ROSTER_JS = r"""
+const lists = document.querySelectorAll('#acListItems');
+if (lists.length !== 1 || !window.jQuery || window.jQuery.active !== 0) return null;
+const list = lists[0];
+if (list.offsetParent === null || list.querySelector('img[src*="loader"], [aria-busy="true"]')) return null;
+const cards = Array.from(list.children);
+if (!cards.length || cards.some(el => !el.matches('.acListItem') || el.offsetParent === null)) return null;
+return cards.map(el => {
+  const matches = Array.from((el.getAttribute('onclick') || '').matchAll(
+    /Ajax\('ac_orders\.php\?mode=detail&id=([1-9][0-9]{0,11})&charter=0','acModel',/g));
+  const name = el.querySelector('b');
+  return {id: matches.length === 1 ? matches[0][1] : null,
+          name: name ? name.textContent.trim() : null, section: el.id};
+});
+"""
 
 
 def _timestamp(value: object) -> int | float | None:
@@ -40,6 +60,69 @@ def _model_identity(model_id: object, model_name: object) -> tuple[str, str] | N
             or not isinstance(model_name, str) or not 0 < len(model_name.strip()) <= 120):
         return None
     return model_id, model_name.strip()
+
+
+def _roster_models(rows: object) -> list[dict] | None:
+    """Validate the exact observed list; never infer a missing model from counts."""
+    if not isinstance(rows, list) or not 0 < len(rows) <= 10000:
+        return None
+    models = []
+    sections = set()
+    ids = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        identity = _model_identity(row.get("id"), row.get("name"))
+        section = row.get("section")
+        if (identity is None or identity[0] in ids or not isinstance(section, str)
+                or not re.fullmatch(r"listSection[1-9][0-9]{0,4}", section)
+                or section in sections):
+            return None
+        ids.add(identity[0])
+        sections.add(section)
+        models.append({"id": identity[0], "name": identity[1], "section": section})
+    if sections != {f"listSection{i}" for i in range(1, len(models) + 1)}:
+        return None
+    return models
+
+
+def _roster_coverage(state: dict, models: dict, now: object) -> dict:
+    pending = {"source": ROSTER_SOURCE, "status": "unverified", "listed_model_count": None,
+               "verified_model_count": None, "available_variant_count": None,
+               "observed_variant_count": None, "models_with_all_variant_details": None,
+               "final_prices_verified": False}
+    roster = state.get("roster")
+    if not isinstance(roster, dict) or roster.get("source") != ROSTER_SOURCE:
+        return pending
+    stamp = _timestamp(roster.get("observed_at"))
+    rows = _roster_models(roster.get("models"))
+    if (stamp is None or _timestamp(now) is None or not 0 <= now - stamp <= ROSTER_MAX_AGE_SECONDS
+            or rows is None):
+        return pending
+    attempts = state.get("attempts")
+    attempts = attempts if isinstance(attempts, dict) else {}
+    verified = []
+    for row in rows:
+        model = models.get(row["id"], {})
+        attempt = attempts.get(row["id"], {})
+        attempt_at = _timestamp(attempt.get("attempted_at")) if isinstance(attempt, dict) else None
+        if (model.get("model") == row["name"] and model.get("model_detail_identity_verified") is True
+                and isinstance(attempt, dict) and attempt.get("status") == "observed"
+                and attempt.get("model") == row["name"] and attempt_at is not None
+                and model["observed_at"] <= attempt_at <= now):
+            verified.append(model)
+    available_count = observed_count = all_details_count = 0
+    for model in verified:
+        available = {v["engine_id"] for v in model["variants"] if v["available"]}
+        observed = available & model["variant_details"].keys()
+        available_count += len(available)
+        observed_count += len(observed)
+        all_details_count += bool(available and available == observed)
+    return {**pending, "observed_at": stamp, "listed_model_count": len(rows),
+            "verified_model_count": len(verified), "available_variant_count": available_count,
+            "observed_variant_count": observed_count,
+            "models_with_all_variant_details": all_details_count,
+            "status": "details_observed" if all_details_count == len(rows) else "partial"}
 
 
 def _variant_number(value: object) -> float | None:
@@ -151,6 +234,24 @@ class EngineCatalogRegistry:
         state["schema_version"] = 1
         paths.write_atomic(self.path, json.dumps(state, indent=2, ensure_ascii=False))
 
+    def revoke_roster(self) -> None:
+        with _LOCK:
+            state = self._load()
+            if "roster" in state:
+                del state["roster"]
+                self._write(state)
+
+    def record_roster(self, rows: object, *, observed_at: object) -> list[dict] | None:
+        models = _roster_models(rows)
+        stamp = _timestamp(observed_at)
+        if models is None or stamp is None or not 0 <= time.time() - stamp <= ROSTER_MAX_AGE_SECONDS:
+            return None
+        with _LOCK:
+            state = self._load()
+            state["roster"] = {"source": ROSTER_SOURCE, "observed_at": stamp, "models": models}
+            self._write(state)
+        return models
+
     def next_models(self, models: list[dict], *, per_cycle: int = 2) -> list[dict]:
         """Rotate even after failures; never schedule conflicting model identities."""
         if type(per_cycle) is not int or per_cycle < 1:
@@ -233,8 +334,12 @@ class EngineCatalogRegistry:
                         return False  # Contradictory, equally dated evidence.
             catalogs[model_id] = clean
             state["catalogs"] = catalogs
+            state["last_attempted_id"] = model_id
+            attempts = state.get("attempts")
+            attempts = attempts if isinstance(attempts, dict) else {}
+            attempts[model_id] = {"model": clean["model"], "attempted_at": now, "status": "observed"}
+            state["attempts"] = attempts
             self._write(state)
-        self.record_attempt(model_id, model_name, success=True)
         return True
 
     def snapshot(self, *, now: Optional[int | float] = None) -> dict:
@@ -248,4 +353,5 @@ class EngineCatalogRegistry:
             if clean is not None and mid == clean["model_id"]:
                 models[mid] = clean
         return {"source": SOURCE, "models": models, "model_count": len(models),
-                "coverage": "partial", "read_only": True}
+                "coverage": "partial", "order_list_coverage": _roster_coverage(state, models, now),
+                "read_only": True}
