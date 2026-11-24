@@ -33,11 +33,13 @@ def test_modo_autonomo_configurado_segue_bloqueado_no_gate_g0():
         ("investment", "auto_buy_hub"): True,
         ("investment", "max_single_investment"): "100000",
         ("investment", "max_daily_spend"): "200000",
+        ("investment", "max_cycle_spend"): "150000",
         ("investment", "max_acquisitions_per_day"): "5",
     })
     state = InvestmentPolicy.from_config(config).report()
     assert state["auto_buy_hub"] is True
     assert state["max_daily_spend"] == 200000
+    assert state["max_cycle_spend"] == 150000
     assert state["valid"] is True
     assert state["execution_available"] is False
     assert state["blocking_reasons"] == ["executor_aguarda_homologacao"]
@@ -88,6 +90,7 @@ def test_pesos_incorretos_bloqueiam_politica():
         ("investment", "profit_weight"): "0",
         ("investment", "efficiency_weight"): "0",
         ("investment", "risk_weight"): "0",
+        ("investment", "max_cycle_spend"): "100000",
     })
     assert "politica_invalida" in InvestmentPolicy.from_config(invalid).report()["blocking_reasons"]
 

@@ -139,7 +139,7 @@ def test_hubs_dashboard_discloses_historical_audit_without_claiming_current_comp
 def test_investment_policy_controls_have_labels_and_separate_endpoints():
     page = _page()
     for identifier in ("investmentPlanning", "investmentAircraft", "investmentHub", "investmentMode",
-                       "investmentSingle", "investmentDaily", "investmentCount",
+                       "investmentSingle", "investmentDaily", "investmentCycle", "investmentCount",
                        "investmentMinProfit", "investmentPayback"):
         assert page.controls[identifier]["nested_label"], identifier
     for identifier in ("investmentProfitWeight", "investmentEfficiencyWeight",

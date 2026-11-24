@@ -679,6 +679,7 @@ footer strong { font-weight: 600; color: var(--aqua); }
               </select></label>
               <label class="hubs-field"><span data-t="Máximo por compra ($ jogo)">Máximo por compra ($ jogo)</span><input id="investmentSingle" type="number" min="0" max="1000000000000000" step="1" required></label>
               <label class="hubs-field"><span data-t="Máximo diário ($ jogo)">Máximo diário ($ jogo)</span><input id="investmentDaily" type="number" min="0" max="1000000000000000" step="1" required></label>
+              <label class="hubs-field"><span data-t="Máximo por ciclo ($ jogo)">Máximo por ciclo ($ jogo)</span><input id="investmentCycle" type="number" min="0" max="1000000000000000" step="1" required></label>
               <label class="hubs-field"><span data-t="Máximo de aquisições em 24h">Máximo de aquisições em 24h</span><input id="investmentCount" type="number" min="0" max="100" step="1" required></label>
               <label class="hubs-field"><span data-t="Lucro diário mínimo ($ jogo)">Lucro diário mínimo ($ jogo)</span><input id="investmentMinProfit" type="number" min="0" max="1000000000000000" step="1" required></label>
               <label class="hubs-field"><span data-t="Payback máximo em dias (0 = livre)">Payback máximo em dias (0 = livre)</span><input id="investmentPayback" type="number" min="0" max="3650" step="1" required></label>
@@ -1522,6 +1523,9 @@ const EN = {
   "Autônomo dentro dos limites": "Autonomous within limits",
   "Máximo por compra ($ jogo)": "Maximum per purchase (game $)",
   "Máximo diário ($ jogo)": "Daily maximum (game $)",
+  "Máximo por ciclo ($ jogo)": "Cycle maximum (game $)",
+  "Limite restante do ciclo auditado": "Remaining audited cycle limit",
+  "Limite do ciclo não configurado": "Cycle limit not configured",
   "Máximo de aquisições em 24h": "Maximum acquisitions per 24h",
   "Lucro diário mínimo ($ jogo)": "Minimum daily profit (game $)",
   "Payback máximo em dias (0 = livre)": "Maximum payback days (0 = no limit)",
@@ -2524,6 +2528,7 @@ const hubResearchBlockerLabels = {
   saldo_apos_compromissos_insuficiente: "Saldo após compromissos insuficiente",
   limite_ciclo_esgotado: "Limite de gasto do ciclo esgotado",
   limite_periodo_esgotado: "Limite de gasto do período esgotado",
+  limite_ciclo_nao_configurado: "Limite do ciclo não configurado",
   economia_a3_a_confirmar: "Economia A3 não confirmada",
   roi_a3_a_confirmar: "ROI A3 não confirmado",
   vagas_hangar_a_confirmar: "Vagas de hangar não confirmadas",
@@ -3348,6 +3353,10 @@ function renderAuditedExpansionPlanner(audited, hubs) {
       : tr("Aguardando provas completas de rota, motor, demanda e custos.");
   }
   const observed = audited.game_observation_snapshot;
+  if (Number.isFinite(portfolio.remaining_cycle_spend)) {
+    explanation.textContent += " · " + tr("Limite restante do ciclo auditado") +
+      ": " + hubMoney(portfolio.remaining_cycle_spend);
+  }
   const period = portfolio.local_period_limits;
   if (period) {
     if (period.estimated_exposure == null || period.acquisition_count == null) {
@@ -3529,6 +3538,7 @@ function renderInvestmentPolicy(report) {
   $("investmentMode").value = policy.mode;
   $("investmentSingle").value = String(policy.max_single_investment);
   $("investmentDaily").value = String(policy.max_daily_spend);
+  $("investmentCycle").value = String(policy.max_cycle_spend);
   $("investmentCount").value = String(policy.max_acquisitions_per_day);
   $("investmentMinProfit").value = String(policy.min_daily_profit);
   $("investmentPayback").value = String(policy.max_payback_days);
@@ -3634,6 +3644,7 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
   const amounts = [
     [$("investmentSingle").value.trim(), 1e15],
     [$("investmentDaily").value.trim(), 1e15],
+    [$("investmentCycle").value.trim(), 1e15],
     [$("investmentCount").value.trim(), 100],
     [$("investmentMinProfit").value.trim(), 1e15],
     [$("investmentPayback").value.trim(), 3650],
@@ -3647,7 +3658,7 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
     $("investmentPolicyStatus").textContent = tr("Verifique os limites numéricos antes de salvar.");
     return;
   }
-  const [single, daily, count, minProfit, maxPayback, profitWeight,
+  const [single, daily, cycle, count, minProfit, maxPayback, profitWeight,
     efficiencyWeight, riskWeight, confidenceWeight, diversificationWeight] = amounts.map(([text]) => Number(text));
   if (profitWeight + efficiencyWeight + riskWeight + confidenceWeight + diversificationWeight === 0) {
     $("investmentPolicyStatus").textContent = tr("Configure pelo menos um peso positivo para o ranking.");
@@ -3660,6 +3671,7 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
     mode: $("investmentMode").value,
     max_single_investment: single,
     max_daily_spend: daily,
+    max_cycle_spend: cycle,
     max_acquisitions_per_day: count,
     min_daily_profit: minProfit,
     max_payback_days: maxPayback,

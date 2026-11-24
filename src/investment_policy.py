@@ -20,6 +20,7 @@ class InvestmentPolicy:
     auto_buy_hub: bool = False
     max_single_investment: int = 0
     max_daily_spend: int = 0
+    max_cycle_spend: int = 0
     max_acquisitions_per_day: int = 0
     min_daily_profit: int = 0
     max_payback_days: int = 0
@@ -50,7 +51,8 @@ class InvestmentPolicy:
                   ("max_acquisitions_per_day", 100, 0), ("min_daily_profit", 10**15, 0),
                   ("max_payback_days", 3650, 0), ("profit_weight", 100, 60),
                   ("efficiency_weight", 100, 40), ("risk_weight", 100, 0),
-                  ("confidence_weight", 100, 0), ("diversification_weight", 100, 0))
+                  ("confidence_weight", 100, 0), ("diversification_weight", 100, 0),
+                  ("max_cycle_spend", 10**15, 0))
         for key, upper, fallback in bounds:
             raw = read(key, str(fallback)).strip()
             if not raw.isascii() or not raw.isdecimal() or len(raw) > 16 or int(raw) > upper:
@@ -58,7 +60,7 @@ class InvestmentPolicy:
                 limits.append(0)
             else:
                 limits.append(int(raw))
-        if not any(limits[5:]):
+        if not any(limits[5:10]):
             valid = False
 
         return cls(
@@ -76,6 +78,7 @@ class InvestmentPolicy:
             risk_weight=limits[7],
             confidence_weight=limits[8],
             diversification_weight=limits[9],
+            max_cycle_spend=limits[10],
             valid=valid,
             legacy_autobuy_aircraft=enabled("autobuy_aircraft", "options"),
         )
@@ -93,7 +96,7 @@ class InvestmentPolicy:
             reasons.append("aprovacao_humana_necessaria")
         if self.mode == "autonomous" and (
             not self.max_single_investment or not self.max_daily_spend
-            or not self.max_acquisitions_per_day
+            or not self.max_acquisitions_per_day or not self.max_cycle_spend
         ):
             reasons.append("limites_de_gasto_a_configurar")
         reasons.append("executor_aguarda_homologacao")
@@ -104,6 +107,7 @@ class InvestmentPolicy:
             "auto_buy_hub": self.auto_buy_hub,
             "max_single_investment": self.max_single_investment,
             "max_daily_spend": self.max_daily_spend,
+            "max_cycle_spend": self.max_cycle_spend,
             "max_acquisitions_per_day": self.max_acquisitions_per_day,
             "min_daily_profit": self.min_daily_profit,
             "max_payback_days": self.max_payback_days,

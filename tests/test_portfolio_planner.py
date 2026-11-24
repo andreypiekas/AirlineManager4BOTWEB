@@ -522,6 +522,7 @@ def a4_compare(*evaluations, controls=None, capacities=None, **changes):
                 "fleet_coverage_verified": True, "research_coverage_verified": True,
                 "commitments_verified": True, "max_single_investment": 9000,
                 "current_cash_reserve": 0, "max_daily_spend": 30000,
+                "max_cycle_spend": 20000,
                 "max_acquisitions_per_day": 10, "local_journal": a4_local_journal(),
                 "now": NOW}
     settings.update(changes)
@@ -543,7 +544,24 @@ def test_a4_current_policy_caps_audited_budget_without_double_counting():
     assert reserved["best"]["economics_id"] == cheap["economics_id"]
 
 
+def test_a4_cycle_limit_uses_stricter_current_and_audited_caps():
+    candidate = a4_evaluation(cost=2000)
+    controls = a4_controls(cycle_spent=3000, cycle_limit=10000)
+    result = a4_compare(candidate, controls=controls, max_cycle_spend=6000)
+    assert result["remaining_cycle_spend"] == 3000
+    assert result["budget_after_reservations_and_limits"] == 3000
+    assert result["decision"] == "sugestao_para_analise"
+    increased = a4_compare(candidate, controls=controls, max_cycle_spend=15000)
+    assert increased["remaining_cycle_spend"] == 7000
+    exhausted = a4_compare(candidate, controls=controls, max_cycle_spend=3000)
+    assert exhausted["remaining_cycle_spend"] == 0
+    assert "limite_ciclo_esgotado" in exhausted["blocking_reasons"]
+    assert exhausted["best"] is None
+
+
 @pytest.mark.parametrize("changes, reason", [
+    ({"max_cycle_spend": 0}, "limite_ciclo_nao_configurado"),
+    ({"max_cycle_spend": -1}, "limite_ciclo_nao_configurado"),
     ({"max_daily_spend": 0}, "limites_periodo_invalidos"),
     ({"max_acquisitions_per_day": 0}, "limites_periodo_invalidos"),
     ({"current_cash_reserve": -1}, "limites_periodo_invalidos"),

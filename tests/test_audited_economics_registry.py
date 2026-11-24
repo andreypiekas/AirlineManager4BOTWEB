@@ -78,6 +78,7 @@ def compare_registry(registry):
         research_coverage_verified=evidence.get("research_coverage_verified") is True,
         commitments_verified=evidence.get("commitments_verified") is True,
         current_cash_reserve=0, max_daily_spend=50000, max_acquisitions_per_day=10,
+        max_cycle_spend=30000,
         local_journal={"profile_id": "principal", "estimated_exposure": 0, "count": 0,
                        "period_usage": {"source": "local_investment_journal", "since": NOW - 86400,
                                         "estimated_exposure": 0, "acquisition_count": 0}},
@@ -259,13 +260,21 @@ def test_a4_api_enforces_live_policy_and_rolling_journal(registry, monkeypatch):
     endpoint = "/api/investment/audited-expansion"
     with served(registry.path.parent) as (port, cfg):
         for key, value in (("planning_enabled", "on"), ("max_single_investment", 20000),
-                           ("max_daily_spend", 50000), ("max_acquisitions_per_day", 2)):
+                           ("max_daily_spend", 50000), ("max_cycle_spend", 30000),
+                           ("max_acquisitions_per_day", 2)):
             cfg.set("investment", key, value)
         cfg.set("settings", "cash_reserve", 5000)
         status, result = request(port, "GET", endpoint, headers=auth())
         assert status == 200
         assert result["purchase_plan_preview"] is not None, result["purchase_plan_blockers"]
         assert result["portfolio"]["local_period_limits"]["remaining_acquisitions"] == 1
+
+        cfg.set("investment", "max_cycle_spend", 10000)
+        status, result = request(port, "GET", endpoint, headers=auth())
+        assert status == 200
+        assert result["portfolio"]["remaining_cycle_spend"] == 10000
+        assert result["purchase_plan_preview"] is None
+        cfg.set("investment", "max_cycle_spend", 30000)
 
         cfg.set("investment", "max_daily_spend", 15000)
         status, result = request(port, "GET", endpoint, headers=auth())

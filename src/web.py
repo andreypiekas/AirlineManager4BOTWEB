@@ -457,6 +457,7 @@ class WebDashboard:
             commitments_verified=proof.get("commitments_verified") is True,
             current_cash_reserve=self.cfg.get_int("settings", "cash_reserve", -1),
             max_daily_spend=policy.max_daily_spend,
+            max_cycle_spend=policy.max_cycle_spend,
             max_acquisitions_per_day=policy.max_acquisitions_per_day,
             local_journal=journal,
             max_single_investment=(policy.max_single_investment
@@ -615,7 +616,7 @@ class WebDashboard:
     def update_investment_settings(self, payload: dict) -> tuple[bool, str]:
         """Validate the entire policy before an atomic per-profile config save."""
         fields = {"planning_enabled", "mode", "auto_buy_aircraft", "auto_buy_hub",
-                  "max_single_investment", "max_daily_spend", "max_acquisitions_per_day",
+                  "max_single_investment", "max_daily_spend", "max_cycle_spend", "max_acquisitions_per_day",
                   "min_daily_profit", "max_payback_days", "profit_weight", "efficiency_weight",
                   "risk_weight", "confidence_weight", "diversification_weight"}
         values = payload.get("policy")
@@ -629,6 +630,7 @@ class WebDashboard:
         if not isinstance(values["mode"], str) or values["mode"] not in MODES:
             return False, "Modo de investimento inválido."
         for key, upper in (("max_single_investment", 10**15), ("max_daily_spend", 10**15),
+                           ("max_cycle_spend", 10**15),
                            ("max_acquisitions_per_day", 100), ("min_daily_profit", 10**15),
                            ("max_payback_days", 3650), ("profit_weight", 100),
                            ("efficiency_weight", 100), ("risk_weight", 100),

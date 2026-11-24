@@ -529,6 +529,7 @@ def compare_audited_portfolio(
     commitments_verified: bool = False,
     current_cash_reserve: object = None,
     max_daily_spend: object = None,
+    max_cycle_spend: object = None,
     max_acquisitions_per_day: object = None,
     local_journal: Mapping[str, Any] | None = None,
     max_single_investment: object = None,
@@ -577,10 +578,13 @@ def compare_audited_portfolio(
 
     current_reserve = _number(current_cash_reserve)
     daily_limit = _number(max_daily_spend, positive=True)
+    cycle_limit = _number(max_cycle_spend, positive=True)
     count_limit = (max_acquisitions_per_day if type(max_acquisitions_per_day) is int
                    and max_acquisitions_per_day > 0 else None)
     if current_reserve is None or daily_limit is None or count_limit is None:
         blockers.append("limites_periodo_invalidos")
+    if cycle_limit is None:
+        blockers.append("limite_ciclo_nao_configurado")
     journal = local_journal if isinstance(local_journal, Mapping) else {}
     usage = journal.get("period_usage")
     usage = usage if isinstance(usage, Mapping) else {}
@@ -679,23 +683,26 @@ def compare_audited_portfolio(
         blockers.append("saldos_a3_contraditorios")
     baseline = next(iter(cash_baselines)) if len(cash_baselines) == 1 else None
     budget = None
+    remaining_cycle_spend = None
+    if cycle_limit is not None and observed["cycle_limit"] is not None and observed["cycle_spent"] is not None:
+        remaining_cycle_spend = max(0.0, min(cycle_limit, observed["cycle_limit"]) - observed["cycle_spent"])
+        if remaining_cycle_spend == 0:
+            blockers.append("limite_ciclo_esgotado")
     if (baseline is not None and all(value is not None for value in observed.values())
             and current_reserve is not None and remaining_spend is not None
-            and remaining_acquisitions is not None):
+            and remaining_acquisitions is not None and remaining_cycle_spend is not None):
         available, committed, reserve = baseline
         remaining_cash = (available - committed - observed["pending_orders_incremental"]
                           - observed["future_commitments_incremental"]
                           - max(reserve, observed["operational_reserve"], current_reserve))
         budget = max(0.0, min(remaining_cash,
-                              observed["cycle_limit"] - observed["cycle_spent"],
+                              remaining_cycle_spend,
                               observed["period_limit"] - observed["period_spent"],
                               remaining_spend))
         if remaining_acquisitions == 0:
             budget = 0.0
         if remaining_cash <= 0:
             blockers.append("saldo_apos_compromissos_insuficiente")
-        if observed["cycle_spent"] >= observed["cycle_limit"]:
-            blockers.append("limite_ciclo_esgotado")
         if observed["period_spent"] >= observed["period_limit"]:
             blockers.append("limite_periodo_esgotado")
 
@@ -842,6 +849,7 @@ def compare_audited_portfolio(
         "eligible_count": len(candidates),
         "excluded": dict(sorted(excluded.items())),
         "budget_after_reservations_and_limits": budget,
+        "remaining_cycle_spend": remaining_cycle_spend,
         "local_period_limits": {
             "source": "local_investment_journal", "since": since,
             "estimated_exposure": exposure, "acquisition_count": count,
@@ -850,6 +858,7 @@ def compare_audited_portfolio(
         },
         "criteria": {
             "current_cash_reserve": current_reserve,
+            "max_cycle_spend": cycle_limit,
             "max_single_investment": single_limit,
             "minimum_daily_profit": minimum_profit,
             "maximum_payback_days": maximum_payback,

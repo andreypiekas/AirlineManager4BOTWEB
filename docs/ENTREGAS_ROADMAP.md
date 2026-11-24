@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4, teto financeiro por ciclo (G0)
+
+- A política de investimento passa a oferecer `max_cycle_spend`, configurável no painel PT/EN e validado pela API. O padrão zero exige configuração explícita antes de uma proposta auditada. O teto vigente e o teto comprovado pelo registro A4 são comparados, adotando-se o menor e descontando-se o gasto de ciclo registrado.
+- O orçamento global respeita o saldo restante desse limite, além dos compromissos, reserva, limite do período e diário local. Limite ausente, inválido ou esgotado bloqueia a proposta. O painel informa o valor restante quando disponível; os testes verificam também a redução do teto pela API e a impossibilidade de usar o teto para mascarar pesos de ranking zerados.
+- Validação: 170 testes direcionados aprovados; suíte Windows com 2.041 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. A aplicação do teto nesta entrega é restrita ao planejamento auditado. Continuam pendentes a identidade persistente do ciclo, a vinculação do diário de aquisições ao ciclo, a aplicação no executor, a cobertura econômica integral e a homologação das fases A0–A9. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A4, limites vigentes e diário de 24 horas (G0)
 
 - A comparação global auditada incorpora a reserva operacional vigente, o teto de gasto e a quantidade máxima de aquisições nas últimas 24 horas, usando o mesmo diário local consultado pela conciliação financeira. A reserva aplicada é a maior entre a configuração atual e as evidências A3/A4. O orçamento é o menor entre caixa após compromissos, limites auditados de ciclo/período e limite local de gasto restante, sem somar exposições já conciliadas ao caixa.
