@@ -405,7 +405,7 @@ globalThis.window = {statusData: null};
     assert checkout["detail_model_id"] == "785"
     assert checkout["controls"] == {
         "all_selects": 2, "all_radios": 1, "engine_named_selects": 1, "native_engine_selects": 1,
-        "engine_named_radios": 1, "purchase_buttons": 1,
+        "engine_named_radios": 1, "purchase_buttons": 1, "order_intro_buttons": 0,
         "insufficient_balance_warnings": 1,
     }
     assert checkout["price_candidates"]["data_price"] == {
@@ -425,6 +425,9 @@ globalThis.window = {statusData: null};
 
 @pytest.mark.parametrize("case,correlated", [
     ("same_panel", True),
+    ("native_script_id", True),
+    ("conflicting_id", False),
+    ("conflicting_scripts", False),
     ("hub_outside_panel", False),
     ("ajax_in_progress", False),
     ("ajax_state_unavailable", False),
@@ -456,15 +459,21 @@ const hub = makeNode({id: 'hubSelection'}, {value: '456'});
 const option = makeNode({value: '456'}, {value: '456',
   selected: fixture.case !== 'hub_option_unselected'});
 const panelAttrs = {'data-model-id': fixture.case === 'invalid_model_id' ? 'invalid' : '785'};
+if (['native_script_id', 'conflicting_scripts'].includes(fixture.case)) delete panelAttrs['data-model-id'];
 if (fixture.case === 'panel_busy') panelAttrs['aria-busy'] = 'true';
 const panel = makeNode(panelAttrs);
 panel.contains = node => fixture.case !== 'hub_outside_panel' && node === hub;
 panel.querySelector = () => fixture.case === 'nested_loader' ? {} : null;
+panel.querySelectorAll = selector => selector !== 'script' ? [] :
+  fixture.case === 'native_script_id' ? [{textContent:'var acId = 785;'}] :
+  fixture.case === 'conflicting_id' ? [{textContent:'var acId = 786;'}] :
+  fixture.case === 'conflicting_scripts' ? [{textContent:'var acId = 785; var acId = 786;'}] : [];
 const panels = fixture.case === 'duplicate_model_panels' ? [panel, makeNode(panelAttrs)] : [panel];
 const nodes = {
   '#acModel': panels,
   '#hubSelection': [hub],
   '#hubSelection option': [option],
+  '#acModel #btnPurchaseIntroA': fixture.case === 'native_script_id' ? [makeNode()] : [],
 };
 globalThis.document = {querySelectorAll: selector => nodes[selector] || []};
 globalThis.window = {statusData: null};
@@ -490,6 +499,12 @@ console.log(JSON.stringify((new Function(PROBE))()));
     assert checkout["detail_loading"] is (case in ("nested_loader", "panel_busy"))
     assert checkout["price_verified"] is False
     assert checkout["read_only"] is True
+    if case == "native_script_id":
+        assert checkout["detail_model_id"] == "785"
+        assert checkout["controls"]["order_intro_buttons"] == 1
+        assert checkout["controls"]["purchase_buttons"] == 0
+    if case in ("conflicting_id", "conflicting_scripts"):
+        assert checkout["detail_model_id"] is None
     if case == "hub_outside_panel":
         # A consistent hub dropdown can still belong to an unrelated pane.
         assert report["aircraft_order_hub_selection"]["status"] == "dom_consistent"

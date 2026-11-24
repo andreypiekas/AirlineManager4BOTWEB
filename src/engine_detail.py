@@ -6,6 +6,22 @@ import re
 import unicodedata
 
 
+# Both the catalog collector and checkout probe must identify the same loaded
+# detail response. The native inline assignment is independent of the catalog
+# header, which changes before the asynchronous detail is replaced.
+MODEL_DETAIL_IDENTITY_JS = r"""(panel => {
+  const id = panel.getAttribute('data-model-id');
+  const scripts = typeof panel.querySelectorAll === 'function' ? panel.querySelectorAll('script') : [];
+  const scriptIds = Array.from(scripts).flatMap(el =>
+    Array.from(String(el.textContent || '').matchAll(
+      /\bacId\s*=\s*([1-9][0-9]{0,11})\s*;/g), match => match[1]));
+  const scriptId = scriptIds.length ? scriptIds[0] : null;
+  if (scriptIds.some(value => value !== scriptId) ||
+      (id !== null && scriptId !== null && id !== scriptId)) return null;
+  return {attribute_present: id !== null, model_id: id, script_model_id: scriptId};
+})"""
+
+
 def _normalize(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text)
                    if not unicodedata.combining(c)).casefold().strip()

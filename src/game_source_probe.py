@@ -51,6 +51,8 @@ import json
 import re
 from typing import Any
 
+from engine_detail import MODEL_DETAIL_IDENTITY_JS
+
 
 SAMPLE_LIMIT = 40
 _NUMERIC_ID = re.compile(r"^[1-9][0-9]{0,13}$")
@@ -93,6 +95,7 @@ _CHECKOUT_CONTROL_SELECTORS = {
         "#acModel input[type='radio'][name*='motor' i]"
     ),
     "purchase_buttons": "#acModel #btnPurchaseIntro",
+    "order_intro_buttons": "#acModel #btnPurchaseIntroA",
     "insufficient_balance_warnings": "#acModel #accountLow",
 }
 
@@ -354,8 +357,10 @@ result.aircraft_order_hub_selection = orderHubSelection;
 // Snapshot only structural clues for the unverified final-price field.
 // Never emit checkout text, attributes, registration, or potential balances.
 const checkoutPanels = Array.from(document.querySelectorAll('#acModel'));
-const checkoutModelId = checkoutPanels.length === 1 ?
-  safeAttribute(checkoutPanels[0], 'data-model-id') : null;
+const checkoutIdentity = checkoutPanels.length === 1 ?
+  """ + MODEL_DETAIL_IDENTITY_JS + r"""(checkoutPanels[0]) : null;
+const checkoutModelId = checkoutIdentity ?
+  (checkoutIdentity.model_id ?? checkoutIdentity.script_model_id) : null;
 const checkoutAjaxIdleConfirmed = typeof window !== 'undefined' &&
   !!window.jQuery && window.jQuery.active === 0;
 const checkoutAjaxActive = typeof window !== 'undefined' &&

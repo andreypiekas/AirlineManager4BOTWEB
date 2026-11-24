@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A1/A5, identidade do checkout e seletor de entrega (G0)
+
+- No detalhe autenticado do A380-800 (modelo 2), o painel não possuía `data-model-id`, mas continha a declaração nativa `acId`. Foram observadas 30 opções de entrega, uma única selecionada. A troca reversível entre as duas primeiras opções preservou o ID do modelo, a variante 7 e o preço exibido de US$ 215.629.503. A seleção inicial foi restaurada.
+- O diagnóstico de checkout e o coletor passaram a compartilhar a leitura da identidade nativa do detalhe. IDs conflitantes invalidam a correlação. O diagnóstico também distingue o botão `#btnPurchaseIntroA`, observado no formulário autenticado, de `#btnPurchaseIntro`, que não estava presente nessa tela.
+- O preço de `#acCost` continua sendo apenas o valor exibido: o formulário observado não tinha atributos `data-final-price` ou `data-total-price`. A seleção reversível de entrega não comprova a aquisição, o preço final ou a disponibilidade de hangar. A execução planejada permanece bloqueada pelo gate G0. Nenhum botão de encomenda foi acionado. A homologação do coletor Selenium integrado continua pendente.
+- Validação Windows: 193 testes de diagnóstico, detalhe e catálogo de motores e 79 testes de observações e seleção do hub aprovados. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A1/A3/A7, emissão de CO₂ por variante (G0)
 
 - Em sessão autenticada, a seleção reversível de motores do A320-200 (modelo 5, motores 9 e 10) exibiu 0,14 kg/pax/km nas duas variantes. O A380-800 (modelo 2, motores 5, 6 e 7) exibiu 0,16 kg/pax/km nas três variantes. A identidade nativa `acId` permaneceu estável em cada modelo. A fixture anonimizada registra também as velocidades e consumos distintos das cinco variantes.

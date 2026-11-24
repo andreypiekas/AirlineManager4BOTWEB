@@ -10,7 +10,7 @@ import time
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
 from engine_catalog import EngineCatalogRegistry
-from engine_detail import parse_displayed_metrics
+from engine_detail import MODEL_DETAIL_IDENTITY_JS, parse_displayed_metrics
 from engine_selection import (
     EngineSelectionError, _ENGINE_OPTIONS_JS, _SET_ENGINE_JS, parse_engine_catalog,
 )
@@ -26,16 +26,8 @@ const panel = document.querySelector('#acModel');
 if (!panel || document.querySelectorAll('#acModel').length !== 1 ||
     (window.jQuery && window.jQuery.active > 0) ||
     panel.querySelector('img[src*="loader"], [aria-busy="true"]')) return null;
-const id = panel.getAttribute('data-model-id');
-// The native detail response carries its model ID in an inline acId assignment.
-// Read only that assignment, scoped to the freshly loaded panel. The catalog
-// header changes before the response arrives and cannot identify the detail.
-const scriptIds = Array.from(panel.querySelectorAll('script'))
-  .flatMap(el => Array.from(String(el.textContent || '').matchAll(
-    /\bacId\s*=\s*([1-9][0-9]{0,11})\s*;/g), match => match[1]));
-const scriptId = scriptIds.length ? scriptIds[0] : null;
-if (scriptIds.some(value => value !== scriptId) ||
-    (id !== null && scriptId !== null && id !== scriptId)) return null;
+const identity = """ + MODEL_DETAIL_IDENTITY_JS + r"""(panel);
+if (!identity) return null;
 const groups = (() => {
 """ + _ENGINE_OPTIONS_JS + r"""
 })();
@@ -50,7 +42,7 @@ const rows = Array.from(panel.querySelectorAll('tr, .row'))
   .filter(row => metricLabels.has(normalized(row[0])));
 const costs = Array.from(panel.querySelectorAll('#acCost'),
   el => String(el.textContent || '').trim());
-return {detail: {attribute_present: id !== null, model_id: id, script_model_id: scriptId}, groups,
+return {detail: identity, groups,
         metrics: {rows, costs}};
 """
 
