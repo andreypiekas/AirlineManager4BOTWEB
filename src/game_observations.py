@@ -41,6 +41,7 @@ const groups = (() => {
 })();
 const metricLabels = new Set(['cruise speed', 'velocidade de cruzeiro', 'capacity', 'capacidade',
   'runway required', 'pista necessaria', 'range', 'alcance', 'consumption', 'consumo',
+  'co2 emission', 'co₂ emission', 'emissao de co2', 'emissao de co₂',
   'a-check', 'maint check', 'verificacao de manutencao']);
 const normalized = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 const rows = Array.from(panel.querySelectorAll('tr, .row'))
@@ -632,7 +633,7 @@ def _observe_variant_details(bot, snapshot, catalog, observed_at):
                 if (current_metrics and any(
                         key in last_metrics and key in current_metrics
                         and current_metrics[key] != last_metrics[key]
-                        for key in ("speed_kph", "fuel_lbs_per_km", "range_km",
+                        for key in ("speed_kph", "fuel_lbs_per_km", "range_km", "co2_kg_per_pax_km",
                                     "displayed_cost_usd"))):
                     result[variant.engine_id] = {"observed_at": stamp, "metrics": current_metrics}
                     last_metrics = current_metrics

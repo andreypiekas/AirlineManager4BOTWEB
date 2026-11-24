@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A1/A3/A7, emissão de CO₂ por variante (G0)
+
+- Em sessão autenticada, a seleção reversível de motores do A320-200 (modelo 5, motores 9 e 10) exibiu 0,14 kg/pax/km nas duas variantes. O A380-800 (modelo 2, motores 5, 6 e 7) exibiu 0,16 kg/pax/km nas três variantes. A identidade nativa `acId` permaneceu estável em cada modelo. A fixture anonimizada registra também as velocidades e consumos distintos das cinco variantes.
+- O coletor aceita a emissão apenas com unidade explícita `kg/pax/km`, rejeita valores inválidos ou conflitantes e preserva a métrica no detalhe por variante. A simulação exploratória utiliza o coeficiente observado com identidade correlacionada no cenário base e no stress. Na ausência dessa evidência, mantém a hipótese de 0,18 kg/pax/km. O painel PT/EN mostra o valor e sua origem.
+- O fator de combustível, os pesos por classe, as tarifas, a ocupação e as rotações continuam premissas exploratórias. A demanda residual e a fórmula operacional completa de CO₂, manutenção, A-check, outros custos recorrentes e investimento ainda exigem validação. A contribuição estimada não certifica lucro líquido, elegibilidade ou retorno de compra. G0 permanece ativo; nenhuma aquisição foi executada.
+- Validação Windows: suíte ampla com 1.768 testes aprovados e 1 ignorado (excluído `tests/test_instalacao_linux.py`, requisito POSIX). Após inclusão da fixture final, 190 testes direcionados aprovados, incluindo parsing PT/EN, unidades e conflito, simulação base/stress e painel. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A1/A3, identidade da aeronave no detalhe de motores (G0)
 
 - Em sessão autenticada, os detalhes de catálogo de A380-800, Cessna 172 e A320-200 apresentaram a declaração nativa `var acId = 2;`, `var acId = 12;` e `var acId = 5;`, respectivamente, dentro de `#acModel`. O cabeçalho do catálogo muda antes de o carregamento terminar; durante a transição observada não havia declaração no painel. O ID permaneceu correto durante as trocas reversíveis de motor do A380 e A320.

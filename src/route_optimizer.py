@@ -22,7 +22,7 @@ from gamemode import GameMode
 
 TURNAROUND_H = 0.1  # six minutes per one-way leg, matching existing project assumptions
 ENGINE_FUEL = 0.94  # observed approximation; not a substitute for training/CI data
-CO2_PER_PAX_KM = 0.18  # fallback estimate while the game does not expose per-aircraft CO2
+CO2_PER_PAX_KM = 0.18  # fallback estimate when variant-specific CO2 is unavailable
 CLASS_WEIGHTS = (1, 2, 3)
 
 
@@ -77,7 +77,8 @@ def estimate_route(candidate, *, seats: int, model: Optional[dict],
                    fuel_price: float, co2_price: float,
                    premium: bool, prices: Optional[tuple[int, int, int]] = None,
                    extra_stops: int = 0,
-                   fixed_layout: Optional[tuple[int, int, int]] = None) -> Optional[RouteEconomics]:
+                   fixed_layout: Optional[tuple[int, int, int]] = None,
+                   co2_kg_per_pax_km: float = CO2_PER_PAX_KM) -> Optional[RouteEconomics]:
     """Rank routes with demand-limited Y/J/F sales minus fuel and CO2 costs.
 
     Return None when model data is missing, allowing the original demand sorter
@@ -88,6 +89,8 @@ def estimate_route(candidate, *, seats: int, model: Optional[dict],
     price_fuel = normalize_operating_price(fuel_price)
     price_co2 = normalize_operating_price(co2_price)
     if price_fuel is None or price_co2 is None:
+        return None
+    if type(co2_kg_per_pax_km) not in (int, float) or not 0 < co2_kg_per_pax_km <= 100:
         return None
     try:
         distance = float(candidate.distance)
@@ -120,7 +123,7 @@ def estimate_route(candidate, *, seats: int, model: Optional[dict],
     fares = prices if prices is not None else tuple(mode.fare(i, distance) for i in range(3))
     revenue = sum(sold[i] * fares[i] for i in range(3))
     fuel = legs * fuel_rate * ENGINE_FUEL * distance * price_fuel / 1000
-    co2 = sum(sold[i] * CLASS_WEIGHTS[i] for i in range(3)) * CO2_PER_PAX_KM * distance * price_co2 / 1000
+    co2 = sum(sold[i] * CLASS_WEIGHTS[i] for i in range(3)) * co2_kg_per_pax_km * distance * price_co2 / 1000
     return RouteEconomics(revenue - fuel - co2, revenue, fuel, co2, legs, layout, sold)
 
 

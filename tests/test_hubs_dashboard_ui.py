@@ -275,6 +275,10 @@ const money = value => '$' + String(value);
 const translations = {
       'Identidade do modelo pendente': 'Model identity pending',
       'Velocidade da variante': 'Variant cruise speed',
+      'Emissão de CO₂ da variante': 'Variant CO₂ emission',
+      'Coeficiente de CO₂ na simulação': 'CO₂ coefficient in simulation',
+      'Coeficiente observado': 'Observed coefficient',
+      'Hipótese padrão': 'Default assumption',
       'Preço exibido no detalhe': 'Displayed detail price',
       'Triagem física direta': 'Direct physical screening',
       'Escala exploratória': 'Exploratory stopover',
@@ -430,6 +434,15 @@ const preview = {source:'route_optimizer_what_if_v1', purchase_eligible:false,
 appendResearchEconomicsPreview(previewMetrics, {economics_preview:preview});
 assert.equal(previewMetrics.children.length, 4);
 assert.equal(previewMetrics.children[1].children[1].textContent, '$120 / $-20');
+const observedPreview = document.createElement('div');
+appendResearchEconomicsPreview(observedPreview, {economics_preview:{...preview,
+  co2_kg_per_pax_km:.14, co2_rate_source:'observed_variant'}});
+assert.equal(observedPreview.children[3].children[0].textContent, 'CO₂ coefficient in simulation');
+assert.equal(observedPreview.children[3].children[1].textContent, '0.14 kg/pax/km · Observed coefficient');
+const assumedPreview = document.createElement('div');
+appendResearchEconomicsPreview(assumedPreview, {economics_preview:{...preview,
+  co2_kg_per_pax_km:.18, co2_rate_source:'assumed_default'}});
+assert.equal(assumedPreview.children[3].children[1].textContent, '0.18 kg/pax/km · Default assumption');
 const expiredMetrics = document.createElement('div');
 appendResearchEconomicsPreview(expiredMetrics, {economics_preview:{...preview, expires_at:marketNow-1}});
 assert.equal(expiredMetrics.children.length, 0);
@@ -443,6 +456,11 @@ assert.equal(engineMetrics.children[1].children[1].textContent, '881 kph');
 assert.equal(engineMetrics.children[4].children[0].textContent, 'Displayed detail price');
 appendEngineDetail(engineMetrics, {engine_detail:{...detailEvidence, observed_at:marketNow-4*86400}});
 assert.equal(engineMetrics.children.length, 5);
+const emissionMetrics = document.createElement('div');
+appendEngineDetail(emissionMetrics, {engine_detail:{...detailEvidence,
+  metrics:{co2_kg_per_pax_km:.16}}});
+assert.equal(emissionMetrics.children[1].children[0].textContent, 'Variant CO₂ emission');
+assert.equal(emissionMetrics.children[1].children[1].textContent, '0.16 kg/pax/km');
 const physicalMetrics = document.createElement('div');
 const physical = {source:'observed_direct_dimensions_v1', status:'direct_shortfall', purchase_eligible:false,
   expires_at:marketNow+60, checks:{range:'short', origin_runway:'unknown', destination_runway:'unknown'},

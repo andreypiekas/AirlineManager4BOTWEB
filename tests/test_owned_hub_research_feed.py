@@ -1002,6 +1002,34 @@ def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress()
     assert set(first["excluded_costs"]) == {"maintenance", "a_check", "other_recurring", "capex"}
 
 
+def test_economic_preview_uses_correlated_variant_co2_in_both_scenarios():
+    engines = _preview_engines()
+    def build():
+        page = build_owned_hub_research_queue(_inventory(), [_sample()], _market(), engines=engines,
+            now=NOW, operating_market_stats=_preview_stats())
+        return {row["engine_id"]: row["economics_preview"] for row in page["items"]}
+
+    baseline = build()
+    engines["models"]["11"]["variant_details"] = {
+        "1": {"observed_at": NOW, "metrics": {"co2_kg_per_pax_km": .14}},
+        "3": {"observed_at": NOW, "metrics": {"co2_kg_per_pax_km": .16}},
+    }
+    observed = build()
+    for engine_id, coefficient in (("1", .14), ("3", .16)):
+        before, after = baseline[engine_id], observed[engine_id]
+        assert before["co2_rate_source"] == "assumed_default"
+        assert before["co2_kg_per_pax_km"] == .18
+        assert after["co2_rate_source"] == "observed_variant"
+        assert after["co2_kg_per_pax_km"] == coefficient
+        assert after["purchase_eligible"] is False
+        for original, updated in zip(before["layouts"], after["layouts"]):
+            assert original["layout"] == updated["layout"]
+            for scenario in ("base", "stress"):
+                assert updated[scenario]["co2_cost_per_day"] == pytest.approx(
+                    original[scenario]["co2_cost_per_day"] * coefficient / .18, abs=.02)
+                assert updated[scenario]["fuel_cost_per_day"] == original[scenario]["fuel_cost_per_day"]
+
+
 @pytest.mark.parametrize("missing", ["mode", "stale_mode", "future_mode", "fuel", "co2",
                                     "unverified_engine", "event", "occupied", "range", "capacity"])
 def test_economic_preview_requires_relevant_observations(missing):

@@ -1284,6 +1284,10 @@ const EN = {
   "Identidade do modelo confirmada": "Model identity confirmed",
   "Identidade do modelo pendente": "Model identity pending",
   "Velocidade da variante": "Variant cruise speed",
+  "Emissão de CO₂ da variante": "Variant CO₂ emission",
+  "Coeficiente de CO₂ na simulação": "CO₂ coefficient in simulation",
+  "Coeficiente observado": "Observed coefficient",
+  "Hipótese padrão": "Default assumption",
   "Consumo da variante": "Variant fuel burn",
   "Pista exigida pela aeronave": "Aircraft runway requirement",
   "Alcance da variante": "Variant range",
@@ -1975,6 +1979,11 @@ function appendResearchEconomicsPreview(metrics, task) {
       " / " + hubMoney(row.stress.projected_contribution_per_day));
   }
   addHubMetric(metrics, "Margem sobre receita", nf.format(preview.safety_margin_fraction * 100) + "%");
+  if (Number.isFinite(preview.co2_kg_per_pax_km) && preview.co2_kg_per_pax_km > 0 &&
+      ["observed_variant", "assumed_default"].includes(preview.co2_rate_source)) {
+    addHubMetric(metrics, "Coeficiente de CO₂ na simulação", nf.format(preview.co2_kg_per_pax_km) +
+      " kg/pax/km · " + tr(preview.co2_rate_source === "observed_variant" ? "Coeficiente observado" : "Hipótese padrão"));
+  }
   addHubMetric(metrics, "Custos excluídos", tr("Manutenção, A-check, outras despesas e investimento"));
 }
 function appendPhysicalFeasibility(metrics, task) {
@@ -2023,6 +2032,7 @@ function appendEngineDetail(metrics, task) {
   for (const [label, value, unit] of [
     ["Velocidade da variante", data.speed_kph, "kph"],
     ["Consumo da variante", data.fuel_lbs_per_km, "lbs/km"],
+    ["Emissão de CO₂ da variante", data.co2_kg_per_pax_km, "kg/pax/km"],
     ["Pista exigida pela aeronave", data.required_runway_ft, "ft"],
     ["Alcance da variante", data.range_km, "km"],
     ["Capacidade da variante", data.capacity_pax, "pax"],

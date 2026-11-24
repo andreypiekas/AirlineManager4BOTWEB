@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from expansion_economics import DEFAULT_STRESS
 from gamemode import EASY, REALISM
-from route_optimizer import estimate_route
+from route_optimizer import CO2_PER_PAX_KM, estimate_route
 
 
 def research_mode(stats: object, now: float) -> str | None:
@@ -39,6 +39,10 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
     candidate = SimpleNamespace(distance=distance, **demand)
     capacity = int(model["capacity"])
     spec = {"capacity": capacity, "speed": variant["engine_speed"], "fuel": variant["engine_fuel"]}
+    detail = variant.get("engine_detail") or {}
+    observed_co2 = (detail.get("metrics", {}).get("co2_kg_per_pax_km")
+                    if detail.get("model_identity_verified") is True else None)
+    co2_rate = observed_co2 if observed_co2 is not None else CO2_PER_PAX_KM
     fuel, co2 = quotes["fuel"]["price"], quotes["co2"]["price"]
     load = 0.80
     fares = tuple(mode.fare(i, distance) for i in range(3))
@@ -60,13 +64,14 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
     layouts = []
     for premium in (False, True):
         base = estimate_route(candidate, seats=capacity, model=spec, mode=mode, load_factor=load,
-                              fuel_price=fuel, co2_price=co2, premium=premium, prices=fares)
+                              fuel_price=fuel, co2_price=co2, premium=premium, prices=fares,
+                              co2_kg_per_pax_km=co2_rate)
         if base is None or any(row["layout"] == dict(zip(("y", "j", "f"), base.layout)) for row in layouts):
             continue
         stressed = estimate_route(stressed_candidate, seats=capacity, model=spec, mode=mode,
                                   load_factor=load * stress["occupancy"], fuel_price=fuel * stress["fuel_price"],
                                   co2_price=co2 * stress["co2_price"], premium=True, prices=fares,
-                                  fixed_layout=base.layout)
+                                  fixed_layout=base.layout, co2_kg_per_pax_km=co2_rate)
         if stressed is not None:
             layouts.append({"layout": dict(zip(("y", "j", "f"), base.layout)),
                             "base": serialize(base), "stress": serialize(stressed)})
@@ -77,5 +82,7 @@ def research_economics_preview(sample: dict, model: dict, variant: dict | None,
             "assumed_load_factor": load, "safety_margin_fraction": margin,
             "expires_at": min(quotes[k]["expires_at"] for k in ("fuel", "co2")),
             "estimated_fares": dict(zip(("y", "j", "f"), fares)), "stress_factors": dict(stress),
+            "co2_kg_per_pax_km": co2_rate,
+            "co2_rate_source": "observed_variant" if observed_co2 is not None else "assumed_default",
             "excluded_costs": ["maintenance", "a_check", "other_recurring", "capex"],
             "layouts": layouts}

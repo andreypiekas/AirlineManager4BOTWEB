@@ -19,6 +19,8 @@ _FIELDS = {
     "required_runway_ft": (("runway required", "pista necessaria"), "ft", 50000),
     "range_km": (("range", "alcance"), "km", 100000),
     "fuel_lbs_per_km": (("consumption", "consumo"), "lbs/km", 10000),
+    "co2_kg_per_pax_km": (("co2 emission", "co₂ emission", "emissao de co2", "emissao de co₂"),
+                          "kg/pax/km", 100),
     "a_check_cost_usd": (("a-check",), None, 10**12),
     "maintenance_interval_hours": (("maint check", "verificacao de manutencao"),
                                    "hours?|horas?", 100000),

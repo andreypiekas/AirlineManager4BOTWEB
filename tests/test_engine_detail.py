@@ -35,12 +35,34 @@ def test_observed_variant_metrics_are_distinct():
     assert second == {**first, "speed_kph": 798, "fuel_lbs_per_km": 10.67}
 
 
+def test_passenger_emissions_use_exact_units():
+    assert parse_displayed_metrics({"rows": [["CO2 Emission", "0.16 kg/pax/km"]]}) == {
+        "co2_kg_per_pax_km": 0.16}
+    assert parse_displayed_metrics({"rows": [["Emissão de CO₂", "0.14 kg/pax/km"]]}) == {
+        "co2_kg_per_pax_km": 0.14}
+
+
+def test_authenticated_emissions_fixture_preserves_every_selected_variant():
+    emissions = json.loads((Path(__file__).parent / "fixtures" /
+                            "am4_engine_emissions_20261124.json").read_text(encoding="utf-8"))
+    for model_id, coefficient, expected_engines in (("5", .14, {"9", "10"}),
+                                                     ("2", .16, {"5", "6", "7"})):
+        variants = emissions["models"][model_id]["variants"]
+        assert set(variants) == expected_engines
+        parsed = [parse_displayed_metrics(value) for value in variants.values()]
+        assert all(metrics["co2_kg_per_pax_km"] == coefficient for metrics in parsed)
+        assert len({metrics["speed_kph"] for metrics in parsed}) == len(expected_engines)
+        assert len({metrics["fuel_lbs_per_km"] for metrics in parsed}) == len(expected_engines)
+
+
 @pytest.mark.parametrize("raw", [
     {"rows": [["Cruise speed", "881 mph"]]},
     {"rows": [["Cruise speed", "881 kph"], ["Cruise speed", "798 kph"]]},
     {"rows": [["Capacity", "164.5 pax"]]},
     {"rows": [], "costs": ["1,000", "2,000"]},
     {"rows": [["Runway required", "6,50 ft"]]},
+    {"rows": [["CO2 Emission", "0.16 lbs/pax/km"]]},
+    {"rows": [["CO2 Emission", "0.16 kg/pax/km"], ["CO2 Emission", "0.14 kg/pax/km"]]},
 ])
 def test_bad_units_and_ambiguous_values_fail_closed(raw):
     assert parse_displayed_metrics(raw) is None

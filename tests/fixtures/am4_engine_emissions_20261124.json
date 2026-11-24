@@ -1,0 +1,21 @@
+{
+  "observed_on": "2026-11-24",
+  "source": "Authenticated native aircraft detail with reversible engine selection",
+  "models": {
+    "5": {
+      "name": "A320-200",
+      "variants": {
+        "9": {"rows": [["Cruise speed", "798 kph"], ["Consumption", "10.67 lbs/km"], ["CO2 Emission", "0.14 kg/pax/km"]]},
+        "10": {"rows": [["Cruise speed", "881 kph"], ["Consumption", "11.55 lbs/km"], ["CO2 Emission", "0.14 kg/pax/km"]]}
+      }
+    },
+    "2": {
+      "name": "A380-800",
+      "variants": {
+        "5": {"rows": [["Cruise speed", "964 kph"], ["Consumption", "22.89 lbs/km"], ["CO2 Emission", "0.16 kg/pax/km"]]},
+        "6": {"rows": [["Cruise speed", "917 kph"], ["Consumption", "18.90 lbs/km"], ["CO2 Emission", "0.16 kg/pax/km"]]},
+        "7": {"rows": [["Cruise speed", "1,049 kph"], ["Consumption", "22.26 lbs/km"], ["CO2 Emission", "0.16 kg/pax/km"]]}
+      }
+    }
+  }
+}
