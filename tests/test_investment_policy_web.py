@@ -155,7 +155,7 @@ def test_external_research_endpoint_exposes_recent_cash_and_catalog_costs(tmp_pa
     monkeypatch.setattr(web_module, "EngineCatalogRegistry", lambda: SimpleNamespace(snapshot=lambda: {}))
     monkeypatch.setattr(web_module, "load_market_evidence", lambda: market)
     monkeypatch.setattr(web_module, "load_state", lambda: {})
-    monkeypatch.setattr(web_module, "recent_verified_money", lambda bot, state: (5000, now))
+    monkeypatch.setattr(web_module, "recent_verified_money", lambda bot: (5000, now))
     with served(tmp_path) as (port, config):
         status, report = request(port, "GET", "/api/hubs/expansion/research", headers=auth())
         assert status == 200

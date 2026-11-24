@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A7, validade do saldo para investimentos (G0)
+
+- As consultas de expansão de hubs, pesquisa externa e recomendações de aeronaves passaram a usar exclusivamente o saldo inteiro não negativo confirmado pelo jogo nos últimos 900 segundos. Amostras históricas continuam disponíveis para exibição e cálculo de renda, mas não restabelecem uma evidência de saldo revogada, inclusive após gasto, falha de leitura ou reinício.
+- Nova leitura do cabeçalho, perda de sessão e encerramento do navegador revogam a confirmação anterior. Somente uma leitura válida restabelece a elegibilidade financeira. O saldo zero confirmado é válido; valores fracionários, booleanos, negativos, não finitos e observações futuras ou expiradas são rejeitados.
+- Validação Windows: 1.943 testes aprovados, nenhum reprovado e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX); 112 testes direcionados aprovados antes dos dois testes adicionais de revogação, e 38 testes de saldo aprovados após a inclusão. Ruff aprovado.
+- Permanecem pendentes a conciliação de compromissos financeiros futuros, as evidências completas de rentabilidade e a homologação autenticada do planejador. Nenhuma transação real foi executada. O objetivo integral permanece ativo.
+
 ## 2026-11-24 — Autonomia Total A5, conciliação persistente de criação de rotas (G0)
 
 - A criação de rota direta ou com escala reserva uma intenção exclusiva por perfil antes do clique. Uma resposta perdida, falha do navegador ou reinício conserva a intenção; a recuperação consulta os detalhes da aeronave sem reenviar a criação. Somente a confirmação independente da rota esperada permite registrar a relação e contabilizar a taxa cotada. O registro persistente de despesas e contadores utiliza a identidade da intenção para impedir contabilização repetida após reinício e atualiza o caixa por nova leitura.

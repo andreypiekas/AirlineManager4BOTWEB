@@ -203,7 +203,7 @@ class WebDashboard:
         if owned_inventory is None:
             owned_inventory = self.hubs()
         owned = {hub["id"] for hub in owned_inventory["hubs"]}
-        cash, observed_at = recent_verified_money(self.bot, load_state())
+        cash, observed_at = recent_verified_money(self.bot)
         report = HubExpansionRegistry().snapshot(
             cash=cash,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
@@ -232,7 +232,7 @@ class WebDashboard:
         owned = {hub["id"] for hub in inventory.get("hubs", [])
                  if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
         external = HubExpansionRegistry().external_demand_snapshot(owned)
-        cash, observed_at = recent_verified_money(self.bot, load_state())
+        cash, observed_at = recent_verified_money(self.bot)
         stats_reader = getattr(self.bot, "stats", None)
         return build_external_hub_research_queue(
             inventory, external, load_market_evidence(),
@@ -249,7 +249,7 @@ class WebDashboard:
                             research_fingerprint: str | None = None) -> dict:
         """Rank proven research for owned hubs using independent cached reads."""
         routes = self.routes()
-        cash, observed_at = recent_verified_money(self.bot, load_state())
+        cash, observed_at = recent_verified_money(self.bot)
         inventory = HubRegistry().snapshot(routes)
         verified_scenarios = HubAircraftResearchRegistry().snapshot()
         pending_inputs = OwnedHubResearchInputsRegistry().snapshot(verified=verified_scenarios)

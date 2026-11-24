@@ -112,6 +112,31 @@ def test_valor_estimado_apos_compra_nao_finge_ser_leitura_do_jogo():
     assert bot.stats().money_read_at is None
 
 
+def test_header_read_failure_revokes_cash_evidence():
+    bot = bot_for_cash()
+    bot.update_stats(money=1000, money_read_at=time.time())
+    bot._sel = lambda name: name
+
+    def disconnected(*args, **kwargs):
+        raise WebDriverException("disconnected")
+
+    bot._text = disconnected
+    with pytest.raises(WebDriverException):
+        bot._read_header()
+    assert bot.stats().money == 1000
+    assert bot.stats().money_read_at is None
+
+
+def test_closing_driver_revokes_cash_evidence():
+    bot = bot_for_cash()
+    bot.update_stats(money=1000, money_read_at=time.time())
+    bot.driver.quit = lambda: None
+    bot._quit_driver()
+    assert bot.driver is None
+    assert bot.stats().money == 1000
+    assert bot.stats().money_read_at is None
+
+
 @pytest.mark.parametrize("raw,expected", [("$ 1,250", 1250), ("0", 0), ("-$ 10", None),
                                          ("$ 1.25", None), ("$ 1 / 2", None), ("$ 1,25", None)])
 def test_leitura_de_saldo_exige_valor_inteiro_completo(raw, expected):

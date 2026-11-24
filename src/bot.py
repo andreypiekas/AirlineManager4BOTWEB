@@ -861,6 +861,7 @@ class Bot:
         self.driver.current_url  # noqa: B018
         if self._is_logged_in(timeout=5):
             return
+        self.update_stats(money_read_at=None)
         log_login.warning("Sessão perdida; tentando entrar novamente ...")
         self.state = BotState.LOGGING_IN
         self.driver.get(self.config.get("app", "url", "https://www.airlinemanager.com/"))
@@ -997,6 +998,7 @@ class Bot:
         self.update_stats(mode=mode.label, mode_read_at=time.time() if str(difficulty) in ("1", "1.0", "1.5") else None)
 
     def _read_header(self) -> None:
+        self.update_stats(money_read_at=None)
         money = game_whole_number(self._text(self._sel("money"), timeout=5), currency=True)
         points = to_int(self._text(self._sel("points"), timeout=3))
         self.update_stats(money=money, points=points,
@@ -1461,6 +1463,7 @@ class Bot:
         element.send_keys(text)
 
     def _quit_driver(self) -> None:
+        self.update_stats(money_read_at=None)
         driver, self.driver = self.driver, None
         if driver is None:
             return
