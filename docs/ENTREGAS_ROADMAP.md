@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A1/A3/A7, especificações observadas por variante de motor (G0)
+
+- O detalhe autenticado do A320-200 exibiu CFM56-5 (ID 10, 881 kph e 11,55 lbs/km) e IAE V2500 (ID 9, 798 kph e 10,67 lbs/km). A seleção reversível mostrou 164 pax, alcance de 5.700 km, pista de 6.500 ft, A-check de $524.690, intervalo de 360 horas e preço exibido de $6.770.196 em ambas as variantes. A fixture contém somente esses dados técnicos e não inclui informações da conta.
+- O coletor combina identidade do detalhe, seleção e especificações em leituras estáveis. Pode percorrer até dez opções do seletor nativo observado, sem clicar em Order; se a seleção não provocar atualização observável das métricas, o detalhe da variante permanece pendente. Unidades inesperadas, campos duplicados, timestamps inválidos e variantes desconhecidas são rejeitados. Observações incompletas são mantidas como parciais.
+- O registro por perfil persiste cada detalhe com seu próprio horário. As filas de hubs próprios e externos apresentam alcance, capacidade, velocidade, consumo, pista, preço exibido, A-check e intervalo de manutenção quando observados. Somente a identidade explicitamente correlacionada permite alimentar o cálculo exploratório com métricas do detalhe; conflito com atributos da opção invalida a evidência. O painel PT/EN sinaliza a identidade pendente e não apresenta observações vencidas.
+- A leitura autenticada anterior não encontrou ID inequívoco do modelo no painel, e o preço exibido ainda não comprova o total final de checkout. Permanecem pendentes a homologação do novo coletor com o DOM real, a confirmação de outras variantes, a fórmula de manutenção, demanda residual, cobertura e demais custos. Nenhuma aquisição foi executada. O objetivo de autonomia integral continua em andamento.
+- Validação Windows: suíte ampla com 1.726 aprovados e 1 ignorado (excluído o teste de instalação Linux por permissões POSIX), antes dos últimos ajustes da fila e interface. A execução direcionada final aprovou 221 testes, incluindo a fixture de variantes, divergência de seleção, persistência, fila, dados não correlacionados e apresentação em inglês. Ruff, compilação Python e verificação do diff aprovados.
+
 ## 2026-11-23 — Autonomia Total A3/A7, ocupação auditada no ranking de aeronaves (G0)
 
 - O ranking de cenários para hubs próprios reutiliza a mesma evidência de ocupação das filas de pesquisa. Uma recomendação viável exige auditoria completa e recente da frota com zero aeronaves na rota, além de disponibilidade e demanda residual verificadas independentemente. Uma relação histórica, uma lista vazia ou uma indicação isolada de cobertura não certificam uma rota livre.

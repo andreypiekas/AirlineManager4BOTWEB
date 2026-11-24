@@ -273,6 +273,9 @@ const LANG = 'en';
 const nf = new Intl.NumberFormat('en-GB');
 const money = value => '$' + String(value);
 const translations = {
+      'Identidade do modelo pendente': 'Model identity pending',
+      'Velocidade da variante': 'Variant cruise speed',
+      'Preço exibido no detalhe': 'Displayed detail price',
   'Todos os modelos': 'All models',
   'Recomendações exibidas': 'Recommendations shown',
   'Cenários viáveis': 'Viable scenarios',
@@ -422,6 +425,16 @@ assert.equal(previewMetrics.children[1].children[1].textContent, '$120 / $-20');
 const expiredMetrics = document.createElement('div');
 appendResearchEconomicsPreview(expiredMetrics, {economics_preview:{...preview, expires_at:marketNow-1}});
 assert.equal(expiredMetrics.children.length, 0);
+const engineMetrics = document.createElement('div');
+const detailEvidence = {observed_at:marketNow-5, model_identity_verified:false,
+  metrics:{speed_kph:881, fuel_lbs_per_km:11.55, required_runway_ft:6500, displayed_cost_usd:6770196}};
+appendEngineDetail(engineMetrics, {engine_detail:detailEvidence});
+assert.equal(engineMetrics.children[0].children[1].textContent, 'Model identity pending');
+assert.equal(engineMetrics.children[1].children[0].textContent, 'Variant cruise speed');
+assert.equal(engineMetrics.children[1].children[1].textContent, '881 kph');
+assert.equal(engineMetrics.children[4].children[0].textContent, 'Displayed detail price');
+appendEngineDetail(engineMetrics, {engine_detail:{...detailEvidence, observed_at:marketNow-4*86400}});
+assert.equal(engineMetrics.children.length, 5);
 assert.equal($('hubResearchPrev').disabled, true);
 assert.equal($('hubResearchNext').disabled, true);
 Object.assign(report.research_queue, {

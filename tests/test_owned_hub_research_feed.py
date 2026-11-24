@@ -379,6 +379,34 @@ def test_research_queue_schedules_distinct_engine_variants_across_owned_hubs():
             assert "motor_indisponivel" in row["pending"]
 
 
+@pytest.mark.parametrize("verified", [True, False])
+def test_selected_detail_is_exposed_but_only_correlated_metrics_feed_model(verified):
+    engines = _engines(observed_at=NOW - 5)
+    catalog = engines["models"]["11"]
+    catalog["model_detail_identity_verified"] = verified
+    catalog["observed_model_id"] = "11" if verified else None
+    catalog["variants"][0].update(speed=None, fuel=None)
+    metrics = {"speed_kph": 881, "fuel_lbs_per_km": 11.55, "range_km": 5700,
+               "capacity_pax": 164, "required_runway_ft": 6500,
+               "displayed_cost_usd": 6770196}
+    catalog["variant_details"] = {"1": {"observed_at": NOW - 2, "metrics": metrics}}
+    page = build_owned_hub_research_queue(_inventory(), [_sample()], _market(),
+                                         engines=engines, now=NOW)
+    item = next(row for row in page["items"] if row["engine_id"] == "1")
+    assert item["engine_detail"] == {"observed_at": NOW - 2, "metrics": metrics,
+                                     "model_identity_verified": verified}
+    assert item["engine_speed"] == (881 if verified else None)
+    assert item["engine_fuel"] == (11.55 if verified else None)
+    assert item["range_km"] == (5700 if verified else 6000)
+    assert item["capacity"] == (164 if verified else 180)
+    assert item["final_aircraft_price"] is None
+    assert item["purchase_eligible"] is False
+    catalog["variant_details"]["2"] = None
+    invalid = build_owned_hub_research_queue(_inventory(), [_sample()], _market(),
+                                            engines=engines, now=NOW)
+    assert all(row["engine_id"] is None for row in invalid["items"])
+
+
 @pytest.mark.parametrize("page_size", [1, 2, 3, 4, 7])
 def test_research_pages_cover_all_candidates_in_hub_balanced_order(page_size):
     samples = [_sample("2926", str(destination)) for destination in range(3139, 3143)]

@@ -1264,6 +1264,17 @@ const EN = {
   "Demanda observada Y/J/F": "Observed Y/J/F demand",
   "Simulação (demanda total, não residual)": "What-if (total demand, not remaining demand)",
   "Contribuição diária base / stress": "Daily contribution base / stress",
+  "Detalhe da variante observado": "Observed variant detail",
+  "Identidade do modelo confirmada": "Model identity confirmed",
+  "Identidade do modelo pendente": "Model identity pending",
+  "Velocidade da variante": "Variant cruise speed",
+  "Consumo da variante": "Variant fuel burn",
+  "Pista exigida pela aeronave": "Aircraft runway requirement",
+  "Alcance da variante": "Variant range",
+  "Capacidade da variante": "Variant capacity",
+  "Preço exibido no detalhe": "Displayed detail price",
+  "Valor exibido do A-check": "Displayed A-check cost",
+  "Intervalo exibido de manutenção": "Displayed maintenance interval",
   "Margem sobre receita": "Revenue margin",
   "Custos excluídos": "Excluded costs",
   "Manutenção, A-check, outras despesas e investimento": "Maintenance, A-check, other expenses and capital investment",
@@ -1950,6 +1961,30 @@ function appendResearchEconomicsPreview(metrics, task) {
   addHubMetric(metrics, "Margem sobre receita", nf.format(preview.safety_margin_fraction * 100) + "%");
   addHubMetric(metrics, "Custos excluídos", tr("Manutenção, A-check, outras despesas e investimento"));
 }
+function appendEngineDetail(metrics, task) {
+  const evidence = task.engine_detail;
+  const now = Date.now() / 1000;
+  if (!evidence || typeof evidence.model_identity_verified !== "boolean" ||
+      !Number.isFinite(evidence.observed_at) || evidence.observed_at > now ||
+      now - evidence.observed_at > 3 * 86400 || !evidence.metrics) { return; }
+  addHubMetric(metrics, "Detalhe da variante observado",
+    tr(evidence.model_identity_verified ? "Identidade do modelo confirmada" : "Identidade do modelo pendente"));
+  const data = evidence.metrics;
+  for (const [label, value, unit] of [
+    ["Velocidade da variante", data.speed_kph, "kph"],
+    ["Consumo da variante", data.fuel_lbs_per_km, "lbs/km"],
+    ["Pista exigida pela aeronave", data.required_runway_ft, "ft"],
+    ["Alcance da variante", data.range_km, "km"],
+    ["Capacidade da variante", data.capacity_pax, "pax"],
+    ["Intervalo exibido de manutenção", data.maintenance_interval_hours, "h"],
+    ["Preço exibido no detalhe", data.displayed_cost_usd, ""],
+    ["Valor exibido do A-check", data.a_check_cost_usd, ""],
+  ]) {
+    if (Number.isFinite(value) && value > 0) {
+      addHubMetric(metrics, label, unit ? nf.format(value) + " " + unit : hubMoney(value));
+    }
+  }
+}
 const hubName = hub => (hub.code ? hub.code + " · " : "") + (hub.name || (hub.id ? "#" + hub.id : tr("Sem dados")));
 const hubSearchText = value => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
 const hubMeanProfit = hub => Number.isFinite(hub.estimated_profit_per_day) &&
@@ -2581,6 +2616,7 @@ function renderHubRecommendations(report) {
     addHubMetric(metrics, "Preço final da aeronave", tr("Não verificado"));
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
+    appendEngineDetail(metrics, task);
     appendResearchEconomicsPreview(metrics, task);
     addHubMetric(metrics, "ROI", tr("Desconhecido"));
     addHubMetric(metrics, "Retorno estimado", tr("Desconhecido"));
@@ -3242,6 +3278,7 @@ function renderExternalHubResearch(page) {
       ? nf.format(costs.hub_points) : tr("Não verificado"));
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
+    appendEngineDetail(metrics, task);
     appendResearchEconomicsPreview(metrics, task);
     const reasons = document.createElement("ul"); reasons.className = "hub-research-reasons";
     for (const reason of task.pending || []) {

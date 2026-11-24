@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import paths
+from engine_detail import validate_metrics
 from engine_selection import EngineCatalog
 
 _LOCK = threading.RLock()
@@ -106,6 +107,22 @@ def _validated_record(row: object, *, now: int | float) -> dict | None:
         return None
     if not selected and len(clean) > 1:
         return None
+    # Individual observations belong to the engine actually selected when
+    # the detail was read. Legacy catalogs have no such observations.
+    raw_details = row.get("variant_details", {})
+    if not isinstance(raw_details, dict):
+        return None
+    variant_details = {}
+    available_ids = {v["engine_id"] for v in clean if v["available"]}
+    for engine_id, observation in raw_details.items():
+        if engine_id not in available_ids or not isinstance(observation, dict):
+            return None
+        stamp = _timestamp(observation.get("observed_at"))
+        metrics = validate_metrics(observation.get("metrics"))
+        if (stamp is None or not observed_at <= stamp <= now
+                or stamp - observed_at > 300 or metrics is None):
+            return None
+        variant_details[engine_id] = {"observed_at": stamp, "metrics": metrics}
     return {
         "source": SOURCE, "model_id": identity[0], "model": identity[1],
         "observed_at": observed_at, "selector_type": row["selector_type"],
@@ -113,6 +130,7 @@ def _validated_record(row: object, *, now: int | float) -> dict | None:
         "variants": clean, "engine_prices_verified": False,
         "observed_model_id": observed_model_id,
         "model_detail_identity_verified": identity_verified,
+        "variant_details": variant_details,
     }
 
 
@@ -177,7 +195,8 @@ class EngineCatalogRegistry:
 
     def record(self, model_id: str, model_name: str, catalog: EngineCatalog, *,
                observed_model_id: str | None = None,
-               observed_at: object = _UNSET) -> bool:
+               observed_at: object = _UNSET,
+               variant_details: dict | None = None) -> bool:
         """Keep the latest valid DOM observation per model, including after restart."""
         if not isinstance(catalog, EngineCatalog):
             return False
@@ -191,6 +210,7 @@ class EngineCatalogRegistry:
             "selected_engine_id": catalog.selected_engine_id,
             "variants": [vars(variant) for variant in catalog.variants],
             "observed_model_id": observed_model_id,
+            "variant_details": {} if variant_details is None else variant_details,
         }
         clean = _validated_record(candidate, now=now)
         if clean is None:

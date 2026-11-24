@@ -14,6 +14,7 @@ import time
 from collections import defaultdict
 from typing import Optional
 
+from engine_detail import validate_metrics
 from route_detail_evidence import current_detail
 from market import recent_market_quotes
 from research_economics_preview import research_economics_preview, research_mode
@@ -148,6 +149,9 @@ def _engine_variants(engines: dict, model: dict, now: int) -> tuple[list[dict], 
         return [], None
     seen = set()
     result = []
+    details = row.get("variant_details", {})
+    if not isinstance(details, dict):
+        return [], None
     for item in variants:
         if not isinstance(item, dict):
             return [], None
@@ -158,11 +162,34 @@ def _engine_variants(engines: dict, model: dict, now: int) -> tuple[list[dict], 
                 or type(item.get("selected")) is not bool):
             return [], None
         seen.add(engine_id)
+        detail = details.get(engine_id)
+        metrics = None
+        if engine_id in details:
+            if (not isinstance(detail, dict) or not item["available"]
+                    or not _fresh_engine_read(detail.get("observed_at"), now)
+                    or not 0 <= detail["observed_at"] - row["observed_at"] <= 300):
+                return [], None
+            metrics = validate_metrics(detail.get("metrics"))
+            if metrics is None:
+                return [], None
+        speed, fuel = _positive_number(item.get("speed")), _positive_number(item.get("fuel"))
+        if identity_verified and metrics:
+            # Prefer actual selected-form values, but never use conflicting
+            # option attributes to compute a variant's economic preview.
+            for field, old in (("speed_kph", speed), ("fuel_lbs_per_km", fuel)):
+                if field in metrics and old is not None and metrics[field] != old:
+                    return [], None
+            speed = metrics.get("speed_kph", speed)
+            fuel = metrics.get("fuel_lbs_per_km", fuel)
         result.append({"engine_id": engine_id, "engine_label": label.strip(),
                        "engine_available": item["available"],
                        "engine_selected": item["selected"],
-                       "engine_speed": _positive_number(item.get("speed")),
-                       "engine_fuel": _positive_number(item.get("fuel"))})
+                       "engine_speed": speed, "engine_fuel": fuel,
+                       "engine_detail": ({"observed_at": detail["observed_at"], "metrics": metrics,
+                                          "model_identity_verified": identity_verified}
+                                         if metrics is not None else None)})
+    if not details.keys() <= seen:
+        return [], None
     if (sum(item["engine_selected"] for item in result) > 1
             or (len(result) > 1 and not any(item["engine_selected"] for item in result))
             or any(item["engine_selected"] and not item["engine_available"] for item in result)
@@ -389,8 +416,16 @@ def _build_hub_research_queue(
     model_options = []
     for model in models:
         variants, engine_evidence = _engine_variants(engines, model, now)
-        model_options.extend((model, variant, engine_evidence)
-                             for variant in (variants or [None]))
+        for variant in (variants or [None]):
+            detail = variant.get("engine_detail") if variant else None
+            if detail and detail["model_identity_verified"]:
+                metrics = detail["metrics"]
+                effective_model = {**model,
+                                   "range_km": metrics.get("range_km", model["range_km"]),
+                                   "capacity": metrics.get("capacity_pax", model["capacity"])}
+            else:
+                effective_model = model
+            model_options.append((effective_model, variant, engine_evidence))
     ordered_hubs = sorted(samples_by_hub, key=int)
     lengths = {hub_id: len(samples_by_hub[hub_id]) * len(model_options)
                for hub_id in ordered_hubs}
@@ -530,6 +565,7 @@ def _build_hub_research_queue(
                     "engine_selected": variant["engine_selected"] if variant else None,
                     "engine_speed": variant["engine_speed"] if variant else None,
                     "engine_fuel": variant["engine_fuel"] if variant else None,
+                    "engine_detail": variant["engine_detail"] if variant else None,
                     "final_aircraft_price": None,
                     **({"external_cost_preview": preview} if external else {}),
                     "economics_preview": economics,

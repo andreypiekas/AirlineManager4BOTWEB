@@ -10,7 +10,10 @@ import time
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
 from engine_catalog import EngineCatalogRegistry
-from engine_selection import EngineSelectionError, _ENGINE_OPTIONS_JS, parse_engine_catalog
+from engine_detail import parse_displayed_metrics
+from engine_selection import (
+    EngineSelectionError, _ENGINE_OPTIONS_JS, _SET_ENGINE_JS, parse_engine_catalog,
+)
 
 log = logging.getLogger("am4bot.observations")
 
@@ -27,7 +30,18 @@ const id = panel.getAttribute('data-model-id');
 const groups = (() => {
 """ + _ENGINE_OPTIONS_JS + r"""
 })();
-return {detail: {attribute_present: id !== null, model_id: id}, groups};
+const metricLabels = new Set(['cruise speed', 'velocidade de cruzeiro', 'capacity', 'capacidade',
+  'runway required', 'pista necessaria', 'range', 'alcance', 'consumption', 'consumo',
+  'a-check', 'maint check', 'verificacao de manutencao']);
+const normalized = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+const rows = Array.from(panel.querySelectorAll('tr, .row'))
+  .filter(row => row.children.length === 2)
+  .map(row => Array.from(row.children, cell => String(cell.textContent || '').trim()))
+  .filter(row => metricLabels.has(normalized(row[0])));
+const costs = Array.from(panel.querySelectorAll('#acCost'),
+  el => String(el.textContent || '').trim());
+return {detail: {attribute_present: id !== null, model_id: id}, groups,
+        metrics: {rows, costs}};
 """
 
 # Only the currently selected airport can have an observed price. The country
@@ -529,8 +543,62 @@ def _collect_hub_route_details(bot: object, *, external: bool) -> int:
     return count
 
 
+def _variant_signature(catalog):
+    return (catalog.selector_type, catalog.dom_id, catalog.selector_name,
+            tuple((v.engine_id, v.label, v.available) for v in catalog.variants))
+
+
+def _observe_variant_details(bot, snapshot, catalog, observed_at):
+    """Read reversible native choices; leave checkout and account state untouched."""
+    metrics = parse_displayed_metrics(snapshot.get("metrics"))
+    selected = catalog.selected_engine_id
+    if not selected or metrics is None:
+        return {}
+    result = {selected: {"observed_at": observed_at, "metrics": metrics}}
+    # Only the native selector has been observed in the authenticated game.
+    if catalog.selector_type != "select" or catalog.dom_id != "engSelection":
+        return result
+    signature = _variant_signature(catalog)
+    last_metrics = metrics
+    for variant in catalog.variants[:10]:
+        if getattr(bot, "stopping", False):
+            break
+        if not variant.available or variant.engine_id == selected:
+            continue
+        if not bot.js(_SET_ENGINE_JS, "select", catalog.dom_id, variant.engine_id):
+            break
+        # The form may load asynchronously after the native change event.
+        for _ in range(5):
+            read = _stable_read(bot, _ENGINE_DETAIL_SNAPSHOT_JS, with_timestamp=True)
+            if isinstance(read, tuple):
+                candidate, stamp = read
+                if not isinstance(candidate, dict) or candidate.get("detail") != snapshot.get("detail"):
+                    return result
+                current = parse_engine_catalog(candidate.get("groups"))
+                if (_variant_signature(current) != signature
+                        or current.selected_engine_id != variant.engine_id):
+                    return result
+                current_metrics = parse_displayed_metrics(candidate.get("metrics"))
+                # A change of selected option alone does not prove that the
+                # previous engine's specification has been refreshed.
+                if (current_metrics and any(
+                        key in last_metrics and key in current_metrics
+                        and current_metrics[key] != last_metrics[key]
+                        for key in ("speed_kph", "fuel_lbs_per_km", "range_km",
+                                    "displayed_cost_usd"))):
+                    result[variant.engine_id] = {"observed_at": stamp, "metrics": current_metrics}
+                    last_metrics = current_metrics
+                    break
+            stop = getattr(bot, "_stop", None)
+            if (stop.wait(0.3) if stop is not None else threading.Event().wait(0.3)):
+                return result
+        else:
+            break
+    return result
+
+
 def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
-    """Inspect a bounded number of model detail screens without choosing or buying.
+    """Inspect a bounded number of model detail screens without placing orders.
 
     The model list and each combined detail snapshot are stable double reads.
     The AJAX target is cleared by bot.ajax(), so an old model's form cannot
@@ -583,9 +651,14 @@ def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
                     or (not explicit and observed_id is not None)):
                 log.warning("Motor de %s (%s): ID de modelo divergente no detalhe.", name, model_id)
                 continue
+            try:
+                variant_details = _observe_variant_details(bot, snapshot, catalog, observed_at)
+            except Exception:
+                log.debug("A pesquisa de detalhes por variante não foi concluída.")
+                variant_details = {}
             if registry.record(model_id, name, catalog,
                                observed_model_id=observed_id if explicit else None,
-                               observed_at=observed_at):
+                               observed_at=observed_at, variant_details=variant_details):
                 collected += 1
             else:
                 log.info("Motor de %s (%s): dados do formulário inconsistentes.", name, model_id)
