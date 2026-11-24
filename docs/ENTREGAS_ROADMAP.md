@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, custo incremental de hangar com evidência nativa (G0)
+
+- A pesquisa contábil de aeronaves de passageiros aproveita uma vaga livre de hangar comprovada no snapshot para estabelecer custo incremental zero de uma única aeronave. O contrato valida a fonte nativa, a consistência da capacidade e das vagas, o prazo de validade e o vínculo com o perfil, snapshot e hub da proposta. A resposta de pesquisa apresenta os custos comprovados com fonte e horário da coleta.
+- Hangares sem vagas, informações inconsistentes ou vencidas e valores divergentes continuam sem comprovação de custo. O preço exibido de ampliação do hangar permanece apenas uma referência até a validação do custo final. A vaga observada não substitui as travas de reserva, compromissos e revalidação de capacidade do A4/A5.
+- Validação: 145 testes direcionados aprovados; suíte Windows com 2.080 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Rollback por reversão deste commit. Permanecem pendentes a demanda residual, os preços finais, a alimentação produtiva do registro A3, a conciliação e a homologação A0–A9. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A3/A9, progressão da pesquisa entre ciclos (G0)
 
 - A pesquisa contábil automática retoma o deslocamento salvo por perfil quando a ordem das identidades de hubs, rotas, modelos e motores permanece igual. Mudanças nessa composição reiniciam a paginação; ao chegar ao fim, o próximo ciclo começa novamente. A posição é persistida atomicamente junto à execução do planejador e preservada durante falhas ou indisponibilidade temporária da fila.

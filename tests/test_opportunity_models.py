@@ -134,6 +134,37 @@ def test_success_is_read_only_reproducible_and_explainable():
     assert evaluate(snapshot, candidate)["plan_id"] != result["plan_id"]
 
 
+def test_native_free_passenger_hangar_cost_is_bound_to_captured_evidence():
+    from fleet_commitment_observations import SOURCE
+    from opportunity_models import native_free_passenger_hangar_cost
+
+    snapshot, candidate = sample()
+    commitments = {"source": SOURCE, "status": "partial", "observed_at": NOW - 10,
+                   "passenger_hangar": {"capacity": 4, "occupied": 3, "free": 1}}
+    snapshot["observations"] = {"fleet_commitments": commitments}
+    rebind(snapshot, candidate)
+    evidence = native_free_passenger_hangar_cost(snapshot, "123", now=NOW)
+    candidate["costs"]["hangar_cost"] = evidence.copy()
+    result = evaluate(snapshot, candidate)
+    assert result["status"] == "suggested"
+    assert result["economics"]["total_investment"] == 10600
+    for field, value in (("value", 50), ("observed_at", NOW), ("hub_id", "456")):
+        candidate["costs"]["hangar_cost"] = {**evidence, field: value}
+        assert "HANGAR_COST_UNVERIFIED" in codes(evaluate(snapshot, candidate))
+
+    candidate["costs"]["hangar_cost"] = evidence.copy()
+    for changes in ({"observed_at": NOW - 901}, {"source": "other"},
+                    {"passenger_hangar": {"capacity": 4, "occupied": 4, "free": 0}},
+                    {"passenger_hangar": {"capacity": 4, "occupied": 4, "free": 1}}):
+        original = commitments.copy()
+        commitments.update(changes)
+        rebind(snapshot, candidate)
+        assert native_free_passenger_hangar_cost(snapshot, "123", now=NOW) is None
+        assert "HANGAR_COST_UNVERIFIED" in codes(evaluate(snapshot, candidate))
+        commitments.clear()
+        commitments.update(original)
+
+
 @pytest.mark.parametrize(
     "field",
     [

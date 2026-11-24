@@ -7,7 +7,7 @@ used for complete proposals reports the missing evidence for these hypotheses.
 from __future__ import annotations
 
 from expansion_economics import evaluate_expansion_economics
-from opportunity_models import DEFAULT_MAX_AGE_SECONDS
+from opportunity_models import DEFAULT_MAX_AGE_SECONDS, native_free_passenger_hangar_cost
 from route_detail_evidence import current_detail
 
 
@@ -80,6 +80,9 @@ def evaluate_research_gate(snapshot, item, *, now, margin, native_reference=None
     owned = next((row for row in snapshot["hubs"] if row["id"] == hub), None)
     if owned and owned.get("owned") is True and owned.get("verified") is True:
         costs["hub_cost"] = evidence("game_hub_select", owned["observed_at"], hub_id=hub, value=0)
+    hangar_cost = native_free_passenger_hangar_cost(snapshot, hub, now=now)
+    if hangar_cost is not None:
+        costs["hangar_cost"] = hangar_cost
     candidate = {**binding, "schema_version": 1, "kind": "aircraft_on_owned_hub",
                  "hub": {"id": hub}, "route": route, "aircraft": aircraft, "costs": costs}
     inputs = {}
@@ -120,6 +123,10 @@ def evaluate_research_gate(snapshot, item, *, now, margin, native_reference=None
             "economics_id": result["economics_id"], "read_only": True,
             "purchase_eligible": False, "blocking_reasons": result["blocking_reasons"],
             "verified_accounting_inputs": sorted(result["provenance"]),
+            "verified_capital_costs": {field: {key: value[key] for key in ("value", "source", "observed_at")}
+                                       for field, value in costs.items()
+                                       if not any(reason["field"] == f"costs.{field}"
+                                                  for reason in result["blocking_reasons"])},
             "excluded_costs": result["excluded_costs"],
             "total_investment": result["capital_costs"]["total_investment"],
             "cash_after_purchase": result["cash_after_purchase"],

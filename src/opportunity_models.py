@@ -38,6 +38,8 @@ import time
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Mapping
 
+from fleet_commitment_observations import MAX_AGE as HANGAR_MAX_AGE, SOURCE as HANGAR_SOURCE, _hangar
+
 SCHEMA_VERSION = 1
 DEFAULT_MAX_AGE_SECONDS = 900
 _PROFILE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -314,6 +316,22 @@ def _validate_aircraft(
     return {"model_id": model_id if _choice_id(model_id) else None, "engine_id": engine_id if _choice_id(engine_id) else None}
 
 
+def native_free_passenger_hangar_cost(snapshot, hub_id, *, now, max_age_seconds=DEFAULT_MAX_AGE_SECONDS):
+    """Evidence of zero incremental hangar expense for one passenger aircraft."""
+    observations = snapshot.get("observations")
+    commitments = observations.get("fleet_commitments") if isinstance(observations, Mapping) else None
+    if (not isinstance(commitments, Mapping) or commitments.get("source") != HANGAR_SOURCE
+            or commitments.get("status") not in ("observed", "partial")
+            or not _valid_time(commitments.get("observed_at"), now, min(max_age_seconds, HANGAR_MAX_AGE))):
+        return None
+    hangar = _hangar(commitments.get("passenger_hangar"))
+    if hangar is None or hangar["free"] < 1:
+        return None
+    return {"source": HANGAR_SOURCE, "profile_id": snapshot.get("profile_id"),
+            "snapshot_id": snapshot.get("snapshot_id"), "observed_at": commitments["observed_at"],
+            "verified": True, "hub_id": hub_id, "value": 0}
+
+
 def _validate_costs(
     raw: object,
     profile_id: object,
@@ -322,11 +340,20 @@ def _validate_costs(
     reasons: list[dict[str, str]],
     snapshot_id: str | None,
     identities: Mapping[str, object],
+    snapshot: Mapping[str, Any],
 ) -> tuple[dict[str, float | None], Decimal | None]:
     costs = raw if isinstance(raw, Mapping) else {}
     values: dict[str, Decimal] = {}
     output: dict[str, float | None] = {}
     for field, source in _COST_SOURCES.items():
+        raw_evidence = costs.get(field)
+        if field == "hangar_cost" and isinstance(raw_evidence, Mapping) and raw_evidence.get("source") == HANGAR_SOURCE:
+            source = HANGAR_SOURCE
+            expected = native_free_passenger_hangar_cost(snapshot, identities.get("hub_id"), now=now,
+                                                         max_age_seconds=max_age_seconds)
+            if expected is None or any(raw_evidence.get(key) != value for key, value in expected.items()):
+                _block(reasons, "HANGAR_COST_UNVERIFIED", f"costs.{field}",
+                       "Custo de hangar não corresponde à vaga de passageiros observada no snapshot.")
         evidence = _evidence(
             costs.get(field), f"costs.{field}", source, profile_id, now, max_age_seconds, reasons, snapshot_id=snapshot_id
         )
@@ -498,7 +525,7 @@ def evaluate_investment(
         "engine_id": aircraft["engine_id"],
     }
     costs, investment = _validate_costs(
-        candidate.get("costs"), profile_id, now, max_age_seconds, reasons, evidence_snapshot_id, identities
+        candidate.get("costs"), profile_id, now, max_age_seconds, reasons, evidence_snapshot_id, identities, snapshot
     )
     profit = _validate_financial(
         candidate.get("financial"), profile_id, now, max_age_seconds, reasons, evidence_snapshot_id, identities

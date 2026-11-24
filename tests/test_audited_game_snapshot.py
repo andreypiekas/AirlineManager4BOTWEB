@@ -185,6 +185,12 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
                                    "price": price, "observed_at": NOW - 5, "expires_at": NOW + 60}
                             for kind, price in (("fuel", 600), ("co2", 100))})
     evidence["demand"]["samples"] = [_sample(dest=str(i)) for i in range(3139, 3160)]
+    from fleet_commitment_observations import SOURCE
+
+    evidence["inventory"]["fleet_commitment_observations"] = {
+        "source": SOURCE, "status": "partial", "observed_at": NOW - 10,
+        "passenger_hangar": {"capacity": 4, "occupied": 3, "free": 1},
+    }
     bot = SimpleNamespace()
     for aircraft, origin, dest, distance, fee, fares in (
         ("900001", "2926", "3139", 2000, 1000, (900, 1800, 2700)),
@@ -233,6 +239,10 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
         gate = item["accounting_gate"]
         assert gate["status"] == "blocked" and gate["read_only"] is True
         assert gate["total_investment"] is None and gate["cash_after_purchase"] is None
+        assert gate["verified_capital_costs"]["hangar_cost"] == {
+            "source": SOURCE, "observed_at": NOW - 10, "value": 0,
+        }
+        assert not any(reason["field"] == "costs.hangar_cost" for reason in gate["blocking_reasons"])
         assert {"fuel_price_per_1000", "co2_price_per_1000"} <= set(gate["verified_accounting_inputs"])
         assert not {"layout", "daily_demand", "fares", "cash"} & set(gate["verified_accounting_inputs"])
         assert "DEMAND_UNVERIFIED" in {reason["code"] for reason in gate["blocking_reasons"]}
