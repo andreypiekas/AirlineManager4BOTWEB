@@ -54,6 +54,47 @@ def _fresh_engine_read(raw: object, now: float) -> bool:
     return _fresh(raw, now)
 
 
+def _nonnegative_money(raw: object) -> Optional[float]:
+    if type(raw) in (int, float) and raw == 0:
+        return 0.0
+    return _positive_number(raw)
+
+
+def _external_cost_evidence(row: dict, now: float) -> dict:
+    result = {}
+    for field in ("hub_price", "hub_points"):
+        value = row.get(field)
+        value = (_nonnegative_money(value) if field == "hub_price" else
+                 value if type(value) is int and 0 <= value <= 10_000_000 else None)
+        stamp = row.get(f"{field}_observed_at")
+        if (value is not None and _fresh(stamp, now)
+                and row.get(f"{field}_conflict_at") is None):
+            result.update({field: value, f"{field}_observed_at": stamp})
+    return result
+
+
+def _external_budget(cash: object, observed_at: object, reserve: object, now: float) -> dict:
+    stamp = _positive_number(observed_at)
+    cash = _nonnegative_money(cash) if stamp is not None and 0 <= now - stamp <= 900 else None
+    reserve = _nonnegative_money(reserve)
+    return {"cash": cash, "cash_observed_at": stamp if cash is not None else None,
+            "reserve": reserve,
+            "available_before_commitments": max(0.0, cash - reserve)
+            if cash is not None and reserve is not None else None}
+
+
+def _external_cost_preview(hub: dict, budget: dict) -> dict:
+    price = hub.get("hub_price")
+    available = budget.get("available_before_commitments")
+    return {"hub_price": price, "hub_price_observed_at": hub.get("hub_price_observed_at"),
+            "hub_points": hub.get("hub_points"),
+            "hub_points_observed_at": hub.get("hub_points_observed_at"),
+            "hub_only_exceeds_available": price > available
+            if price is not None and available is not None else None,
+            "total_investment": None, "cash_after_purchase": None,
+            "roi": None, "payback_days": None}
+
+
 def _models(raw: object) -> list[dict]:
     """Keep only uniquely identified, noncontradictory catalog entries."""
     if not isinstance(raw, list):
@@ -148,9 +189,11 @@ def build_external_hub_research_queue(
     ownership: dict, external: dict, market: dict, *,
     now: Optional[float] = None, max_items: int = 40, engines: Optional[dict] = None,
     offset: int = 0, expected_fingerprint: Optional[str] = None,
+    cash: Optional[float] = None, cash_observed_at: Optional[float] = None,
+    reserve: Optional[float] = None,
 ) -> dict:
     """Join external catalog evidence with route and engine research, never owned inputs."""
-    now = time.time() if now is None else now
+    now = _positive_number(time.time() if now is None else now) or 0.0
     ownership = ownership if isinstance(ownership, dict) else {}
     external = external if isinstance(external, dict) else {}
     owned_rows = ownership.get("hubs")
@@ -181,7 +224,8 @@ def build_external_hub_research_queue(
     return _build_hub_research_queue(
         inventory, external.get("samples", []), market, now=now, max_items=max_items,
         engines=engines, offset=offset, expected_fingerprint=expected_fingerprint,
-        hub_progress=external.get("hub_progress"), external=True)
+        hub_progress=external.get("hub_progress"), external=True,
+        external_budget=_external_budget(cash, cash_observed_at, reserve, now))
 
 
 def _build_hub_research_queue(
@@ -189,6 +233,7 @@ def _build_hub_research_queue(
     now: Optional[float] = None, max_items: int = 40, engines: Optional[dict] = None,
     offset: int = 0, expected_fingerprint: Optional[str] = None,
     hub_progress: Optional[list[dict]] = None, external: bool = False,
+    external_budget: Optional[dict] = None,
 ) -> dict:
     """Produce bounded, balanced per-hub tasks from independent cached reads.
 
@@ -202,6 +247,7 @@ def _build_hub_research_queue(
     inventory = inventory if isinstance(inventory, dict) else {}
     market = market if isinstance(market, dict) else {}
     engines = engines if isinstance(engines, dict) else {}
+    external_budget = external_budget or {}
     hub_source = "game_purchase_catalog" if external else "game_hub_select"
     inventory_fresh = (inventory.get("source") == hub_source
                        and _fresh(inventory.get("observed_at"), now))
@@ -218,6 +264,7 @@ def _build_hub_research_queue(
                 hub = {"id": hub_id, "code": str(raw.get("code") or "")}
                 if external:
                     hub["observed_at"] = raw["observed_at"]
+                    hub.update(_external_cost_evidence(raw, now))
                 if hub_id in hubs and hubs[hub_id] != hub:
                     conflicted_hub_ids.add(hub_id)
                 hubs[hub_id] = hub
@@ -329,7 +376,8 @@ def _build_hub_research_queue(
     fingerprint_data = {
         "hubs": hubs, "inventory_source": inventory.get("source"),
         "inventory_observed_at": inventory.get("observed_at"),
-        **({"ownership_observed_at": inventory.get("ownership_observed_at")} if external else {}),
+        **({"ownership_observed_at": inventory.get("ownership_observed_at"),
+            "external_budget": external_budget} if external else {}),
         "market_source": market.get("source"),
         "market_observed_at": market.get("observed_at"),
         "blockers": blockers, "models": models,
@@ -395,8 +443,18 @@ def _build_hub_research_queue(
                 pending = [item for item in _RESEARCH_PENDING
                            if item != "motor_a_pesquisar" or variant is None]
                 if external:
-                    pending.extend(["demanda_externa_a_confirmar", "custo_hub_a_confirmar",
-                                    "pontos_hub_a_confirmar"])
+                    preview = _external_cost_preview(hubs[hub_id], external_budget)
+                    pending.extend(["demanda_externa_a_confirmar", "compromissos_caixa_a_confirmar"])
+                    if preview["hub_price"] is None:
+                        pending.append("custo_hub_a_confirmar")
+                    if preview["hub_points"] is None:
+                        pending.append("pontos_hub_a_confirmar")
+                    elif preview["hub_points"] > 0:
+                        pending.append("saldo_pontos_hub_a_confirmar")
+                    if external_budget.get("available_before_commitments") is None:
+                        pending.append("saldo_reserva_a_confirmar")
+                    if preview["hub_only_exceeds_available"] is True:
+                        pending.append("saldo_insuficiente_para_hub")
                 if sample.get("event_demand_boosted") is True:
                     pending.append("demanda_evento_temporario")
                 # Direct range does not rule out a route with a legal stopover.
@@ -434,6 +492,7 @@ def _build_hub_research_queue(
                     "engine_speed": variant["engine_speed"] if variant else None,
                     "engine_fuel": variant["engine_fuel"] if variant else None,
                     "final_aircraft_price": None,
+                    **({"external_cost_preview": preview} if external else {}),
                     "daily_net_profit": None, "status": "pesquisa_pendente",
                     "pending": pending, "purchase_eligible": False,
                     "evidence": {
@@ -474,7 +533,8 @@ def _build_hub_research_queue(
     return {
         "source": "derived_external_research_queue" if external else "derived_research_queue", "read_only": True,
         "coverage": "partial", "purchase_eligible": False,
-        **({"external_hubs": len(hubs), "origin_scope": "external_catalog"} if external else {"owned_hubs": len(hubs)}),
+        **({"external_hubs": len(hubs), "origin_scope": "external_catalog",
+            "external_budget": external_budget} if external else {"owned_hubs": len(hubs)}),
         "sampled_hubs": len(samples_by_hub),
         "sampled_routes": sum(len(rows) for rows in samples_by_hub.values()),
         "conflicted_routes": sum(conflicts_by_hub.values()),

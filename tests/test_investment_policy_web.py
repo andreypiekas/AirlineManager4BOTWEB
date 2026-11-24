@@ -133,6 +133,39 @@ def test_external_research_endpoint_requires_auth_and_validates_cursor(tmp_path,
         assert calls == [(4, "abc"), *([(0, None)] * 4)]
 
 
+def test_external_research_endpoint_exposes_recent_cash_and_catalog_costs(tmp_path, monkeypatch):
+    from time import time
+    from types import SimpleNamespace
+
+    now = time()
+    inventory = {"source": "game_hub_select", "hub_catalog_fresh": True,
+                 "observed_at": now, "hubs": [{"id": "123", "code": "AAA"}]}
+    external = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                "candidate_inventory": [{"id": "456", "code": "BBB", "observed_at": now,
+                                         "hub_price": 10000, "hub_price_observed_at": now,
+                                         "hub_points": 0, "hub_points_observed_at": now}],
+                "samples": [{"source": "game_route_search", "observed_at": now,
+                             "origin_id": "456", "destination_id": "123", "distance_km": 2000,
+                             "y": 100, "j": 20, "f": 5}]}
+    market = {"source": "bot_aircraft_market_cache", "fresh": True, "observed_at": now,
+              "models": [{"id": "1", "name": "Model", "price": 1000}]}
+    monkeypatch.setattr(web_module, "HubRegistry", lambda: SimpleNamespace(snapshot=lambda: inventory))
+    monkeypatch.setattr(web_module, "HubExpansionRegistry", lambda: SimpleNamespace(
+        external_demand_snapshot=lambda owned: external if owned == {"123"} else {}))
+    monkeypatch.setattr(web_module, "EngineCatalogRegistry", lambda: SimpleNamespace(snapshot=lambda: {}))
+    monkeypatch.setattr(web_module, "load_market_evidence", lambda: market)
+    monkeypatch.setattr(web_module, "load_state", lambda: {})
+    monkeypatch.setattr(web_module, "recent_verified_money", lambda bot, state: (5000, now))
+    with served(tmp_path) as (port, config):
+        status, report = request(port, "GET", "/api/hubs/expansion/research", headers=auth())
+        assert status == 200
+        assert report["external_budget"]["cash"] == 5000
+        assert report["external_budget"]["reserve"] == config.get_int("settings", "cash_reserve", 0)
+        assert report["items"][0]["external_cost_preview"]["hub_price"] == 10000
+        assert report["items"][0]["external_cost_preview"]["hub_only_exceeds_available"] is True
+        assert report["items"][0]["purchase_eligible"] is False
+
+
 def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_path, monkeypatch):
     from investment_journal import InvestmentJournal
 

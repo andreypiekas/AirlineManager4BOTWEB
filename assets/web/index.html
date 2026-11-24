@@ -1260,6 +1260,11 @@ const EN = {
   "Demanda externa a confirmar": "External demand requires verification",
   "Custo do hub a confirmar": "Hub cost requires verification",
   "Pontos do hub a confirmar": "Hub points require verification",
+  "Saldo em pontos a confirmar": "Points balance requires verification",
+  "Saldo e reserva a confirmar": "Cash and reserve require verification",
+  "Compromissos de caixa a confirmar": "Cash commitments require verification",
+  "Saldo insuficiente para o hub": "Insufficient cash for the hub",
+  "Caixa acima da reserva antes de compromissos": "Cash above reserve before commitments",
   "Última pesquisa externa": "Last external research",
   "Pesquisa externa aguarda confirmação dos hubs próprios.": "External research awaits confirmation of owned hubs.",
   "tentativas inconclusivas": "inconclusive attempts",
@@ -2002,6 +2007,10 @@ const hubResearchBlockerLabels = {
   demanda_externa_a_confirmar: "Demanda externa a confirmar",
   custo_hub_a_confirmar: "Custo do hub a confirmar",
   pontos_hub_a_confirmar: "Pontos do hub a confirmar",
+  saldo_pontos_hub_a_confirmar: "Saldo em pontos a confirmar",
+  saldo_reserva_a_confirmar: "Saldo e reserva a confirmar",
+  compromissos_caixa_a_confirmar: "Compromissos de caixa a confirmar",
+  saldo_insuficiente_para_hub: "Saldo insuficiente para o hub",
   motor_a_pesquisar: "Motor ainda não pesquisado no jogo",
   preco_final_motor_a_confirmar: "Preço final do motor e da aeronave não verificado",
   demanda_residual_a_confirmar: "Demanda residual da rota não confirmada",
@@ -3144,7 +3153,9 @@ function renderExternalHubResearch(page) {
     nf.format(page.sampled_hubs) + " / " + nf.format(page.external_hubs) + " · " +
     tr("Amostras de rotas") + ": " + nf.format(page.sampled_routes) + " · " +
     (page.items.length ? nf.format(page.offset + 1) + "–" + nf.format(page.offset + page.items.length) : "0") +
-    " / " + nf.format(page.total_candidates);
+    " / " + nf.format(page.total_candidates) + " · " +
+    tr("Caixa acima da reserva antes de compromissos") + ": " +
+    hubMoney(page.external_budget?.available_before_commitments);
   for (const reason of page.blocking_reasons || []) {
     const item = document.createElement("li");
     item.textContent = hubResearchBlocker(reason);
@@ -3172,6 +3183,10 @@ function renderExternalHubResearch(page) {
     if (task.event_demand_boosted === true) {
       addHubMetric(metrics, "Evento de demanda", tr("Demanda elevada por evento temporário"));
     }
+    const costs = task.external_cost_preview || {};
+    addHubMetric(metrics, "Custo do hub", hubMoney(costs.hub_price));
+    addHubMetric(metrics, "Custo em pontos", Number.isSafeInteger(costs.hub_points)
+      ? nf.format(costs.hub_points) : tr("Não verificado"));
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
     const reasons = document.createElement("ul"); reasons.className = "hub-research-reasons";

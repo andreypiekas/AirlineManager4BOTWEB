@@ -74,6 +74,69 @@ def test_external_queue_keeps_ownership_and_financial_evidence_separate(tmp_path
         inventory, {**external, "candidate_source": "unknown"}, _market(), now=NOW)["items"]
 
 
+def test_external_cost_preview_is_independent_and_never_authorizes_purchase():
+    inventory = {**_inventory(), "hub_catalog_fresh": True}
+    candidate = {"id": "3139", "code": "SBL", "observed_at": NOW,
+                 "hub_price": 5000, "hub_price_observed_at": NOW - 10,
+                 "hub_points": 0, "hub_points_observed_at": NOW - 20}
+    external = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                "candidate_inventory": [candidate], "samples": [_sample("3139", "2926")]}
+
+    def page(**kwargs):
+        return build_external_hub_research_queue(inventory, external, _market(), now=NOW,
+                                                 max_items=1, **kwargs)
+
+    first = page(cash=6000, cash_observed_at=NOW, reserve=2000)
+    assert first["external_budget"]["available_before_commitments"] == 4000
+    item = first["items"][0]
+    cost = item["external_cost_preview"]
+    assert cost == {"hub_price": 5000, "hub_price_observed_at": NOW - 10,
+                    "hub_points": 0, "hub_points_observed_at": NOW - 20,
+                    "hub_only_exceeds_available": True, "total_investment": None,
+                    "cash_after_purchase": None, "roi": None, "payback_days": None}
+    assert "saldo_insuficiente_para_hub" in item["pending"]
+    assert "compromissos_caixa_a_confirmar" in item["pending"]
+    assert "pontos_hub_a_confirmar" not in item["pending"]
+    assert "custo_hub_a_confirmar" not in item["pending"]
+    assert item["purchase_eligible"] is False
+    changed = page(cash=9000, cash_observed_at=NOW, reserve=2000, offset=1,
+                   expected_fingerprint=first["snapshot_fingerprint"])
+    assert changed["cursor_reset"] is True
+    assert changed["items"][0]["external_cost_preview"]["hub_only_exceeds_available"] is False
+    assert changed["items"][0]["purchase_eligible"] is False
+    candidate.update(hub_price=0, hub_points=10, hub_points_conflict_at=NOW)
+    reset = page(cash=0, cash_observed_at=NOW, reserve=0, offset=1,
+                 expected_fingerprint=changed["snapshot_fingerprint"])
+    assert reset["cursor_reset"] is True
+    assert reset["items"][0]["external_cost_preview"]["hub_price"] == 0
+    assert reset["items"][0]["external_cost_preview"]["hub_points"] is None
+    candidate.pop("hub_points_conflict_at")
+    candidate["hub_price_observed_at"] = NOW - 3 * 86400 - 1
+    stale = page(cash=6000, cash_observed_at=NOW - 901, reserve=1000)
+    assert stale["external_budget"]["available_before_commitments"] is None
+    item = stale["items"][0]
+    assert item["external_cost_preview"]["hub_price"] is None
+    assert item["external_cost_preview"]["hub_points"] == 10
+    assert item["external_cost_preview"]["hub_only_exceeds_available"] is None
+    assert {"saldo_pontos_hub_a_confirmar", "saldo_reserva_a_confirmar",
+            "custo_hub_a_confirmar"} <= set(item["pending"])
+
+
+@pytest.mark.parametrize("price,points", [(False, True), (-1, -1), (float("inf"), 1.5),
+                                          (float("nan"), 10_000_001)])
+def test_external_cost_preview_rejects_invalid_amounts(price, points):
+    candidate = {"id": "3139", "observed_at": NOW, "hub_price": price,
+                 "hub_points": points, "hub_price_observed_at": NOW, "hub_points_observed_at": NOW}
+    external = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                "candidate_inventory": [candidate], "samples": [_sample("3139", "2926")]}
+    result = build_external_hub_research_queue({**_inventory(), "hub_catalog_fresh": True},
+                                              external, _market(), now=NOW,
+                                              cash=False, cash_observed_at=NOW, reserve=0)
+    assert result["external_budget"]["cash"] is None
+    assert result["items"][0]["external_cost_preview"]["hub_price"] is None
+    assert result["items"][0]["external_cost_preview"]["hub_points"] is None
+
+
 def test_event_demand_is_persisted_and_blocks_queue(tmp_path, monkeypatch):
     monkeypatch.setattr("hub_expansion.time.time", lambda: NOW)
     registry = HubExpansionRegistry(tmp_path / "expansion.json")

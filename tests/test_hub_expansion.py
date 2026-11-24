@@ -39,6 +39,24 @@ def test_external_demand_isolated_and_excluded_after_hub_purchase(tmp_path):
     assert restarted.demand_observations({"456"}) == []
 
 
+def test_external_catalog_costs_keep_independent_observation_times(tmp_path, monkeypatch):
+    clock = [1800000000]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate("456", price=0)])
+    initial = registry.external_demand_snapshot({"123"}, now=clock[0])["candidate_inventory"][0]
+    assert initial["hub_price"] == initial["hub_points"] == 0
+    assert initial["hub_price_observed_at"] == initial["hub_points_observed_at"] == clock[0]
+    clock[0] += MAX_AGE_SECONDS + 1
+    price_only = _candidate("456", price=1000)
+    del price_only["hub_points"]
+    assert registry.record_catalog([price_only], observed_at=clock[0])
+    updated = registry.external_demand_snapshot({"123"}, now=clock[0])["candidate_inventory"][0]
+    assert updated["hub_price"] == 1000 and updated["hub_price_observed_at"] == clock[0]
+    assert "hub_points" not in updated and "hub_points_observed_at" not in updated
+    assert registry.external_research_candidates({"123", "456"}, now=clock[0]) == []
+
+
 def _research(*, airport_id="123", **overrides):
     observed_at = int(time.time())
     model = overrides.get("model", "model-fixture")

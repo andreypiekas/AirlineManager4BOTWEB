@@ -229,10 +229,13 @@ class WebDashboard:
         owned = {hub["id"] for hub in inventory.get("hubs", [])
                  if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
         external = HubExpansionRegistry().external_demand_snapshot(owned)
+        cash, observed_at = recent_verified_money(self.bot, load_state())
         return build_external_hub_research_queue(
             inventory, external, load_market_evidence(),
             engines=EngineCatalogRegistry().snapshot(), offset=research_offset,
             expected_fingerprint=research_fingerprint,
+            cash=cash, cash_observed_at=observed_at,
+            reserve=self.cfg.get_int("settings", "cash_reserve", 0),
         )
 
     def hub_recommendations(self, *, research_offset: int = 0,

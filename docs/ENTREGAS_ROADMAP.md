@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A3/A6/A7, evidências financeiras de hubs externos (G0)
+
+- O catálogo externo agora fornece preço em dinheiro e custo em pontos com horários independentes, excluindo cada valor vencido ou conflitante. Valores explicitamente iguais a zero continuam válidos; atualização de preço não renova a validade do custo em pontos.
+- A fila externa e a API autenticada cruzam essas observações com o saldo recente (até 15 minutos) e a reserva configurada. Se apenas o preço do hub exceder o caixa acima da reserva, o candidato recebe um bloqueio financeiro explícito. A comparação é um limite superior de disponibilidade antes dos compromissos; saldo de pontos, compromissos, preço final da aeronave, taxas, retorno e investimento total seguem pendentes de evidência.
+- O painel PT/EN apresenta preço, pontos e caixa acima da reserva antes de compromissos, com valores desconhecidos distintos de zero. Mudanças no saldo ou nos custos invalidam o cursor de pesquisa, sem alterar o contrato da fila própria. Nenhuma combinação da fila externa autoriza aquisição.
+- Regressões cobrem valores zero, inválidos, vencidos ou conflitantes, atualização independente, mudança de saldo, paginação, exclusão de hubs adquiridos e integração HTTP autenticada. Ainda é necessária a homologação das observações financeiras reais e a composição auditada dos demais custos, demanda residual, cobertura e retorno. Nenhuma compra foi executada.
+- Suíte Windows: 1.673 testes aprovados e 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Ruff, compilação Python, sintaxe JavaScript e `git diff --check` aprovados.
+
 ## 2026-11-23 — Autonomia Total A2/A6/A7, combinações e detalhes de rotas externas (G0)
 
 - A coleta incremental de hubs externos passou a pesquisar um detalhe independente de rota por ciclo de planejamento, com pistas dos dois aeroportos e contagem observada quando disponível. O registro, a rotação e a validade são separados dos hubs próprios. Hubs adquiridos deixam de alimentar a pesquisa externa.

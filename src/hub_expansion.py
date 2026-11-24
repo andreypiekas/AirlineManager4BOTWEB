@@ -990,11 +990,22 @@ class HubExpansionRegistry:
             saved = self._load()
         if saved.get("source") != "game_purchase_catalog":
             return []
-        return sorted(({"id": row["id"], "code": row.get("code"),
-                        "observed_at": row["observed_at"]}
-                       for row in _stored_candidates(saved.get("candidates"))
-                       if row["id"] not in owned and _fresh(row.get("observed_at"), now)),
-                      key=lambda row: int(row["id"]))
+        candidates = []
+        for row in _stored_candidates(saved.get("candidates")):
+            if row["id"] in owned or not _fresh(row.get("observed_at"), now):
+                continue
+            candidate = {"id": row["id"], "code": row.get("code"),
+                         "observed_at": row["observed_at"]}
+            # Each cost has its own observation clock. A fresh identity or a
+            # price-only refresh must not renew the other cost component.
+            for field in ("hub_price", "hub_points"):
+                stamp = row.get(f"{field}_observed_at")
+                if (row.get(f"{field}_conflict_at") is None
+                        and row.get(field) is not None and _fresh(stamp, now)):
+                    candidate[field] = row[field]
+                    candidate[f"{field}_observed_at"] = stamp
+            candidates.append(candidate)
+        return sorted(candidates, key=lambda row: int(row["id"]))
 
     def external_research_origins(self, owned_ids: set[str], *,
                                   now: Optional[float] = None) -> list[str]:
