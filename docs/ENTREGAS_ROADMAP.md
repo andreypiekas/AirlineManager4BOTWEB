@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A9, replanejamento no ciclo operacional (G0)
+
+- Com o planejamento habilitado, o próprio worker recalcula a decisão A4 após consolidar cada snapshot produtivo, independentemente de consultas ao painel ou do envio de notificações. A execução é somente leitura, registra status e horários em arquivo privado por perfil e invalida a decisão anterior durante uma nova execução, após falha, expiração ou mudança de snapshot.
+- A API autenticada e o painel PT/EN exibem a última execução válida. O resultado registrado é histórico e não autoriza compras. A simulação não publica esse registro nem consulta o planejador produtivo. As falhas registram somente o tipo da exceção, sem divulgar detalhes da conta.
+- Validação: 60 testes direcionados aprovados, incluindo replanejamento real A4 com registro vazio, invalidação, falhas, isolamento e API. Suíte Windows: 2.062 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Rollback por reversão deste commit na branch de trabalho. Replanejamento depende do ciclo periódico existente; gatilhos independentes, alimentação produtiva A3, demanda residual, custos finais, calibração de voos e homologação autenticada A0–A9 seguem pendentes. Nenhuma compra real executada.
+
 ## 2026-11-24 — Autonomia Total A9, observabilidade das decisões A3/A4 (G0)
 
 - A API de métricas, o painel PT/EN e o resumo diário do Telegram passam a distinguir pesquisa preliminar de cenários registrados no A3 e candidatos do planejador A4. Os seis escopos de coleta são independentes; as contagens auditadas dependem de captura atual (até 900 segundos), perfil e snapshot correspondentes. Registro vazio informa zero cenários registrados, sem comprovar ausência de oportunidades. Evidência vencida ou divergente mantém contagens desconhecidas.

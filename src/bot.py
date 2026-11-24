@@ -698,7 +698,7 @@ class Bot:
         if opt("auto_checklist"):
             self._guard(lambda: check_checklist(self), "verificar a lista de tarefas")
         if self.config.get_bool("investment", "planning_enabled"):
-            from audited_game_snapshot import capture_game_snapshot
+            from planning_cycle import capture_and_plan
             from finance_observations import collect_finance_observations
             from staff_observations import collect_staff_observations
 
@@ -707,7 +707,7 @@ class Bot:
             self._guard(lambda: collect_staff_observations(self),
                         "conferir quadro de pessoal e salários diários")
             self._guard(self._read_header, "atualizar saldo para o planejamento")
-            self._guard(lambda: capture_game_snapshot(self), "consolidar snapshot de evidências A3")
+            self._guard(lambda: capture_and_plan(self), "consolidar evidências e replanejar expansão")
         if (self.config.get_bool("investment", "planning_enabled")
                 and opt("telegram_expansion")):
             from expansion_alerts import publish_expansion_alert

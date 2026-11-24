@@ -1170,6 +1170,12 @@ const EN = {
   "Decisão auditada A3/A4": "Audited A3/A4 decision",
   "Sem decisão auditada atual": "No current audited decision",
   "Impedimentos auditados": "Audited blockers",
+  "Última execução automática do planejamento": "Last automatic planning run",
+  "Planejamento concluído": "Planning completed",
+  "Planejamento inconclusivo": "Planning inconclusive",
+  "Planejamento em execução": "Planning in progress",
+  "Falha no planejamento": "Planning failed",
+  "Sem execução atual do planejamento": "No current planning run",
   "Precisão financeira": "Forecast accuracy",
   "Aguardando razão financeira e histórico de voos": "Awaiting accounting ledger and flight history",
   "Resumo financeiro da companhia (últimas 24 horas)": "Company financial summary (last 24 hours)",
@@ -3635,7 +3641,13 @@ async function loadInvestmentMetrics() {
     if (report.environment !== "simulation") {
       const audited = report.audited_opportunities;
       const scopes = audited?.scopes;
+      const worker = report.worker_planning;
+      const workerStatus = {concluido: "Planejamento concluído", inconclusivo: "Planejamento inconclusivo",
+        em_execucao: "Planejamento em execução", falhou: "Falha no planejamento"}[worker?.status];
       rows.push(
+        [tr("Última execução automática do planejamento"), workerStatus
+          ? tr(workerStatus) + " · " + hubDate(worker.finished_at ?? worker.started_at)
+          : tr("Sem execução atual do planejamento")],
         [tr("Escopos auditados atuais"), scopes == null ? null :
           nf.format(Object.values(scopes).filter(value => value === true).length) + " / " + nf.format(Object.keys(scopes).length)],
         [tr("Cenários registrados A3"), audited?.evaluated_count],

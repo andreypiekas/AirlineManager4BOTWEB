@@ -16,12 +16,12 @@ from finance_observations import MAX_AGE as FINANCE_MAX_AGE, SOURCE as FINANCE_S
 from opportunity_models import DEFAULT_MAX_AGE_SECONDS
 
 
-def _audited_metrics(report: Mapping | None, journal: InvestmentJournal, now: float) -> dict:
+def _audited_metrics(report: Mapping | None, *, profile_id: str, simulation: bool, now: float) -> dict:
     """Keep actual A3/A4 decisions distinct from preliminary portfolio counts."""
     result = {"status": "sem_fonte", "scopes": None, "evaluated_count": None,
               "eligible_count": None, "decision": None, "blocking_reasons": []}
-    if (journal.simulation or not isinstance(report, Mapping)
-            or report.get("profile_id") != journal.profile_id or report.get("read_only") is not True):
+    if (simulation or not isinstance(report, Mapping)
+            or report.get("profile_id") != profile_id or report.get("read_only") is not True):
         return result
     capture = report.get("game_observation_snapshot")
     if not isinstance(capture, Mapping):
@@ -193,7 +193,8 @@ def build_expansion_metrics(
         "journal": audit,
         "research_coverage": coverage,
         "opportunities": opportunities,
-        "audited_opportunities": _audited_metrics(audited_report, journal, current),
+        "audited_opportunities": _audited_metrics(audited_report, profile_id=journal.profile_id,
+                                                 simulation=journal.simulation, now=current),
         "portfolio_blocking_reasons": portfolio_blockers,
         "forecast": forecast,
         "company_finance_24h": company_finance,

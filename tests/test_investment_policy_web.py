@@ -199,6 +199,14 @@ def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_p
                 "purchase_plan_blockers": ["nenhum_plano_elegivel"]}
 
     monkeypatch.setattr(WebDashboard, "audited_expansion", audited)
+    worker_calls = []
+
+    def worker_summary():
+        worker_calls.append(True)
+        return {"status": "concluido", "historical_only": True, "read_only": True,
+                "decision": "nao_comprar"}
+
+    monkeypatch.setattr(web_module, "planning_cycle_summary", worker_summary)
     with served(tmp_path) as (port, _config):
         denied, _ = request(port, "GET", "/api/investment/metrics")
         assert denied == 403
@@ -215,6 +223,12 @@ def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_p
         assert len(calls) == (0 if simulation else 1)
         assert report["audited_opportunities"]["evaluated_count"] == (None if simulation else 1)
         assert report["audited_opportunities"]["decision"] == (None if simulation else "nao_comprar")
+        assert len(worker_calls) == (0 if simulation else 1)
+        if simulation:
+            assert "worker_planning" not in report
+        else:
+            assert report["worker_planning"]["historical_only"] is True
+            assert report["worker_planning"]["decision"] == "nao_comprar"
 
 
 def test_policy_update_survives_reload_without_activating_legacy_or_execution(tmp_path):

@@ -63,6 +63,7 @@ from portfolio_planner import compare_audited_portfolio
 from expansion_economics import rank_expansion_economics
 from audited_economics_registry import AuditedEconomicsRegistry
 from audited_game_snapshot import replay_research_page, snapshot_summary
+from planning_cycle import planning_cycle_summary
 from expansion_feasibility import assess_expansion
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
@@ -417,9 +418,12 @@ class WebDashboard:
                 audited = self.audited_expansion() if not journal.simulation else None
             except (OSError, sqlite3.Error, ValueError, KeyError, TypeError, AttributeError):
                 audited = None
-            return HTTPStatus.OK, build_expansion_metrics(
+            metrics = build_expansion_metrics(
                 journal, opportunity_report=research, audited_report=audited,
             )
+            if not journal.simulation:
+                metrics["worker_planning"] = planning_cycle_summary()
+            return HTTPStatus.OK, metrics
         except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
             return HTTPStatus.SERVICE_UNAVAILABLE, {
                 "read_only": True,
