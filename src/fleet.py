@@ -44,6 +44,7 @@ from route_registry import HOME_HUB_EVIDENCE, RouteRegistry, reroute_block_reaso
 from reroute import (aircraft_details_missing, confirm_direct_route, confirm_stopover, has_pending_reroute,
                      landed_departure, read_direct_form, recover_pending, replace_route)
 from reroute_preflight import check_existing_route
+from route_creation import has_pending_creation, stage_creation, finish_creation, recover_pending_creation
 from route_stopover import Stopover, find_stopover, parked_specs, read_form, research_details
 
 if TYPE_CHECKING:
@@ -777,7 +778,8 @@ def manage_fleet(bot: "Bot") -> None:
     planning_enabled = cfg.get_bool("investment", "planning_enabled", False)
     if planning_enabled:
         registry.invalidate_fleet_coverage()
-    reroute_ready = recover_pending(bot, registry)
+    creation_ready = recover_pending_creation(bot, registry)
+    reroute_ready = recover_pending(bot, registry) and creation_ready
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
     measure_load(bot)
     counters = bot.js(_GAME_FLEET_COUNTS_JS)
@@ -834,14 +836,14 @@ def manage_fleet(bot: "Bot") -> None:
             reconcile_missing_duplicate_aircraft(bot, registry)
         repaired = resolve_duplicate_routes(bot, registry, budget, reroute_ready=reroute_ready)
         budget -= repaired
-    if not has_pending_reroute() and cfg.get_bool("options", "auto_route") and parked > 0 and budget > 0:
+    if creation_ready and not has_pending_reroute() and cfg.get_bool("options", "auto_route") and parked > 0 and budget > 0:
         # Duplicate-route research and preflight navigate away from the routes
         # list. Restore it before read_parked needs its routesContainer element.
         bot.open_popup("routes_main.php", "Routes", "nav_routes")
         created = create_routes(bot, budget)
         budget -= created
         parked -= created
-    if cfg.get_bool("options", "autobuy_aircraft") and budget > 0:
+    if reroute_ready and not has_pending_creation() and not has_pending_reroute() and cfg.get_bool("options", "autobuy_aircraft") and budget > 0:
         pending_duplicates = (not cfg.get_bool("options", "allow_duplicate_routes", False)
                               and registry.snapshot(allow_duplicates=False)["duplicate_routes"] > 0)
         if pending_duplicates:
@@ -1475,6 +1477,8 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
                  profit_per_day: Optional[float] = None, stopover: Optional[Stopover] = None,
                  stopover_economics: Optional[dict] = None, allow_duplicates: bool = True) -> str:
     """Return the outcome, including 'none' when a stopover candidate is rejected before submission."""
+    if has_pending_creation():
+        return "stop"
     bot.js("if (typeof hideFlightInfo === 'function') { hideFlightInfo(); } arrId = arguments[0];", int(candidate.arr_id))
     url = f"new_route_info.php?id={aircraft.id}&airportId={candidate.arr_id}"
     if stopover:
@@ -1558,8 +1562,18 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         log.warning("%s: formulário ou saldo da rota mudou antes da criação.", aircraft.reg)
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
-    RouteRegistry().invalidate_fleet_coverage()
-    bot.click_element(panel.find_element(By.XPATH, ".//*[@id='btnCreateNewRoute']"))
+    button = panel.find_element(By.XPATH, ".//*[@id='btnCreateNewRoute']")
+    origin["name"] = bot.js(
+        "var e=document.getElementById('hubSelect');"
+        "return e && e.selectedIndex>=0 ? e.options[e.selectedIndex].text : '';"
+    ) or ""
+    registry = RouteRegistry()
+    registry.invalidate_fleet_coverage()
+    job = stage_creation(aircraft, origin, destination, stop, fee, profit_per_day, reroute=reroute)
+    if job is None:
+        bot.js("$('#newRouteInfo').hide();")
+        return "stop"
+    bot.click_element(button)
     response = bot.wait_text("//*[@id='routeNewAction']", timeout=15)
     if stop:
         confirmed = confirm_stopover(bot, aircraft.id, origin, destination, stop)
@@ -1570,20 +1584,9 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
                     aircraft.reg, name)
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
-    bot.spent(fee, invest=True)
-    bot.count("routes")
-    if origin_id:
-        origin["name"] = bot.js(
-            "var e=document.getElementById('hubSelect');"
-            "return e && e.selectedIndex>=0 ? e.options[e.selectedIndex].text : '';"
-        ) or ""
-        RouteRegistry().record(
-            aircraft.id, aircraft.reg, aircraft.model, origin, destination,
-            source="redirecionamento" if reroute else "criacao_confirmada",
-            profit_per_day=profit_per_day,
-            at_base=True,
-            stopover=stop,
-        )
+    if not finish_creation(bot, registry, job, at_base=True):
+        bot.js("$('#newRouteInfo').hide();")
+        return "stop"
     log.info("%s: %s. %s", "Rota alterada" if reroute else "Rota criada", summary, clean_response(response))
     bot.notify(f"🛫 <b>Rota criada</b>: {esc(summary)}.\n{esc(clean_response(response, 200))}".rstrip(), category="routes")
     bot.js("$('#newRouteInfo').hide();")
@@ -1622,6 +1625,9 @@ def payback_days(model: AircraftModel) -> float:
 
 
 def buy_aircraft(bot: "Bot") -> None:
+    if has_pending_creation():
+        log_market.warning("Compra adiada: criação de rota pendente de conciliação.")
+        return
     cfg = bot.config
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
     bot.ajax("ac_orders.php?first=true", "routeAction")

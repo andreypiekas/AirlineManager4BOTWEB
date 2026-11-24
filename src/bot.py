@@ -338,6 +338,24 @@ class Bot:
         except WebDriverException:
             return None
 
+    def record_route_expense(self, intent_id: str, fee: int) -> None:
+        """Persist the route fee and counter together, once per outstanding intent."""
+        if self._state.get("last_route_creation_intent") != intent_id:
+            counters = dict(self._state.get("counters", {}))
+            counters["routes"] = int(counters.get("routes", 0)) + 1
+            state = {**self._state, "counters": counters, "last_route_creation_intent": intent_id,
+                     "spent_total": int(self._state.get("spent_total", 0)) + fee,
+                     "invested": int(self._state.get("invested", 0)) + fee}
+            write_atomic(state_file(), json.dumps(state, indent=1))
+            self._state = state
+        # A restart may already have observed the debited balance. Refresh it
+        # instead of subtracting the quoted fee from a possibly newer balance.
+        balance = self.read_money()
+        if balance is None:
+            with self._stats_lock:
+                self._stats.money = None
+        self.update_stats(money=balance, money_read_at=time.time() if balance is not None else None)
+
     def confirm_purchase(self, before: Optional[int], cost: Optional[int], what: str, container: Optional[str] = None,
                          check: Optional[Callable[[], bool]] = None, timeout: float = 8) -> bool:
         """After a buy click: did the game really take it? Counters, totals and notifications only follow a

@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A5, conciliação persistente de criação de rotas (G0)
+
+- A criação de rota direta ou com escala reserva uma intenção exclusiva por perfil antes do clique. Uma resposta perdida, falha do navegador ou reinício conserva a intenção; a recuperação consulta os detalhes da aeronave sem reenviar a criação. Somente a confirmação independente da rota esperada permite registrar a relação e contabilizar a taxa cotada. O registro persistente de despesas e contadores utiliza a identidade da intenção para impedir contabilização repetida após reinício e atualiza o caixa por nova leitura.
+- Intenção inconclusiva ou arquivo ilegível bloqueia novas criações e compras de aeronaves. A conciliação mantém a pendência até confirmação positiva. A recuperação também preserva o registro diante de falha de escrita; a confirmação persistida permite repetir apenas a contabilização, se necessário.
+- Validação Windows: 1.931 testes aprovados, nenhum reprovado e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX); 81 testes direcionados aprovados. Ruff e `git diff --check` aprovados.
+- Permanecem pendentes a identificação nativa de recusa definitiva, a comprovação do débito exato em extrato e a homologação autenticada das rotas estacionadas e com escala. A taxa registrada é a cotação, não um débito conciliado em extrato. Nenhuma transação real no jogo foi executada. O objetivo integral permanece ativo.
+
 ## 2026-11-24 — Autonomia Total A3/A5, confirmação independente e validade do saldo (G0)
 
 - A leitura do saldo exige um valor monetário inteiro completo e não negativo. Gastos com valores inválidos são recusados. A atualização estimada do caixa após despesa e uma tentativa de sincronização sem leitura válida revogam a data de confirmação do saldo em memória.

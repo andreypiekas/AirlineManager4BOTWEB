@@ -4,6 +4,7 @@ import pytest
 
 import fleet
 import reroute
+import route_creation
 import route_stopover
 from fleet import ParkedAircraft, RouteCandidate
 from gamemode import EASY
@@ -124,6 +125,7 @@ def test_confirm_route_requires_readback_of_stopover(monkeypatch, via):
 @pytest.mark.parametrize("confirmed", [True, False])
 def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, monkeypatch, confirmed):
     registry = RouteRegistry(tmp_path / "routes.json")
+    monkeypatch.setattr(route_creation, "pending_path", lambda: tmp_path / "route_creation_pending.json")
     monkeypatch.setattr(fleet, "RouteRegistry", lambda: registry)
     monkeypatch.setattr(fleet, "read_form", lambda *_: (18052, (900, 400, 150), 1058871, 0))
     monkeypatch.setattr(fleet, "confirm_stopover", lambda *_: confirmed)
@@ -157,11 +159,9 @@ def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, mo
         def wait_text(self, xpath, timeout):
             return ""
 
-        def spent(self, fee, *, invest):
-            actions.append((fee, invest))
-
-        def count(self, name):
-            assert name == "routes"
+        def record_route_expense(self, intent_id, fee):
+            assert len(intent_id) == 32
+            actions.append((fee, True))
 
         def notify(self, message, *, category):
             assert "via ANC" in message
@@ -176,5 +176,6 @@ def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, mo
     assert result == ("created" if confirmed else "stop")
     assert sum("btnCreateNewRoute" in action for action in actions if isinstance(action, str)) == 1
     assert ((1058871, True) in actions) is confirmed
+    assert route_creation.has_pending_creation() is not confirmed
     records = registry.snapshot()["relations"]
     assert (records[0]["stopover"]["code"] if records else None) == ("ANC" if confirmed else None)
