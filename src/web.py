@@ -61,7 +61,7 @@ from portfolio_planner import compare_portfolio
 from portfolio_planner import compare_audited_portfolio
 from expansion_economics import rank_expansion_economics
 from audited_economics_registry import AuditedEconomicsRegistry
-from audited_game_snapshot import snapshot_summary
+from audited_game_snapshot import replay_research_page, snapshot_summary
 from expansion_feasibility import assess_expansion
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
@@ -767,6 +767,14 @@ class WebDashboard:
                     return self._json(report, status)
                 if url.path == "/api/investment/audited-expansion":
                     return self._json(dashboard.audited_expansion())
+                if url.path == "/api/investment/audited-expansion/research":
+                    params = parse_qs(url.query)
+                    raw_offset = params.get("research_offset", ["0"])[0]
+                    offset = int(raw_offset) if raw_offset.isdecimal() and len(raw_offset) <= 9 else 0
+                    return self._json(replay_research_page(
+                        offset=offset, expected_snapshot=params.get("snapshot_id", [None])[0],
+                        expected_fingerprint=params.get("research_snapshot", [None])[0],
+                    ))
                 if url.path == "/api/routes":
                     return self._json(dashboard.routes())
                 if url.path == "/api/hubs":

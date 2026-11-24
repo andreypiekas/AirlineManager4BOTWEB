@@ -3,7 +3,9 @@ import time
 from types import SimpleNamespace
 
 import paths
-from audited_game_snapshot import FILENAME, capture_game_snapshot, compose_snapshot, snapshot_summary
+from audited_game_snapshot import (
+    FILENAME, capture_game_snapshot, compose_snapshot, replay_research_page, snapshot_summary,
+)
 from opportunity_models import fingerprint_snapshot
 
 
@@ -90,3 +92,50 @@ def test_summary_preserves_source_age_and_is_profile_bound(tmp_path, monkeypatch
     snapshot["coverage"]["scopes"]["prices"] = True
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     assert snapshot_summary(now=NOW, path=path)["status"] == "registro_invalido"
+
+
+def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, monkeypatch):
+    from test_owned_hub_research_feed import _fleet_report, _inventory, _market, _preview_engines, _sample
+
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    evidence = observations()
+    evidence.update(inventory={**_inventory(), "hub_catalog_fresh": True}, routes=_fleet_report(),
+                    market=_market(), engines=_preview_engines(),
+                    mode="realista", mode_at=NOW - 10, preview_margin=0.15,
+                    quotes={kind: {"source": "game_market", "unit": "USD/1000",
+                                   "price": price, "observed_at": NOW - 5, "expires_at": NOW + 60}
+                            for kind, price in (("fuel", 600), ("co2", 100))})
+    evidence["demand"]["samples"] = [_sample(dest=str(i)) for i in range(3139, 3160)]
+    snapshot = compose_snapshot(**evidence)
+    path = tmp_path / FILENAME
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    first = replay_research_page(now=NOW, path=path)
+    assert first["status"] == "parcial" and first["historical_replay"] is True
+    assert first["snapshot_id"] == snapshot["snapshot_id"]
+    assert first["has_more"] and first["next_offset"] == 40
+    previews = [item["economics_preview"] for item in first["items"] if item["economics_preview"]]
+    assert previews and all(p["safety_margin_fraction"] == 0.15 for p in previews)
+    occupied = [item for item in first["items"] if item["destination_id"] == "3139"]
+    assert occupied and all(item["fleet_occupancy"]["own_aircraft_count"] == 1
+                            and item["economics_preview"] is None for item in occupied)
+    assert all(item["purchase_eligible"] is False for item in first["items"])
+    assert replay_research_page(now=NOW + 100, path=path) == first
+    assert replay_research_page(offset=40, expected_snapshot="other", now=NOW, path=path)["status"] == "snapshot_alterado"
+    second = replay_research_page(offset=40, expected_snapshot=snapshot["snapshot_id"],
+                                  expected_fingerprint=first["snapshot_fingerprint"], now=NOW, path=path)
+    assert second["offset"] == 40 and second["snapshot_fingerprint"] == first["snapshot_fingerprint"]
+    assert second["items"] and not second["cursor_reset"]
+    assert replay_research_page(now=NOW + 901, path=path)["status"] == "expirado"
+
+
+def test_replay_rejects_legacy_or_modified_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    snapshot = compose_snapshot(**observations())
+    path = tmp_path / FILENAME
+    snapshot["observations"].pop("research_inputs")
+    snapshot["snapshot_id"] = fingerprint_snapshot(snapshot)
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    assert replay_research_page(now=NOW, path=path)["status"] == "recoleta_necessaria"
+    snapshot["observations"]["captured_at"] += 1
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    assert replay_research_page(now=NOW, path=path)["status"] == "registro_invalido"

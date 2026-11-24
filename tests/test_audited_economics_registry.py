@@ -163,6 +163,24 @@ def test_authenticated_a3_api_exposes_only_read_only_analysis(tmp_path, monkeypa
         assert result["execution_available"] is False
 
 
+def test_authenticated_snapshot_research_api_passes_pagination(tmp_path, monkeypatch):
+    calls = []
+
+    def replay(**kwargs):
+        calls.append(kwargs)
+        return {"items": [], "read_only": True, "purchase_eligible": False}
+
+    monkeypatch.setattr("web.replay_research_page", replay)
+    endpoint = "/api/investment/audited-expansion/research"
+    with served(tmp_path) as (port, _config):
+        assert request(port, "GET", endpoint)[0] == 403
+        assert not calls
+        status, result = request(port, "GET", endpoint +
+                                 "?research_offset=40&snapshot_id=abc&research_snapshot=def", headers=auth())
+        assert status == 200 and result["read_only"] and not result["purchase_eligible"]
+        assert calls == [{"offset": 40, "expected_snapshot": "abc", "expected_fingerprint": "def"}]
+
+
 def test_web_dashboard_fails_closed_for_invalid_a3_storage(registry, monkeypatch):
     registry.path.write_text("{invalid json", encoding="utf-8")
     monkeypatch.setattr("web.AuditedEconomicsRegistry", lambda: registry)

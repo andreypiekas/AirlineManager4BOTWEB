@@ -27,7 +27,8 @@ def _game_id(value):
 
 
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
-                     quotes, cash, cash_at, now):
+                     quotes, cash, cash_at, now, mode=None, mode_at=None,
+                     preview_margin=0.10):
     """Translate independently collected observations without upgrading their provenance."""
     hub_at = inventory.get("observed_at")
     raw_hubs = inventory.get("hubs", [])
@@ -106,6 +107,15 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                     "aircraft_market": market,
                     "engine_coverage": engine_coverage,
                     "market_quotes": quotes,
+                    "research_inputs": {
+                        "mode": mode, "mode_observed_at": mode_at,
+                        "preview_margin": preview_margin,
+                        "route_report": {key: routes.get(key) for key in (
+                            "current_roster_verified", "current_roster_observed_at",
+                            "current_roster_total", "current_fleet_coverage_verified",
+                            "fleet_coverage", "current_relations",
+                        )},
+                    },
                     "fleet_commitments": inventory.get("fleet_commitment_observations"),
                     "finance_history": inventory.get("finance_observations"),
                     "cash": {"available": cash if cash_verified else None,
@@ -125,6 +135,8 @@ def capture_game_snapshot(bot):
     from hub_registry import HubRegistry
     from market import recent_market_quotes
     from route_registry import RouteRegistry
+    from research_economics_preview import research_mode
+    from gamemode import EASY, REALISM
 
     profile = paths.current()
     routes = RouteRegistry().snapshot()
@@ -133,14 +145,76 @@ def capture_game_snapshot(bot):
     demand = HubExpansionRegistry().demand_research_snapshot(
         {row["id"] for row in inventory["hubs"]}, now=now)
     cash, cash_at = recent_verified_money(bot, now=now)
+    stats = bot.stats()
+    mode_key = research_mode(stats, now)
+    mode = next((item.label for item in (EASY, REALISM) if item.key == mode_key), None)
+    config = getattr(bot, "config", None)
+    margin = (max(0, min(100, config.get_int("investment", "preview_margin_pct", 10))) / 100
+              if config else 0.10)
     snapshot = compose_snapshot(profile_id=profile.label, routes=routes, inventory=inventory,
                                 demand=demand, engines=EngineCatalogRegistry().snapshot(now=now),
                                 market=load_market_evidence(now=now),
-                                quotes=recent_market_quotes(bot.stats(), now), cash=cash,
-                                cash_at=cash_at, now=now)
+                                quotes=recent_market_quotes(stats, now), cash=cash,
+                                cash_at=cash_at, now=now, mode=mode,
+                                mode_at=stats.mode_read_at if mode else None, preview_margin=margin)
     paths.write_atomic(profile.data / FILENAME, json.dumps(snapshot, ensure_ascii=False, allow_nan=False),
                        private=True)
     return snapshot
+
+
+def _load_snapshot(path):
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    if (snapshot["profile_id"] != paths.current().label or snapshot["schema_version"] != 1
+            or fingerprint_snapshot(snapshot) != snapshot["snapshot_id"]):
+        raise ValueError("invalid snapshot")
+    return snapshot
+
+
+def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerprint=None, now=None, path=None):
+    """Replay a bounded page using only the captured inputs and capture clock."""
+    from types import SimpleNamespace
+
+    from market import MarketQuote
+    from owned_hub_research_feed import build_owned_hub_research_queue
+
+    now = time.time() if now is None else now
+    path = path if path is not None else paths.current().data / FILENAME
+    unavailable = {"snapshot_id": None, "items": [], "read_only": True,
+                   "purchase_eligible": False, "coverage": "partial"}
+    try:
+        snapshot = _load_snapshot(path)
+        observed = snapshot["observations"]
+        captured = observed["captured_at"]
+        unavailable["snapshot_id"] = snapshot["snapshot_id"]
+        if not _fresh(captured, now):
+            return {**unavailable, "status": "expirado"}
+        if "research_inputs" not in observed:
+            return {**unavailable, "status": "recoleta_necessaria"}
+        if (offset or expected_snapshot is not None) and expected_snapshot != snapshot["snapshot_id"]:
+            return {**unavailable, "status": "snapshot_alterado"}
+        inputs = observed["research_inputs"]
+        stats = SimpleNamespace(mode=inputs["mode"], mode_read_at=inputs["mode_observed_at"])
+        for kind in ("fuel", "co2"):
+            quote = observed["market_quotes"].get(kind)
+            if quote is not None and quote.get("source") == "game_market" and quote.get("unit") == "USD/1000":
+                setattr(stats, f"{kind}_quote", MarketQuote(quote["price"], quote["observed_at"], quote["expires_at"]))
+        hubs = snapshot["hubs"]
+        inventory = {"source": "game_hub_select", "hubs": hubs,
+                     "observed_at": min((hub["observed_at"] for hub in hubs), default=None),
+                     "fleet_commitment_observations": observed["fleet_commitments"]}
+        demand = observed["route_research"]
+        result = build_owned_hub_research_queue(
+            inventory, demand["samples"], observed["aircraft_market"], now=captured,
+            engines=observed["engine_catalog"], hub_progress=demand.get("hub_progress"),
+            operating_market_stats=stats, preview_margin=inputs["preview_margin"],
+            route_report=inputs["route_report"], offset=offset, expected_fingerprint=expected_fingerprint,
+        )
+        return {**result, "status": "parcial", "snapshot_id": snapshot["snapshot_id"],
+                "captured_at": captured, "historical_replay": True}
+    except FileNotFoundError:
+        return {**unavailable, "status": "sem_coleta"}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        return {**unavailable, "status": "registro_invalido"}
 
 
 def snapshot_summary(*, now=None, path: Path | None = None):
@@ -148,10 +222,7 @@ def snapshot_summary(*, now=None, path: Path | None = None):
     now = time.time() if now is None else now
     path = path if path is not None else paths.current().data / FILENAME
     try:
-        snapshot = json.loads(path.read_text(encoding="utf-8"))
-        if (snapshot["profile_id"] != paths.current().label or snapshot["schema_version"] != 1
-                or fingerprint_snapshot(snapshot) != snapshot["snapshot_id"]):
-            raise ValueError("invalid snapshot")
+        snapshot = _load_snapshot(path)
         coverage = snapshot["coverage"]
         observations = snapshot["observations"]
         if not _fresh(observations["captured_at"], now):

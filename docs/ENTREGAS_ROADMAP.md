@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, reprodução paginada das alternativas por snapshot (G0)
+
+- A captura automática agora preserva o modo de jogo observado, a margem configurada e as evidências de ocupação da frota usadas na avaliação. O replay reutiliza o mesmo otimizador de pesquisa com o relógio da captura, incluindo as cotações de combustível e CO₂, para gerar combinações hub/rota/modelo/motor e layouts em condições reproduzíveis.
+- Endpoint GET autenticado `/api/investment/audited-expansion/research`, somente leitura. Primeira consulta sem parâmetros; páginas seguintes usam `research_offset` (next_offset), `snapshot_id` e `research_snapshot` (snapshot_fingerprint). Mudanças de snapshot impedem combinar páginas de capturas diferentes; capturas anteriores sem os novos insumos exigem recoleta. As projeções são históricas, expiram conforme as evidências e não autorizam compras.
+- Validação Windows: 165 testes direcionados aprovados, incluindo reprodução após mudança do relógio, margem, rota ocupada, paginação, adulteração, expiração e autenticação do endpoint. Ruff e `git diff --check` aprovados.
+- Pendentes: integração visual do replay, cobertura conclusiva da demanda residual, preços finais, custos e geração de casos A3 auditados elegíveis, seguida da homologação A4–A9. Nenhuma transação real executada. O objetivo integral permanece ativo.
+
 ## 2026-11-24 — Autonomia Total A3/A4/A7, captura automática de evidências do jogo (G0)
 
 - Com o planejamento habilitado, o ciclo atualiza o saldo após as operações e consolida um snapshot local por perfil com hash canônico. Preserva as datas originais do seletor de hubs, auditoria da frota, amostras de demanda e detalhes de rotas, catálogo de motores, mercado, compromissos e histórico financeiro. O arquivo é gravado atomicamente com permissão privada quando suportada.
