@@ -1,6 +1,7 @@
 """Fleet management restores the routes screen after duplicate research."""
 
 import fleet
+import fleet_commitment_observations
 import pytest
 import route_registry
 from route_registry import RouteRegistry
@@ -70,12 +71,17 @@ def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
         config = Config()
         stopping = False
         roster_reads = 0
+        events = []
+        screen = None
 
         def open_popup(self, *args):
-            pass
+            self.screen = args[0]
 
         def close_popup(self):
-            pass
+            self.screen = None
+
+        def _guard(self, action, what):
+            action()
 
         def update_stats(self, **kwargs):
             pass
@@ -84,6 +90,8 @@ def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
             if script == fleet._GAME_FLEET_COUNTS_JS:
                 return {"routes": 1, "parked": 1, "pending": 0}
             if script == fleet._GAME_ROSTER_JS:
+                assert self.screen == "routes_main.php"
+                self.events.append("roster")
                 self.roster_reads += 1
                 route_id = 999 if changed and self.roster_reads == 2 else 801
                 return [{"aircraft_id": "101", "registration": "PP-101", "route_id": route_id},
@@ -99,7 +107,16 @@ def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
     monkeypatch.setattr(fleet, "recover_pending", lambda bot, registry: reroute_ready)
     monkeypatch.setattr(fleet, "has_pending_reroute", lambda: not reroute_ready)
     monkeypatch.setattr(RouteRegistry, "next_flight_read_ids", lambda self, **kwargs: [])
+
+    def collect(bot):
+        assert bot.events == ["roster"]
+        bot.events.append("native_lists")
+        bot.close_popup()
+        return True
+
+    monkeypatch.setattr(fleet_commitment_observations, "collect_fleet_commitment_observations", collect)
     bot = Bot()
     fleet.manage_fleet(bot)
     assert registry.snapshot()["current_fleet_coverage_verified"] is verified
     assert bot.roster_reads == (2 if reroute_ready else 1)
+    assert bot.events == (["roster", "native_lists", "roster"] if reroute_ready else ["roster", "native_lists"])

@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4, conciliação dentro do ciclo de auditoria (G0)
+
+- A coleta nativa de hangar, aeronaves estacionadas e pendentes passou a ocorrer imediatamente após a auditoria paginada e antes da conferência final do inventário, das correções de rota e das compras nessa etapa. A tela de rotas é restaurada antes da leitura final, e a coleta continua restrita à opção de planejamento habilitada.
+- O cache registra o início e o fim da coleta. Para auditorias extensas, permite conciliar observações feitas integralmente entre as duas conferências consistentes do inventário, desde que o início da coleta esteja a até 120 segundos da confirmação final. A validade de 15 minutos continua aplicável às duas fontes; caches antigos conservam o critério temporal anterior. Intervalos inválidos, fontes divergentes ou dados expirados não certificam as contagens.
+- O resultado permanece agregado e não confirma identidades individuais, pedidos de entrega, obrigações financeiras ou vínculo permanente ao hub. A restauração da tela e os tempos reais ainda dependem de homologação autenticada; mutações posteriores de rota ou compra invalidam a cobertura existente. G0 permanece ativo.
+- Validação Windows: 1.839 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX); 99 testes direcionados aprovados, incluindo ordenação das leituras no ciclo, restauração da tela, auditoria longa e intervalos inválidos. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-24 — Autonomia Total A4/A7, conciliação das contagens da frota (G0)
 
 - O inventário cruza as contagens nativas das listas de aeronaves estacionadas e pendentes com as contagens da auditoria integral de rotas e do inventário de aeronaves. Exige evidências atuais (até 15 minutos) e proximidade temporal de até 120 segundos entre a observação nativa, o início do inventário e a conclusão da auditoria. Registra coincidência, divergência, observações em horários distintos, fonte única ou cobertura parcial, sem persistir identificadores adicionais.

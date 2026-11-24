@@ -61,6 +61,7 @@ def test_collector_and_profile_snapshot(tmp_path, monkeypatch):
     assert "12345678" not in path.read_text(encoding="utf-8")
     report = HubRegistry(tmp_path / "hubs.json").snapshot({"relations": []})["fleet_commitment_observations"]
     assert report["status"] == "observed"
+    assert report["observed_at"] <= report["observed_until"] <= time.time()
     assert report["passenger_hangar"]["free"] == 0
     assert report["passenger_hangar"]["upgrade_quotes"] == {"1": {"cost": 190835956, "duration_seconds": 1080}}
     assert report["pending_fleet"] == {"total": 1, "maintenance": 1, "unclassified": 0}
@@ -165,6 +166,22 @@ def test_hub_snapshot_only_reconciles_verified_current_roster(tmp_path):
     assert "12345678" not in json.dumps(snapshot["fleet_route_reconciliation"])
     snapshot = registry.snapshot({**routes, "current_fleet_coverage_verified": False}, now=now)
     assert snapshot["fleet_route_reconciliation"]["status"] == "native_only"
+
+
+def test_long_audit_requires_native_read_bracketed_near_final_roster():
+    now = 10000
+    observations = {"source": SOURCE, "status": "observed", "observed_at": now - 35,
+                    "observed_until": now - 10, "parked_count": 0,
+                    "pending_fleet": {"total": 2, "maintenance": 2, "unclassified": 0}}
+    coverage = {"source": "game_roster_and_route_audit", "observed_at": now - 5,
+                "roster_observed_at": now - 600, "total": 12, "routes": 10, "parked": 0, "pending": 2}
+    assert reconcile_route_coverage(observations, coverage, now=now)["status"] == "matched"
+    for changes in ({"observed_at": now - 150, "observed_until": now - 50},
+                    {"observed_at": now - 4, "observed_until": now - 1},
+                    {"observed_until": now - 2}):
+        assert reconcile_route_coverage({**observations, **changes}, coverage, now=now)["status"] == "not_contemporaneous"
+    for changes in ({"observed_until": True}, {"observed_until": now + 1}, {"observed_until": now - 36}):
+        assert reconcile_route_coverage({**observations, **changes}, coverage, now=now)["status"] == "audit_only"
 
 
 def test_expansion_quote_does_not_certify_capacity_or_final_cost():

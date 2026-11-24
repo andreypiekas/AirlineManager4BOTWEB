@@ -813,6 +813,16 @@ def manage_fleet(bot: "Bot") -> None:
         visited = audit_routes_live_pages(
             bot, registry, pages_per_cycle=cfg.get_int("settings", "fleet_audit_pages_per_cycle", 3),
             attempt_full=planning_enabled)
+        if planning_enabled and not getattr(bot, "stopping", False):
+            from fleet_commitment_observations import collect_fleet_commitment_observations
+
+            # Read the independent lists immediately before the final roster
+            # check, before any route repairs or aircraft purchases in this step.
+            bot._guard(lambda: collect_fleet_commitment_observations(bot),
+                       "conferir hangar e pendências da frota")
+            if getattr(bot, "stopping", False):
+                return
+            bot.open_popup("routes_main.php", "Routes", "nav_routes")
         if (planning_enabled and roster_verified and reroute_ready
                 and not getattr(bot, "stopping", False)):
             after_counts = bot.js(_GAME_FLEET_COUNTS_JS)

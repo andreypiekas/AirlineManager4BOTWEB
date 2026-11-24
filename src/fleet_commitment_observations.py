@@ -159,6 +159,10 @@ def observations_snapshot(path: Path | None = None, *, now: float | None = None)
     stamp = saved.get("observed_at")
     if type(stamp) not in (int, float) or not 0 < stamp <= now or now - stamp > MAX_AGE:
         return result
+    end = saved.get("observed_until")
+    if "observed_until" in saved and (type(end) not in (int, float) or not stamp <= end <= now
+                                     or end - stamp > MAX_WINDOW):
+        return result
     hangar = _hangar(saved.get("passenger_hangar"))
     pending = saved.get("pending_fleet")
     if (not isinstance(pending, dict) or any(not _count(pending.get(key)) for key in ("total", "maintenance", "unclassified"))
@@ -170,6 +174,7 @@ def observations_snapshot(path: Path | None = None, *, now: float | None = None)
         return result
     return {**result, "status": "observed" if all(value is not None for value in (hangar, pending, parked)) else "partial",
             "source": SOURCE, "observed_at": stamp, "passenger_hangar": hangar,
+            **({"observed_until": end} if end is not None else {}),
             "pending_fleet": ({key: pending[key] for key in ("total", "maintenance", "unclassified")} if pending else None),
             "parked_count": parked}
 
@@ -184,8 +189,10 @@ def reconcile_route_coverage(observations: dict, coverage: dict | None, *, now: 
         return type(stamp) in (int, float) and 0 < stamp <= now and now - stamp <= MAX_AGE
 
     stamp = observations.get("observed_at")
+    end = observations.get("observed_until")
     native_current = (observations.get("source") == SOURCE and observations.get("status") in ("observed", "partial")
-                      and current(stamp))
+                      and current(stamp) and ("observed_until" not in observations or
+                          (current(end) and stamp <= end and end - stamp <= MAX_WINDOW)))
     parked = observations.get("parked_count")
     pending = observations.get("pending_fleet")
     if native_current and _count(parked):
@@ -208,7 +215,13 @@ def reconcile_route_coverage(observations: dict, coverage: dict | None, *, now: 
     result.update(audited_parked_count=coverage["parked"], audited_pending_count=coverage["pending"],
                   unrouted_or_pending_count=coverage["total"] - coverage["routes"])
     if result["native_parked_count"] is not None and result["native_pending_count"] is not None:
-        if max(stamp, audited_at) - min(stamp, roster_at) > MAX_WINDOW:
+        # The audit confirms the same roster and counts at both boundaries.
+        # A bounded native read inside that interval can be compared to its
+        # final boundary even when a complete paginated audit takes longer.
+        bracketed = (end is not None and roster_at <= stamp <= end <= audited_at
+                     and audited_at - stamp <= MAX_WINDOW)
+        close = max(end if end is not None else stamp, audited_at) - min(stamp, roster_at) <= MAX_WINDOW
+        if not (bracketed or close):
             result["status"] = "not_contemporaneous"
         else:
             result["status"] = ("matched" if parked == coverage["parked"] and pending["total"] == coverage["pending"]
@@ -250,6 +263,7 @@ def collect_fleet_commitment_observations(bot, *, path=None):
     finished = time.time()
     if getattr(bot, "stopping", False) or not 0 <= finished - started <= MAX_WINDOW:
         return False
-    paths.write_atomic(path, json.dumps({"source": SOURCE, "observed_at": int(started), "passenger_hangar": hangar,
+    paths.write_atomic(path, json.dumps({"source": SOURCE, "observed_at": int(started), "observed_until": int(finished),
+                                        "passenger_hangar": hangar,
                                         "pending_fleet": pending, "parked_count": parked["total"] if parked else None}))
     return all(value is not None for value in (hangar, pending, parked))
