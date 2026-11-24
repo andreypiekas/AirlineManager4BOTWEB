@@ -213,6 +213,7 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
     from types import SimpleNamespace
 
     from market import MarketQuote
+    from native_route_quotes import reference_for_route
     from owned_hub_research_feed import build_owned_hub_research_queue
 
     now = time.time() if now is None else now
@@ -247,6 +248,16 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
             operating_market_stats=stats, preview_margin=inputs["preview_margin"],
             route_report=inputs["route_report"], offset=offset, expected_fingerprint=expected_fingerprint,
         )
+        for item in result["items"]:
+            stop = item.get("stopover_research")
+            reference = reference_for_route(
+                observed.get("native_route_quotes", []), profile_id=snapshot["profile_id"],
+                origin_id=item["hub_id"], destination_id=item["destination_id"],
+                distance_km=stop["first_km"] + stop["second_km"] if stop else item["distance_km"],
+                stopover_id=stop["stop_id"] if stop else None, now=captured,
+            )
+            if reference is not None:
+                item["native_route_quote_reference"] = reference
         return {**result, "status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": captured, "historical_replay": True}
     except FileNotFoundError:

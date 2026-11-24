@@ -1241,6 +1241,10 @@ const evidence = {observed_at:captured-10, expires_at:captured+10};
 const task = {purchase_eligible:false, hub_code:'AAA', destination_id:'42', model:'A320',
   engine_id:'1', engine_label:'Variant <test>', observed_demand:{y:123,j:0,f:12}, distance_km:450,
   fleet_occupancy:{...evidence, own_aircraft_count:1, count_complete:false},
+  native_route_quote_reference:{...evidence, source:'game_native_route_form',
+    scope:'existing_aircraft_only', purchase_eligible:false, quote_count:2,
+    route_fee_range:{min:100,max:200}, fare_ranges:{y:{min:10,max:20},j:{min:30,max:30},f:{min:40,max:50}},
+    aircraft_on_route_range:{min:0,max:1}},
   capital_quote_preview:{...evidence, source:'displayed_capital_quotes_v1', purchase_eligible:false,
     aircraft_price_source:'observed_variant', components:{aircraft:100,hangar:20}, displayed_subtotal:120},
   pending:['pesquisa_pendente']};
@@ -1259,6 +1263,13 @@ async function run() {
   await initial;
   assert.match($('snapshotResearchStatus').textContent, /Simulação histórica.*snap-a.*1–1 \/ 2.*\$900/);
   assert.equal(metrics()['Aeronaves da frota própria na rota'], '1 · Mínimo observado');
+  assert.equal(metrics()['Cotações nativas de aeronaves existentes'], '2 · Referência histórica, sem preço para nova aeronave');
+  assert.equal(metrics()['Taxa de rota observada (intervalo)'], '$100–$200');
+  assert.equal(metrics()['Tarifas observadas Y/J/F (intervalos)'], '$10–$20 / $30 / $40–$50');
+  assert.equal(metrics()['Ocupação observada no formulário (intervalo)'], '0–1');
+  const expiredMetrics = element('div');
+  appendNativeRouteQuoteReference(expiredMetrics, task, captured + 11);
+  assert.equal(expiredMetrics.children.length, 0);
   assert.equal(metrics()['Hangar para uma aeronave (cotação na captura)'], '$20');
   assert.equal(metrics()['Motor pesquisado'], 'Variant <test> (1)');
   assert.equal(metrics()['Demanda observada Y/J/F'], '123 / 0 / 12');

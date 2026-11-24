@@ -3,7 +3,7 @@ import time
 from types import SimpleNamespace
 
 import paths
-from native_route_quotes import record_native_route_quote
+from native_route_quotes import native_route_quotes, record_native_route_quote
 from audited_game_snapshot import (
     FILENAME, capture_game_snapshot, compose_snapshot, replay_research_page, snapshot_summary,
 )
@@ -129,6 +129,17 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
                                    "price": price, "observed_at": NOW - 5, "expires_at": NOW + 60}
                             for kind, price in (("fuel", 600), ("co2", 100))})
     evidence["demand"]["samples"] = [_sample(dest=str(i)) for i in range(3139, 3160)]
+    bot = SimpleNamespace()
+    for aircraft, origin, dest, distance, fee, fares in (
+        ("900001", "2926", "3139", 2000, 1000, (900, 1800, 2700)),
+        ("900002", "2926", "3139", 2000, 1500, (950, 1900, 2800)),
+        ("900003", "3139", "2926", 2000, 9999, (1, 2, 3)),
+        ("900004", "2926", "3140", 1999, 9999, (1, 2, 3)),
+    ):
+        assert record_native_route_quote(bot, aircraft_id=aircraft, origin_id=origin,
+                                         destination_id=dest, distance=distance, fee=fee,
+                                         occupied=1, fares=fares, now=NOW - 10)
+    evidence["native_quotes"] = native_route_quotes(bot, now=NOW)
     snapshot = compose_snapshot(**evidence)
     path = tmp_path / FILENAME
     path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -141,6 +152,17 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
     occupied = [item for item in first["items"] if item["destination_id"] == "3139"]
     assert occupied and all(item["fleet_occupancy"]["own_aircraft_count"] == 1
                             and item["economics_preview"] is None for item in occupied)
+    for item in occupied:
+        ref = item["native_route_quote_reference"]
+        assert ref["quote_count"] == 2
+        assert ref["route_fee_range"] == {"min": 1000, "max": 1500}
+        assert ref["fare_ranges"]["y"] == {"min": 900, "max": 950}
+        assert ref["scope"] == "existing_aircraft_only" and ref["purchase_eligible"] is False
+        assert ref["daily_demand_residual"] is None and ref["expires_at"] == NOW + 890
+        assert item["daily_net_profit"] is None and item["final_aircraft_price"] is None
+    assert all("native_route_quote_reference" not in item for item in first["items"]
+               if item["destination_id"] != "3139")
+    assert not any(aircraft in json.dumps(first) for aircraft in ("900001", "900002", "900003", "900004"))
     assert all(item["purchase_eligible"] is False for item in first["items"])
     assert replay_research_page(now=NOW + 100, path=path) == first
     assert replay_research_page(offset=40, expected_snapshot="other", now=NOW, path=path)["status"] == "snapshot_alterado"

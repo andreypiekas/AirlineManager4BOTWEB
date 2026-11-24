@@ -1371,6 +1371,11 @@ const EN = {
   "Relógio de manutenção a confirmar; aplicada a maior reserva": "Maintenance clock unverified; larger reserve applied",
   "Após reserva adicional A-check (base / stress)": "After additional A-check reserve (base / stress)",
   "Custos excluídos da contribuição original": "Costs excluded from original contribution",
+  "Cotações nativas de aeronaves existentes": "Native quotes for existing aircraft",
+  "Referência histórica, sem preço para nova aeronave": "Historical reference, no price for a new aircraft",
+  "Taxa de rota observada (intervalo)": "Observed route fee (range)",
+  "Tarifas observadas Y/J/F (intervalos)": "Observed Y/J/F fares (ranges)",
+  "Ocupação observada no formulário (intervalo)": "Observed form occupancy (range)",
   "Otimizada para cenário base": "Optimized for base scenario",
   "Otimizada para stress": "Optimized for stress",
   "Detalhe da variante observado": "Observed variant detail",
@@ -2072,6 +2077,24 @@ function appendFleetRouteOccupancy(metrics, task, now = Date.now() / 1000) {
   const qualifier = evidence.count_complete === true ? "Auditoria completa" : "Mínimo observado";
   addHubMetric(metrics, "Aeronaves da frota própria na rota",
     nf.format(evidence.own_aircraft_count) + " · " + tr(qualifier));
+}
+function appendNativeRouteQuoteReference(metrics, task, now) {
+  const ref = task.native_route_quote_reference;
+  if (!ref || ref.source !== "game_native_route_form" || ref.scope !== "existing_aircraft_only" ||
+      ref.purchase_eligible !== false || !Number.isFinite(ref.expires_at) || now > ref.expires_at ||
+      !Number.isSafeInteger(ref.quote_count) || ref.quote_count < 1) { return; }
+  const formatRange = (range, format) => {
+    if (!range || !Number.isSafeInteger(range.min) || !Number.isSafeInteger(range.max) ||
+        range.min < 0 || range.max < range.min) { return tr("Não verificado"); }
+    return range.min === range.max ? format(range.min) : format(range.min) + "–" + format(range.max);
+  };
+  addHubMetric(metrics, "Cotações nativas de aeronaves existentes", nf.format(ref.quote_count) + " · " +
+    tr("Referência histórica, sem preço para nova aeronave"));
+  addHubMetric(metrics, "Taxa de rota observada (intervalo)", formatRange(ref.route_fee_range, hubMoney));
+  addHubMetric(metrics, "Tarifas observadas Y/J/F (intervalos)", ["y", "j", "f"].map(key =>
+    formatRange(ref.fare_ranges?.[key], hubMoney)).join(" / "));
+  addHubMetric(metrics, "Ocupação observada no formulário (intervalo)",
+    formatRange(ref.aircraft_on_route_range, value => nf.format(value)));
 }
 function appendResearchEconomicsPreview(metrics, task, now = Date.now() / 1000) {
   const preview = task.economics_preview;
@@ -3653,6 +3676,7 @@ function renderSnapshotResearch(page) {
       addHubMetric(metrics, "Aeronaves na rota (leitura do jogo)", nf.format(observedCount));
     }
     appendFleetRouteOccupancy(metrics, task, page.captured_at);
+    appendNativeRouteQuoteReference(metrics, task, page.captured_at);
     if (task.event_demand_boosted === true) {
       addHubMetric(metrics, "Evento de demanda", tr("Demanda elevada por evento temporário"));
     }

@@ -40,6 +40,48 @@ def native_route_quotes(bot, *, now=None):
                      if _fresh(row, now, profile_id)])
 
 
+def reference_for_route(rows, *, profile_id, origin_id, destination_id, distance_km,
+                        stopover_id=None, now):
+    """Summarize captured form observations without transferring aircraft-specific prices.
+
+    Use the exact direction, distance and stop identity. Different aircraft can
+    quote different values, so preserve the ranges rather than pick a winner.
+    The caller supplies the capture clock for reproducible historical replay.
+    """
+    matching = []
+    for row in rows:
+        if (not isinstance(row, dict) or not _fresh(row, now, profile_id)
+                or row.get("source") != "game_native_route_form"
+                or row.get("scope") != "existing_aircraft_only"
+                or row.get("purchase_eligible") is not False
+                or not _identity(row.get("aircraft_id"))
+                or row.get("origin_id") != origin_id or row.get("destination_id") != destination_id
+                or row.get("stopover_id") != stopover_id or row.get("distance_km") != distance_km):
+            continue
+        fares = row.get("fares")
+        if (not isinstance(fares, dict) or set(fares) != set("yjf")
+                or not _numbers(tuple(fares.values()), 3) or not any(fares.values())
+                or not _numbers((row.get("route_fee"), row.get("aircraft_on_route")), 2)):
+            continue
+        matching.append(row)
+    if not matching:
+        return None
+
+    def bounds(values):
+        return {"min": min(values), "max": max(values)}
+
+    stamps = [row["observed_at"] for row in matching]
+    return {"source": "game_native_route_form", "scope": "existing_aircraft_only",
+            "purchase_eligible": False, "quote_count": len(matching),
+            "oldest_observed_at": min(stamps), "newest_observed_at": max(stamps),
+            "expires_at": min(stamps) + DEFAULT_MAX_AGE_SECONDS,
+            "stopover_id": stopover_id, "distance_km": distance_km,
+            "route_fee_range": bounds([row["route_fee"] for row in matching]),
+            "aircraft_on_route_range": bounds([row["aircraft_on_route"] for row in matching]),
+            "fare_ranges": {key: bounds([row["fares"][key] for row in matching]) for key in "yjf"},
+            "daily_demand_residual": None}
+
+
 def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
                              distance, fee, occupied, fares, stopover_id=None,
                              total_demand=None, now=None):

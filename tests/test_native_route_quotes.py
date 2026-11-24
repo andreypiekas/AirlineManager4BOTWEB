@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 import paths
-from native_route_quotes import native_route_quotes, record_native_route_quote
+from native_route_quotes import native_route_quotes, record_native_route_quote, reference_for_route
 
 
 NOW = 1_900_000_000
@@ -63,3 +63,41 @@ def test_collection_is_bounded():
     rows = native_route_quotes(bot, now=NOW)
     assert len(rows) == 256
     assert rows[0]["aircraft_id"] == "1044"
+
+
+def test_reference_filters_profile_clock_direction_and_stopover():
+    bot = SimpleNamespace()
+    assert quote(bot, aircraft_id="900001", stopover_id="13", now=NOW - 10)
+    assert quote(bot, aircraft_id="900002", stopover_id="13", fee=3000,
+                 fares=(120, 200, 400), occupied=2)
+    assert quote(bot, aircraft_id="900003")
+    rows = native_route_quotes(bot, now=NOW)
+    original = rows[0]
+    rows.extend([
+        {**original, "profile_id": "other"},
+        {**original, "observed_at": NOW - 901},
+        {**original, "observed_at": NOW + 1},
+        {**original, "origin_id": "12", "destination_id": "11"},
+        {**original, "distance_km": 999},
+        {**original, "purchase_eligible": True},
+        {**original, "scope": "future_aircraft"},
+        {**original, "route_fee": True},
+        {**original, "fares": {"y": 100, "j": 200, "f": -1}},
+        {**original, "aircraft_id": ""},
+        None,
+    ])
+    args = dict(profile_id=paths.current().label, origin_id="11", destination_id="12",
+                distance_km=1000, stopover_id="13", now=NOW)
+    ref = reference_for_route(rows, **args)
+    assert ref["quote_count"] == 2
+    assert ref["route_fee_range"] == {"min": 2500, "max": 3000}
+    assert ref["fare_ranges"] == {"y": {"min": 100, "max": 120},
+                                  "j": {"min": 200, "max": 200},
+                                  "f": {"min": 300, "max": 400}}
+    assert ref["aircraft_on_route_range"] == {"min": 0, "max": 2}
+    assert ref["oldest_observed_at"] == NOW - 10 and ref["newest_observed_at"] == NOW
+    assert ref["expires_at"] == NOW + 890
+    assert "aircraft_id" not in ref and "900001" not in str(ref) and "900002" not in str(ref)
+    assert reference_for_route(rows, **{**args, "stopover_id": "14"}) is None
+    assert reference_for_route(rows, **{**args, "profile_id": "unknown"}) is None
+    assert reference_for_route(rows[:3], **{**args, "now": NOW + 901}) is None

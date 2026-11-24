@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3, correlação histórica de cotações de rota (G0)
+
+- A reprodução da pesquisa por snapshot agora associa as cotações nativas capturadas por perfil, origem, destino, direção, distância e identidade da escala. O painel PT/EN apresenta quantidade, intervalos de taxa, tarifas Y/J/F e ocupação, com validade calculada pela observação mais antiga. Os identificadores privados das aeronaves não são expostos na pesquisa.
+- A correspondência exige distância exata, inclusive na soma dos trechos de escala; diferenças de arredondamento podem omitir uma referência. Os valores são específicos das aeronaves existentes, preservados como evidência histórica, sem estimar preço final de novas rotas ou demanda residual. Lucro líquido e elegibilidade permanecem desconhecidos ou bloqueados.
+- Validação Windows: 31 testes direcionados e suíte completa com 1.997 aprovados, 1 ignorado e nenhum erro; testes de instalação Linux excluídos. Ruff e git diff --check aprovados. Nenhuma transação real executada. Ainda falta integrar evidências suficientes à avaliação auditada A3 e homologar as demais fases.
+
 ## 2026-11-24 — Autonomia Total A3, reserva condicional de A-check (G0)
 
 - A simulação econômica utiliza custo e intervalo de A-check observados no detalhe da variante com identidade confirmada. A reserva diária é o custo dividido pelo intervalo, multiplicado pelas horas de voo projetadas. São calculadas as horas reais (distância / velocidade efetiva × partidas) e nominais (distância / velocidade de cruzeiro × partidas), inclusive pelos dois trechos em uma escala exploratória. A maior reserva é deduzida da contribuição após margem, nos cenários base e stress, em um resultado condicional separado.
