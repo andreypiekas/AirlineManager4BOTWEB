@@ -198,7 +198,7 @@ class RouteRegistry:
         """Record the displayed flight value and an explicitly approximate operating margin."""
         if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
             return 0
-        if not all(isinstance(price, (int, float)) and 0 < price < 100000
+        if not all(type(price) in (int, float) and 0 < price < 100000
                    for price in (fuel_price, co2_price)):
             return 0
         now = int(time.time())

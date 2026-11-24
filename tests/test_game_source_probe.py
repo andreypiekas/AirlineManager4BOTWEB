@@ -369,10 +369,14 @@ const node = (attrs = {}, content = '') => ({
 });
 const priceNode = node({'data-price':'3500000'}, 'US$ 3,500,000 ' + secret);
 const finalNode = node({'data-final-price':secret}, 'USD 4,000,000 ' + secret);
+const observedCost = node({id:'acCost'}, '215,629,503');
+observedCost.parentElement = {tagName:'H4', textContent:'$ 215,629,503'};
 const identity = node({'data-model-id':'785'}, secret);
 const elements = {
   '#acModel': [identity],
   '#acModel select': [node(), node()],
+  '#acModel select#engSelection': [node()],
+  '#acModel #acCost': [observedCost],
   "#acModel input[type='radio']": [node()],
   "#acModel select[name*='engine' i], #acModel select[id*='engine' i], #acModel select[name*='motor' i], #acModel select[id*='motor' i]": [node()],
   "#acModel input[type='radio'][name*='engine' i], #acModel input[type='radio'][name*='motor' i]": [node()],
@@ -393,13 +397,14 @@ globalThis.window = {statusData: null};
     assert "SECRET_" not in response.stdout
     assert "3500000" not in response.stdout
     assert "4000000" not in response.stdout
+    assert "215,629,503" not in response.stdout
     from game_source_probe import _sanitize
 
     checkout = _sanitize(json.loads(response.stdout))["aircraft_checkout_diagnostics"]
     assert checkout["detail_panel_count"] == 1
     assert checkout["detail_model_id"] == "785"
     assert checkout["controls"] == {
-        "all_selects": 2, "all_radios": 1, "engine_named_selects": 1,
+        "all_selects": 2, "all_radios": 1, "engine_named_selects": 1, "native_engine_selects": 1,
         "engine_named_radios": 1, "purchase_buttons": 1,
         "insufficient_balance_warnings": 1,
     }
@@ -411,6 +416,10 @@ globalThis.window = {statusData: null};
         "numeric_price_attribute_nodes"] == 0
     assert checkout["price_candidates"]["id_price"]["count"] == 2
     assert checkout["price_candidates"]["id_price"]["currency_text_nodes"] == 2
+    assert checkout["price_candidates"]["observed_cost"] == {
+        "selector": "#acModel #acCost", "count": 1,
+        "currency_text_nodes": 1, "numeric_price_attribute_nodes": 0,
+    }
     assert checkout["price_verified"] is False
 
 

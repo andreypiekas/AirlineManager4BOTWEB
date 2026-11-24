@@ -1,6 +1,8 @@
 """Pure route-ranking tests; no browser, AM4 login or real purchases."""
 from dataclasses import dataclass
 
+import pytest
+
 from gamemode import EASY, REALISM
 from route_optimizer import estimate_route, rank_candidates
 
@@ -69,17 +71,27 @@ def test_invalid_model_does_not_generate_fake_profit():
     assert result is None
 
 
-def test_zero_fuel_or_co2_price_blocks_unverified_profit_ranking():
+@pytest.mark.parametrize("bad_price", [0, None, True, False, -1, 100000, 100001,
+                                       float("nan"), float("inf"), "nan", "invalid", "100000"])
+def test_invalid_fuel_or_co2_price_blocks_unverified_profit_ranking(bad_price):
     candidate = Candidate(1200, 1600)
     assert estimate(candidate).profit_per_day > 0
 
-    for fuel_price, co2_price in ((0, 125), (650, 0), (None, 125), (650, None)):
+    for fuel_price, co2_price in ((bad_price, 125), (650, bad_price)):
         kwargs = dict(
             seats=180, model=MODEL, mode=EASY, load_factor=0.8,
             fuel_price=fuel_price, co2_price=co2_price, premium=False,
         )
         assert estimate_route(candidate, **kwargs) is None
         assert rank_candidates([candidate], **kwargs) == []
+
+
+def test_numeric_string_operating_costs_preserve_ranking():
+    candidate = Candidate(1200, 1600)
+    kwargs = dict(seats=180, model=MODEL, mode=EASY, load_factor=0.8,
+                  fuel_price="650", co2_price="125", premium=False)
+    assert estimate_route(candidate, **kwargs) == estimate(candidate)
+    assert rank_candidates([candidate], **kwargs) == [(candidate, estimate(candidate))]
 
 
 def test_realistic_mode_changes_expected_revenue_and_flights():

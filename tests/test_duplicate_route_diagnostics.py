@@ -20,6 +20,12 @@ class NoWriteBot:
 
     config = Config()
 
+    def fuel_cost_basis(self):
+        return 650
+
+    def co2_cost_basis(self):
+        return 120
+
     def open_popup(self, *args):
         pass
 

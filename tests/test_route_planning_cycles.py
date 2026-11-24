@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 import fleet
 from fleet import ParkedAircraft, RouteCandidate, create_routes, resolve_duplicate_routes
 from gamemode import EASY
@@ -87,6 +89,34 @@ def test_disabling_analysis_skips_game_research_and_preserves_proposal(tmp_path,
     record = next(r for r in registry.snapshot()["relations"] if r["aircraft_id"] == candidate_id)
     assert record["status"] == "aguardando_ativacao_de_analise"
     assert record["proposal"] == proposal
+
+
+@pytest.mark.parametrize("fuel,co2", [(True, 125), (650, None), (100000, 125)])
+def test_invalid_costs_defer_duplicate_planner_and_route_creation(tmp_path, monkeypatch, caplog, fuel, co2):
+    registry = registry_with_four_duplicates(tmp_path)
+    monkeypatch.setattr(fleet, "load_market", lambda: [])
+    monkeypatch.setattr(fleet, "find_model", lambda *_: {"speed": 800, "fuel": 7, "capacity": 180})
+    monkeypatch.setattr(fleet, "read_parked", lambda _: [ParkedAircraft("101", "A320", "PP-101", 180)])
+
+    class Bot:
+        config = Config(analyze=True)
+        dry_run = True
+        stopping = False
+
+        def fuel_cost_basis(self):
+            return fuel
+
+        def co2_cost_basis(self):
+            return co2
+
+        def open_popup(self, *_):
+            pytest.fail("Invalid operating costs must block route research")
+
+    assert resolve_duplicate_routes(Bot(), registry, 2) == 0
+    rows = registry.snapshot()["relations"]
+    assert sum(r.get("status") == "aguardando_custos_operacionais_validos" for r in rows) == 2
+    assert create_routes(Bot(), 1) == 0
+    assert "custos operacionais" in caplog.text
 
 
 def test_creation_skips_known_unprofitable_routes_without_opening_order_form(tmp_path, monkeypatch):

@@ -38,7 +38,8 @@ const dataNum = (el, key) => {
 const groups = [];
 for (const el of root.querySelectorAll('select')) {
   const context = labelOf(el);
-  if (!engine.test(context)) continue;
+  // The authenticated AM4 checkout uses #engSelection without a name or label.
+  if (el.id !== 'engSelection' && !engine.test(context)) continue;
   const options = Array.from(el.options).map(o => ({
     value: o.value, label: (o.textContent || '').trim(),
     speed: dataNum(o, 'speed'), fuel: dataNum(o, 'fuel'),

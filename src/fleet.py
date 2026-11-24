@@ -34,7 +34,7 @@ from aircraft_order_hub import AircraftOrderHubError, prepare_order_hub
 from gamemode import EASY, GameMode
 from helpers import clean_response, fmt, to_int
 from notify import esc
-from route_optimizer import estimate_route, rank_candidates
+from route_optimizer import estimate_route, operating_prices_valid, rank_candidates
 from route_strategy import best_reroute, profitable_candidates
 from route_airports import HubMatch, match_hub_options, code_from_candidate, explain_hub_options
 from airport_catalog import by_code, game_code
@@ -992,6 +992,10 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
         if seats <= 0:
             pending(aircraft_id, "aguardando_dados_do_modelo")
             continue
+        fuel_price, co2_price = bot.fuel_cost_basis(), bot.co2_cost_basis()
+        if not operating_prices_valid(fuel_price, co2_price):
+            pending(aircraft_id, "aguardando_custos_operacionais_validos")
+            continue
         limit = cfg.get_int("settings", "route_max_distance_big" if seats >= BIG_SEATS else "route_max_distance", 6000)
         if model.get("range"):
             limit = min(limit, int(model["range"]))
@@ -1101,8 +1105,8 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
             continue
         ranked = rank_candidates(
             destination_options, seats=seats, model=model, mode=bot.mode,
-            load_factor=bot.load_factor(), fuel_price=bot.fuel_cost_basis(),
-            co2_price=bot.co2_cost_basis(), premium=cfg.get_bool("options", "auto_seats"),
+            load_factor=bot.load_factor(), fuel_price=fuel_price,
+            co2_price=co2_price, premium=cfg.get_bool("options", "auto_seats"),
         )
         alternative, required_profit = best_reroute(
             ranked, current_profit=row.get("profit_per_day"),
@@ -1253,6 +1257,8 @@ def _route_demand(candidate: RouteCandidate, premium: bool) -> int:
 
 
 def _try_stopover(bot, aircraft, origin, reach, limit, runway, economics, available, allow_duplicates):
+    if not operating_prices_valid(economics.get("fuel_price"), economics.get("co2_price")):
+        return "none", None
     hub_id = origin["id"]
     candidates = [
         candidate for candidate in search_routes(bot, hub_id, limit, runway)
@@ -1281,6 +1287,10 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
     parked = read_parked(bot)
     if not parked:
         log.info("Não há aeronaves estacionadas na lista da frota.")
+        return 0
+    fuel_price, co2_price = bot.fuel_cost_basis(), bot.co2_cost_basis()
+    if not operating_prices_valid(fuel_price, co2_price):
+        log.warning("Criação de rotas adiada: custos operacionais de combustível ou CO₂ inválidos.")
         return 0
     max_distance = cfg.get_int("settings", "route_max_distance", 2000)
     max_distance_big = cfg.get_int("settings", "route_max_distance_big", 6000)
@@ -1327,7 +1337,7 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
 
         economics = dict(
             seats=aircraft.seats, model=known, mode=bot.mode, load_factor=bot.load_factor(),
-            fuel_price=bot.fuel_cost_basis(), co2_price=bot.co2_cost_basis(), premium=premium,
+            fuel_price=fuel_price, co2_price=co2_price, premium=premium,
         )
         outcome = "none"
         if origin and known and limit < configured_limit and not bot.stopping:

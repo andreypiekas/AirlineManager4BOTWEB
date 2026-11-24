@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from pathlib import Path
+import shutil
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +13,49 @@ import pytest
 import engine_selection
 import fleet
 import web
+
+
+_OBSERVED_ORDER_MODELS = json.loads(
+    (Path(__file__).parent / "fixtures" / "am4_order_engines_20261123.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize("model", _OBSERVED_ORDER_MODELS["models"], ids=lambda row: row["model"])
+def test_native_unlabeled_engine_select_from_observed_checkout(model, tmp_path):
+    if not shutil.which("node"):
+        pytest.skip("Node.js required for browser DOM reader regression")
+    # Minimal DOM adapter reconstructed from the anonymized live observations.
+    # The options only exposed value/selected, no per-option speed or fuel.
+    mock = r"""
+const model = JSON.parse(process.argv[2]);
+const el = (id, options, value) => ({
+  id, name: '', value, options, closest: () => null,
+  getAttribute: () => null, matches: () => false
+});
+const options = model.options.map(o => ({
+  value: o.value, textContent: o.label, selected: o.value === model.selected,
+  getAttribute: () => null, matches: () => false
+}));
+const engine = el('engSelection', options, model.selected);
+const hub = el('hubSelection', [], '123');
+const root = {querySelectorAll: selector => selector === 'select' ? [hub, engine] : []};
+globalThis.document = {querySelector: selector => selector === '#acModel' ? root : null};
+"""
+    script = tmp_path / "engine_dom.js"
+    script.write_text(mock + "\nconsole.log(JSON.stringify((new Function(" +
+                      json.dumps(engine_selection._ENGINE_OPTIONS_JS) + "))()));\n", encoding="utf-8")
+    result = subprocess.run(["node", str(script), json.dumps(model)], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    catalog = engine_selection.parse_engine_catalog(json.loads(result.stdout))
+    assert catalog.selector_id == "engSelection"
+    assert catalog.selected_engine_id == model["selected"]
+    assert [(v.engine_id, v.label) for v in catalog.variants] == [
+        (option["value"], option["label"]) for option in model["options"]
+    ]
+    assert all(v.speed is None and v.fuel is None for v in catalog.variants)
+    if len(catalog.variants) > 1:
+        with pytest.raises(engine_selection.EngineSelectionError):
+            engine_selection.choose_engine(json.loads(result.stdout), "economical")
 
 
 def engines(*, speed=True, fuel=True, selected="1"):

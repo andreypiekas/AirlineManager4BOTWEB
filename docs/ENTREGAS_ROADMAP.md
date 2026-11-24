@@ -1,5 +1,22 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A1/A3, seletor autenticado de motores e custos operacionais (G0)
+
+**Objetivo:** reconhecer o controle real de variantes no formulário de aeronaves e impedir pesquisa ou classificação de rotas com preços operacionais inválidos.
+
+### Implementação e evidências
+
+- **A1:** inspeção autenticada somente leitura em Routes > Order > Aircraft details confirmou `#acModel select#engSelection`, sem nome ou rótulo associado, com IDs de opções estáveis observados na sessão. Cessna 172 e B737-800 apresentaram uma variante cada, A320-200 apresentou duas e A380-800 apresentou três (GP7270, RR Trent 970 e RR Trent 972). A fixture anonimizada `tests/fixtures/am4_order_engines_20261123.json` registra as quatro estruturas e os preços exibidos, sem dados de conta. A opção de motor não contém atributos individuais de velocidade/consumo; as métricas do painel não podem ser atribuídas às variantes não selecionadas.
+- `src/engine_selection.py` reconhece o seletor nativo mesmo sem nome/rótulo. `src/game_source_probe.py` reconhece o controle e a estrutura `#acCost` cujo símbolo monetário fica no elemento pai; o diagnóstico continua expondo somente contagens e indicadores de formato, sem publicar valores da conta. A presença de preço exibido não prova preço final incluindo motor, nem a identidade completa do checkout.
+- **A3:** `src/route_optimizer.py` centraliza a validação de preços operacionais positivos, finitos e inferiores a 100.000 por mil unidades, rejeitando booleanos e valores ausentes ou malformados. `src/fleet.py` adia a criação, a substituição de rotas duplicadas e a busca de escalas se esses preços forem inválidos; os mesmos preços são utilizados durante a classificação. `src/route_registry.py` rejeita booleanos no registro de margem observada.
+- Regressões verificam a leitura do JavaScript de produção com as estruturas observadas, variantes sem métricas próprias, ausência de confirmação de preço integral e bloqueio de pesquisas com custos inválidos. O teste de diagnóstico de duplicidades fornece preços válidos para preservar a verificação independente de identificação da base.
+
+### Verificação, limites e reversão
+
+- Testes direcionados de A1/A3, seleção de base, escala e registros de rota aprovados. Suíte Windows: 1.618 testes aprovados, 1 ignorado pela própria suíte, com exclusão de `tests/test_instalacao_linux.py`, que depende de permissões POSIX. Ruff (`src`, `tests`, `scripts`), `compileall src` e `git diff --check` aprovados.
+- **Gate G0.** Nenhuma opção de motor ou base foi alterada durante a inspeção, nenhuma compra foi executada. O preço final por variante, identidade do modelo e do hub correlacionada ao checkout, e revalidação autenticada pós-AJAX permanecem pendentes. Os custos operacionais configurados/legados ainda não substituem a prova temporal de preços observados necessária à política autônoma. Não houve Telegram real, implantação ou merge na `main`.
+- Reversão pelo commit desta entrega na branch `codex/autonomia-a0-a1-20261122`, considerando dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A1/A5, variante exata e pré-checagem de checkout (G0)
 
 **Objetivo:** vincular a preparação de uma encomenda planejada à variante de motor e base aprovadas e exigir evidência estável do preço final antes de considerar a operação viável.

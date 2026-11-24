@@ -70,6 +70,7 @@ _PAGINATION_EVIDENCE = (
 # has not yet supplied an authenticated, verified final-price selector. These
 # fixed selectors expose counts and currency-shape flags, never text or prices.
 _CHECKOUT_PRICE_CANDIDATES = (
+    ("observed_cost", "#acModel #acCost"),
     ("data_price", "#acModel [data-price]"),
     ("data_final_price", "#acModel [data-final-price]"),
     ("data_total_price", "#acModel [data-total-price]"),
@@ -82,6 +83,7 @@ _CHECKOUT_PRICE_CANDIDATES = (
 _CHECKOUT_CONTROL_SELECTORS = {
     "all_selects": "#acModel select",
     "all_radios": "#acModel input[type='radio']",
+    "native_engine_selects": "#acModel select#engSelection",
     "engine_named_selects": (
         "#acModel select[name*='engine' i], #acModel select[id*='engine' i], "
         "#acModel select[name*='motor' i], #acModel select[id*='motor' i]"
@@ -379,7 +381,10 @@ for (const [key, selector] of checkoutPriceSpecs) {
   let currencyTextNodes = 0;
   let numericPriceAttributeNodes = 0;
   for (const node of nodes) {
-    const text = String(node.textContent || '').slice(0, 256);
+    // The observed #acCost span holds digits; its h4 parent carries the currency.
+    const display = key === 'observed_cost' && node.parentElement?.tagName === 'H4'
+      ? node.parentElement : node;
+    const text = String(display.textContent || '').slice(0, 256);
     if (/(?:US\s*\$|USD\s*|\$)\s*[1-9][0-9,.]{0,14}/i.test(text)) {
       currencyTextNodes++;
     }

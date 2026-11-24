@@ -26,6 +26,21 @@ CO2_PER_PAX_KM = 0.18  # fallback estimate while the game does not expose per-ai
 CLASS_WEIGHTS = (1, 2, 3)
 
 
+def normalize_operating_price(value: object) -> Optional[float]:
+    """Return a usable per-thousand market cost, rejecting missing or implausible values."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        price = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return price if isfinite(price) and 0 < price < 100000 else None
+
+
+def operating_prices_valid(fuel_price: object, co2_price: object) -> bool:
+    return all(normalize_operating_price(price) is not None for price in (fuel_price, co2_price))
+
+
 @dataclass(frozen=True)
 class RouteEconomics:
     profit_per_day: float
@@ -69,6 +84,10 @@ def estimate_route(candidate, *, seats: int, model: Optional[dict],
     """
     if not model:
         return None
+    price_fuel = normalize_operating_price(fuel_price)
+    price_co2 = normalize_operating_price(co2_price)
+    if price_fuel is None or price_co2 is None:
+        return None
     try:
         distance = float(candidate.distance)
         speed = float(model.get("speed") or 0)
@@ -78,12 +97,11 @@ def estimate_route(candidate, *, seats: int, model: Optional[dict],
         if capacity <= 0:
             capacity = actual_seats
         load = max(0.1, min(1.0, float(load_factor)))
-        price_fuel, price_co2 = float(fuel_price), float(co2_price)
     except (TypeError, ValueError, OverflowError):
         return None
-    if not all(map(isfinite, (distance, speed, fuel_rate, load, price_fuel, price_co2))):
+    if not all(map(isfinite, (distance, speed, fuel_rate, load))):
         return None
-    if distance < 100 or speed <= 0 or fuel_rate <= 0 or capacity <= 0 or price_fuel <= 0 or price_co2 <= 0:
+    if distance < 100 or speed <= 0 or fuel_rate <= 0 or capacity <= 0:
         return None
 
     legs = 24 / (distance / (speed * mode.speed) + TURNAROUND_H * (1 + extra_stops))
@@ -103,13 +121,8 @@ def rank_candidates(candidates, **estimate_kwargs):
     """Return (candidate, estimate) best-first; fall back to demand when data is missing."""
     # Unknown market costs invalidate financial comparisons and must not trigger
     # demand-only routing. That legacy fallback is reserved for a missing model.
-    for name in ("fuel_price", "co2_price"):
-        try:
-            price = float(estimate_kwargs[name])
-        except (KeyError, TypeError, ValueError, OverflowError):
-            return []
-        if not isfinite(price) or price <= 0:
-            return []
+    if not operating_prices_valid(estimate_kwargs.get("fuel_price"), estimate_kwargs.get("co2_price")):
+        return []
 
     ranked = [(candidate, estimate_route(candidate, **estimate_kwargs)) for candidate in candidates]
     if any(result is not None for _, result in ranked):
