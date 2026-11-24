@@ -107,3 +107,33 @@ def test_worker_captures_policy_controls_and_revokes_changed_limits(worker):
     planning_cycle.capture_and_plan(worker)
     assert snapshot_summary()["policy_controls"]["cycle_limit"]["value"] == 1500
     assert "evidencia_cycle_limit_a_confirmar" not in dashboard.audited_expansion()["purchase_plan_blockers"]
+
+
+def test_worker_applies_native_historical_spending_without_certifying_period(worker, tmp_path):
+    from finance_observations import FILENAME, SOURCE
+
+    worker.config.set("investment", "planning_enabled", "on")
+    worker.config.set("investment", "max_cycle_spend", 1200)
+    worker.config.set("investment", "max_daily_spend", 2400)
+    worker.config.set("settings", "cash_reserve", 0)
+    finance = {"source": SOURCE, "observed_at": int(time.time()) - 5,
+               "summary": {"window_hours": 24, "expenses": 4000, "income": 5000,
+                           "result": 1000, "fuel_expenses": 100, "quota_expenses": 100,
+                           "aircraft_orders": 2000, "hubs": 500, "route_fees": 200,
+                           "ticket_income": 5000}}
+    path = tmp_path / FILENAME
+    path.write_text(json.dumps(finance), encoding="utf-8")
+    snapshot = planning_cycle.capture_and_plan(worker)
+    proof = snapshot_summary()["historical_investment_spending"]
+    assert proof == {"source": SOURCE, "profile_id": "isolated", "snapshot_id": snapshot["snapshot_id"],
+                     "verified": True, "historical_only": True, "window_hours": 24,
+                     "observed_at": finance["observed_at"], "value": 2700}
+    reasons = planning_cycle.planning_cycle_summary()["blocking_reasons"]
+    assert "limite_periodo_esgotado_na_observacao" in reasons
+    assert "evidencia_period_spent_a_confirmar" in reasons
+    assert "compromissos_a_conciliar" in reasons
+    assert snapshot_summary(now=finance["observed_at"] + 901)["historical_investment_spending"] is None
+    path.write_text(json.dumps({**finance, "summary": {**finance["summary"], "result": 0}}), encoding="utf-8")
+    planning_cycle.capture_and_plan(worker)
+    assert snapshot_summary()["historical_investment_spending"] is None
+    assert "limite_periodo_esgotado_na_observacao" not in planning_cycle.planning_cycle_summary()["blocking_reasons"]

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import paths
 from fleet_commitment_observations import SOURCE as HANGAR_SOURCE, _hangar
+from finance_observations import SOURCE as FINANCE_SOURCE, validate_summary
 from investment_policy import AUDITED_POLICY_LIMITS, InvestmentPolicy, audited_policy_values
 from opportunity_models import DEFAULT_MAX_AGE_SECONDS, fingerprint_snapshot
 
@@ -327,6 +328,21 @@ def snapshot_summary(*, now=None, path: Path | None = None):
         for scope, valid in _catalog_scopes(observations["engine_coverage"], now).items():
             scopes[scope] = scopes[scope] and valid
         policy_controls = {}
+        finance = observations.get("finance_history")
+        historical_spending = None
+        if (isinstance(finance, dict) and finance.get("status") == "observed"
+                and finance.get("source") == FINANCE_SOURCE and finance.get("historical_only") is True
+                and _fresh(finance.get("observed_at"), now)
+                and finance["observed_at"] <= observations["captured_at"]):
+            summary = validate_summary(finance.get("summary"))
+            if summary is not None:
+                historical_spending = {
+                    "source": FINANCE_SOURCE, "profile_id": snapshot["profile_id"],
+                    "snapshot_id": snapshot["snapshot_id"], "verified": True,
+                    "observed_at": finance["observed_at"], "historical_only": True,
+                    "window_hours": 24,
+                    "value": sum(summary[key] for key in ("aircraft_orders", "hubs", "route_fees")),
+                }
         policy_values = observations.get("investment_policy")
         if isinstance(policy_values, dict):
             for name, (minimum, maximum) in AUDITED_POLICY_LIMITS.items():
@@ -343,6 +359,7 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                 "fleet_count": coverage["expected_aircraft_count"] if scopes["fleet"] else None,
                 "unrouted_aircraft_control": unrouted,
                 "passenger_hangar_control": hangar_control,
+                "historical_investment_spending": historical_spending,
                 **({"policy_controls": policy_controls} if "investment_policy" in observations else {}),
                 "route_samples": len(observations["route_research"]["samples"]),
                 "native_route_quote_count": sum(_fresh(row.get("observed_at"), now)

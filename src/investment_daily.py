@@ -34,6 +34,7 @@ _PORTFOLIO_BLOCKER_LABELS = {
     "reservas_locais_invalidas": "reservas locais inválidas",
     "limites_periodo_invalidos": "limites de gasto do período inválidos",
     "uso_periodo_a_confirmar": "gastos e aquisições do período a confirmar",
+    "limite_periodo_esgotado_na_observacao": "limite de gasto esgotado na observação de 24 horas",
     "criterios_planejamento_invalidos": "critérios de planejamento inválidos",
     "cenarios_proprios_pendentes": "cenários de hubs próprios pendentes",
     "pesquisas_conflitantes": "pesquisas conflitantes",

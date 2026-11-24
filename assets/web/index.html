@@ -1123,6 +1123,9 @@ const EN = {
   "Saldo após compromissos insuficiente": "Insufficient cash after commitments",
   "Limite de gasto do ciclo esgotado": "Cycle spending limit reached",
   "Limite de gasto do período esgotado": "Period spending limit reached",
+  "Limite de gasto esgotado na observação de 24 horas": "Spending limit reached in the observed 24-hour window",
+  "Gastos históricos identificados (aeronaves, hubs e rotas)": "Identified historical spending (aircraft, hubs and routes)",
+  "Teto restante na janela observada (estimativa conservadora)": "Remaining cap in the observed window (conservative estimate)",
   "Economia A3 não confirmada": "A3 economics unverified",
   "ROI A3 não confirmado": "A3 ROI unverified",
   "Vagas de hangar não confirmadas": "Hangar capacity unverified",
@@ -2546,6 +2549,7 @@ const hubResearchBlockerLabels = {
   saldo_apos_compromissos_insuficiente: "Saldo após compromissos insuficiente",
   limite_ciclo_esgotado: "Limite de gasto do ciclo esgotado",
   limite_periodo_esgotado: "Limite de gasto do período esgotado",
+  limite_periodo_esgotado_na_observacao: "Limite de gasto esgotado na observação de 24 horas",
   limite_ciclo_nao_configurado: "Limite do ciclo não configurado",
   economia_a3_a_confirmar: "Economia A3 não confirmada",
   roi_a3_a_confirmar: "ROI A3 não confirmado",
@@ -3397,6 +3401,15 @@ function renderAuditedExpansionPlanner(audited, hubs) {
         explanation.textContent += " · " + tr("Aquisições restantes em 24 horas (diário local)") +
           ": " + nf.format(period.remaining_acquisitions);
       }
+    }
+  }
+  const historical = portfolio.historical_period_limits;
+  if (historical?.historical_only === true && Number.isFinite(historical.observed_investment_charges)) {
+    explanation.textContent += " · " + tr("Gastos históricos identificados (aeronaves, hubs e rotas)") +
+      ": " + hubMoney(historical.observed_investment_charges);
+    if (Number.isFinite(historical.maximum_remaining_at_observation)) {
+      explanation.textContent += " · " + tr("Teto restante na janela observada (estimativa conservadora)") +
+        ": " + hubMoney(historical.maximum_remaining_at_observation);
     }
   }
   if (observed?.status === "parcial") {

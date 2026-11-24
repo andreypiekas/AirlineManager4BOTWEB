@@ -479,6 +479,8 @@ class WebDashboard:
             max_cycle_spend=policy.max_cycle_spend,
             max_acquisitions_per_day=policy.max_acquisitions_per_day,
             local_journal=journal,
+            historical_investment_spending=(game_snapshot.get("historical_investment_spending")
+                                            if matching_capture else None),
             max_single_investment=(policy.max_single_investment
                                    if policy.enabled and policy.max_single_investment > 0 else None),
             min_daily_profit=policy.min_daily_profit,

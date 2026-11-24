@@ -20,6 +20,7 @@ from expansion_economics import (
 )
 from opportunity_models import DEFAULT_MAX_AGE_SECONDS
 from fleet_commitment_observations import SOURCE as HANGAR_SOURCE, _hangar
+from finance_observations import SOURCE as FINANCE_SOURCE
 
 
 DEFAULT_PROFIT_WEIGHT = 0.6
@@ -538,6 +539,7 @@ def compare_audited_portfolio(
     max_cycle_spend: object = None,
     max_acquisitions_per_day: object = None,
     local_journal: Mapping[str, Any] | None = None,
+    historical_investment_spending: Mapping[str, Any] | None = None,
     max_single_investment: object = None,
     min_daily_profit: object = 0,
     max_payback_days: object = None,
@@ -670,6 +672,27 @@ def compare_audited_portfolio(
     for name, value in observed.items():
         if value is None:
             blockers.append(f"evidencia_{name}_a_confirmar")
+    # The native window ended at observation time. Its known acquisition and
+    # route charges constrain this snapshot conservatively, but cannot certify
+    # the current rolling period or the outstanding commitments.
+    historical_spend = None
+    historical_remaining = None
+    if (isinstance(historical_investment_spending, Mapping)
+            and historical_investment_spending.get("historical_only") is True
+            and type(historical_investment_spending.get("window_hours")) is int
+            and historical_investment_spending["window_hours"] == 24
+            and type(historical_investment_spending.get("value")) is int
+            and 0 <= historical_investment_spending["value"] <= 2**53 - 1):
+        historical_spend = _audited_value(
+            historical_investment_spending, source=FINANCE_SOURCE, profile_id=profile_id,
+            snapshot_id=snapshot_id, now=now)
+    if historical_spend is not None and daily_limit is not None:
+        historical_limit = daily_limit
+        if observed["period_limit"] is not None:
+            historical_limit = min(historical_limit, observed["period_limit"])
+        historical_remaining = max(0.0, historical_limit - historical_spend)
+        if historical_remaining == 0:
+            blockers.append("limite_periodo_esgotado_na_observacao")
     for name in ("unrouted_aircraft_count",):
         if observed[name] is not None and not observed[name].is_integer():
             blockers.append(f"evidencia_{name}_invalida")
@@ -737,6 +760,8 @@ def compare_audited_portfolio(
                               remaining_cycle_spend,
                               observed["period_limit"] - observed["period_spent"],
                               remaining_spend))
+        if historical_remaining is not None:
+            budget = min(budget, historical_remaining)
         if remaining_acquisitions == 0:
             budget = 0.0
         if remaining_cash <= 0:
@@ -888,6 +913,12 @@ def compare_audited_portfolio(
         "excluded": dict(sorted(excluded.items())),
         "budget_after_reservations_and_limits": budget,
         "remaining_cycle_spend": remaining_cycle_spend,
+        "historical_period_limits": {
+            "source": FINANCE_SOURCE, "historical_only": True, "window_hours": 24,
+            "observed_at": historical_investment_spending["observed_at"] if historical_spend is not None else None,
+            "observed_investment_charges": historical_spend,
+            "maximum_remaining_at_observation": historical_remaining,
+        },
         "local_cycle_limits": {
             "source": "local_investment_journal", "estimated_exposure": cycle_exposure,
             "remaining_spend": local_cycle_remaining,

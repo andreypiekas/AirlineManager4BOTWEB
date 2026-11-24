@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4, restrição financeira histórica nativa (G0)
+
+- A captura vincula ao perfil e snapshot a soma das despesas identificadas de encomendas de aeronaves, hubs e taxas de rota no resumo nativo das últimas 24 horas. A evidência mantém o horário original, expira em 900 segundos e exige resumo contabilmente consistente.
+- O planejador limita o orçamento ao menor teto aplicável entre o histórico observado, os controles auditados e o diário local, sem somar despesas possivelmente sobrepostas. Se os gastos históricos esgotaram o teto, sinaliza a restrição mesmo sem candidatos A3 registrados. O painel PT/EN mostra os valores como históricos e o Telegram identifica o bloqueio.
+- A janela histórica encerra-se no instante da observação. O teto restante é uma estimativa conservadora para o snapshot, sujeita a nova coleta; a soma parcial não comprova todos os desembolsos (por exemplo, despesas de hangar não discriminadas), gastos do período atual ou compromissos futuros. Nenhuma compra real executada.
+- Validação: 116 testes direcionados, suíte Windows com 2.066 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída), 17 testes de relatório diário aprovados; Ruff e git diff --check aprovados. Rollback por reversão deste commit. Permanecem pendentes a conciliação completa de gastos e compromissos, a produção de evidências econômicas A3, a calibração e a homologação A0–A9.
+
 ## 2026-11-24 — Autonomia Total A4, controles locais de política vinculados à coleta (G0)
 
 - A coleta produtiva registra a reserva operacional e os limites configurados de investimento por ciclo e por 24 horas, com identidade de perfil e snapshot. O planejador A4 utiliza esses controles somente quando permanecem compatíveis com a política atual. Alterações ou limites ausentes exigem nova coleta; a reserva zero explícita é válida, enquanto limites de gasto zero permanecem desconfigurados.

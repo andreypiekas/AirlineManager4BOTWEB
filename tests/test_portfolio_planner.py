@@ -553,6 +553,38 @@ def test_a4_current_policy_caps_audited_budget_without_double_counting():
     assert reserved["best"]["economics_id"] == cheap["economics_id"]
 
 
+def test_a4_native_historical_spending_caps_budget_independently():
+    proof = {**a4_proof(16000, "game_transaction_summary"),
+             "historical_only": True, "window_hours": 24}
+    cheap = a4_evaluation(cost=2000)
+    expensive = a4_evaluation("789", "999", cost=7000, profit=350)
+    result = a4_compare(cheap, expensive, historical_investment_spending=proof,
+                        local_journal=a4_local_journal(exposure=5000, count=1))
+    assert result["budget_after_reservations_and_limits"] == 4000
+    assert result["best"]["economics_id"] == cheap["economics_id"]
+    assert result["historical_period_limits"]["maximum_remaining_at_observation"] == 4000
+    assert result["local_period_limits"]["estimated_exposure"] == 5000
+
+
+def test_a4_native_historical_spending_veto_without_economics_or_reconciliation():
+    proof = {**a4_proof(30000, "game_transaction_summary"),
+             "historical_only": True, "window_hours": 24}
+    result = a4_compare(controls={}, commitments_verified=False, historical_investment_spending=proof)
+    assert result["decision"] == "nao_comprar"
+    assert "limite_periodo_esgotado_na_observacao" in result["blocking_reasons"]
+    assert "evidencia_period_spent_a_confirmar" in result["blocking_reasons"]
+    assert "compromissos_a_conciliar" in result["blocking_reasons"]
+    for invalid in ({"observed_at": NOW - 901}, {"profile_id": "other"},
+                    {"snapshot_id": "other"}, {"historical_only": False}, {"window_hours": 12},
+                    {"value": True}, {"source": "investment_journal"}):
+        unknown = a4_compare(controls={}, historical_investment_spending={**proof, **invalid})
+        assert unknown["historical_period_limits"]["observed_investment_charges"] is None
+        assert "limite_periodo_esgotado_na_observacao" not in unknown["blocking_reasons"]
+    zero = a4_compare(controls={}, historical_investment_spending={**proof, "value": 0})
+    assert zero["historical_period_limits"]["observed_investment_charges"] == 0
+    assert "evidencia_period_spent_a_confirmar" in zero["blocking_reasons"]
+
+
 def test_a4_cycle_limit_uses_stricter_current_and_audited_caps():
     candidate = a4_evaluation(cost=2000)
     controls = a4_controls(cycle_spent=3000, cycle_limit=10000)
