@@ -5,7 +5,10 @@ import pytest
 
 import engine_catalog
 import game_observations
-from engine_detail import parse_displayed_metrics, parse_seat_observation, validate_seat_observation
+from engine_detail import (
+    parse_displayed_metrics, parse_operational_requirements, parse_seat_observation,
+    validate_operational_requirements, validate_seat_observation,
+)
 from engine_selection import parse_engine_catalog
 
 
@@ -72,6 +75,10 @@ def test_observations_bound_to_selected_variant_and_persisted(tmp_path, monkeypa
     monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
     initial = _snapshot("10")
     initial["seat_observation"] = {"source": "hidden_native_template", "y": "164", "j": "0", "f": "0"}
+    initial["metrics"] = {**initial["metrics"], "rows": initial["metrics"]["rows"] + [
+        ["Delivery time", "00:10:30"], ["Pilots", "2"], ["Crew", "4"],
+        ["Engineers", "2"], ["Tech", "1"],
+    ]}
     catalog = parse_engine_catalog(initial["groups"])
 
     class Bot:
@@ -88,6 +95,10 @@ def test_observations_bound_to_selected_variant_and_persisted(tmp_path, monkeypa
     assert result["10"]["metrics"]["speed_kph"] == 881
     assert result["10"]["seat_observation"] == {"source": "hidden_native_template", "y": 164, "j": 0, "f": 0}
     assert "seat_observation" not in result["9"]
+    assert result["10"]["operational_requirements"] == {
+        "delivery_seconds": 630, "pilots": 2, "cabin_crew": 4, "engineers": 2, "technicians": 1,
+    }
+    assert "operational_requirements" not in result["9"]
     assert result["9"]["metrics"]["speed_kph"] == 798
     registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
     assert registry.record("11", "A320-200", catalog, observed_at=NOW - 1,
@@ -98,6 +109,23 @@ def test_observations_bound_to_selected_variant_and_persisted(tmp_path, monkeypa
     assert not row["engine_prices_verified"]
     assert not registry.record("11", "A320-200", catalog, observed_at=NOW - 1,
                                variant_details={"unknown": result["9"]})
+
+
+def test_native_operational_requirements_preserve_zero_crew_and_duration():
+    fixture = json.loads((Path(__file__).parent / "fixtures" /
+                          "am4_operational_requirements_20261124.json").read_text(encoding="utf-8"))
+    rows = fixture["rows"]
+    expected = {"delivery_seconds": 30, "pilots": 1, "cabin_crew": 0,
+                "engineers": 1, "technicians": 1}
+    assert parse_operational_requirements(fixture) == expected
+    assert validate_operational_requirements(expected) == expected
+    assert parse_operational_requirements({"rows": rows[:-1]}) is None
+    assert parse_operational_requirements({"rows": rows + [["Crew", "1"]]}) is None
+    for invalid_duration in ("00:60:00", "00:00:00", "30 seconds", "-01:00:00"):
+        assert parse_operational_requirements({"rows": [["Delivery time", invalid_duration], *rows[1:]]}) is None
+    assert validate_operational_requirements({**expected, "cabin_crew": True}) is None
+    assert validate_operational_requirements({**expected, "salary": 0}) is None
+    assert validate_operational_requirements({**expected, "technicians": -1}) is None
 
 
 def test_changed_selector_without_refreshed_specs_is_not_attributed(monkeypatch):

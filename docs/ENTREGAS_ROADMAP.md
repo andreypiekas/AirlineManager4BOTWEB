@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A5, requisitos operacionais por variante (G0)
+
+- A leitura autenticada do detalhe da aeronave passa a registrar o tempo de entrega exibido e os quantitativos de pilotos, tripulação de cabine, engenheiros e técnicos. A observação opcional exige as cinco linhas únicas, valores inteiros válidos e duração positiva. O catálogo mantém os dados por variante de motor, associados à identidade do modelo e ao instante da coleta. O painel PT/EN e a reprodução histórica apresentam somente os requisitos correlacionados à variante.
+- Evidência nativa em leitura sem mutação: o detalhe do Cessna 172 apresentou entrega de 30 segundos, 1 piloto, 0 tripulantes de cabine, 1 engenheiro e 1 técnico. A fixture anonimizada e os testes cobrem ausência, duplicidade e valores inválidos, inclusive tripulação zero. Os requisitos exibidos não comprovam disponibilidade de pessoal, salários, custos incrementais nem prazo de entrega efetivo. Esses dados ainda não habilitam uma aquisição ou avaliação econômica integral. Nenhuma transação real executada.
+- Validação: 219 testes direcionados aprovados e suíte Windows completa com 2.009 aprovados, 1 ignorado e nenhuma falha (instalação Linux excluída), incluindo o teste adicional de reprodução histórica. Ruff e git diff --check aprovados. A homologação integral A0–A9 permanece pendente.
+
 ## 2026-11-24 — Autonomia Total A3/A4, stress simultâneo no ranking global (G0)
 
 - A avaliação econômica auditada passa a recalcular receita, combustível, CO₂, lucro e retorno quando os quatro fatores de stress ocorrem simultaneamente, preservando os cenários isolados. O ranking global utiliza a menor proporção de lucro em relação ao cenário base entre os cinco cenários, limitada ao intervalo de zero a um. Quando o peso de risco é positivo, a ausência do cenário combinado impede a classificação. O painel PT/EN mostra os quatro multiplicadores e o resultado combinado.

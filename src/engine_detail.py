@@ -127,3 +127,49 @@ def parse_seat_observation(raw: object, capacity: object) -> dict | None:
             return None
         values[key] = int(value)
     return validate_seat_observation(values, capacity)
+
+
+_CREW_LABELS = {
+    "pilots": ("pilots", "pilotos"),
+    "cabin_crew": ("crew", "tripulacao"),
+    "engineers": ("engineers", "engenheiros"),
+    "technicians": ("tech", "tecnicos"),
+}
+_DELIVERY_LABELS = ("delivery time", "tempo de entrega")
+_MAX_DELIVERY_SECONDS = 9999 * 3600 + 3599
+
+
+def validate_operational_requirements(raw: object) -> dict | None:
+    """Validate displayed requirements, without claiming staffing or delivery availability."""
+    if not isinstance(raw, dict) or raw.keys() != {*_CREW_LABELS, "delivery_seconds"}:
+        return None
+    if any(type(raw[key]) is not int or not 0 <= raw[key] <= 10000 for key in _CREW_LABELS):
+        return None
+    duration = raw["delivery_seconds"]
+    if type(duration) is not int or not 0 < duration <= _MAX_DELIVERY_SECONDS:
+        return None
+    return dict(raw)
+
+
+def parse_operational_requirements(raw: object) -> dict | None:
+    """Read unique native crew and delivery rows as one optional observation."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("rows"), list) or len(raw["rows"]) > 100:
+        return None
+    result = {}
+    for key, labels in {**_CREW_LABELS, "delivery_seconds": _DELIVERY_LABELS}.items():
+        values = [row[1] for row in raw["rows"] if isinstance(row, list) and len(row) == 2
+                  and isinstance(row[0], str) and _normalize(row[0]) in labels]
+        if len(values) != 1 or not isinstance(values[0], str):
+            return None
+        value = values[0].strip()
+        if key == "delivery_seconds":
+            match = re.fullmatch(r"([0-9]{2,4}):([0-5][0-9]):([0-5][0-9])", value)
+            if match is None:
+                return None
+            hours, minutes, seconds = map(int, match.groups())
+            result[key] = hours * 3600 + minutes * 60 + seconds
+        else:
+            if not re.fullmatch(r"(?:0|[1-9][0-9]{0,4})", value):
+                return None
+            result[key] = int(value)
+    return validate_operational_requirements(result)

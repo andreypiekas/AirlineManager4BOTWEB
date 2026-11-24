@@ -222,7 +222,9 @@ def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, mo
     engines["models"]["11"]["variant_details"] = {
         "1": {"observed_at": NOW, "metrics": {"capacity_pax": 180, "range_km": 2000,
                                                 "required_runway_ft": 6500},
-              "seat_observation": {"source": "hidden_native_template", "y": 180, "j": 0, "f": 0}}}
+              "seat_observation": {"source": "hidden_native_template", "y": 180, "j": 0, "f": 0},
+              "operational_requirements": {"delivery_seconds": 600, "pilots": 2,
+                                           "cabin_crew": 4, "engineers": 2, "technicians": 1}}}
     sample = _sample()
     sample["destination_runway_ft"] = 6499
     sample["route_detail"] = {"source": "game_route_detail", "observed_at": NOW,
@@ -244,6 +246,8 @@ def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, mo
     gate = row["accounting_gate"]
     assert row["engine_detail"]["seat_observation"] == {
         "source": "hidden_native_template", "y": 180, "j": 0, "f": 0}
+    assert row["engine_detail"]["operational_requirements"] == {
+        "delivery_seconds": 600, "pilots": 2, "cabin_crew": 4, "engineers": 2, "technicians": 1}
     assert not row["purchase_eligible"]
     assert gate["verified_accounting_inputs"] == ["capacity", "co2_price_per_1000"]
     codes = {reason["code"] for reason in gate["blocking_reasons"]}

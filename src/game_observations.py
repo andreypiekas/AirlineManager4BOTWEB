@@ -10,7 +10,9 @@ import time
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
 from engine_catalog import EngineCatalogRegistry, MODEL_ROSTER_JS
-from engine_detail import MODEL_DETAIL_IDENTITY_JS, parse_displayed_metrics, parse_seat_observation
+from engine_detail import (
+    MODEL_DETAIL_IDENTITY_JS, parse_displayed_metrics, parse_operational_requirements, parse_seat_observation,
+)
 from engine_selection import (
     EngineSelectionError, _ENGINE_OPTIONS_JS, _SET_ENGINE_JS, parse_engine_catalog,
 )
@@ -34,7 +36,9 @@ const groups = (() => {
 const metricLabels = new Set(['cruise speed', 'velocidade de cruzeiro', 'capacity', 'capacidade',
   'runway required', 'pista necessaria', 'range', 'alcance', 'consumption', 'consumo',
   'co2 emission', 'co₂ emission', 'emissao de co2', 'emissao de co₂',
-  'a-check', 'maint check', 'verificacao de manutencao']);
+  'a-check', 'maint check', 'verificacao de manutencao',
+  'pilots', 'pilotos', 'crew', 'tripulacao', 'engineers', 'engenheiros', 'tech', 'tecnicos',
+  'delivery time', 'tempo de entrega']);
 const normalized = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 const rows = Array.from(panel.querySelectorAll('tr, .row'))
   .filter(row => row.children.length === 2)
@@ -615,6 +619,9 @@ def _observe_variant_details(bot, snapshot, catalog, observed_at):
         seats = parse_seat_observation(read.get("seat_observation"), parsed_metrics.get("capacity_pax"))
         if seats is not None:
             entry["seat_observation"] = seats
+        requirements = parse_operational_requirements(read.get("metrics"))
+        if requirements is not None:
+            entry["operational_requirements"] = requirements
         return entry
 
     result = {selected: observation(snapshot, observed_at, metrics)}

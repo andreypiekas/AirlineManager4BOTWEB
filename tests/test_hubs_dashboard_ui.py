@@ -275,6 +275,8 @@ const money = value => '$' + String(value);
 const translations = {
       'Identidade do modelo pendente': 'Model identity pending',
       'Assentos Y/J/F do modelo oculto (sem confirmação)': 'Hidden template Y/J/F seats (unconfirmed)',
+      'Tripulação exigida (pilotos / cabine / engenheiros / técnicos)': 'Required staff (pilots / cabin crew / engineers / technicians)',
+      'Tempo indicativo de entrega (sem confirmação)': 'Displayed delivery time (unconfirmed)',
       'Velocidade da variante': 'Variant cruise speed',
       'Emissão de CO₂ da variante': 'Variant CO₂ emission',
       'Coeficiente de CO₂ na simulação': 'CO₂ coefficient in simulation',
@@ -657,6 +659,17 @@ appendEngineDetail(seatMetrics, {engine_detail:{...detailEvidence, model_identit
   metrics:{capacity_pax:3}, seat_observation:{source:'hidden_native_template', y:3, j:0, f:0}}});
 assert.equal(seatMetrics.children[1].children[0].textContent, 'Hidden template Y/J/F seats (unconfirmed)');
 assert.equal(seatMetrics.children[1].children[1].textContent, '3 / 0 / 0');
+const requirementMetrics = document.createElement('div');
+const requirements = {pilots:1, cabin_crew:0, engineers:1, technicians:1, delivery_seconds:30};
+appendEngineDetail(requirementMetrics, {engine_detail:{...detailEvidence, model_identity_verified:true,
+  operational_requirements:requirements}});
+assert.equal(requirementMetrics.children[1].children[0].textContent, 'Required staff (pilots / cabin crew / engineers / technicians)');
+assert.equal(requirementMetrics.children[1].children[1].textContent, '1 / 0 / 1 / 1');
+assert.equal(requirementMetrics.children[2].children[0].textContent, 'Displayed delivery time (unconfirmed)');
+assert.equal(requirementMetrics.children[2].children[1].textContent, '00:00:30');
+const unverifiedRequirements = document.createElement('div');
+appendEngineDetail(unverifiedRequirements, {engine_detail:{...detailEvidence, operational_requirements:requirements}});
+assert.equal(unverifiedRequirements.children.length, 5);
 const physicalMetrics = document.createElement('div');
 const physical = {source:'observed_direct_dimensions_v1', status:'direct_shortfall', purchase_eligible:false,
   expires_at:marketNow+60, checks:{range:'short', origin_runway:'unknown', destination_runway:'unknown'},

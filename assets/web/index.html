@@ -1399,6 +1399,8 @@ const EN = {
   "Diferença diária ante referência nativa (base / stress)": "Daily difference from native reference (base / stress)",
   "Diferença ante referência nativa com preços configurados (base / stress)": "Difference from native reference with configured prices (base / stress)",
   "Detalhe da variante observado": "Observed variant detail",
+  "Tripulação exigida (pilotos / cabine / engenheiros / técnicos)": "Required staff (pilots / cabin crew / engineers / technicians)",
+  "Tempo indicativo de entrega (sem confirmação)": "Displayed delivery time (unconfirmed)",
   "Assentos Y/J/F do modelo oculto (sem confirmação)": "Hidden template Y/J/F seats (unconfirmed)",
   "Assentos Y/J/F do formulário visível (sem confirmação)": "Visible form Y/J/F seats (unconfirmed)",
   "Identidade do modelo confirmada": "Model identity confirmed",
@@ -2289,6 +2291,22 @@ function appendEngineDetail(metrics, task, now = Date.now() / 1000) {
   addHubMetric(metrics, "Detalhe da variante observado",
     tr(evidence.model_identity_verified ? "Identidade do modelo confirmada" : "Identidade do modelo pendente"));
   const data = evidence.metrics;
+  const requirements = evidence.operational_requirements;
+  if (evidence.model_identity_verified && requirements &&
+      [requirements.pilots, requirements.cabin_crew, requirements.engineers, requirements.technicians]
+        .every(value => Number.isInteger(value) && value >= 0 && value <= 10000) &&
+      Number.isInteger(requirements.delivery_seconds) && requirements.delivery_seconds > 0 &&
+      requirements.delivery_seconds <= 9999 * 3600 + 3599) {
+    addHubMetric(metrics, "Tripulação exigida (pilotos / cabine / engenheiros / técnicos)",
+      [requirements.pilots, requirements.cabin_crew, requirements.engineers, requirements.technicians]
+        .map(value => nf.format(value)).join(" / "));
+    const duration = requirements.delivery_seconds;
+    const hours = Math.floor(duration / 3600);
+    const minutes = Math.floor(duration % 3600 / 60);
+    const seconds = duration % 60;
+    addHubMetric(metrics, "Tempo indicativo de entrega (sem confirmação)",
+      [hours, minutes, seconds].map(value => String(value).padStart(2, "0")).join(":"));
+  }
   const seats = evidence.seat_observation;
   if (evidence.model_identity_verified && seats &&
       ["hidden_native_template", "visible_native_form"].includes(seats.source) &&

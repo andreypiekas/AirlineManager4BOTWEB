@@ -598,11 +598,13 @@ const seat = textContent => ({textContent, getClientRects: () => stepShown ? [{}
 const seats = {'#eSeats': seat('3'), '#bSeats': seat('0'), '#fSeats': seat('0')};
 const step = {contains: el => Object.values(seats).includes(el),
   getClientRects: () => stepShown ? [{}] : []};
+const requirementRows = [['Delivery time', '00:00:30'], ['Pilots', '1'], ['Crew', '0'],
+  ['Engineers', '1'], ['Tech', '1']].map(row => ({children:row.map(textContent => ({textContent}))}));
 const panel = {
   getAttribute: name => name === 'data-model-id' ? modelId : null,
   querySelector: () => loading ? {} : null,
   querySelectorAll: name => name === 'select' ? [select] : name === 'script' ? scripts :
-    name === '#step2' ? [step] : name in seats ?
+    name === 'tr, .row' ? requirementRows : name === '#step2' ? [step] : name in seats ?
     (duplicateSeat && name === '#eSeats' ? [seats[name], seat('3')] : [seats[name]]) : []
 };
 globalThis.document = {
@@ -643,6 +645,8 @@ globalThis.window = {jQuery: {active: 0}, getComputedStyle: () => ({visibility: 
     assert reads["missing"]["detail"]["script_model_id"] is None
     assert reads["first"]["seat_observation"] == {
         "source": "hidden_native_template", "y": "3", "j": "0", "f": "0"}
+    assert reads["first"]["metrics"]["rows"] == [
+        ["Delivery time", "00:00:30"], ["Pilots", "1"], ["Crew", "0"], ["Engineers", "1"], ["Tech", "1"]]
     assert reads["visibleSeats"]["seat_observation"] == {
         "source": "visible_native_form", "y": "3", "j": "0", "f": "0"}
     assert reads["duplicateSeats"]["seat_observation"] is None

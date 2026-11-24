@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import paths
-from engine_detail import validate_metrics, validate_seat_observation
+from engine_detail import validate_metrics, validate_operational_requirements, validate_seat_observation
 from engine_selection import EngineCatalog
 
 _LOCK = threading.RLock()
@@ -217,6 +217,9 @@ def _validated_record(row: object, *, now: int | float) -> dict | None:
         seats = validate_seat_observation(observation.get("seat_observation"), metrics.get("capacity_pax"))
         if seats is not None:
             variant_details[engine_id]["seat_observation"] = seats
+        requirements = validate_operational_requirements(observation.get("operational_requirements"))
+        if requirements is not None:
+            variant_details[engine_id]["operational_requirements"] = requirements
     return {
         "source": SOURCE, "model_id": identity[0], "model": identity[1],
         "observed_at": observed_at, "selector_type": row["selector_type"],

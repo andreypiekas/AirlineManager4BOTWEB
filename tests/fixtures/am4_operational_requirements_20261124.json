@@ -1,0 +1,12 @@
+{
+  "observed_on": "2026-11-24",
+  "source": "Authenticated aircraft detail, read-only DOM observation",
+  "model": "Cessna 172",
+  "rows": [
+    ["Delivery time", "00:00:30"],
+    ["Pilots", "1"],
+    ["Crew", "0"],
+    ["Engineers", "1"],
+    ["Tech", "1"]
+  ]
+}

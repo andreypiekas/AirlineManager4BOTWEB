@@ -436,14 +436,17 @@ def test_selected_detail_is_exposed_but_only_correlated_metrics_feed_model(verif
                "capacity_pax": 164, "required_runway_ft": 6500,
                "displayed_cost_usd": 6770196}
     seats = {"source": "hidden_native_template", "y": 164, "j": 0, "f": 0}
+    requirements = {"delivery_seconds": 600, "pilots": 2, "cabin_crew": 4,
+                    "engineers": 2, "technicians": 1}
     catalog["variant_details"] = {"1": {"observed_at": NOW - 2, "metrics": metrics,
-                                        "seat_observation": seats}}
+                                        "seat_observation": seats, "operational_requirements": requirements}}
     page = build_owned_hub_research_queue(_inventory(), [_sample()], _market(),
                                          engines=engines, now=NOW)
     item = next(row for row in page["items"] if row["engine_id"] == "1")
     expected = {"observed_at": NOW - 2, "metrics": metrics, "model_identity_verified": verified}
     if verified:
         expected["seat_observation"] = seats
+        expected["operational_requirements"] = requirements
     assert item["engine_detail"] == expected
     assert item["engine_speed"] == (881 if verified else None)
     assert item["engine_fuel"] == (11.55 if verified else None)
