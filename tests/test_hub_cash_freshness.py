@@ -51,5 +51,9 @@ def test_hub_api_exposes_cash_verification_time_and_omits_stale_money(monkeypatc
                            cfg=SimpleNamespace(get_int=lambda *args: 2000))
 
     response = WebDashboard.hub_expansion(fake)
-    assert called == {"cash": None, "reserve": 2000, "owned_hub_ids": {"1"}}
+    assert called == {"cash": None, "reserve": 2000, "owned_hub_ids": {"1"},
+                      "external_ownership_verified": False}
     assert response["cash_observed_at"] is None
+
+    WebDashboard.hub_expansion(fake, owned_inventory={"hubs": [{"id": "1"}], "hub_catalog_fresh": True})
+    assert called["external_ownership_verified"] is True

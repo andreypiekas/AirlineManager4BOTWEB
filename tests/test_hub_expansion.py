@@ -13,6 +13,32 @@ def _candidate(airport_id="123", price=5000):
             "purchasable": True, "hub_price": price, "hub_points": 0}
 
 
+def test_external_demand_isolated_and_excluded_after_hub_purchase(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate("123"), _candidate("456"), _candidate("789")])
+    now = time.time()
+    assert registry.external_research_origins({"123"}, now=now) == ["456", "789"]
+    assert registry.external_research_origins(set(), now=now) == []
+    assert registry.external_research_origins({"123", "invalid"}, now=now) == []
+    assert registry.external_research_origins({"123"}, now=now + MAX_AGE_SECONDS + 1) == []
+    external = registry.external_demand_registry()
+    assert external.record_demand_attempt("456", search_scope="configured", max_distance=6000, min_runway=5000)
+    assert external.record_demand("456", [{"arr_id": "789", "distance": 2000, "y": 100, "j": 20, "f": 5}]) == 1
+    restarted = HubExpansionRegistry(registry.path)
+    assert restarted.external_demand_registry().next_demand_origin(["456", "789"]) == "789"
+    report = restarted.snapshot(owned_hub_ids={"123"})
+    assert report["external_demand_fresh_samples"] == 1
+    assert report["external_demand_attempted_hubs"] == 1
+    assert report["demand_samples"] == 0
+    assert report["external_demand_coverage"] == "partial"
+    candidate = next(row for row in report["candidates"] if row["id"] == "456")
+    assert candidate["route_research"]["fresh_sample_count"] == 1
+    assert candidate["status"] == "dados_a_confirmar"
+    assert restarted.snapshot(owned_hub_ids={"123"}, external_ownership_verified=False)["external_demand_fresh_samples"] == 0
+    assert restarted.external_demand_snapshot({"123", "456"})["samples"] == []
+    assert restarted.demand_observations({"456"}) == []
+
+
 def _research(*, airport_id="123", **overrides):
     observed_at = int(time.time())
     model = overrides.get("model", "model-fixture")

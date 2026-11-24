@@ -206,6 +206,7 @@ class WebDashboard:
             cash=cash,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
             owned_hub_ids=owned,
+            external_ownership_verified=owned_inventory.get("hub_catalog_fresh") is True,
         )
         report["cash_observed_at"] = observed_at
         if owned_research is None:

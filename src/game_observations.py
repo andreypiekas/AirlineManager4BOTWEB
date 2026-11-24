@@ -410,19 +410,36 @@ def collect_hub_market_prices(bot: object, *, per_cycle: int = 3) -> int:
 
 def collect_owned_hub_demand(bot: object) -> int:
     """Search one purchased hub per cycle, using the game's read-only research."""
+    return _collect_hub_demand(bot, external=False)
+
+
+def collect_external_hub_demand(bot: object) -> int:
+    """Search one fresh purchase-catalog airport outside the owned inventory."""
+    if not bot.config.get_bool("investment", "planning_enabled"):
+        return 0
+    return _collect_hub_demand(bot, external=True)
+
+
+def _collect_hub_demand(bot: object, *, external: bool) -> int:
     from fleet import _HUB_OPTIONS_JS, search_routes
+    from hub_registry import _hub_id
 
     if getattr(bot, "stopping", False):
         return 0
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
     try:
         bot.ajax("research_main.php", "routeAction")
-        options = bot.js(_HUB_OPTIONS_JS) or []
+        options = (_stable_read(bot, _HUB_OPTIONS_JS) if external
+                   else bot.js(_HUB_OPTIONS_JS)) or []
         if not HubRegistry().record_options(options):
             return 0
         ids = [str(option.get("id")) for option in options if isinstance(option, dict)]
-        registry = HubExpansionRegistry()
-        origin = registry.next_demand_origin(ids)
+        if external:
+            ids = [airport_id for value in ids if (airport_id := _hub_id(value))]
+        expansion = HubExpansionRegistry()
+        registry = expansion.external_demand_registry() if external else expansion
+        origins = expansion.external_research_origins(set(ids)) if external else ids
+        origin = registry.next_demand_origin(origins)
         if origin is None:
             return 0
         # Reserve the rotation cursor before making AJAX requests. An empty,
@@ -448,13 +465,23 @@ def collect_owned_hub_demand(bot: object) -> int:
         read = _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS, with_timestamp=True)
         rows, read_at = read if isinstance(read, tuple) and len(read) == 2 else (None, None)
         samples = _verified_demand(candidates, rows, origin)
+        if external:
+            # A changed or missing ownership selector invalidates the external
+            # classification. Keep the attempt, but discard its observations.
+            confirmed_options = _stable_read(bot, _HUB_OPTIONS_JS)
+            if (confirmed_options != options
+                    or origin not in expansion.external_research_origins(set(ids))):
+                return 0
         if not samples or any(sample["distance"] > distance + 0.001
                               or sample.get("destination_runway_ft", runway) < runway
                               for sample in samples):
             log.debug("Pesquisa de demanda do hub %s incompleta ou sem resultados confirmados.", origin)
             return 0
         count = registry.record_demand(origin, samples, observed_at=read_at, search_scope=scope)
-        log.info("Pesquisa de demanda: hub %s, %d destinos confirmados.", origin, count)
+        if external:
+            log.info("Pesquisa externa de demanda: hub %s, %d destinos observados.", origin, count)
+        else:
+            log.info("Pesquisa de demanda: hub %s, %d destinos confirmados.", origin, count)
         return count
     finally:
         bot.close_popup(quiet=True)

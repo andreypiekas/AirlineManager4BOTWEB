@@ -975,6 +975,69 @@ def test_demand_collection_discards_unstable_reads_and_invalid_hub_selector(tmp_
     assert persisted["route_demand_attempts"]["2926"]["status"] == "inconclusive"
 
 
+@pytest.mark.parametrize("failure", [None, "wrong_origin", "changed_ownership", "missing_ownership"])
+def test_external_demand_requires_current_ownership_and_matching_results(tmp_path, monkeypatch, failure):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([{"id": "3139", "purchasable": True, "hub_price": 5000}])
+    monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
+    monkeypatch.setattr(game_observations, "HubRegistry", lambda: HubRegistry(tmp_path / "hubs.json"))
+    options = [{"id": "0", "text": "Select hub"},
+               {"id": "2926", "text": "XAP - Chapeco", "code": "XAP", "title": ""}]
+    raw = {"dep_id": "2926" if failure == "wrong_origin" else "3139", "arr_id": "2926",
+           "distance": "2000", "y": "100", "j": "20", "f": "5", "runway": "5013",
+           "event_demand_boosted": True}
+    ownership_reads = iter([None if failure == "missing_ownership" else options,
+                            options + [{"id": "3139"}] if failure == "changed_ownership" else options])
+
+    def stable_read(_bot, script, *, with_timestamp=False):
+        if script == _HUB_OPTIONS_JS:
+            return next(ownership_reads)
+        assert with_timestamp
+        return [raw], time.time()
+
+    monkeypatch.setattr(game_observations, "_stable_read", stable_read)
+    searched = []
+
+    def search(_bot, origin, distance, runway, *, persist_demand):
+        searched.append((origin, distance, runway, persist_demand))
+        return [RouteCandidate("2926", "XAP", 2000, 100, 20, 5, 5013)]
+
+    monkeypatch.setattr(fleet, "search_routes", search)
+
+    class Config:
+        def get_bool(self, _section, _key):
+            return True
+
+        def get_int(self, _section, _key, default):
+            return default
+
+    class Bot:
+        stopping = False
+        config = Config()
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            self.closed = True
+
+        def ajax(self, *_args):
+            pass
+
+    bot = Bot()
+    assert game_observations.collect_external_hub_demand(bot) == (1 if failure is None else 0)
+    assert bot.closed
+    assert searched == ([] if failure == "missing_ownership" else [("3139", 6000, 5000, False)])
+    assert registry.demand_observations({"3139"}) == []
+    external = registry.external_demand_snapshot({"2926"})
+    assert len(external["samples"]) == (1 if failure is None else 0)
+    if failure is None:
+        assert external["samples"][0]["event_demand_boosted"] is True
+    else:
+        assert external["hub_progress"][0]["last_attempt_status"] == (
+            "unattempted" if failure == "missing_ownership" else "inconclusive")
+
+
 def test_demand_search_interruption_rotates_to_next_owned_hub(tmp_path, monkeypatch):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)

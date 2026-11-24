@@ -1,5 +1,14 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A6/A7, pesquisa incremental de hubs externos (G0)
+
+- O planejador pesquisa até um aeroporto externo por ciclo quando `collect_market_observations` e `investment.planning_enabled` estão ativos. A seleção exige uma lista estável e válida dos hubs próprios e candidatos recentes do catálogo de compra. O seletor de hubs é conferido novamente após a pesquisa e os IDs, valores e limites dos resultados são correlacionados antes de persistir qualquer amostra.
+- Cada perfil utiliza um registro separado de demanda externa, com cursor, tentativas inconclusivas, alternância de filtros e prazo de validade independentes. Um hub adquirido deixa de aparecer na pesquisa externa e suas observações anteriores não são promovidas ao registro dos hubs próprios.
+- A API e o painel PT/EN exibem a quantidade de candidatos pesquisados, amostras recentes e última tentativa por candidato. Inventários de propriedade vencidos ou ausentes deixam a classificação externa pendente. A cobertura permanece parcial e os dados observacionais não constituem cenário financeiro nem liberam aquisições.
+- A pesquisa autenticada por `Custom departure` já foi observada na entrega anterior. O coletor reutiliza a consulta de rotas existente e exige que todas as linhas retornem o aeroporto externo selecionado. A aceitação dessa chamada direta pelo jogo, a abrangência dos filtros, a demanda residual, os detalhes independentes de rota e o cálculo completo de viabilidade externa seguem pendentes de homologação. Nenhuma compra foi realizada.
+- Os testes cobrem a separação de registros, validade do catálogo, retomada após reinício, exclusão após aquisição, ausência ou mudança de propriedade, resultados com origem divergente e preservação do aviso de demanda temporária.
+- Suíte Windows: 1.663 testes aprovados e 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-23 — Autonomia Total A2/A3, demanda de evento e contagem de aeronaves na rota (G0)
 
 - Na sessão autenticada foi observado o aviso `Demand is currently boosted due to a special event` e a linha `A/C on route`, com duas células e contagem zero, na rota XAP–SBL. A leitura agora identifica explicitamente o aviso e associa a contagem ao rótulo, sem depender da posição da tabela. O valor permanece uma observação até conciliação com a frota completa; ausência de aviso não confirma demanda normal.

@@ -975,13 +975,39 @@ class HubExpansionRegistry:
 
         return RouteDetailRegistry(self.path.with_name(self.path.stem + "_route_details.json"))
 
+    def external_demand_registry(self):
+        """Keep pre-purchase observations and cursors separate from owned hubs."""
+        return HubExpansionRegistry(self.path.with_name(self.path.stem + "_external_demand.json"))
+
+    def external_research_origins(self, owned_ids: set[str], *,
+                                  now: Optional[float] = None) -> list[str]:
+        """Return fresh catalog airports outside a verified ownership inventory."""
+        owned = {_airport_id(value) for value in owned_ids}
+        if not owned or None in owned:
+            return []
+        now = time.time() if now is None else now
+        with _LOCK:
+            saved = self._load()
+        if saved.get("source") != "game_purchase_catalog":
+            return []
+        return sorted((row["id"] for row in _stored_candidates(saved.get("candidates"))
+                       if row["id"] not in owned
+                       and _fresh(row.get("observed_at"), now)), key=int)
+
+    def external_demand_snapshot(self, owned_ids: set[str], *,
+                                 now: Optional[float] = None) -> dict:
+        origins = self.external_research_origins(owned_ids, now=now)
+        snapshot = self.external_demand_registry().demand_research_snapshot(set(origins), now=now)
+        return {**snapshot, "origin_scope": "external_catalog", "candidate_hubs": len(origins)}
+
     def demand_observations(self, owned_hub_ids: set[str], *,
                             now: Optional[float] = None) -> list[dict]:
         """Return fresh raw traffic samples for owned hubs without inferred demand."""
         return self.demand_research_snapshot(owned_hub_ids, now=now)["samples"]
 
     def snapshot(self, *, cash: object = None, reserve: object = 0,
-                 now: Optional[int] = None, owned_hub_ids: Optional[set[str]] = None) -> dict:
+                 now: Optional[int] = None, owned_hub_ids: Optional[set[str]] = None,
+                 external_ownership_verified: bool = True) -> dict:
         """Evaluate evidence age, affordability and payback without game writes."""
         with _LOCK:
             saved = deepcopy(self._load())
@@ -996,6 +1022,14 @@ class HubExpansionRegistry:
         fresh_demand = {key: item for key, item in demand.items()
                         if 0 <= now - item["observed_at"] <= MAX_AGE_SECONDS}
         owned = {_airport_id(value) for value in (owned_hub_ids or set())} - {None}
+        external_ownership_verified = (external_ownership_verified is True and bool(owned)
+                                       and all(_airport_id(value) is not None for value in owned_hub_ids or set()))
+        external = self.external_demand_snapshot(
+            (owned_hub_ids or set()) if external_ownership_verified else set(), now=now)
+        external_progress = {row["hub_id"]: {**row, "fresh_sample_count": 0}
+                             for row in external["hub_progress"]}
+        for sample in external["samples"]:
+            external_progress[sample["origin_id"]]["fresh_sample_count"] += 1
         attempted_owned = {hub for hub in owned if hub in attempts and
                            0 <= now - attempts[hub]["attempted_at"]}
         sampled_owned = {item["origin_id"] for item in demand.values()} & owned
@@ -1074,6 +1108,7 @@ class HubExpansionRegistry:
                 "ranking_conclusive": best["ranking_conclusive"] if best else False,
                 "purchase_evidence": best["purchase_evidence"] if best else False,
                 "cost_breakdown": best["cost_breakdown"] if best else None,
+                "route_research": external_progress.get(raw["id"]),
             })
             candidates.append(row)
         candidates.sort(key=lambda row: (row["status"] != "viavel",
@@ -1099,4 +1134,10 @@ class HubExpansionRegistry:
                 "demand_last_attempt_at": max(
                     (attempts[hub]["attempted_at"] for hub in attempted_owned), default=None),
                 "demand_hub_progress": list(progress.values()),
+                "external_demand_candidate_hubs": external["candidate_hubs"],
+                "external_demand_ownership_verified": external_ownership_verified,
+                "external_demand_attempted_hubs": sum(
+                    row["last_attempt_at"] is not None for row in external["hub_progress"]),
+                "external_demand_fresh_samples": len(external["samples"]),
+                "external_demand_coverage": external["coverage"],
                 "demand_coverage": "partial"}

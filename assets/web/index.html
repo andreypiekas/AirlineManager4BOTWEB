@@ -1242,6 +1242,10 @@ const EN = {
   "Aguardando nova leitura para liberar os dados.": "Awaiting a new read to release the evidence.",
   "recentes": "recent", "Demanda atualizada em": "Demand updated at",
   "Hubs próprios pesquisados": "Owned hubs researched",
+  "Hubs externos pesquisados": "External hubs researched",
+  "Amostras externas recentes": "Fresh external samples",
+  "Última pesquisa externa": "Last external research",
+  "Pesquisa externa aguarda confirmação dos hubs próprios.": "External research awaits confirmation of owned hubs.",
   "tentativas inconclusivas": "inconclusive attempts",
   "Cobertura de demanda parcial; respostas vazias não comprovam ausência de rotas.":
     "Partial demand coverage; empty responses do not prove there are no routes.",
@@ -2270,6 +2274,16 @@ function renderHubExpansion(report) {
       tr("tentativas inconclusivas") + "). " +
       tr("Cobertura de demanda parcial; respostas vazias não comprovam ausência de rotas."));
   }
+  if (report.external_demand_ownership_verified === false) {
+    observations.push(tr("Pesquisa externa aguarda confirmação dos hubs próprios."));
+  } else if (Number.isSafeInteger(report.external_demand_candidate_hubs)) {
+    observations.push(tr("Hubs externos pesquisados") + ": " +
+      nf.format(report.external_demand_attempted_hubs || 0) + " / " +
+      nf.format(report.external_demand_candidate_hubs) + ". " +
+      tr("Amostras externas recentes") + ": " +
+      nf.format(report.external_demand_fresh_samples || 0) + ". " +
+      tr("Cobertura de demanda parcial; respostas vazias não comprovam ausência de rotas."));
+  }
   $("hubExpansionScope").textContent += " " + observations.join(" ");
   const demandProgress = Array.isArray(report.demand_hub_progress) ? report.demand_hub_progress : [];
   const progressList = $("hubDemandProgressList");
@@ -2335,6 +2349,10 @@ function renderHubExpansion(report) {
     addHubMetric(evidence, "Modelo pesquisado", scenario.model || tr("Sem dados"));
     addHubMetric(evidence, "Rota pesquisada", scenario.route || tr("Sem dados"));
     addHubMetric(evidence, "Consulta do hub", hubDate(hub.observed_at));
+    if (hub.route_research) {
+      addHubMetric(evidence, "Amostras externas recentes", nf.format(hub.route_research.fresh_sample_count || 0));
+      addHubMetric(evidence, "Última pesquisa externa", hubDate(hub.route_research.last_attempt_at));
+    }
     addHubMetric(evidence, "Observação do cenário", hubDate(scenario.observed_at));
     const note = document.createElement("p"); note.className = "hub-context";
     const excluded = Array.isArray(scenario.excluded_costs) ? scenario.excluded_costs : [];
