@@ -457,6 +457,26 @@ def collect_owned_hub_demand(bot: object) -> int:
         bot.close_popup(quiet=True)
 
 
+def collect_owned_route_details(bot: object) -> int:
+    """Rotate independent route-detail reads over fresh owned-hub samples."""
+    from route_detail_evidence import collect_route_details
+
+    if getattr(bot, "stopping", False):
+        return 0
+    inventory = HubRegistry().snapshot()
+    if not inventory.get("hub_catalog_fresh"):
+        return 0
+    codes = {hub["id"]: hub.get("code") for hub in inventory["hubs"]}
+    expansion = HubExpansionRegistry()
+    samples = expansion.demand_research_snapshot(set(codes))["samples"]
+    if not samples:
+        return 0
+    count = collect_route_details(bot, expansion.route_detail_registry(), samples, codes)
+    if count:
+        log.info("Detalhes de rotas: %d pares de pistas observados.", count)
+    return count
+
+
 def collect_aircraft_engine_catalog(bot: object, *, per_cycle: int = 2) -> int:
     """Inspect a bounded number of model detail screens without choosing or buying.
 

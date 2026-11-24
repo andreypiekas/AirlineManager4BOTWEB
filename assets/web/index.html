@@ -1133,6 +1133,9 @@ const EN = {
   "Pesquisa ampla": "Broad search",
   "Pesquisa configurada": "Configured search",
   "Pista do destino observada": "Observed destination runway",
+  "Pista da origem no detalhe": "Origin runway in route details",
+  "Pista do destino no detalhe": "Destination runway in route details",
+  "Ocupação da rota": "Route occupancy",
   "Rotas com amostras conflitantes": "Routes with conflicting samples",
   "Cobertura parcial": "Partial coverage",
   "Pesquisa ainda pendente": "Research pending",
@@ -2456,6 +2459,13 @@ function renderHubRecommendations(report) {
     addHubMetric(metrics, "Pista do destino observada",
       Number.isSafeInteger(task.destination_runway_ft) && task.destination_runway_ft > 0
         ? nf.format(task.destination_runway_ft) + " ft" : tr("Não verificado"));
+    const routeDetail = task.route_detail;
+    for (const [label, value] of [["Pista da origem no detalhe", routeDetail?.origin_runway_ft],
+      ["Pista do destino no detalhe", routeDetail?.destination_runway_ft]]) {
+      addHubMetric(metrics, label, Number.isSafeInteger(value) && value > 0 && value <= 30000
+        ? nf.format(value) + " ft" : tr("Não verificado"));
+    }
+    addHubMetric(metrics, "Ocupação da rota", tr("Não verificado"));
     addHubMetric(metrics, "Preço final da aeronave", tr("Não verificado"));
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));

@@ -629,9 +629,11 @@ class Bot:
         # The registry is also updated when automatic buying and routing are off.
         self._guard(lambda: manage_fleet(self), "auditar rotas e gerenciar a frota")
         if opt("collect_market_observations"):
-            from game_observations import collect_owned_hub_demand
+            from game_observations import collect_owned_hub_demand, collect_owned_route_details
 
             self._guard(lambda: collect_owned_hub_demand(self), "coletar demanda dos hubs")
+            if self.config.get_bool("investment", "planning_enabled"):
+                self._guard(lambda: collect_owned_route_details(self), "coletar detalhes das rotas")
         if opt("collect_engine_catalog"):
             from game_observations import collect_aircraft_engine_catalog
 

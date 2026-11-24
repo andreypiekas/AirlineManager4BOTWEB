@@ -298,6 +298,9 @@ const translations = {
   'Pesquisa ampla': 'Broad search',
   'Pesquisa configurada': 'Configured search',
   'Pista do destino observada': 'Observed destination runway',
+  'Pista da origem no detalhe': 'Origin runway in route details',
+  'Pista do destino no detalhe': 'Destination runway in route details',
+  'Ocupação da rota': 'Route occupancy',
   'Rotas com amostras conflitantes': 'Routes with conflicting samples',
   'Cobertura parcial': 'Partial coverage',
   'Pesquisa ainda pendente': 'Research pending',
@@ -445,6 +448,9 @@ assert.deepEqual(researchMetrics(withoutEngine), {
   'Researched engine':'Engine research pending',
   'Engine status':'Engine research pending',
   'Observed destination runway':'Not verified',
+  'Origin runway in route details':'Not verified',
+  'Destination runway in route details':'Not verified',
+  'Route occupancy':'Not verified',
   'Final aircraft price':'Not verified',
   'Total cost':'Unknown',
   'Daily net profit':'Unknown', 'ROI':'Unknown', 'Estimated payback':'Unknown'
@@ -471,6 +477,7 @@ assert.deepEqual(researchReasons(unavailable), ['Variante de motor indisponível
 report.research_queue.items.push({hub_code:'BBB', destination_id:'9', model:'A320',
   engine_id:'1', engine_label:'Trent <prova>', engine_available:true, engine_selected:true,
   destination_runway_ft:5013,
+  route_detail:{origin_runway_ft:6749,destination_runway_ft:5013,occupied_aircraft:null},
   evidence:{engine:{model_detail_identity_verified:true}},
   final_aircraft_price:123456, daily_net_profit:123, roi:0.42, payback_days:10,
   pending:['preco_final_motor_a_confirmar', 'cobertura_da_frota_a_confirmar']});
@@ -480,6 +487,9 @@ assert.equal(researchMetrics(selected)['Model identity'], 'Verified in game mode
 assert.equal(researchMetrics(selected)['Researched engine'], 'Trent <prova> (1)');
 assert.equal(researchMetrics(selected)['Engine status'], 'Selected in game');
 assert.equal(researchMetrics(selected)['Observed destination runway'], '5,013 ft');
+assert.equal(researchMetrics(selected)['Origin runway in route details'], '6,749 ft');
+assert.equal(researchMetrics(selected)['Destination runway in route details'], '5,013 ft');
+assert.equal(researchMetrics(selected)['Route occupancy'], 'Not verified');
 assert.equal(researchMetrics(selected)['Final aircraft price'], 'Not verified');
 assert.equal(researchMetrics(selected)['Total cost'], 'Unknown');
 assert.equal(researchMetrics(selected)['ROI'], 'Unknown');

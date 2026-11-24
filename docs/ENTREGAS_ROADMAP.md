@@ -1,5 +1,23 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A2/A3, evidência independente dos detalhes de rota (G0)
+
+**Objetivo:** complementar as amostras de demanda com as pistas dos dois aeroportos, vinculando a leitura ao par de IDs pesquisado e preservando a incerteza sobre a ocupação da rota.
+
+### Implementação e evidências
+
+- `src/route_detail_evidence.py` reutiliza a leitura desacoplada de `route_research_route.php`, sem executar scripts do fragmento. Exige duas respostas idênticas, dois códigos na ordem solicitada, correspondência IATA/ICAO com o catálogo auxiliar, concordância com o código do hub quando disponível e medidas positivas em pés, até 30.000 ft. Se a pesquisa já trouxe a pista do destino, exige concordância entre as fontes.
+- O proprietário da sessão Selenium pesquisa até dois pares por ciclo, com `collect_market_observations` e `investment.planning_enabled` ativos e inventário de hubs recente. A seleção alterna hubs e destinos com base nas tentativas persistidas por perfil. Uma tentativa inconclusiva invalida o detalhe anterior e libera a rotação para os demais pares, inclusive após reinício. A evidência independente expira após 15 minutos.
+- O cache de demanda, a fila de pesquisa, a materialização de combinações e o painel PT/EN incorporam os detalhes com ID, origem, horário e validade próprios. Pistas de origem e destino aparecem separadamente da pista observada na pesquisa de demanda. A leitura de cenários armazenados consulta o registro atual para retirar evidências vencidas ou invalidadas.
+- O número localizado na primeira célula da tabela do detalhe não possui semântica autenticada inequívoca. Ocupação, disponibilidade, demanda residual e compatibilidade do modelo continuam desconhecidas ou pendentes. A evidência permanece restrita à pesquisa e não autoriza compras.
+
+### Verificação, limites e reversão
+
+- Regressões cobrem ordem dos aeroportos, aliases IATA/ICAO, unidades e limites das pistas, divergência entre fontes, rotação, persistência, respostas instáveis, expiração e invalidação da evidência nos cenários. O teste do painel inclui traduções e estados desconhecidos.
+- Suíte Windows: 1.654 testes aprovados, 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). Ruff em `src`, `tests` e `scripts`, compilação Python e `git diff --check` aprovados.
+- **Gate G0.** As estruturas do detalhe foram verificadas com respostas simuladas nesta entrega. A estrutura exata e os rótulos do fragmento autenticado, a semântica de ocupação, o universo de rotas, a demanda residual, os custos e a viabilidade final seguem pendentes. Nenhuma compra real, implantação ou merge na `main` foi executado.
+- Reversão pelo commit desta entrega na branch `codex/autonomia-a0-a1-20261122`, considerando dependências posteriores.
+
 ## 2026-11-23 — Autonomia Total A2/A3, ampliação da pesquisa de rotas por hub (G0)
 
 **Objetivo:** aumentar o universo observado para comparar aeronaves de alcances e requisitos de pista diferentes, mantendo a procedência dos dados e a rotação entre hubs próprios.

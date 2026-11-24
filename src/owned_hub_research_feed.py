@@ -14,6 +14,7 @@ import time
 from collections import defaultdict
 from typing import Optional
 
+from route_detail_evidence import current_detail
 
 MAX_EVIDENCE_AGE = 3 * 86400
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
@@ -195,6 +196,10 @@ def build_owned_hub_research_queue(
         runway = row.get("destination_runway_ft")
         if type(runway) is int and 0 < runway <= 30000:
             sample["destination_runway_ft"] = runway
+        detail = current_detail(row.get("route_detail"), origin, destination, now,
+                                expected_runway=sample.get("destination_runway_ft"))
+        if detail:
+            sample["route_detail"] = detail
         key = (origin, destination)
         prior = latest_routes.get(key)
         if prior is None or sample["observed_at"] > prior["sample"]["observed_at"]:
@@ -354,6 +359,7 @@ def build_owned_hub_research_queue(
                                                 if model["range_km"] is not None else None),
                     "observed_demand": sample["demand"],
                     "destination_runway_ft": sample.get("destination_runway_ft"),
+                    "route_detail": sample.get("route_detail"),
                     "model_id": model["id"], "model": model["name"],
                     "range_km": model["range_km"], "capacity": model["capacity"],
                     "catalog_price": model["catalog_price"],

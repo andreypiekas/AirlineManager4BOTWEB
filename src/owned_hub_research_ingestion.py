@@ -19,6 +19,7 @@ from typing import Optional
 import paths
 from owned_hub_research_feed import MAX_EVIDENCE_AGE, build_owned_hub_research_queue
 from route_registry import endpoint, route_key
+from route_detail_evidence import RouteDetailRegistry, current_detail
 
 
 _LOCK = threading.RLock()
@@ -129,6 +130,10 @@ def _scenario(item: dict, now: float) -> dict | None:
     runway = item.get("destination_runway_ft")
     if type(runway) is int and 0 < runway <= 30000:
         observed["destination_runway_ft"] = runway
+    detail = current_detail(item.get("route_detail"), hub_id, destination_id, now,
+                            expected_runway=observed.get("destination_runway_ft"))
+    if detail:
+        observed["route_detail"] = detail
     return observed if _identity(observed) is not None else None
 
 
@@ -170,13 +175,27 @@ class OwnedHubResearchInputsRegistry:
                       if isinstance(item, dict) and item.get("source") == "game_research"}
         with _LOCK:
             rows = self._load().get("items")
-        return deepcopy([
+        result = deepcopy([
             row for row in rows if isinstance(row, dict)
             and row.get("source") == "derived_research_queue"
             and _identity(row) is not None and _identity(row) not in identities
             and _recent(row.get("observed_at"), now)
             and _evidence_current(row, now)
         ]) if isinstance(rows, list) else []
+        # A failed or contradictory new observation invalidates the separate
+        # registry immediately, including previously materialized queue pages.
+        detail_registry = RouteDetailRegistry(self.path.with_name("hub_expansion_route_details.json"))
+        live = detail_registry.enrich([
+            {"origin_id": row["hub_id"], "destination_id": row["destination"].get("id"),
+             "destination_runway_ft": row.get("destination_runway_ft")}
+            for row in result
+        ], now=now)
+        for row, sample in zip(result, live):
+            if sample.get("route_detail"):
+                row["route_detail"] = sample["route_detail"]
+            else:
+                row.pop("route_detail", None)
+        return result
 
     def record_queue(self, page: dict, *, now: Optional[float] = None,
                      expected_state: tuple[int, str | None, str | None] | None = None) -> int:
@@ -225,7 +244,8 @@ class OwnedHubResearchInputsRegistry:
                     # Equal-time contradictions are quarantined: every
                     # derived row is pending until independent validation.
                     if (previous is not None and row["observed_at"] == previous["observed_at"]
-                            and row != previous):
+                            and {k: v for k, v in row.items() if k != "route_detail"}
+                            != {k: v for k, v in previous.items() if k != "route_detail"}):
                         row["research_pending"] = sorted(set([
                             *row["research_pending"], "pesquisas_conflitantes"
                         ]))
