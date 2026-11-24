@@ -45,7 +45,7 @@ from reroute import (aircraft_details_missing, confirm_direct_route, confirm_sto
                      landed_departure, read_direct_form, recover_pending, replace_route)
 from reroute_preflight import check_existing_route
 from route_creation import has_pending_creation, stage_creation, finish_creation, recover_pending_creation
-from route_stopover import Stopover, find_stopover, parked_specs, read_form, research_details
+from route_stopover import Stopover, find_stopover, parked_specs, read_form, read_route_fares, research_details
 
 if TYPE_CHECKING:
     from bot import Bot
@@ -1517,19 +1517,18 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         return "none" if stop else "stop"
 
     autoprice = panel.find_elements(By.XPATH, ".//*[@id='introAuto']")
-    if autoprice:
-        bot.click_element(autoprice[0])
-        bot.pause(0.8, 1.2)
-    prices = bot.js(
-        "return ['eSeat', 'bSeat', 'fSeat'].map(i => { const e = document.getElementById(i); return e ? e.value : ''; });"
-    ) or ["", "", ""]
-    if not prices[0]:
+    if len(autoprice) != 1:
+        bot.js("$('#newRouteInfo').hide();")
+        return "none" if stop else "stop"
+    bot.click_element(autoprice[0])
+    bot.pause(0.8, 1.2)
+    prices = read_route_fares(bot)
+    if prices is None:
         log.warning("O preço automático não preencheu as passagens de %s; a rota não será criada.", candidate.name)
         bot.js("$('#newRouteInfo').hide();")
         return "none" if stop else "stop"
     if stop:
-        fares = tuple(to_int(price) or 0 for price in prices)
-        estimate = estimate_route(candidate, **stopover_economics, prices=fares, extra_stops=1)
+        estimate = estimate_route(candidate, **stopover_economics, prices=prices, extra_stops=1)
         if not estimate or estimate.profit_per_day <= 0:
             log.info("%s: rota %s sem lucro estimado positivo com os preços do jogo.", aircraft.reg, name)
             bot.js("$('#newRouteInfo').hide();")
@@ -1558,7 +1557,7 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         current = read_direct_form(bot, aircraft.id, origin, destination, allow_duplicates=allow_duplicates)
         unchanged = current == direct
     reserve = bot.config.get_int("settings", "cash_reserve", 0) if reroute else 0
-    if not unchanged or before is None or before - fee < reserve:
+    if not unchanged or read_route_fares(bot) != prices or before is None or before - fee < reserve:
         log.warning("%s: formulário ou saldo da rota mudou antes da criação.", aircraft.reg)
         bot.js("$('#newRouteInfo').hide();")
         return "stop"

@@ -5,8 +5,25 @@ import pytest
 
 import reroute
 import fleet
+from route_stopover import read_route_fares
 from airport_catalog import by_code
 from route_registry import endpoint
+
+
+@pytest.mark.parametrize("fields,expected", [
+    ([{"value": "100", "disabled": False}, {"value": "200", "disabled": False},
+      {"value": "300", "disabled": False}], (100, 200, 300)),
+    ([{"value": "100", "disabled": False}, {"value": "", "disabled": True},
+      {"value": "0", "disabled": True}], (100, 0, 0)),
+    ([{"value": "100", "disabled": False}, {"value": "", "disabled": False},
+      {"value": "300", "disabled": False}], None),
+    ([{"value": "100", "disabled": False}, {"value": "-200", "disabled": False},
+      {"value": "300", "disabled": False}], None),
+    ([{"value": "100", "disabled": False}, None, {"value": "300", "disabled": False}], None),
+    (None, None),
+])
+def test_native_route_fares_require_unambiguous_fields(fields, expected):
+    assert read_route_fares(SimpleNamespace(js=lambda *_: fields)) == expected
 
 
 @pytest.mark.parametrize("distance,expected", [(1000, True), (6000, False), (None, False)])
@@ -14,19 +31,22 @@ def test_form_waits_for_all_classes_and_checks_native_range(distance, expected):
     button, auto = object(), object()
     reads, clicks = [], []
 
-    def price_read(script):
-        reads.append(True)
-        return len(reads) > 1
+    def form_read(script, *_):
+        if "'eSeat', 'bSeat', 'fSeat'" in script:
+            reads.append(True)
+            return ([{"value": price, "disabled": False} for price in ("100", "200", "300")]
+                    if len(reads) > 1 else None)
+        return dict(codes=["LAX", "MIA"], bound=True, existing="0", fee="100",
+                    range="5500", distance=distance)
 
     panel = SimpleNamespace(find_elements=lambda by, selector: [auto] if selector == "introAuto" else [button])
     bot = SimpleNamespace(
         ajax=lambda *_: panel,
-        js=lambda *_: dict(codes=["LAX", "MIA"], bound=True, existing="0", fee="100",
-                           range="5500", distance=distance),
+        js=form_read,
         read_money=lambda: 1000,
         config=SimpleNamespace(get_int=lambda *_: 100),
         click_element=lambda element: clicks.append(element),
-        driver=SimpleNamespace(execute_script=price_read),
+        driver=SimpleNamespace(),
     )
     result = reroute._prepare_form(bot, "5", endpoint(code="LAX"), endpoint(by_code("MIA").game_id, code="MIA"))
     assert bool(result) == expected
@@ -63,12 +83,17 @@ def test_direct_form_distinguishes_duplicate_policy_and_unknown(occupied, allowe
                                     allow_duplicates=allowed) == expected
 
 
-@pytest.mark.parametrize("second,balance", [((1000, 1100, 0), 5000), (None, 5000),
-                                           ((1000, 1000, 0), None), ((1000, 1000, 0), 999)])
-def test_parked_direct_route_aborts_before_submit_when_form_or_cash_changes(monkeypatch, second, balance):
+@pytest.mark.parametrize("second,balance,second_fares", [
+    ((1000, 1100, 0), 5000, (100, 200, 300)), (None, 5000, (100, 200, 300)),
+    ((1000, 1000, 0), None, (100, 200, 300)), ((1000, 1000, 0), 999, (100, 200, 300)),
+    ((1000, 1000, 0), 5000, (100, 201, 300)), ((1000, 1000, 0), 5000, None),
+])
+def test_parked_direct_route_aborts_before_submit_when_form_or_cash_changes(monkeypatch, second, balance, second_fares):
     quotes = iter([(1000, 1000, 0), second])
     monkeypatch.setattr(fleet, "read_direct_form", lambda *args, **kwargs: next(quotes))
     actions = []
+    fares = iter([(100, 200, 300), second_fares])
+    monkeypatch.setattr(fleet, "read_route_fares", lambda *_: next(fares))
     panel = SimpleNamespace(find_elements=lambda *_: ["autoprice"],
                             find_element=lambda *_: pytest.fail("Unexpected route submission"))
 

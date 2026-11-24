@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
@@ -15,6 +15,7 @@ import paths
 from helpers import fmt, game_whole_number
 from notify import esc
 from route_registry import endpoint, endpoint_matches, same_route
+from route_stopover import read_route_fares
 
 log = logging.getLogger("am4bot.rutas")
 _ID = re.compile(r"[0-9]{1,14}")
@@ -221,17 +222,20 @@ def _prepare_form(bot, aircraft_id, origin, destination):
     bot.click_element(auto[0])
     # Native autoprice fills business/first prices on 200/400 ms timers.
     # Wait for the game's own validation to activate Create route.
-    def ready(driver):
-        prices_ready = driver.execute_script("""
-            return ['eSeat', 'bSeat', 'fSeat'].every(id => {
-                const field = document.getElementById(id);
-                return !!field && (field.disabled || Number(field.value) > 0);
-            });
-        """)
+    def ready(_driver):
+        fares = read_route_fares(bot)
         buttons = panel.find_elements(By.CSS_SELECTOR, "#btnCreateNewRoute:not(.not-active):not([disabled])")
-        return buttons[0] if prices_ready and len(buttons) == 1 else False
+        return (buttons[0], fares) if fares is not None and len(buttons) == 1 else False
 
-    return WebDriverWait(bot.driver, 5).until(ready), fee
+    try:
+        button, fares = WebDriverWait(bot.driver, 5).until(ready)
+    except TimeoutException:
+        return None
+    balance = bot.read_money()
+    if (read_direct_form(bot, aircraft_id, origin, destination) != verified
+            or read_route_fares(bot) != fares or balance is None or balance - fee < reserve):
+        return None
+    return button, fee
 
 
 def _transaction_path():

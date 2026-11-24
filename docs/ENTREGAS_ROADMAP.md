@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A5, validação das tarifas nativas de rota (G0)
+
+- A criação de rotas diretas e com escala e a preparação de trocas usam uma leitura compartilhada das três tarifas no formulário nativo ativo. Campos duplicados, ambíguos ou vazios quando habilitados e valores negativos são rejeitados. Classes desabilitadas podem apresentar zero. O preço automático exige um único controle.
+- Antes do envio, as tarifas são relidas e comparadas com a cotação inicial, juntamente com o formulário e o saldo. Nas trocas, a espera pelo preenchimento nativo tem limite e uma divergência impede a preparação. A estimativa para escala utiliza os valores estritamente validados.
+- Validação Windows: 63 testes direcionados aprovados, Ruff e `git diff --check` aprovados. A integração Selenium com o jogo real ainda requer homologação. As tarifas observadas em formulários de aeronaves existentes não comprovam preços para futuras compras; a alimentação de oportunidades auditadas A3 permanece pendente. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A3, otimização de layouts Y/J/F (G0)
 
 - A pesquisa por hub, rota, modelo e motor agora inclui layouts que maximizam a contribuição diária estimada no cenário base e no stress combinado, preservando as alternativas de referência econômica e premium. O algoritmo inteiro respeita a capacidade ponderada 1/2/3, demanda por classe, margem e custo de CO₂; explora as quantidades de F e encontra a melhor combinação Y/J por busca sobre uma função discreta côncava. As alternativas idênticas são consolidadas, com indicação das estratégias que as selecionaram.

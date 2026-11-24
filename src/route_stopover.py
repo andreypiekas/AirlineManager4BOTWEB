@@ -87,6 +87,37 @@ return {codes, via, bound, ready:!!button && !button.disabled && !button.classLi
 """
 
 
+_FARES = r"""
+const roots = document.querySelectorAll('#newRouteInfo');
+if (roots.length !== 1) return null;
+const root = roots[0];
+const buttons = root.querySelectorAll('#btnCreateNewRoute');
+if (buttons.length !== 1 || buttons[0].disabled || buttons[0].classList.contains('not-active')) return null;
+return ['eSeat', 'bSeat', 'fSeat'].map(id => {
+    const fields = root.querySelectorAll('[id="' + id + '"]');
+    if (fields.length !== 1) return null;
+    return {value:fields[0].value, disabled:fields[0].disabled === true};
+});
+"""
+
+
+def read_route_fares(bot):
+    """Read all three fares from the active native route form without changing it."""
+    fields = bot.js(_FARES)
+    if not isinstance(fields, list) or len(fields) != 3:
+        return None
+    fares = []
+    for field in fields:
+        if not isinstance(field, dict) or type(field.get("disabled")) is not bool:
+            return None
+        value = field.get("value")
+        price = 0 if field["disabled"] and value == "" else game_whole_number(value)
+        if price is None or (price == 0 and not field["disabled"]):
+            return None
+        fares.append(price)
+    return tuple(fares) if any(fares) else None
+
+
 @dataclass(frozen=True)
 class Stopover:
     id: str

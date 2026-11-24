@@ -137,7 +137,7 @@ def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, mo
 
         def js(self, script, *args):
             if "'eSeat', 'bSeat', 'fSeat'" in script:
-                return ["6000", "9000", "12500"]
+                return [{"value": price, "disabled": False} for price in ("6000", "9000", "12500")]
             return None
 
         def ajax(self, url, target, timeout):
