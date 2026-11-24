@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A3/A9, rastreabilidade da avaliação contábil (G0)
+
+- O registro privado do ciclo passa a preservar o deslocamento de cada combinação avaliada, as identificações econômicas das avaliações compartilhadas e dos layouts hipotéticos, e os respectivos impedimentos por código e campo. A trilha é vinculada ao snapshot e aos fingerprints da pesquisa e gravada atomicamente junto ao resumo e ao cursor.
+- A leitura do resumo reconcilia os totais de combinações, layouts e impedimentos com a trilha e rejeita registros ausentes, estruturalmente inválidos ou divergentes. Registros anteriores exigem um novo ciclo para publicar o resumo, preservando o cursor válido. A API continua expondo apenas os agregados, sem divulgar a trilha privada. O registro corresponde à coleta atual e não constitui histórico permanente nem comprovação de elegibilidade.
+- Validação: 7 testes do worker aprovados, incluindo comparação da trilha com o replay do snapshot, rejeição de identificação inválida e retomada entre ciclos; suíte Windows com 2.080 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Rollback por reversão deste commit. Permanecem pendentes a demanda residual, os preços finais, o registro produtivo de casos elegíveis, a conciliação e a homologação A0–A9. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A3, custo incremental de hangar com evidência nativa (G0)
 
 - A pesquisa contábil de aeronaves de passageiros aproveita uma vaga livre de hangar comprovada no snapshot para estabelecer custo incremental zero de uma única aeronave. O contrato valida a fonte nativa, a consistência da capacidade e das vagas, o prazo de validade e o vínculo com o perfil, snapshot e hub da proposta. A resposta de pesquisa apresenta os custos comprovados com fonte e horário da coleta.

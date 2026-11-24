@@ -125,6 +125,26 @@ def test_worker_evaluates_sampled_combinations_and_layouts_with_real_replay(work
     path = tmp_path / planning_cycle.FILENAME
     record = json.loads(path.read_text(encoding="utf-8"))
     assert record["research_cursor"]["next_offset"] == 80
+    audit = record["research_audit"]
+    assert audit["snapshot_id"] == snapshot["snapshot_id"]
+    assert [row["offset"] for row in audit["rows"]] == list(range(80))
+    assert sum(len(row["evaluations"]) - 1 for row in audit["rows"]) == research["hypothetical_layouts"]
+    assert "research_audit" not in result
+    assert all("economics_id" not in row for row in result["research"].values() if isinstance(row, dict))
+    from audited_game_snapshot import replay_research_page
+
+    page = replay_research_page(now=NOW, expected_snapshot=snapshot["snapshot_id"])
+    first_gate = page["items"][0]["accounting_gate"]
+    assert audit["rows"][0]["evaluations"] == [
+        {"economics_id": item["economics_id"], "blocking_reasons": item["blocking_reasons"]}
+        for item in [first_gate, *first_gate["layout_evaluations"]]
+    ]
+    # A changed trace or aggregate cannot be presented as the original sweep.
+    original_record = path.read_text(encoding="utf-8")
+    record["research_audit"]["rows"][0]["evaluations"][0]["economics_id"] = "invalid"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    assert planning_cycle.planning_cycle_summary()["status"] == "registro_invalido"
+    path.write_text(original_record, encoding="utf-8")
     saved_cursor = record["research_cursor"]
     # A failed A4 run cannot advance the successfully committed cursor.
     with monkeypatch.context() as context:

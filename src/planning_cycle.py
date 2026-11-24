@@ -19,6 +19,7 @@ from opportunity_models import DEFAULT_MAX_AGE_SECONDS
 
 FILENAME = "investment_planning_cycle.json"
 RESEARCH_PAGE_BUDGET = 2
+_ECONOMICS_ID = re.compile(r"economics-v1-[0-9a-f]{32}")
 log = logging.getLogger("am4bot.investment")
 
 
@@ -56,6 +57,7 @@ def _research_summary(snapshot_id, cursor=None):
     total = None
     combinations = layouts = pages = 0
     blockers = Counter()
+    evidence_rows = []
     queue_blockers = []
     for _ in range(RESEARCH_PAGE_BUDGET):
         page = replay_research_page(offset=offset, expected_snapshot=snapshot_id,
@@ -82,13 +84,18 @@ def _research_summary(snapshot_id, cursor=None):
         items = page["items"]
         if type(total) is not int or not 0 <= offset + len(items) <= total:
             raise ValueError("Contagem de pesquisa inválida.")
-        for item in items:
+        for row_offset, item in enumerate(items, offset):
             gate = item["accounting_gate"]
+            evaluations = []
             for evaluation in [gate, *gate["layout_evaluations"]]:
                 if (evaluation["read_only"] is not True or evaluation["purchase_eligible"] is not False
                         or evaluation["status"] != "blocked"):
                     raise ValueError("Resultado de pesquisa incompatível.")
                 blockers.update({reason["code"] for reason in evaluation["blocking_reasons"]})
+                evaluations.append({"economics_id": evaluation["economics_id"],
+                                    "blocking_reasons": evaluation["blocking_reasons"]})
+            evidence_rows.append({"offset": row_offset,
+                                  "evaluations": evaluations})
             layouts += len(gate["layout_evaluations"])
         combinations += len(items)
         pages += 1
@@ -111,7 +118,9 @@ def _research_summary(snapshot_id, cursor=None):
                    {"next_offset": next_offset, "layout_fingerprint": layout_fingerprint})
     if next_cursor is not None and not _valid_cursor(next_cursor):
         raise ValueError("Cursor de pesquisa inválido.")
-    return summary, next_cursor
+    audit = {"snapshot_id": snapshot_id, "snapshot_fingerprint": fingerprint,
+             "layout_fingerprint": layout_fingerprint, "rows": evidence_rows}
+    return summary, next_cursor, audit
 
 
 def _valid_research_summary(research):
@@ -135,6 +144,37 @@ def _valid_research_summary(research):
             and research.get("sample_sweep_complete") is (first == 0 and examined == total and not queue))
 
 
+def _valid_research_audit(audit, research, snapshot_id):
+    """Reconcile the private scenario trace with the published aggregate."""
+    if (not isinstance(audit, dict) or audit.get("snapshot_id") != snapshot_id
+            or any(not isinstance(audit.get(key), str) or not re.fullmatch(r"[0-9a-f]{24}", audit[key])
+                   for key in ("snapshot_fingerprint", "layout_fingerprint"))
+            or not isinstance(audit.get("rows"), list)
+            or len(audit["rows"]) != research["examined_combinations"]):
+        return False
+    counts = Counter()
+    ids = set()
+    layouts = 0
+    for offset, row in enumerate(audit["rows"], research["first_offset"]):
+        if (not isinstance(row, dict) or row.get("offset") != offset
+                or not isinstance(row.get("evaluations"), list) or not row["evaluations"]):
+            return False
+        layouts += len(row["evaluations"]) - 1
+        for entry in row["evaluations"]:
+            if not isinstance(entry, dict):
+                return False
+            identifier, reasons = entry.get("economics_id"), entry.get("blocking_reasons")
+            if (not isinstance(identifier, str) or not _ECONOMICS_ID.fullmatch(identifier)
+                    or identifier in ids or not isinstance(reasons, list) or not reasons
+                    or any(not isinstance(reason, dict) or set(reason) != {"code", "field"}
+                           or any(not isinstance(value, str) or not value for value in reason.values())
+                           for reason in reasons)):
+                return False
+            ids.add(identifier)
+            counts.update({reason["code"] for reason in reasons})
+    return layouts == research["hypothetical_layouts"] and counts == research["accounting_blocker_counts"]
+
+
 def capture_and_plan(bot):
     """Recompute A4 after each productive capture, independent of web/Telegram use."""
     if bot.dry_run:
@@ -152,8 +192,8 @@ def capture_and_plan(bot):
     try:
         snapshot = capture_game_snapshot(bot)
         record["snapshot_id"] = snapshot["snapshot_id"]
-        research, next_cursor = _research_summary(record["snapshot_id"], cursor)
-        if not _valid_research_summary(research):
+        research, next_cursor, audit = _research_summary(record["snapshot_id"], cursor)
+        if not _valid_research_summary(research) or not _valid_research_audit(audit, research, record["snapshot_id"]):
             raise ValueError("Resumo de pesquisa inválido.")
         dashboard = WebDashboard(bot, bot.config, buffer=None)
         report = dashboard.audited_expansion()
@@ -168,6 +208,7 @@ def capture_and_plan(bot):
                       decision=metrics["decision"], evaluated_count=metrics["evaluated_count"],
                       eligible_count=metrics["eligible_count"],
                       research=research,
+                      research_audit=audit,
                       research_cursor=next_cursor,
                       blocking_reasons=metrics["blocking_reasons"])
         if metrics["decision"] is None:
@@ -180,6 +221,7 @@ def capture_and_plan(bot):
         # Never serialize exception text: it may contain private account data.
         record.update(status="falhou", finished_at=time.time(), decision=None,
                       evaluated_count=None, eligible_count=None, blocking_reasons=[], research=None,
+                      research_audit=None,
                       research_cursor=cursor)
         _save(record)
         log.warning("Falha no planejamento de expansão (%s).", type(exc).__name__)
@@ -218,7 +260,8 @@ def planning_cycle_summary(*, now=None):
                         or type(evaluated) is int and type(eligible) is int and 0 <= eligible <= evaluated)
                 or not isinstance(blockers, list)
                 or not all(isinstance(code, str) and code for code in blockers)
-                or research is not None and not _valid_research_summary(research)):
+                or not _valid_research_summary(research)
+                or not _valid_research_audit(record.get("research_audit"), research, record["snapshot_id"])):
             return {**unavailable, "status": "registro_invalido"}
         return {**unavailable, "status": record["status"], "started_at": started,
                 "finished_at": finished, "snapshot_id": record["snapshot_id"],
