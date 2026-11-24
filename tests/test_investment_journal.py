@@ -103,11 +103,43 @@ def test_period_snapshot_counts_reservations_and_confirmations_once(tmp_path):
     assert "period_usage" not in ledger.unresolved()
 
 
+def test_cycle_snapshot_counts_confirmations_outside_rolling_window(tmp_path):
+    ledger = journal(tmp_path)
+    intent, _ = ledger.register(aircraft_plan())
+    key = intent["intent_key"]
+    assert ledger.acquire_executor("cycle-test")
+    assert ledger.approve_in_cycle(key, "cycle-test", 20000) is None
+    assert ledger.transition(key, "APPROVED", "PRECHECKED")
+    assert ledger.claim_submission(key, "cycle-test")
+    assert ledger.transition(key, "SUBMITTED", "CONFIRMED", confirmation=aircraft_proof())
+    assert ledger.release_executor("cycle-test")
+    pending = ready(ledger, aircraft_plan(plan_id="candidate-789", destination_id="789", estimated_cost=3000))
+    ready(journal(tmp_path, "secondary"))
+    result = journal(tmp_path).unresolved(since=time.time() + 1)
+    cycle = result["cycle_usage"]
+    assert cycle["cycle_id"] == ledger.active_cycle()["cycle_id"]
+    assert cycle["confirmed_estimated_cost"] == 10000
+    assert cycle["reserved_exposure"] == 3000
+    assert cycle["estimated_exposure"] == 13000
+    assert result["period_usage"]["estimated_exposure"] == 3000
+    assert journal(tmp_path, "secondary").unresolved()["cycle_usage"]["confirmed_estimated_cost"] == 0
+    assert ledger.acquire_executor("cycle-test")
+    assert not ledger.finish_cycle(cycle["cycle_id"], "cycle-test")
+    assert ledger.transition(pending, "PRECHECKED", "FAILED")
+    assert ledger.finish_cycle(cycle["cycle_id"], "cycle-test")
+    assert ledger.release_executor("cycle-test")
+    closed = ledger.unresolved(since=time.time() - 86400)
+    assert closed["cycle_usage"]["cycle_id"] is None
+    assert closed["cycle_usage"]["estimated_exposure"] == 0
+    assert closed["period_usage"]["estimated_exposure"] == 10000
+
+
 def test_read_existing_is_profile_scoped_and_never_creates_journal(tmp_path, monkeypatch):
     monkeypatch.setattr(investment_journal.paths.Profile, "data", property(lambda self: tmp_path))
     monkeypatch.setattr(investment_journal.paths, "current", lambda: investment_journal.paths.Profile(""))
     path = tmp_path / "investment_journal.sqlite3"
     assert InvestmentJournal.read_existing()["count"] == 0
+    assert InvestmentJournal.read_existing()["cycle_usage"]["estimated_exposure"] == 0
     assert not path.exists()
     ledger = InvestmentJournal()
     ready(ledger)
@@ -118,6 +150,22 @@ def test_read_existing_is_profile_scoped_and_never_creates_journal(tmp_path, mon
     assert path.read_bytes() == before
     with pytest.raises(ValueError, match="janela"):
         InvestmentJournal.read_existing(since=[])
+
+
+def test_read_existing_legacy_cycle_schema_is_not_migrated(tmp_path, monkeypatch):
+    monkeypatch.setattr(investment_journal.paths.Profile, "data", property(lambda self: tmp_path))
+    monkeypatch.setattr(investment_journal.paths, "current", lambda: investment_journal.paths.Profile(""))
+    ledger = InvestmentJournal()
+    ready(ledger)
+    path = tmp_path / "investment_journal.sqlite3"
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE investment_cycles")
+        conn.execute("ALTER TABLE intents DROP COLUMN cycle_id")
+    before = path.read_bytes()
+    result = InvestmentJournal.read_existing(since=time.time() - 86400)
+    assert result["estimated_exposure"] == 10000
+    assert result["cycle_usage"] is None
+    assert path.read_bytes() == before
 
 
 def test_read_existing_rejects_simulation_database_in_game_path(tmp_path, monkeypatch):

@@ -80,6 +80,9 @@ def compare_registry(registry):
         current_cash_reserve=0, max_daily_spend=50000, max_acquisitions_per_day=10,
         max_cycle_spend=30000,
         local_journal={"profile_id": "principal", "estimated_exposure": 0, "count": 0,
+                       "cycle_usage": {"source": "local_investment_journal", "cycle_id": None,
+                                       "started_at": None, "reserved_exposure": 0,
+                                       "confirmed_estimated_cost": 0, "estimated_exposure": 0},
                        "period_usage": {"source": "local_investment_journal", "since": NOW - 86400,
                                         "estimated_exposure": 0, "acquisition_count": 0}},
         max_single_investment=20000, now=NOW,
@@ -246,6 +249,9 @@ def test_a4_api_enforces_live_policy_and_rolling_journal(registry, monkeypatch):
             return deepcopy(record)
 
     journal = {"profile_id": "principal", "estimated_exposure": 0, "count": 0,
+               "cycle_usage": {"source": "local_investment_journal", "cycle_id": None,
+                               "started_at": None, "reserved_exposure": 0,
+                               "confirmed_estimated_cost": 0, "estimated_exposure": 0},
                "period_usage": {"source": "local_investment_journal", "since": NOW - 86400,
                                 "estimated_exposure": 5000, "acquisition_count": 1,
                                 "last_confirmed_at": None}}
@@ -275,6 +281,15 @@ def test_a4_api_enforces_live_policy_and_rolling_journal(registry, monkeypatch):
         assert result["portfolio"]["remaining_cycle_spend"] == 10000
         assert result["purchase_plan_preview"] is None
         cfg.set("investment", "max_cycle_spend", 30000)
+
+        empty_cycle = journal["cycle_usage"].copy()
+        journal["cycle_usage"].update(cycle_id="a" * 32, started_at=NOW - 90000,
+                                      confirmed_estimated_cost=20000, estimated_exposure=20000)
+        status, result = request(port, "GET", endpoint, headers=auth())
+        assert status == 200
+        assert result["portfolio"]["remaining_cycle_spend"] == 10000
+        assert result["purchase_plan_preview"] is None
+        journal["cycle_usage"] = empty_cycle
 
         cfg.set("investment", "max_daily_spend", 15000)
         status, result = request(port, "GET", endpoint, headers=auth())

@@ -508,8 +508,13 @@ def a4_controls(**changes):
             for key, (value, source) in values.items()}
 
 
-def a4_local_journal(*, exposure=0, count=0, since=NOW - 86400):
+def a4_local_journal(*, exposure=0, count=0, since=NOW - 86400, cycle_confirmed=0):
     return {"profile_id": PROFILE, "estimated_exposure": 0, "count": 0,
+            "cycle_usage": {"source": "local_investment_journal",
+                            "cycle_id": "a" * 32 if cycle_confirmed else None,
+                            "started_at": NOW - 90000 if cycle_confirmed else None,
+                            "reserved_exposure": 0, "confirmed_estimated_cost": cycle_confirmed,
+                            "estimated_exposure": cycle_confirmed},
             "period_usage": {"source": "local_investment_journal", "since": since,
                              "estimated_exposure": exposure, "acquisition_count": count}}
 
@@ -559,6 +564,20 @@ def test_a4_cycle_limit_uses_stricter_current_and_audited_caps():
     assert exhausted["best"] is None
 
 
+def test_a4_persistent_cycle_usage_is_independent_of_rolling_period():
+    candidate = a4_evaluation(cost=2000)
+    controls = a4_controls(cycle_spent=3000, cycle_limit=10000)
+    journal = a4_local_journal(cycle_confirmed=7000)
+    result = a4_compare(candidate, controls=controls, max_cycle_spend=10000, local_journal=journal)
+    assert result["remaining_cycle_spend"] == 3000
+    assert result["budget_after_reservations_and_limits"] == 3000
+    assert result["local_cycle_limits"]["estimated_exposure"] == 7000
+    assert result["decision"] == "sugestao_para_analise"
+    exhausted = a4_compare(candidate, controls=controls, max_cycle_spend=7000, local_journal=journal)
+    assert exhausted["remaining_cycle_spend"] == 0
+    assert exhausted["best"] is None
+
+
 @pytest.mark.parametrize("changes, reason", [
     ({"max_cycle_spend": 0}, "limite_ciclo_nao_configurado"),
     ({"max_cycle_spend": -1}, "limite_ciclo_nao_configurado"),
@@ -566,6 +585,9 @@ def test_a4_cycle_limit_uses_stricter_current_and_audited_caps():
     ({"max_acquisitions_per_day": 0}, "limites_periodo_invalidos"),
     ({"current_cash_reserve": -1}, "limites_periodo_invalidos"),
     ({"local_journal": None}, "uso_periodo_a_confirmar"),
+    ({"local_journal": {**a4_local_journal(), "cycle_usage": None}}, "uso_ciclo_a_confirmar"),
+    ({"local_journal": {**a4_local_journal(), "cycle_usage": {
+        **a4_local_journal()["cycle_usage"], "estimated_exposure": 1}}}, "uso_ciclo_a_confirmar"),
     ({"local_journal": a4_local_journal(since=NOW - 86399)}, "uso_periodo_a_confirmar"),
     ({"local_journal": a4_local_journal(since=NOW - 86500)}, "uso_periodo_a_confirmar"),
     ({"local_journal": {**a4_local_journal(), "profile_id": "other"}}, "uso_periodo_a_confirmar"),

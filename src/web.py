@@ -87,7 +87,7 @@ def _local_investment_snapshot() -> dict:
     except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
         return {
             "intents": [], "count": None, "estimated_exposure": None,
-            "period_usage": None, "read_only": True, "execution_available": False,
+            "period_usage": None, "cycle_usage": None, "read_only": True, "execution_available": False,
             "blocking_reasons": ["diario_indisponivel"],
         }
 

@@ -618,6 +618,7 @@ class InvestmentJournal:
         """Return reservations and optionally the local period usage in one read."""
         self._validate_since(since)
         with self._connect() as conn:
+            conn.execute("BEGIN")
             return self._read_unresolved(conn, self.profile_id, since)
 
     @classmethod
@@ -631,7 +632,9 @@ class InvestmentJournal:
         except FileNotFoundError:
             # This is only the absence of local reservations, not proof of
             # the game's outstanding orders or financial commitments.
-            return cls._summarize_unresolved([], profile.label, since)
+            result = cls._summarize_unresolved([], profile.label, since)
+            result["cycle_usage"] = cls._cycle_usage(None, 0, 0)
+            return result
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("BEGIN")
@@ -649,7 +652,35 @@ class InvestmentJournal:
             "ORDER BY created_at, intent_key",
             (profile_id, *_RESERVED_STATES, since),
         ).fetchall()
-        return cls._summarize_unresolved(rows, profile_id, since)
+        result = cls._summarize_unresolved(rows, profile_id, since)
+        # Old journals can be read without migration, but cannot attest to
+        # the new cycle accounting until their schema has been upgraded.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(intents)")}
+        if "cycle_id" not in columns:
+            result["cycle_usage"] = None
+            return result
+        cycle = conn.execute(
+            "SELECT cycle_id, started_at FROM investment_cycles "
+            "WHERE profile_id=? AND finished_at IS NULL", (profile_id,),
+        ).fetchone()
+        confirmed = [] if cycle is None else conn.execute(
+            "SELECT plan_json FROM intents WHERE profile_id=? AND cycle_id=? AND state='CONFIRMED'",
+            (profile_id, cycle["cycle_id"]),
+        ).fetchall()
+        confirmed_cost = sum(json.loads(row["plan_json"])["estimated_cost"] for row in confirmed)
+        result["cycle_usage"] = cls._cycle_usage(cycle, result["estimated_exposure"], confirmed_cost)
+        return result
+
+    @staticmethod
+    def _cycle_usage(cycle, reserved: int, confirmed: int) -> dict:
+        return {
+            "source": "local_investment_journal",
+            "cycle_id": cycle["cycle_id"] if cycle is not None else None,
+            "started_at": cycle["started_at"] if cycle is not None else None,
+            "reserved_exposure": reserved,
+            "confirmed_estimated_cost": confirmed,
+            "estimated_exposure": reserved + confirmed,
+        }
 
     @staticmethod
     def _validate_since(since: float | None) -> None:

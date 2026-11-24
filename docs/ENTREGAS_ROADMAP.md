@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4/A7, saldo persistente do ciclo no planejamento (G0)
+
+- O planejador auditado e a API consultam o ciclo ativo e as reservas do diário SQLite em uma única transação de leitura. As confirmações vinculadas ao ciclo continuam contabilizadas mesmo fora da janela móvel de 24 horas. O orçamento disponível respeita simultaneamente o limite local vigente e o limite auditado, adotando o menor saldo restante para evitar dupla contagem de observações possivelmente sobrepostas.
+- O painel PT/EN apresenta o saldo local e sinaliza evidência ausente. Bancos legados são consultados sem migração pela API e a ausência de comprovação do ciclo impede a proposta. Os valores são estimativas registradas no diário; o desembolso real exige comprovação independente.
+- Validação: 257 testes direcionados aprovados, incluindo persistência, isolamento por perfil, encerramento do ciclo, leitura de esquema legado e restrição da proposta pela API. Suíte Windows: 2.050 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Nenhuma compra real ou implantação. Continuam pendentes a integração do ciclo ao orquestrador produtivo, a alimentação produtiva das evidências econômicas e a homologação A0–A9. Rollback da entrega por reversão do commit na branch de trabalho, preservando os registros SQLite.
+
 ## 2026-11-24 — Autonomia Total A4/A5/A7, diário persistente por ciclo (G0)
 
 - O diário SQLite mantém um único ciclo ativo por perfil, com identidade própria e abertura/encerramento persistentes. Sob exclusividade do executor, a aprovação e a vinculação da intenção ao ciclo ocorrem na mesma transação que verifica o teto configurado. O cálculo soma reservas ainda abertas e aquisições confirmadas no ciclo, compartilhando o orçamento entre aeronaves e hubs. O limite diário continua independente.

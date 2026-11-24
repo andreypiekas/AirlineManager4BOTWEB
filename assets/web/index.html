@@ -1525,6 +1525,8 @@ const EN = {
   "Máximo diário ($ jogo)": "Daily maximum (game $)",
   "Máximo por ciclo ($ jogo)": "Cycle maximum (game $)",
   "Limite restante do ciclo auditado": "Remaining audited cycle limit",
+  "Limite restante do ciclo (diário local)": "Remaining cycle limit (local journal)",
+  "Uso do limite do ciclo a confirmar": "Cycle limit usage pending verification",
   "Limite do ciclo não configurado": "Cycle limit not configured",
   "Máximo de aquisições em 24h": "Maximum acquisitions per 24h",
   "Lucro diário mínimo ($ jogo)": "Minimum daily profit (game $)",
@@ -3356,6 +3358,15 @@ function renderAuditedExpansionPlanner(audited, hubs) {
   if (Number.isFinite(portfolio.remaining_cycle_spend)) {
     explanation.textContent += " · " + tr("Limite restante do ciclo auditado") +
       ": " + hubMoney(portfolio.remaining_cycle_spend);
+  }
+  const localCycle = portfolio.local_cycle_limits;
+  if (localCycle) {
+    if (localCycle.estimated_exposure == null) {
+      explanation.textContent += " · " + tr("Uso do limite do ciclo a confirmar");
+    } else if (Number.isFinite(localCycle.remaining_spend)) {
+      explanation.textContent += " · " + tr("Limite restante do ciclo (diário local)") +
+        ": " + hubMoney(localCycle.remaining_spend);
+    }
   }
   const period = portfolio.local_period_limits;
   if (period) {

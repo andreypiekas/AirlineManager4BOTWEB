@@ -610,6 +610,32 @@ def compare_audited_portfolio(
     if remaining_acquisitions == 0:
         blockers.append("limite_de_aquisicoes_em_24h")
 
+    cycle_usage = journal.get("cycle_usage")
+    cycle_usage = cycle_usage if isinstance(cycle_usage, Mapping) else {}
+    local_cycle_id = cycle_usage.get("cycle_id")
+    cycle_started = cycle_usage.get("started_at")
+    cycle_reserved = cycle_usage.get("reserved_exposure")
+    cycle_confirmed = cycle_usage.get("confirmed_estimated_cost")
+    cycle_exposure = cycle_usage.get("estimated_exposure")
+    valid_cycle_identity = (
+        (local_cycle_id is None and cycle_started is None and cycle_confirmed == 0)
+        or (isinstance(local_cycle_id, str) and len(local_cycle_id) == 32
+            and all(char in "0123456789abcdef" for char in local_cycle_id)
+            and _number(cycle_started, positive=True) is not None and cycle_started <= now)
+    )
+    if (journal.get("profile_id") != profile_id
+            or cycle_usage.get("source") != "local_investment_journal" or not valid_cycle_identity
+            or type(cycle_reserved) is not int or type(cycle_confirmed) is not int
+            or type(cycle_exposure) is not int or type(pending_exposure) is not int
+            or cycle_reserved != pending_exposure or min(cycle_reserved, cycle_confirmed) < 0
+            or cycle_exposure != cycle_reserved + cycle_confirmed):
+        blockers.append("uso_ciclo_a_confirmar")
+        cycle_exposure = None
+    local_cycle_remaining = (max(0, cycle_limit - cycle_exposure)
+                             if cycle_limit is not None and cycle_exposure is not None else None)
+    if local_cycle_remaining == 0:
+        blockers.append("limite_ciclo_esgotado")
+
     weights = {
         "profit": _number(profit_weight),
         "capital_efficiency": _number(efficiency_weight),
@@ -684,8 +710,14 @@ def compare_audited_portfolio(
     baseline = next(iter(cash_baselines)) if len(cash_baselines) == 1 else None
     budget = None
     remaining_cycle_spend = None
-    if cycle_limit is not None and observed["cycle_limit"] is not None and observed["cycle_spent"] is not None:
-        remaining_cycle_spend = max(0.0, min(cycle_limit, observed["cycle_limit"]) - observed["cycle_spent"])
+    if (local_cycle_remaining is not None and observed["cycle_limit"] is not None
+            and observed["cycle_spent"] is not None):
+        # Both controls must pass; the local estimates may overlap audited
+        # spending. Do not add them or imply that they prove real game costs.
+        remaining_cycle_spend = min(
+            local_cycle_remaining,
+            max(0.0, min(cycle_limit, observed["cycle_limit"]) - observed["cycle_spent"]),
+        )
         if remaining_cycle_spend == 0:
             blockers.append("limite_ciclo_esgotado")
     if (baseline is not None and all(value is not None for value in observed.values())
@@ -850,6 +882,10 @@ def compare_audited_portfolio(
         "excluded": dict(sorted(excluded.items())),
         "budget_after_reservations_and_limits": budget,
         "remaining_cycle_spend": remaining_cycle_spend,
+        "local_cycle_limits": {
+            "source": "local_investment_journal", "estimated_exposure": cycle_exposure,
+            "remaining_spend": local_cycle_remaining,
+        },
         "local_period_limits": {
             "source": "local_investment_journal", "since": since,
             "estimated_exposure": exposure, "acquisition_count": count,
