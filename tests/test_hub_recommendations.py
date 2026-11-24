@@ -63,6 +63,94 @@ def _rank(hubs=None, scenarios=_UNSET, **kwargs):
     )
 
 
+def _variant_catalog(*, range_km=3000, available=True, observed_at=NOW, verified=True):
+    source = "game_aircraft_order_detail"
+    return {"source": source, "models": {"11": {
+        "source": source, "model_id": "11", "model": "A320",
+        "observed_at": observed_at, "engine_prices_verified": False,
+        "model_detail_identity_verified": verified,
+        "observed_model_id": "11" if verified else None,
+        "selected_engine_id": "1" if available else None,
+        "variants": [{"engine_id": "1", "label": "CFM", "available": available,
+                      "selected": available}],
+        "variant_details": {"1": {"observed_at": observed_at, "metrics": {
+            "range_km": range_km, "required_runway_ft": 6500}}} if available else {},
+    }}}
+
+
+def _variant_scenario(**changes):
+    row = _scenario(model_id="11", engine_id="1")
+    row["financial"]["engine_id"] = "1"
+    row["costs"].update(engine_id="1", aircraft_price_includes_engine=True)
+    row["route_detail"] = {"source": "game_route_detail", "origin_id": "123",
+                           "destination_id": "456", "observed_at": NOW,
+                           "origin_runway_ft": 7000, "destination_runway_ft": 7000}
+    row.update(changes)
+    return row
+
+
+def test_rank_recomputes_physical_shortfall_and_expires_independent_route_detail():
+    scenario = _variant_scenario()
+    scenario["route_detail"]["destination_runway_ft"] = 6499
+    scenario["destination_runway_ft"] = 7000
+    scenario["physical_feasibility"] = {"status": "direct_dimensions_sufficient"}
+    result = _rank(scenarios=[scenario], engine_catalog=_variant_catalog())
+    row = result["candidates"][0]
+    assert not result["recommendations"]
+    assert row["status"] == "dados_a_confirmar"
+    assert "pista_observada_insuficiente" in row["pending"]
+    assert row["physical_feasibility"]["checks"]["destination_runway"] == "short"
+    assert row["physical_feasibility"]["purchase_eligible"] is False
+    scenario["route_detail"]["observed_at"] = NOW - 901
+    result = _rank(scenarios=[scenario], engine_catalog=_variant_catalog())
+    row = result["candidates"][0]
+    assert row["physical_feasibility"]["checks"]["destination_runway"] == "unknown"
+    assert "pista_observada_insuficiente" not in row["pending"]
+
+
+def test_rank_uses_current_variant_range_and_checks_verified_stopover():
+    scenario = _variant_scenario(distance_km=2200)
+    catalog = _variant_catalog(range_km=1500)
+    row = _rank(scenarios=[scenario], engine_catalog=catalog)["candidates"][0]
+    assert row["status"] == "dados_a_confirmar"
+    assert "escala_e_trechos_a_confirmar" in row["pending"]
+    scenario["stopover"] = {"verified": True, "airport_id": "999",
+                            "legs_km": [1100, 1200], "runway_m": 2000,
+                            "runway_verified": True}
+    row = _rank(scenarios=[scenario], engine_catalog=catalog)["candidates"][0]
+    assert row["status"] == "viavel"
+    assert row["physical_feasibility"]["checks"]["range"] == "short"
+    assert row["physical_feasibility"]["stopover_research_required"] is False
+    scenario["stopover"]["legs_km"] = [800, 1600]
+    row = _rank(scenarios=[scenario], engine_catalog=catalog)["candidates"][0]
+    assert row["status"] == "dados_a_confirmar"
+    assert "escala_e_trechos_a_confirmar" in row["pending"]
+
+
+@pytest.mark.parametrize("catalog,model_id", [(_variant_catalog(verified=False), "11"),
+    (_variant_catalog(observed_at=NOW - MAX_AGE_SECONDS - 1), "11"),
+    (_variant_catalog(range_km=500), "12")])
+def test_rank_does_not_apply_unrelated_or_stale_engine_dimensions(catalog, model_id):
+    scenario = _variant_scenario(model_id=model_id)
+    row = _rank(scenarios=[scenario], engine_catalog=catalog)["candidates"][0]
+    assert row["physical_feasibility"]["status"] == "unknown"
+    assert row["status"] == "viavel"
+
+
+def test_rank_blocks_current_unavailable_engine_and_derived_count_disagreement():
+    scenario = _variant_scenario()
+    row = _rank(scenarios=[scenario], engine_catalog=_variant_catalog(available=False))["candidates"][0]
+    assert row["status"] == "dados_a_confirmar"
+    assert "motor_indisponivel" in row["pending"]
+    scenario.update(source="derived_research_queue", research_evidence={
+        "route": {"source": "game_route_search", "observed_at": NOW - 15}})
+    scenario["route_detail"]["observed_aircraft_on_route"] = 1
+    row = _rank(scenarios=[scenario], engine_catalog=_variant_catalog())["candidates"][0]
+    assert row["status"] == "dados_a_confirmar"
+    assert "contagem_rota_divergente" in row["pending"]
+    assert row["physical_feasibility"]["status"] == "direct_dimensions_sufficient"
+
+
 def test_ranks_explicit_financial_scenario_and_preserves_empty_hubs():
     inventory = _inventory("123", "789")
     scenario = _scenario()

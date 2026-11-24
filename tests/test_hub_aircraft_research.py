@@ -248,6 +248,10 @@ def test_corrupt_storage_and_missing_evidence_remain_pending(tmp_path):
 
 def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_path):
     scenario = _scenario()
+    details = web.RouteDetailRegistry(tmp_path / "route_details.json")
+    monkeypatch.setattr(web, "RouteDetailRegistry", lambda: details)
+    catalog = {"source": "game_aircraft_order_detail", "models": {}}
+    monkeypatch.setattr(web, "EngineCatalogRegistry", lambda: SimpleNamespace(snapshot=lambda: catalog))
     monkeypatch.setattr(web, "RouteRegistry", lambda: SimpleNamespace(snapshot=lambda **_kw: {"relations": []}))
     monkeypatch.setattr(web, "HubRegistry", lambda: SimpleNamespace(snapshot=lambda _routes: {
         "source": "game_hub_select", "observed_at": 1_800_000_000,
@@ -266,7 +270,7 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_p
     monkeypatch.setattr(web, "load_state", lambda: {})
     monkeypatch.setattr(web, "rank_next_aircraft", lambda *args, **kwargs: {
         "hubs": args[0]["hubs"], "scenarios": args[1], "routes": kwargs["route_report"],
-        "cash": kwargs["cash"], "reserve": kwargs["reserve"]})
+        "cash": kwargs["cash"], "reserve": kwargs["reserve"], "engines": kwargs["engine_catalog"]})
     dashboard = web.WebDashboard.__new__(web.WebDashboard)
     dashboard.bot = object()
     dashboard.cfg = SimpleNamespace(
@@ -285,6 +289,7 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_p
     result = dashboard.hub_recommendations()
     assert result["hubs"][0]["code"] == "XAP"
     assert result["scenarios"] == [scenario]
+    assert result["engines"] is catalog
     assert result["routes"] == {"relations": []}
     assert result["cash"] == 20000
     assert result["reserve"] == 2000
@@ -299,6 +304,18 @@ def test_dashboard_ranks_saved_scenarios_and_never_calls_game(monkeypatch, tmp_p
     assert research["hub_coverage"][0]["status"] == "pesquisa_inconclusiva"
     assert research["hub_coverage"][0]["last_attempt_status"] == "inconclusive"
     assert research["hub_coverage"][0]["conflicted_routes"] == 1
+
+    route_sample = {"source": "game_route_search", "origin_id": "123", "destination_id": "456"}
+    _, attempt = details.reserve([route_sample])
+    assert details.finish("123", "456", attempt, {"origin_runway_ft": 7000,
+                          "destination_runway_ft": 5000}, observed_at=time.time())
+    observed = dashboard.hub_recommendations()["scenarios"][0]
+    assert observed["route_detail"]["destination_runway_ft"] == 5000
+    # An unsuccessful new attempt revokes the old proof, even if the saved
+    # scenario still has a copy of the old result.
+    scenario["route_detail"] = observed["route_detail"]
+    assert details.reserve([route_sample])
+    assert "route_detail" not in dashboard.hub_recommendations()["scenarios"][0]
 
     def broken_ledger():
         import sqlite3

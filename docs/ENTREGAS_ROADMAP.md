@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A3/A7, dimensões atuais no ranking de aquisição (G0)
+
+- O ranking de hubs próprios reutiliza a normalização do catálogo de motores e recalcula a triagem física por modelo, motor e par de aeroportos. O painel passa a mostrar alcance e pistas, validade da evidência e pendências também nos candidatos persistidos. Um motor explicitamente indisponível com identidade confirmada ou uma dimensão observada insuficiente impede a recomendação até a confirmação correspondente.
+- A leitura do painel usa o mesmo snapshot de motores no ranking e na fila de pesquisa. Para cenários verificados, o registro independente do detalhe da rota substitui a cópia eventualmente persistida; uma nova tentativa inconclusiva ou a expiração remove a prova anterior. Contagens independentes de aeronaves na rota também participam da análise de ocupação, sem apagar divergências observadas no cenário.
+- A insuficiência de alcance direto admite reconciliação com uma escala já verificada, somente quando a identidade do aeroporto intermediário, os dois trechos e o comprimento da pista são compatíveis com a variante observada. A triagem dimensional não certifica as regras do jogo, demanda residual, custos ou elegibilidade de compra. Os cenários legados continuam sujeitos às provas originais de viabilidade, disponibilidade e ocupação.
+- Permanecem pendentes a coleta autenticada dos dados de escala e a confirmação das regras por modo, a identidade exata dos modelos no detalhe, a cobertura integral e os custos necessários ao cálculo de rentabilidade. G0 continua ativo, sem aquisição real.
+- Validação Windows: 1.748 testes aprovados e 1 ignorado, excluído `tests/test_instalacao_linux.py` (requisito POSIX). A suíte direcionada passou com 244 testes, cobrindo incompatibilidade de pista/alcance, escala, motor indisponível, identidade divergente, evidência expirada, revogação de prova e integração com o painel. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-23 — Autonomia Total A3/A7, triagem física por variante e rota (G0)
 
 - As filas de pesquisa de hubs próprios e externos comparam o alcance observado da variante com a distância da rota e a pista exigida com os comprimentos de origem e destino. Cada comparação tem estado independente (suficiente, insuficiente ou desconhecido). O cálculo exige identidade correlacionada do modelo e da variante e evidência atual do detalhe da rota; alcance genérico de catálogo e pista da pesquisa não substituem essas provas.

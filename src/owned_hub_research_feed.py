@@ -126,7 +126,7 @@ def _models(raw: object) -> list[dict]:
                   key=lambda row: (row["name"].casefold(), row["id"]))
 
 
-def _engine_variants(engines: dict, model: dict, now: int) -> tuple[list[dict], dict | None]:
+def engine_variants(engines: dict, model: dict, now: float) -> tuple[list[dict], dict | None]:
     """Reject stale, contradictory or mismatched engine evidence as a whole."""
     if engines.get("source") != "game_aircraft_order_detail":
         return [], None
@@ -416,7 +416,7 @@ def _build_hub_research_queue(
     # requests invalidates the cursor instead of silently skipping candidates.
     model_options = []
     for model in models:
-        variants, engine_evidence = _engine_variants(engines, model, now)
+        variants, engine_evidence = engine_variants(engines, model, now)
         for variant in (variants or [None]):
             detail = variant.get("engine_detail") if variant else None
             if detail and detail["model_identity_verified"]:

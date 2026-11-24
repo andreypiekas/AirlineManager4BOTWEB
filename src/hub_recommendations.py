@@ -42,7 +42,10 @@ import re
 import time
 from typing import Iterable, Optional
 
+from owned_hub_research_feed import engine_variants
+from research_physical_feasibility import assess_direct_route
 from research_route_occupancy import FleetRouteOccupancy
+from route_detail_evidence import current_detail
 from route_registry import endpoint, route_key
 
 
@@ -52,7 +55,7 @@ _HUB_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _FINANCIAL_SOURCES = {"route_optimizer", "game_research"}
 _COST_SOURCES = {"game_market", "game_research"}
 _RESEARCH_EVIDENCE_FIELDS = (
-    "source", "observed_at", "engine_id", "engine_label", "distance_km", "range_km", "runway_m",
+    "source", "observed_at", "model_id", "engine_id", "engine_label", "distance_km", "range_km", "runway_m",
     "required_runway_m", "demand_remaining", "demand_verified", "event_demand_boosted",
     "range_verified", "runway_verified", "route_feasible", "route_available",
     "stopover", "financial", "costs", "observed_aircraft_on_route",
@@ -107,6 +110,60 @@ def _ordering(row: dict) -> tuple:
             tuple(row["pending"]))
 
 
+def _current_physical(scenario, aircraft_model, engine_id, detail, engines, now):
+    """Recompute screening from independent observations, never a saved verdict."""
+    model_id = scenario.get("model_id")
+    if not isinstance(model_id, str) or not model_id or not engine_id or not aircraft_model:
+        return None, False
+    stamp = scenario.get("observed_at")
+    if scenario.get("source") == "derived_research_queue":
+        evidence = scenario.get("research_evidence")
+        route = evidence.get("route") if isinstance(evidence, dict) else None
+        if not isinstance(route, dict) or route.get("source") != "game_route_search":
+            return None, False
+        stamp = route.get("observed_at")
+    elif scenario.get("source") != "game_research":
+        return None, False
+    distance = _number(scenario.get("distance_km"), positive=True)
+    if distance is None or distance > 25000 or not _recent(stamp, now, MAX_AGE_SECONDS):
+        return None, False
+    variants, evidence = engine_variants(engines, {"id": model_id, "name": aircraft_model}, now)
+    variant = next((item for item in variants if item["engine_id"] == engine_id), None)
+    unavailable = bool(evidence and evidence["model_detail_identity_verified"]
+                       and variant is not None and not variant["engine_available"])
+    return assess_direct_route({"distance_km": distance, "observed_at": stamp,
+                                "route_detail": detail}, variant, evidence,
+                               max_evidence_age=MAX_AGE_SECONDS), unavailable
+
+
+def _physical_pending(physical, stopover, origin, destination):
+    if physical is None:
+        return []
+    checks = physical["checks"]
+    pending = []
+    if "short" in (checks["origin_runway"], checks["destination_runway"]):
+        pending.append("pista_observada_insuficiente")
+    if checks["range"] == "short" or (isinstance(stopover, dict)
+                                          and stopover.get("verified") is True
+                                          and physical["variant_range_km"] is not None
+                                          and physical["required_runway_ft"] is not None):
+        # A direct shortfall can be reconciled only by verified individual legs.
+        legs = stopover.get("legs_km") if isinstance(stopover, dict) else None
+        runway = _number(stopover.get("runway_m"), positive=True) if isinstance(stopover, dict) else None
+        airport = str(stopover.get("airport_id") or "") if isinstance(stopover, dict) else ""
+        if not (isinstance(stopover, dict) and stopover.get("verified") is True
+                and stopover.get("runway_verified") is True and _HUB_ID.fullmatch(airport)
+                and airport not in (origin["id"], destination["id"])
+                and isinstance(legs, list) and len(legs) == 2
+                and all(_number(leg, positive=True) is not None
+                        and leg <= physical["variant_range_km"] for leg in legs)
+                and sum(legs) >= physical["distance_km"]
+                and runway is not None and physical["required_runway_ft"] is not None
+                and runway >= physical["required_runway_ft"] * 0.3048):
+            pending.append("escala_e_trechos_a_confirmar")
+    return pending
+
+
 def rank_next_aircraft(
     hub_inventory: dict,
     scenarios: Iterable[dict],
@@ -117,6 +174,7 @@ def rank_next_aircraft(
     reserve: object = 0,
     now: Optional[float] = None,
     model: Optional[str] = None,
+    engine_catalog: Optional[dict] = None,
 ) -> dict:
     """Rank one viable next-aircraft scenario per owned hub without writes.
 
@@ -150,6 +208,7 @@ def rank_next_aircraft(
                  if cash_value is not None and reserve_value is not None else None)
 
     fleet_occupancy = FleetRouteOccupancy(route_report, now)
+    engines = engine_catalog if isinstance(engine_catalog, dict) else {}
     candidates = []
     observations_by_route = {}
     raw_scenarios = scenarios if isinstance(scenarios, Iterable) and not isinstance(
@@ -178,8 +237,19 @@ def rank_next_aircraft(
         route_detail = (scenario if scenario.get("source") == "game_research"
                         and _recent(scenario.get("observed_at"), now, MAX_CASH_AGE_SECONDS)
                         else None)
+        independent_detail = current_detail(scenario.get("route_detail"), origin["id"],
+                                            destination["id"], now,
+                                            expected_runway=scenario.get("destination_runway_ft")
+                                            if scenario.get("source") == "derived_research_queue" else None)
         occupancy = fleet_occupancy.evidence_for_endpoints(
-            scenario.get("origin"), scenario.get("destination"), route_detail)
+            scenario.get("origin"), scenario.get("destination"), independent_detail or route_detail)
+        if occupancy and independent_detail and route_detail:
+            legacy_occupancy = fleet_occupancy.evidence_for_endpoints(
+                scenario.get("origin"), scenario.get("destination"), route_detail)
+            if legacy_occupancy and legacy_occupancy["game_count_disagrees"]:
+                occupancy["game_count_disagrees"] = True
+        physical, engine_unavailable = _current_physical(
+            scenario, aircraft_model, engine_id, independent_detail, engines, now)
         financial = scenario.get("financial") if isinstance(scenario.get("financial"), dict) else {}
         costs = scenario.get("costs") if isinstance(scenario.get("costs"), dict) else {}
         profit = _profit(financial.get("profit_per_day"))
@@ -202,7 +272,7 @@ def rank_next_aircraft(
                 missing.extend(reason for reason in pending_inputs
                                if isinstance(reason, str) and reason not in (
                                    "rota_ocupada_frota_propria", "contagem_rota_divergente",
-                                   "ocupacao_da_frota_a_confirmar"))
+                                   "ocupacao_da_frota_a_confirmar", "pista_observada_insuficiente"))
         elif not (scenario.get("source") == "game_research"
                   and _recent(scenario.get("observed_at"), now, MAX_AGE_SECONDS)):
             missing.append("pesquisa_desatualizada")
@@ -251,6 +321,12 @@ def rank_next_aircraft(
         if (investment is not None and profit is not None and profit > 0
                 and _number(investment / profit) is None):
             missing.append("prazo_retorno_a_confirmar")
+        if engine_unavailable:
+            missing.append("motor_indisponivel")
+        physical_pending = _physical_pending(physical, scenario.get("stopover"), origin, destination)
+        missing.extend(physical_pending)
+        if physical and physical["stopover_research_required"]:
+            physical["stopover_research_required"] = "escala_e_trechos_a_confirmar" in physical_pending
 
         # Numeric checks complement game flags, preventing contradictory input
         # from being shown as viable. Stopovers must be individually verified.
@@ -322,6 +398,8 @@ def rank_next_aircraft(
         }
         if occupancy is not None:
             candidate["fleet_occupancy"] = occupancy
+        if physical is not None:
+            candidate["physical_feasibility"] = physical
         if scenario.get("event_demand_boosted") is True:
             candidate["event_demand_boosted"] = True
         if scenario.get("source") == "derived_research_queue":

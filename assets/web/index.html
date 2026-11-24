@@ -2746,6 +2746,7 @@ function renderHubRecommendations(report) {
       }
       addHubMetric(metrics, "Rota sugerida", route);
       appendFleetRouteOccupancy(metrics, candidate);
+      appendPhysicalFeasibility(metrics, candidate);
       addHubMetric(metrics, "Lucro adicional estimado/dia", hubMoney(candidate.profit_per_day));
       addHubMetric(metrics, "Investimento inicial", hubMoney(candidate.investment));
       addHubMetric(metrics, "Retorno estimado", Number.isFinite(candidate.payback_days)

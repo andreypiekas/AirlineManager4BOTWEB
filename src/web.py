@@ -47,6 +47,7 @@ from engine_catalog import EngineCatalogRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
 from owned_hub_research_ingestion import OwnedHubResearchInputsRegistry
 from owned_hub_research_feed import build_external_hub_research_queue, build_owned_hub_research_queue
+from route_detail_evidence import RouteDetailRegistry
 from hub_recommendations import rank_next_aircraft
 from investment_policy import InvestmentPolicy, MODES
 from investment_journal import InvestmentJournal
@@ -251,6 +252,19 @@ class WebDashboard:
         inventory = HubRegistry().snapshot(routes)
         verified_scenarios = HubAircraftResearchRegistry().snapshot()
         pending_inputs = OwnedHubResearchInputsRegistry().snapshot(verified=verified_scenarios)
+        engines = EngineCatalogRegistry().snapshot()
+        # Replace embedded proofs with the independent route-detail registry.
+        # A failed subsequent read must revoke any previously cached detail.
+        details = RouteDetailRegistry().enrich([
+            {"origin_id": row["origin"].get("id") if isinstance(row.get("origin"), dict) else None,
+             "destination_id": row["destination"].get("id") if isinstance(row.get("destination"), dict) else None}
+            for row in verified_scenarios
+        ])
+        verified_scenarios = [
+            {**{key: value for key, value in row.items() if key != "route_detail"},
+             **({"route_detail": sample["route_detail"]} if "route_detail" in sample else {})}
+            for row, sample in zip(verified_scenarios, details)
+        ]
         report = rank_next_aircraft(
             inventory,
             [*verified_scenarios, *pending_inputs],
@@ -258,6 +272,7 @@ class WebDashboard:
             cash=cash,
             cash_observed_at=observed_at,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
+            engine_catalog=engines,
         )
         report["research_ingestion"] = {
             "saved_verified_scenarios": len(verified_scenarios),
@@ -272,7 +287,7 @@ class WebDashboard:
             inventory,
             demand_snapshot["samples"],
             load_market_evidence(),
-            engines=EngineCatalogRegistry().snapshot(),
+            engines=engines,
             hub_progress=demand_snapshot["hub_progress"],
             offset=research_offset,
             expected_fingerprint=research_fingerprint,
