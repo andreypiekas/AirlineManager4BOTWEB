@@ -32,17 +32,34 @@ def test_modo_autonomo_configurado_segue_bloqueado_no_gate_g0():
         ("investment", "auto_buy_aircraft"): True,
         ("investment", "auto_buy_hub"): True,
         ("investment", "max_single_investment"): "100000",
+        ("investment", "max_hub_investment"): "120000",
+        ("investment", "max_hub_points"): "200",
         ("investment", "max_daily_spend"): "200000",
         ("investment", "max_cycle_spend"): "150000",
         ("investment", "max_acquisitions_per_day"): "5",
     })
     state = InvestmentPolicy.from_config(config).report()
     assert state["auto_buy_hub"] is True
+    assert state["max_hub_investment"] == 120000
+    assert state["max_hub_points"] == 200
     assert state["max_daily_spend"] == 200000
     assert state["max_cycle_spend"] == 150000
     assert state["valid"] is True
     assert state["execution_available"] is False
     assert state["blocking_reasons"] == ["executor_aguarda_homologacao"]
+
+
+def test_limites_de_hub_nao_herdam_limite_de_aeronave():
+    state = InvestmentPolicy.from_config(Config({
+        ("investment", "auto_buy_hub"): True,
+        ("investment", "max_single_investment"): "100000",
+    })).report()
+    assert state["max_hub_investment"] == 0
+    assert state["max_hub_points"] == 0
+    assert "limite_de_hub_a_configurar" in state["blocking_reasons"]
+    assert not InvestmentPolicy.from_config(Config({
+        ("investment", "max_hub_points"): "1000000001",
+    })).valid
 
 
 def test_configuracao_invalida_bloqueia_fluxo():

@@ -162,9 +162,12 @@ class SimulatedHubExecutor:
         if self.policy.mode == "autonomous" and not self.policy.auto_buy_hub:
             reasons.append("compra_de_hub_desabilitada")
         if (type(plan.get("estimated_cost")) is not int
-                or self.policy.max_single_investment <= 0
-                or plan["estimated_cost"] > self.policy.max_single_investment):
-            reasons.append("limite_por_compra")
+                or type(self.policy.max_hub_investment) is not int
+                or not 0 < self.policy.max_hub_investment <= 10**15
+                or not 0 < plan["estimated_cost"] <= self.policy.max_hub_investment):
+            reasons.append("limite_por_compra_de_hub")
+        if type(self.policy.max_hub_points) is not int or not 0 <= self.policy.max_hub_points <= 10**9:
+            reasons.append("limite_de_pontos_de_hub_invalido")
         if self.policy.max_daily_spend <= 0 or self.policy.max_acquisitions_per_day <= 0:
             reasons.append("limites_diarios_ausentes")
         return reasons
@@ -207,8 +210,13 @@ class SimulatedHubExecutor:
             if cycle_reason:
                 return {"state": "BLOCKED", "intent_key": key,
                         "reasons": [cycle_reason], "simulated": True}
-            preflight = validate_hub_preflight(intent, gateway.read_checkout(),
+            checkout = gateway.read_checkout()
+            preflight = validate_hub_preflight(intent, checkout,
                                                reserve=reserve)
+            required_points = checkout.get("required_points")
+            if type(required_points) is int and required_points > self.policy.max_hub_points:
+                preflight["reasons"].append("limite_de_pontos_de_hub")
+                preflight["ready"] = False
             if not preflight["ready"]:
                 return {"state": self.journal.get(key)["state"], "intent_key": key,
                         "reasons": preflight["reasons"], "simulated": True}

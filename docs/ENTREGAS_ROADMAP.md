@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A7/A8, limites independentes de aquisição de hubs (G0)
+
+- A política por perfil passa a oferecer `max_hub_investment` (capital máximo por hub, em moeda do jogo) e `max_hub_points` (máximo de pontos exigidos por hub), com configuração e validação no painel PT/EN e na API autenticada. O limite individual de aeronaves permanece independente; os limites financeiros de ciclo e de 24 horas continuam compartilhados para proteger o caixa global.
+- Os dois novos campos iniciam em zero, inclusive em perfis antigos. Capital zero impede compras de hub; pontos zero só admite checkout que comprove exigência de zero pontos. O teto de configuração de pontos é de 1 bilhão, uma restrição administrativa do bot, sem pressupor um limite oficial do jogo.
+- O executor simulado exige o teto de capital do hub e valida os pontos exigidos na leitura do checkout antes da submissão; os testes cobrem configuração ausente, capital excedido, pontos excedidos e independência do limite de aeronaves. A política produtiva continua bloqueada em G0. Nenhuma transação real foi executada.
+- Validação: suíte Windows com 2.087 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Rollback por reversão deste commit. Permanecem pendentes a comprovação do checkout e da demanda residual, a integração do executor real e a homologação dos fluxos A0–A9.
+
 ## 2026-11-24 — Autonomia Total A3/A9, rastreabilidade da avaliação contábil (G0)
 
 - O registro privado do ciclo passa a preservar o deslocamento de cada combinação avaliada, as identificações econômicas das avaliações compartilhadas e dos layouts hipotéticos, e os respectivos impedimentos por código e campo. A trilha é vinculada ao snapshot e aos fingerprints da pesquisa e gravada atomicamente junto ao resumo e ao cursor.

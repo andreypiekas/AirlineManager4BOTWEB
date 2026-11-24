@@ -44,6 +44,7 @@ def _checkout():
 def _policy(*, mode="approval", auto_buy_hub=False):
     return InvestmentPolicy(enabled=True, valid=True, mode=mode,
                             auto_buy_hub=auto_buy_hub, max_single_investment=100000,
+                            max_hub_investment=100000, max_hub_points=200,
                             max_daily_spend=200000, max_acquisitions_per_day=2,
                             max_cycle_spend=200000)
 
@@ -311,6 +312,27 @@ def test_policy_and_checkout_fail_closed(tmp_path):
                    {"available_cash": 1}, {"required_points": None}):
         result = validate_hub_preflight({**_plan()}, {**_checkout(), **update})
         assert result["ready"] is False
+
+
+def test_hub_has_independent_capital_and_points_limits(tmp_path):
+    from dataclasses import replace
+
+    for name, changes, reason in (
+        ("unset", {"max_hub_investment": 0}, "limite_por_compra_de_hub"),
+        ("cash", {"max_hub_investment": 49999}, "limite_por_compra_de_hub"),
+        ("points", {"max_hub_points": 199}, "limite_de_pontos_de_hub"),
+        ("zero-points", {"max_hub_points": 0}, "limite_de_pontos_de_hub"),
+    ):
+        journal, _, gateway = _env(tmp_path / name)
+        policy = replace(_policy(), **changes)
+        result = SimulatedHubExecutor(journal, policy).run(_plan(), gateway, approved=True)
+        assert reason in result["reasons"]
+        assert gateway.submit_calls == 0
+
+    journal, _, gateway = _env(tmp_path / "independent")
+    policy = replace(_policy(), max_single_investment=1)
+    assert SimulatedHubExecutor(journal, policy).run(_plan(), gateway, approved=True)["state"] == "CONFIRMED"
+    assert gateway.submit_calls == 1
 
 
 def test_reserve_and_wrong_profile_cannot_submit(tmp_path):

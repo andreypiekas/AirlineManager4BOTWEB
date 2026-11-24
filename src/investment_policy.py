@@ -34,6 +34,8 @@ class InvestmentPolicy:
     auto_buy_aircraft: bool = False
     auto_buy_hub: bool = False
     max_single_investment: int = 0
+    max_hub_investment: int = 0
+    max_hub_points: int = 0
     max_daily_spend: int = 0
     max_cycle_spend: int = 0
     max_acquisitions_per_day: int = 0
@@ -68,7 +70,8 @@ class InvestmentPolicy:
                   ("max_payback_days", 3650, 0), ("profit_weight", 100, 60),
                   ("efficiency_weight", 100, 40), ("risk_weight", 100, 0),
                   ("confidence_weight", 100, 0), ("diversification_weight", 100, 0),
-                  ("max_cycle_spend", 10**15, 0), ("return_weight", 100, 0))
+                  ("max_cycle_spend", 10**15, 0), ("return_weight", 100, 0),
+                  ("max_hub_investment", 10**15, 0), ("max_hub_points", 10**9, 0))
         for key, upper, fallback in bounds:
             raw = read(key, str(fallback)).strip()
             if not raw.isascii() or not raw.isdecimal() or len(raw) > 16 or int(raw) > upper:
@@ -85,6 +88,8 @@ class InvestmentPolicy:
             auto_buy_aircraft=enabled("auto_buy_aircraft"),
             auto_buy_hub=enabled("auto_buy_hub"),
             max_single_investment=limits[0],
+            max_hub_investment=limits[12],
+            max_hub_points=limits[13],
             max_daily_spend=limits[1],
             max_acquisitions_per_day=limits[2],
             min_daily_profit=limits[3],
@@ -112,10 +117,12 @@ class InvestmentPolicy:
         if self.mode == "approval":
             reasons.append("aprovacao_humana_necessaria")
         if self.mode == "autonomous" and (
-            not self.max_single_investment or not self.max_daily_spend
+            (self.auto_buy_aircraft and not self.max_single_investment) or not self.max_daily_spend
             or not self.max_acquisitions_per_day or not self.max_cycle_spend
         ):
             reasons.append("limites_de_gasto_a_configurar")
+        if self.auto_buy_hub and not self.max_hub_investment:
+            reasons.append("limite_de_hub_a_configurar")
         reasons.append("executor_aguarda_homologacao")
         return {
             "planning_enabled": self.enabled,
@@ -123,6 +130,8 @@ class InvestmentPolicy:
             "auto_buy_aircraft": self.auto_buy_aircraft,
             "auto_buy_hub": self.auto_buy_hub,
             "max_single_investment": self.max_single_investment,
+            "max_hub_investment": self.max_hub_investment,
+            "max_hub_points": self.max_hub_points,
             "max_daily_spend": self.max_daily_spend,
             "max_cycle_spend": self.max_cycle_spend,
             "max_acquisitions_per_day": self.max_acquisitions_per_day,

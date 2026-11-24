@@ -677,7 +677,9 @@ footer strong { font-weight: 600; color: var(--aqua); }
                 <option value="approval" data-t="Sugerir e pedir aprovação">Sugerir e pedir aprovação</option>
                 <option value="autonomous" data-t="Autônomo dentro dos limites">Autônomo dentro dos limites</option>
               </select></label>
-              <label class="hubs-field"><span data-t="Máximo por compra ($ jogo)">Máximo por compra ($ jogo)</span><input id="investmentSingle" type="number" min="0" max="1000000000000000" step="1" required></label>
+              <label class="hubs-field"><span data-t="Máximo por aeronave ($ jogo)">Máximo por aeronave ($ jogo)</span><input id="investmentSingle" type="number" min="0" max="1000000000000000" step="1" required></label>
+              <label class="hubs-field"><span data-t="Máximo por hub ($ jogo)">Máximo por hub ($ jogo)</span><input id="investmentHubSingle" type="number" min="0" max="1000000000000000" step="1" required></label>
+              <label class="hubs-field"><span data-t="Máximo de pontos por hub">Máximo de pontos por hub</span><input id="investmentHubPoints" type="number" min="0" max="1000000000" step="1" required></label>
               <label class="hubs-field"><span data-t="Máximo diário ($ jogo)">Máximo diário ($ jogo)</span><input id="investmentDaily" type="number" min="0" max="1000000000000000" step="1" required></label>
               <label class="hubs-field"><span data-t="Máximo por ciclo ($ jogo)">Máximo por ciclo ($ jogo)</span><input id="investmentCycle" type="number" min="0" max="1000000000000000" step="1" required></label>
               <label class="hubs-field"><span data-t="Máximo de aquisições em 24h">Máximo de aquisições em 24h</span><input id="investmentCount" type="number" min="0" max="100" step="1" required></label>
@@ -1543,7 +1545,10 @@ const EN = {
   "Somente analisar": "Analyze only",
   "Sugerir e pedir aprovação": "Suggest and request approval",
   "Autônomo dentro dos limites": "Autonomous within limits",
-  "Máximo por compra ($ jogo)": "Maximum per purchase (game $)",
+  "Máximo por aeronave ($ jogo)": "Maximum per aircraft (game $)",
+  "Máximo por hub ($ jogo)": "Maximum per hub (game $)",
+  "Máximo de pontos por hub": "Maximum points per hub",
+  "Limite de hub a configurar": "Hub spending limit required",
   "Máximo diário ($ jogo)": "Daily maximum (game $)",
   "Máximo por ciclo ($ jogo)": "Cycle maximum (game $)",
   "Limite restante do ciclo auditado": "Remaining audited cycle limit",
@@ -2585,6 +2590,7 @@ const hubResearchBlockerLabels = {
   hangar_sem_vaga: "Hangar sem vaga",
   modo_somente_analise: "Modo somente análise",
   limites_de_gasto_a_configurar: "Limites de gasto a configurar",
+  limite_de_hub_a_configurar: "Limite de hub a configurar",
   executor_aguarda_homologacao: "Executor aguarda homologação"
 };
 const hubResearchBlocker = reason => tr(Object.hasOwn(hubResearchBlockerLabels, String(reason))
@@ -3582,6 +3588,8 @@ function renderInvestmentPolicy(report) {
   $("investmentHub").checked = policy.auto_buy_hub === true;
   $("investmentMode").value = policy.mode;
   $("investmentSingle").value = String(policy.max_single_investment);
+  $("investmentHubSingle").value = String(policy.max_hub_investment);
+  $("investmentHubPoints").value = String(policy.max_hub_points);
   $("investmentDaily").value = String(policy.max_daily_spend);
   $("investmentCycle").value = String(policy.max_cycle_spend);
   $("investmentCount").value = String(policy.max_acquisitions_per_day);
@@ -3717,6 +3725,8 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
   }
   const amounts = [
     [$("investmentSingle").value.trim(), 1e15],
+    [$("investmentHubSingle").value.trim(), 1e15],
+    [$("investmentHubPoints").value.trim(), 1e9],
     [$("investmentDaily").value.trim(), 1e15],
     [$("investmentCycle").value.trim(), 1e15],
     [$("investmentCount").value.trim(), 100],
@@ -3733,7 +3743,7 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
     $("investmentPolicyStatus").textContent = tr("Verifique os limites numéricos antes de salvar.");
     return;
   }
-  const [single, daily, cycle, count, minProfit, maxPayback, profitWeight,
+  const [single, hubSingle, hubPoints, daily, cycle, count, minProfit, maxPayback, profitWeight,
     efficiencyWeight, returnWeight, riskWeight, confidenceWeight, diversificationWeight] = amounts.map(([text]) => Number(text));
   if (profitWeight + efficiencyWeight + returnWeight + riskWeight + confidenceWeight + diversificationWeight === 0) {
     $("investmentPolicyStatus").textContent = tr("Configure pelo menos um peso positivo para o ranking.");
@@ -3745,6 +3755,8 @@ $("investmentPolicyForm").addEventListener("submit", async event => {
     auto_buy_hub: $("investmentHub").checked,
     mode: $("investmentMode").value,
     max_single_investment: single,
+    max_hub_investment: hubSingle,
+    max_hub_points: hubPoints,
     max_daily_spend: daily,
     max_cycle_spend: cycle,
     max_acquisitions_per_day: count,
