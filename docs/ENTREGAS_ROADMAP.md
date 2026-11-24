@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A4, revogação de observações após mutações (G0)
+
+- A revogação da cobertura integral do inventário agora invalida também o cache nativo de hangar, aeronaves estacionadas e pendentes do mesmo perfil. O início de uma nova auditoria de planejamento, criação ou substituição de rota e encomenda de aeronave deixam de publicar a observação anterior como atual, mesmo quando a tentativa de alteração termina sem confirmação do jogo.
+- Reparo, A-check, ampliação de hangar e alterações na oficina passaram a revogar as duas evidências imediatamente antes do envio da ação. A simulação e as verificações que antecedem a ação preservam o cache. A atualização é atômica e a revogação não alcança outros perfis. A decisão de invalidar também a cobertura de rotas nas operações de manutenção é conservadora, pois o estado da frota pode mudar durante a parada.
+- Validação Windows: 1.846 testes aprovados e 1 ignorado na suíte ampla (excluído `tests/test_instalacao_linux.py`, requisito POSIX), antes da inclusão da oficina. Após a inclusão, 99 testes direcionados aprovados, inclusive revogação por perfil, timeout e simulação. O teste inicial de oficina foi corrigido para respeitar o ganho mínimo exigido pela rotina. Ruff, compilação Python e `git diff --check` aprovados.
+- A conciliação monetária dos pedidos, a cobertura integral de hubs/rotas e a homologação autenticada do ciclo permanecem pendentes. G0 continua ativo. Nenhuma ação real foi executada no jogo nesta entrega.
+
 ## 2026-11-24 — Autonomia Total A4/A7, entregas de aeronaves pendentes (G0)
 
 - A inspeção autenticada da aba Pending mostrou seis aeronaves, sendo duas com o rótulo nativo `Pending delivery:` e quatro com `Pending maintenance:`. Ambos os estados aparecem em células próprias com contador regressivo. O menu Order exibiu catálogo e capacidade, sem uma relação financeira das encomendas. A inspeção foi somente leitura.

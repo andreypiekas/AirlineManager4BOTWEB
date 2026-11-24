@@ -19,6 +19,7 @@ from selenium.webdriver.common.by import By
 
 from helpers import clean_response, fmt, to_int
 from notify import esc
+from route_registry import RouteRegistry
 
 if TYPE_CHECKING:
     from bot import Bot
@@ -148,6 +149,7 @@ def check_hangar(bot: "Bot") -> None:
         log.info("[SIMULAÇÃO] Ampliaria o %s.", detail)
         return
     before = bot.read_money()
+    RouteRegistry().invalidate_fleet_coverage()
     bot.click_element(buttons[0])
     bot.pause(1.0, 1.5)
     if not bot.confirm_purchase(before, cost, "a ampliação do hangar"):
@@ -189,6 +191,7 @@ def plan(bot: "Bot", aircraft: Aircraft, kind: str) -> bool:
         bot.notify(f"🧪 SIMULAÇÃO: programaria {esc(detail)}.", silent=True, category="simulation")
         return True
     before = bot.read_money()
+    RouteRegistry().invalidate_fleet_coverage()
     bot.click_element(buttons[0])
     response = bot.wait_text("//*[@id='maintPlanActionDo']", timeout=15)
     if not bot.confirm_purchase(before, cost, f"o serviço de {label} da aeronave {aircraft.reg}", "maintPlanActionDo"):

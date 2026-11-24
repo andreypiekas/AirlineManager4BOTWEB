@@ -173,6 +173,13 @@ def _pending_counts(value):
     return {key: value[key] for key in keys}
 
 
+def invalidate_observations(path: Path | None = None) -> None:
+    """Withdraw native fleet and hangar evidence before a refresh or mutation."""
+    path = Path(path) if path is not None else paths.current().data / FILENAME
+    if path.exists():
+        paths.write_atomic(path, "{}")
+
+
 def observations_snapshot(path: Path | None = None, *, now: float | None = None) -> dict:
     """Publish only current aggregate observations. Financial obligations remain unverified."""
     path = path if path is not None else paths.current().data / FILENAME
@@ -264,7 +271,7 @@ def collect_fleet_commitment_observations(bot, *, path=None):
     if getattr(bot, "stopping", False):
         return False
     path = Path(path) if path is not None else paths.current().data / FILENAME
-    paths.write_atomic(path, "{}")
+    invalidate_observations(path)
     started = time.time()
     try:
         bot.open_popup("maintenance_main.php", "Maintenance", "nav_maintenance")

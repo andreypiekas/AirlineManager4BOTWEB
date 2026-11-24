@@ -192,7 +192,10 @@ class RouteRegistry:
 
     def invalidate_fleet_coverage(self) -> None:
         """Withdraw the current combined proof before new observations or mutations."""
+        from fleet_commitment_observations import FILENAME, invalidate_observations
+
         with _LOCK:
+            invalidate_observations(self.path.parent / FILENAME)
             data = _state(self.path)
             changed = data.pop("fleet_coverage", None) is not None
             roster = data.get("game_roster")

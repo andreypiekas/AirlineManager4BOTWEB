@@ -2,10 +2,14 @@ import json
 import shutil
 import subprocess
 import time
+from types import SimpleNamespace
 
 import pytest
 
 import game_observations
+import maintenance
+import route_registry
+import seats
 from fleet_commitment_observations import (
     FILENAME, PARKED_FLEET_JS, PASSENGER_HANGAR_JS, PENDING_FLEET_JS, SOURCE,
     _fleet_list, _hangar, collect_fleet_commitment_observations, observations_snapshot,
@@ -13,6 +17,7 @@ from fleet_commitment_observations import (
 )
 from hub_registry import HubRegistry
 from portfolio_planner import compare_portfolio
+from route_registry import RouteRegistry
 
 
 @pytest.mark.parametrize("sample", [None, {"capacity": 2, "occupied": 2, "free": 1},
@@ -93,6 +98,95 @@ def test_malformed_cached_counts_do_not_certify_or_leak_extra_fields(tmp_path):
     assert report["passenger_hangar"] is None and report["parked_count"] is None
     assert "ids" not in report["pending_fleet"]
     assert report["commitments_verified"] is False and report["pending_orders_verified"] is False
+
+
+def _seed_observations(path):
+    path.write_text(json.dumps({"source": SOURCE, "observed_at": time.time(),
+                                "passenger_hangar": {"capacity": 3, "occupied": 2, "free": 1},
+                                "pending_fleet": {"total": 0, "maintenance": 0, "delivery": 0, "unclassified": 0},
+                                "parked_count": 0}), encoding="utf-8")
+
+
+def test_coverage_revocation_withdraws_native_cache_only_in_affected_profile(tmp_path):
+    first = tmp_path / FILENAME
+    other = tmp_path / "other" / FILENAME
+    other.parent.mkdir()
+    _seed_observations(first)
+    _seed_observations(other)
+    registry = RouteRegistry(tmp_path / "routes.json")
+    assert observations_snapshot(first)["status"] == "observed"
+    registry.invalidate_fleet_coverage()
+    registry.invalidate_fleet_coverage()
+    assert observations_snapshot(first)["status"] == "unverified"
+    assert observations_snapshot(other)["status"] == "observed"
+
+
+@pytest.mark.parametrize("action", ["hangar", "repair", "check"])
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_maintenance_revokes_before_uncertain_submission(tmp_path, monkeypatch, action, dry_run):
+    path = tmp_path / FILENAME
+    _seed_observations(path)
+    monkeypatch.setattr(route_registry, "registry_file", lambda: tmp_path / "routes.json")
+    button = SimpleNamespace(text="$100", get_attribute=lambda _: "btn-success")
+    section = SimpleNamespace(find_elements=lambda *_: [button])
+    panel = SimpleNamespace(find_elements=lambda *_: [button if action == "hangar" else section])
+    monkeypatch.setattr(maintenance, "section_cost", lambda _: 100)
+    calls = []
+
+    def click(_):
+        assert observations_snapshot(path)["status"] == "unverified"
+        calls.append(True)
+        raise TimeoutError("uncertain submission")
+
+    bot = SimpleNamespace(
+        dry_run=dry_run, ajax=lambda *_: panel, js=lambda *_: {"capacity": "3", "free": "1"},
+        config=SimpleNamespace(get_int=lambda *args: 2, get_bool=lambda *args: True),
+        update_stats=lambda **_: None, can_spend=lambda *args, **kwargs: True,
+        read_money=lambda: 1000, click_element=click, notify=lambda *args, **kwargs: None,
+    )
+    aircraft = maintenance.Aircraft("101", "PP-101", "A320", 50, 1, True)
+
+    def run():
+        if action == "hangar":
+            maintenance.check_hangar(bot)
+        else:
+            maintenance.plan(bot, aircraft, action)
+
+    if dry_run:
+        run()
+        assert not calls
+        assert observations_snapshot(path)["status"] == "observed"
+    else:
+        with pytest.raises(TimeoutError, match="uncertain submission"):
+            run()
+        assert calls == [True]
+        assert observations_snapshot(path)["status"] == "unverified"
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_workshop_revokes_before_uncertain_submission(tmp_path, monkeypatch, dry_run):
+    path = tmp_path / FILENAME
+    _seed_observations(path)
+    monkeypatch.setattr(route_registry, "registry_file", lambda: tmp_path / "routes.json")
+    panel = SimpleNamespace(find_elements=lambda *_: [object()])
+
+    def click(_):
+        assert observations_snapshot(path)["status"] == "unverified"
+        raise TimeoutError("uncertain submission")
+
+    bot = SimpleNamespace(dry_run=dry_run, ajax=lambda *_: panel, js=lambda *args: 100,
+                          can_spend=lambda *args, **kwargs: True, read_money=lambda: 1000,
+                          click_element=click, notify=lambda *args, **kwargs: None)
+    plan = seats.SeatPlan("101", "PP-101", "A320", "XAP-GRU", seats.Layout(100, 0, 0),
+                          seats.Layout(80, 10, 0), (300, 50, 0), (100, 300, 0), 2,
+                          1000, 2000, 100, 1)
+    if dry_run:
+        assert seats.apply_plan(bot, plan, 30) == 1
+        assert observations_snapshot(path)["status"] == "observed"
+    else:
+        with pytest.raises(TimeoutError, match="uncertain submission"):
+            seats.apply_plan(bot, plan, 30)
+        assert observations_snapshot(path)["status"] == "unverified"
 
 
 def test_portfolio_exposes_missing_or_full_hangar_without_certifying_orders():
