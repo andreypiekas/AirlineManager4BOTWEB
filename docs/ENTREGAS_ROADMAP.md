@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A9, observabilidade das decisões A3/A4 (G0)
+
+- A API de métricas, o painel PT/EN e o resumo diário do Telegram passam a distinguir pesquisa preliminar de cenários registrados no A3 e candidatos do planejador A4. Os seis escopos de coleta são independentes; as contagens auditadas dependem de captura atual (até 900 segundos), perfil e snapshot correspondentes. Registro vazio informa zero cenários registrados, sem comprovar ausência de oportunidades. Evidência vencida ou divergente mantém contagens desconhecidas.
+- Uma sugestão de análise exige cobertura comprovada, candidato elegível, plano disponível e ausência de impedimentos. O Telegram apresenta a decisão e os bloqueios auditados, com rótulos conhecidos e contagem dos demais. O ambiente de simulação não consulta a evidência produtiva. Candidatos A4 não equivalem a compras aprovadas ou realizadas.
+- Validação: 73 testes direcionados aprovados, incluindo API autenticada e resumo diário com captura vigente, expirada e simulação. Suíte Windows: 2.058 aprovados, nenhuma falha e 1 ignorado (instalação Linux excluída); Ruff e git diff --check aprovados. Rollback por reversão deste commit na branch de trabalho. Permanecem pendentes a alimentação produtiva do registro A3, a comprovação de demanda residual e custos finais, a calibração com voos e razão financeira e a homologação das fases A0–A9. Nenhuma compra real executada.
+
 ## 2026-11-24 — Autonomia Total A3, veto de rota por observação nativa (G0)
 
 - O replay auditado usa a contagem positiva do formulário nativo correlacionado por perfil, origem, destino, distância e escala para excluir a projeção econômica de uma rota potencialmente ocupada, mesmo sem cobertura completa da frota. O gate A3 também considera a contagem positiva do detalhe nativo atual e o feed sinaliza essa observação como pendência.

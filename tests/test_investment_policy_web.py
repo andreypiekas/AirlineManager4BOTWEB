@@ -168,11 +168,13 @@ def test_external_research_endpoint_exposes_recent_cash_and_catalog_costs(tmp_pa
         assert report["items"][0]["purchase_eligible"] is False
 
 
-def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_path, monkeypatch):
+@pytest.mark.parametrize("simulation", [True, False])
+def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_path, monkeypatch, simulation):
     from investment_journal import InvestmentJournal
+    import time
 
     journal = InvestmentJournal(tmp_path / "metricas.sqlite3", profile_id="principal",
-                                simulation=True)
+                                simulation=simulation)
     journal.register({"plan_id": "pending-hub", "snapshot_id": "sha256:" + "a" * 64,
                       "kind": "hub", "hub_id": "123", "estimated_cost": 1000})
     monkeypatch.setattr(web_module, "InvestmentJournal", lambda: journal)
@@ -183,6 +185,20 @@ def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_p
         "portfolio": {"status": "inconclusivo", "evaluated_count": 0,
                       "eligible_count": 0},
     })
+    calls = []
+    snapshot = "sha256:" + "a" * 64
+
+    def audited(self):
+        calls.append(True)
+        return {"profile_id": "principal", "read_only": True, "status": "registrado",
+                "snapshot_id": snapshot, "evaluation_count": 1,
+                "game_observation_snapshot": {"status": "parcial", "snapshot_id": snapshot,
+                                              "captured_at": time.time() - 1,
+                                              "scopes": dict.fromkeys(("hubs", "fleet", "routes", "models", "engines", "prices"), False)},
+                "portfolio": {"evaluated_count": 1, "eligible_count": 0, "decision": "nao_comprar"},
+                "purchase_plan_blockers": ["nenhum_plano_elegivel"]}
+
+    monkeypatch.setattr(WebDashboard, "audited_expansion", audited)
     with served(tmp_path) as (port, _config):
         denied, _ = request(port, "GET", "/api/investment/metrics")
         assert denied == 403
@@ -190,12 +206,15 @@ def test_investment_metrics_endpoint_is_authenticated_read_only_and_scoped(tmp_p
         assert status == 200
         assert report["read_only"] is True
         assert report["profile_id"] == "principal"
-        assert report["environment"] == "simulation"
+        assert report["environment"] == ("simulation" if simulation else "game")
         assert report["journal"]["total_intents"] == 1
         assert report["journal"]["by_state"]["PROPOSED"] == 1
         assert report["research_coverage"]["status"] == "partial"
         assert report["actual_spend"] is None
         assert journal.unresolved()["count"] == 0
+        assert len(calls) == (0 if simulation else 1)
+        assert report["audited_opportunities"]["evaluated_count"] == (None if simulation else 1)
+        assert report["audited_opportunities"]["decision"] == (None if simulation else "nao_comprar")
 
 
 def test_policy_update_survives_reload_without_activating_legacy_or_execution(tmp_path):

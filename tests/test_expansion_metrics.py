@@ -65,6 +65,42 @@ def test_empty_metrics_do_not_invent_game_purchase_or_profits(tmp_path):
     assert report["verified_spend_avoided"] is None
 
 
+def test_audited_metrics_keep_current_capture_and_registry_separate(tmp_path):
+    now = time.time()
+    scopes = {"hubs": True, "fleet": True, "routes": False,
+              "models": True, "engines": False, "prices": False}
+    audited = {"profile_id": "principal", "read_only": True, "status": "registrado",
+               "snapshot_id": SNAPSHOT, "evaluation_count": 2,
+               "game_observation_snapshot": {"status": "parcial", "snapshot_id": SNAPSHOT,
+                                             "captured_at": now - 10, "scopes": scopes},
+               "portfolio": {"evaluated_count": 2, "eligible_count": 1,
+                             "decision": "sugestao_para_analise"},
+               "purchase_plan_preview": None,
+               "purchase_plan_blockers": ["conciliacao_financeira_a_confirmar"]}
+    journal = _journal(tmp_path, simulation=False)
+    metrics = build_expansion_metrics(journal, now=now, audited_report=audited)
+    assert metrics["opportunities"]["evaluated_count"] is None
+    assert metrics["audited_opportunities"] == {
+        "status": "registrado", "scopes": scopes, "evaluated_count": 2,
+        "eligible_count": 1, "decision": "nao_comprar",
+        "blocking_reasons": ["conciliacao_financeira_a_confirmar"],
+    }
+    mismatched = {**audited, "snapshot_id": "sha256:" + "b" * 64}
+    metrics = build_expansion_metrics(journal, now=now, audited_report=mismatched)["audited_opportunities"]
+    assert metrics["status"] == "evidencia_indisponivel" and metrics["scopes"] == scopes
+    assert metrics["evaluated_count"] is None and metrics["decision"] is None
+    metrics = build_expansion_metrics(journal, now=now + 901, audited_report=audited)["audited_opportunities"]
+    assert metrics["status"] == "coleta_indisponivel" and metrics["scopes"] is None
+    simulation = InvestmentJournal(tmp_path / "simulation.sqlite3", profile_id="principal", simulation=True)
+    for other in (simulation, _journal(tmp_path, profile="other", simulation=False)):
+        metrics = build_expansion_metrics(other, now=now, audited_report=audited)["audited_opportunities"]
+        assert metrics["status"] == "sem_fonte" and metrics["scopes"] is None
+    empty = {**audited, "status": "sem_avaliacoes", "snapshot_id": None, "evaluation_count": 0}
+    metrics = build_expansion_metrics(journal, now=now, audited_report=empty)["audited_opportunities"]
+    assert metrics["status"] == "sem_avaliacoes" and metrics["evaluated_count"] == 0
+    assert metrics["decision"] == "nao_comprar"
+
+
 def test_journal_events_are_scoped_and_persist_across_restart(tmp_path):
     first = _journal(tmp_path)
     _confirmed(first, uncertain=True)

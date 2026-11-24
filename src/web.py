@@ -413,8 +413,12 @@ class WebDashboard:
                 research = self.hub_recommendations()
             except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
                 research = None
+            try:
+                audited = self.audited_expansion() if not journal.simulation else None
+            except (OSError, sqlite3.Error, ValueError, KeyError, TypeError, AttributeError):
+                audited = None
             return HTTPStatus.OK, build_expansion_metrics(
-                journal, opportunity_report=research,
+                journal, opportunity_report=research, audited_report=audited,
             )
         except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
             return HTTPStatus.SERVICE_UNAVAILABLE, {

@@ -1164,6 +1164,12 @@ const EN = {
   "Custo planejado reservado": "Reserved planned cost",
   "Pesquisas por hub": "Research by hub",
   "Cenários avaliados": "Evaluated scenarios",
+  "Escopos auditados atuais": "Current audited scopes",
+  "Cenários registrados A3": "Recorded A3 scenarios",
+  "Candidatos A4": "A4 candidates",
+  "Decisão auditada A3/A4": "Audited A3/A4 decision",
+  "Sem decisão auditada atual": "No current audited decision",
+  "Impedimentos auditados": "Audited blockers",
   "Precisão financeira": "Forecast accuracy",
   "Aguardando razão financeira e histórico de voos": "Awaiting accounting ledger and flight history",
   "Resumo financeiro da companhia (últimas 24 horas)": "Company financial summary (last 24 hours)",
@@ -3626,6 +3632,20 @@ async function loadInvestmentMetrics() {
         ? String(report.forecast.mean_absolute_daily_error)
         : tr("Aguardando razão financeira e histórico de voos")],
     ];
+    if (report.environment !== "simulation") {
+      const audited = report.audited_opportunities;
+      const scopes = audited?.scopes;
+      rows.push(
+        [tr("Escopos auditados atuais"), scopes == null ? null :
+          nf.format(Object.values(scopes).filter(value => value === true).length) + " / " + nf.format(Object.keys(scopes).length)],
+        [tr("Cenários registrados A3"), audited?.evaluated_count],
+        [tr("Candidatos A4"), audited?.eligible_count],
+        [tr("Decisão auditada A3/A4"), audited?.decision === "nao_comprar" ? tr("Compra bloqueada") :
+          audited?.decision === "sugestao_para_analise" ? tr("Somente análise") : tr("Sem decisão auditada atual")],
+        [tr("Impedimentos auditados"), audited?.decision == null && !audited?.blocking_reasons?.length
+          ? null : audited?.blocking_reasons?.length ?? null],
+      );
+    }
     const finance = report.company_finance_24h;
     const summary = finance?.status === "observed" && finance.historical_only === true ? finance.summary : null;
     const financeFields = [

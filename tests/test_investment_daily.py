@@ -63,6 +63,9 @@ class Dashboard:
         }, "portfolio": {"evaluated_count": 2, "eligible_count": 0,
                          "status": "inconclusivo"}}
 
+    def audited_expansion(self):
+        return None
+
 
 def prepare(monkeypatch, path, *, profile="principal", enabled=True, results=(True,),
             planning=False, dry_run=False, summary_hour=9, settings=None,
@@ -142,6 +145,36 @@ def test_daily_financial_history_and_portfolio_blockers(monkeypatch, tmp_path, a
     assert "pedidos e compromissos a conciliar" in message
     assert "1 outro impedimento no planejador" in message
     assert "future_unknown_code" not in message
+
+
+@pytest.mark.parametrize("age,dry_run,visible", [(10, False, True), (901, False, False), (10, True, False)])
+def test_daily_audited_decision_is_current_and_separate(monkeypatch, tmp_path, age, dry_run, visible):
+    now = _timestamp()
+    bot = prepare(monkeypatch, tmp_path, dry_run=dry_run)
+    snapshot = "sha256:" + "a" * 64
+    calls = []
+
+    class AuditedDashboard(Dashboard):
+        def audited_expansion(self):
+            calls.append(True)
+            return {"profile_id": "principal", "read_only": True, "status": "registrado",
+                    "snapshot_id": snapshot, "evaluation_count": 3,
+                    "game_observation_snapshot": {"status": "parcial", "snapshot_id": snapshot,
+                                                  "captured_at": now - age,
+                                                  "scopes": {"hubs": True, "fleet": True, "routes": False,
+                                                             "models": False, "engines": False, "prices": False}},
+                    "portfolio": {"evaluated_count": 3, "eligible_count": 1,
+                                  "decision": "sugestao_para_analise"},
+                    "purchase_plan_blockers": ["private_unknown_code"]}
+
+    monkeypatch.setattr(investment_daily, "WebDashboard", AuditedDashboard)
+    assert investment_daily.publish_investment_daily(bot, now=now) == "delivered"
+    message = bot.telegram.calls[0]
+    assert ("3 cenários registrados, 1 candidatos A4; compra bloqueada" in message) is visible
+    assert ("hubs, frota." in message) is visible
+    assert "2 avaliadas, 0 elegíveis" in message
+    assert "private_unknown_code" not in message
+    assert len(calls) == (0 if dry_run else 1)
 
 
 def test_send_failed_or_exception_can_retry_without_secret_in_log(monkeypatch, tmp_path, caplog):

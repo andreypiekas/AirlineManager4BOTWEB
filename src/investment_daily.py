@@ -201,6 +201,28 @@ def format_investment_daily(metrics: dict, *, date_label: str, planning_enabled:
         "⚙️ Compra automática legada de aeronaves: "
         f"{'ATIVA' if legacy_autobuy_aircraft else 'desativada'} (fluxo independente).",
     ]
+    audited = metrics.get("audited_opportunities", {})
+    if not is_simulation:
+        scopes = audited.get("scopes")
+        scope_labels = {"hubs": "hubs", "fleet": "frota", "routes": "rotas",
+                        "models": "modelos", "engines": "motores", "prices": "preços"}
+        verified = (", ".join(label for key, label in scope_labels.items() if scopes.get(key) is True)
+                    if scopes is not None else "")
+        lines.append("🔎 <b>Cobertura auditada atual</b>: " + esc(verified or "sem escopo comprovado") + ".")
+        evaluated = audited.get("evaluated_count")
+        eligible = audited.get("eligible_count")
+        decision = {"nao_comprar": "compra bloqueada", "sugestao_para_analise": "sugestão para análise"}.get(
+            audited.get("decision"), "sem decisão auditada atual")
+        if evaluated is not None and eligible is not None:
+            decision = f"{evaluated} cenários registrados, {eligible} candidatos A4; {decision}"
+        lines.append("📋 <b>Planejamento auditado A3/A4</b>: " + esc(decision) + ".")
+        blockers = audited.get("blocking_reasons", [])
+        if blockers:
+            labels = [_PORTFOLIO_BLOCKER_LABELS[code] for code in blockers if code in _PORTFOLIO_BLOCKER_LABELS]
+            unknown = len(blockers) - len(labels)
+            if unknown:
+                labels.append(f"{unknown} impedimento(s) adicional(is) na análise auditada")
+            lines.append("⛔ Bloqueios auditados: " + esc("; ".join(labels)) + ".")
     finance = metrics.get("company_finance_24h", {})
     if not is_simulation and finance.get("status") == "observed" and finance.get("summary"):
         summary = finance["summary"]
@@ -256,8 +278,13 @@ def publish_investment_daily(bot, *, now: float | None = None) -> str:
         except (OSError, sqlite3.Error, ValueError, TypeError, KeyError):
             research = None
             log.warning("Pesquisa de investimento indisponível no resumo diário.")
+        try:
+            audited = dashboard.audited_expansion() if not simulation else None
+        except (OSError, sqlite3.Error, ValueError, TypeError, KeyError, AttributeError):
+            audited = None
+            log.warning("Evidência auditada indisponível no resumo diário.")
         metrics = build_expansion_metrics(journal, now=current, window_days=1,
-                                          opportunity_report=research)
+                                          opportunity_report=research, audited_report=audited)
         policy_report = InvestmentPolicy.from_config(cfg).report()
         message = format_investment_daily(
             metrics, date_label=time.strftime("%d/%m/%Y", local),

@@ -13,6 +13,57 @@ from collections.abc import Mapping, Sequence
 
 from investment_journal import InvestmentJournal
 from finance_observations import MAX_AGE as FINANCE_MAX_AGE, SOURCE as FINANCE_SOURCE, validate_summary
+from opportunity_models import DEFAULT_MAX_AGE_SECONDS
+
+
+def _audited_metrics(report: Mapping | None, journal: InvestmentJournal, now: float) -> dict:
+    """Keep actual A3/A4 decisions distinct from preliminary portfolio counts."""
+    result = {"status": "sem_fonte", "scopes": None, "evaluated_count": None,
+              "eligible_count": None, "decision": None, "blocking_reasons": []}
+    if (journal.simulation or not isinstance(report, Mapping)
+            or report.get("profile_id") != journal.profile_id or report.get("read_only") is not True):
+        return result
+    capture = report.get("game_observation_snapshot")
+    if not isinstance(capture, Mapping):
+        return result
+    stamp = capture.get("captured_at")
+    if (capture.get("status") != "parcial" or type(stamp) not in (int, float)
+            or not 0 < stamp <= now or now - stamp > DEFAULT_MAX_AGE_SECONDS):
+        result["status"] = "coleta_indisponivel"
+        return result
+    scopes = capture.get("scopes")
+    keys = ("hubs", "fleet", "routes", "models", "engines", "prices")
+    if isinstance(scopes, Mapping) and all(type(scopes.get(key)) is bool for key in keys):
+        result["scopes"] = {key: scopes[key] for key in keys}
+    snapshot_id = capture.get("snapshot_id")
+    if not isinstance(snapshot_id, str) or not snapshot_id:
+        return result
+    portfolio = report.get("portfolio")
+    if not isinstance(portfolio, Mapping):
+        return result
+    blockers = report.get("purchase_plan_blockers")
+    blockers_valid = isinstance(blockers, list) and all(isinstance(reason, str) and reason for reason in blockers)
+    if blockers_valid:
+        result["blocking_reasons"] = list(dict.fromkeys(blockers))
+    if (report.get("status") == "sem_avaliacoes" and report.get("snapshot_id") is None
+            and report.get("evaluation_count") == 0):
+        result.update(status="sem_avaliacoes", evaluated_count=0, eligible_count=0, decision="nao_comprar")
+        return result
+    if report.get("status") != "registrado" or report.get("snapshot_id") != snapshot_id:
+        result["status"] = "evidencia_indisponivel"
+        return result
+    evaluated, eligible = portfolio.get("evaluated_count"), portfolio.get("eligible_count")
+    if (type(evaluated) is int and type(eligible) is int and 0 <= eligible <= evaluated
+            and evaluated == report.get("evaluation_count")):
+        result.update(status="registrado", evaluated_count=evaluated, eligible_count=eligible)
+        if portfolio.get("decision") == "nao_comprar" or result["blocking_reasons"]:
+            result["decision"] = "nao_comprar"
+        elif (portfolio.get("decision") == "sugestao_para_analise" and eligible > 0
+              and blockers_valid and result["scopes"] is not None
+              and all(result["scopes"].values()) and isinstance(report.get("purchase_plan_preview"), Mapping)
+              and report["purchase_plan_preview"]):
+            result["decision"] = "sugestao_para_analise"
+    return result
 
 
 def build_expansion_metrics(
@@ -22,6 +73,7 @@ def build_expansion_metrics(
     window_days: int = 30,
     opportunity_report: Mapping | None = None,
     calibration_reports: Sequence[Mapping] | None = None,
+    audited_report: Mapping | None = None,
 ) -> dict:
     """Summarize investment decisions without upgrading partial data to facts.
 
@@ -141,6 +193,7 @@ def build_expansion_metrics(
         "journal": audit,
         "research_coverage": coverage,
         "opportunities": opportunities,
+        "audited_opportunities": _audited_metrics(audited_report, journal, current),
         "portfolio_blocking_reasons": portfolio_blockers,
         "forecast": forecast,
         "company_finance_24h": company_finance,
