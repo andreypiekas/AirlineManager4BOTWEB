@@ -109,6 +109,9 @@ def _scenario(item: dict, now: float) -> dict | None:
                    for kind in ("y", "j", "f"))):
         return None
     event_boosted = item.get("event_demand_boosted") is True
+    # A queue-only physical conclusion depends on short-lived independent
+    # evidence. Persist pending research, not a durable runway verdict.
+    pending = [reason for reason in pending if reason != "pista_observada_insuficiente"]
     if event_boosted:
         pending = [*pending, "demanda_evento_temporario"]
     observed = {

@@ -276,6 +276,10 @@ const translations = {
       'Identidade do modelo pendente': 'Model identity pending',
       'Velocidade da variante': 'Variant cruise speed',
       'Preço exibido no detalhe': 'Displayed detail price',
+      'Triagem física direta': 'Direct physical screening',
+      'Dimensões insuficientes': 'Dimensions insufficient',
+      'Alcance direto': 'Direct range',
+      'Insuficiente': 'Insufficient',
   'Todos os modelos': 'All models',
   'Recomendações exibidas': 'Recommendations shown',
   'Cenários viáveis': 'Viable scenarios',
@@ -435,6 +439,16 @@ assert.equal(engineMetrics.children[1].children[1].textContent, '881 kph');
 assert.equal(engineMetrics.children[4].children[0].textContent, 'Displayed detail price');
 appendEngineDetail(engineMetrics, {engine_detail:{...detailEvidence, observed_at:marketNow-4*86400}});
 assert.equal(engineMetrics.children.length, 5);
+const physicalMetrics = document.createElement('div');
+const physical = {source:'observed_direct_dimensions_v1', status:'direct_shortfall', purchase_eligible:false,
+  expires_at:marketNow+60, checks:{range:'short', origin_runway:'unknown', destination_runway:'unknown'},
+  distance_km:2000, variant_range_km:1999, stopover_research_required:true};
+appendPhysicalFeasibility(physicalMetrics, {physical_feasibility:physical});
+assert.equal(physicalMetrics.children[0].children[0].textContent, 'Direct physical screening');
+assert.equal(physicalMetrics.children[0].children[1].textContent, 'Dimensions insufficient');
+assert.equal(physicalMetrics.children[1].children[1].textContent, 'Insufficient · 1,999 / 2,000 km');
+appendPhysicalFeasibility(physicalMetrics, {physical_feasibility:{...physical, expires_at:marketNow-1}});
+assert.equal(physicalMetrics.children.length, 5);
 assert.equal($('hubResearchPrev').disabled, true);
 assert.equal($('hubResearchNext').disabled, true);
 Object.assign(report.research_queue, {

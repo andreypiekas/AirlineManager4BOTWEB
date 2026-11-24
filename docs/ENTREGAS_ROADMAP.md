@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A3/A7, triagem física por variante e rota (G0)
+
+- As filas de pesquisa de hubs próprios e externos comparam o alcance observado da variante com a distância da rota e a pista exigida com os comprimentos de origem e destino. Cada comparação tem estado independente (suficiente, insuficiente ou desconhecido). O cálculo exige identidade correlacionada do modelo e da variante e evidência atual do detalhe da rota; alcance genérico de catálogo e pista da pesquisa não substituem essas provas.
+- Uma insuficiência física observada suprime a simulação econômica da rota direta. Alcance insuficiente indica necessidade de pesquisar escalas e trechos, que continuam sem homologação. A triagem é dimensional e conservadora, independentemente do modo do jogo; ainda não prova disponibilidade, viabilidade pelas regras do jogo nem elegibilidade de compra. A simulação hipotética permanece possível com dimensões desconhecidas e as pendências são exibidas.
+- A API apresenta as três comparações, medidas observadas, origem e validade da evidência. O painel PT/EN mostra a triagem e sinaliza observações insuficientes. A validade da contribuição hipotética também respeita os prazos dos dados físicos e dos catálogos. A ingestão mantém a verificação física pendente no ranking persistido, sem perpetuar um diagnóstico de pista transitório.
+- Permanecem pendentes a confirmação autenticada da identidade de modelo/variante, as regras de pista por modo, a disponibilidade e viabilidade de escalas, a demanda residual, a cobertura e os custos completos. Nenhuma compra foi executada. O próximo avanço é correlacionar observações físicas atuais ao ranking auditado e comprovar os dados de escalas e as regras no jogo.
+- Validação Windows: suíte ampla com 1.741 aprovados e 1 ignorado, excluído `tests/test_instalacao_linux.py` (requisito POSIX). Após o ajuste final de expiração e ingestão, a suíte direcionada passou com 127 testes, incluindo alcance e pista, dados ausentes/vencidos/conflitantes, descarte de diagnóstico transitório e interface. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-23 — Autonomia Total A1/A3/A7, especificações observadas por variante de motor (G0)
 
 - O detalhe autenticado do A320-200 exibiu CFM56-5 (ID 10, 881 kph e 11,55 lbs/km) e IAE V2500 (ID 9, 798 kph e 10,67 lbs/km). A seleção reversível mostrou 164 pax, alcance de 5.700 km, pista de 6.500 ft, A-check de $524.690, intervalo de 360 horas e preço exibido de $6.770.196 em ambas as variantes. A fixture contém somente esses dados técnicos e não inclui informações da conta.

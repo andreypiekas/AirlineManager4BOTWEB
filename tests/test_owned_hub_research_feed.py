@@ -859,6 +859,78 @@ def _preview_engines():
     return engines
 
 
+@pytest.mark.parametrize("external", [False, True])
+@pytest.mark.parametrize("range_km,origin_ft,dest_ft,expected", [
+    (2000, 6500, 6500, ("sufficient", "sufficient", "sufficient")),
+    (1999, 6500, 6500, ("short", "sufficient", "sufficient")),
+    (2000, 6499, 6500, ("sufficient", "short", "sufficient")),
+    (2000, 6500, 6499, ("sufficient", "sufficient", "short")),
+])
+def test_direct_physical_screening_blocks_shortfall(external, range_km, origin_ft, dest_ft, expected):
+    engines = _preview_engines()
+    engines["models"]["11"]["variant_details"] = {
+        "1": {"observed_at": NOW, "metrics": {"range_km": range_km, "required_runway_ft": 6500}}}
+    origin, dest = ("3139", "2926") if external else ("2926", "3139")
+    sample = _sample(origin, dest)
+    sample["destination_runway_ft"] = dest_ft
+    sample["route_detail"] = {"source": "game_route_detail", "observed_at": NOW - 870,
+                              "origin_id": origin, "destination_id": dest,
+                              "origin_runway_ft": origin_ft, "destination_runway_ft": dest_ft}
+    kwargs = dict(engines=engines, now=NOW, operating_market_stats=_preview_stats())
+    if external:
+        catalog = {"origin_scope": "external_catalog", "candidate_source": "game_purchase_catalog",
+                   "candidate_inventory": [{"id": origin, "code": "SBL", "observed_at": NOW}],
+                   "samples": [sample]}
+        page = build_external_hub_research_queue({**_inventory(), "hub_catalog_fresh": True},
+                                                 catalog, _market(), **kwargs)
+    else:
+        page = build_owned_hub_research_queue(_inventory(), [sample], _market(), **kwargs)
+    row = next(item for item in page["items"] if item["engine_id"] == "1")
+    proof = row["physical_feasibility"]
+    assert tuple(proof["checks"].values()) == expected
+    assert proof["expires_at"] == NOW + 30
+    assert proof["stopover_research_required"] == (expected[0] == "short")
+    assert ("pista_observada_insuficiente" in row["pending"]) == ("short" in expected[1:])
+    assert row["purchase_eligible"] is proof["purchase_eligible"] is proof["game_rules_verified"] is False
+    assert row["daily_net_profit"] is None
+    if "short" in expected:
+        assert proof["status"] == "direct_shortfall"
+        assert row["economics_preview"] is None
+    else:
+        assert proof["status"] == "direct_dimensions_sufficient"
+        assert row["economics_preview"]["expires_at"] == NOW + 30
+
+
+@pytest.mark.parametrize("reason", ["stale", "endpoint", "conflict", "identity", "missing"])
+def test_physical_screening_never_substitutes_uncorrelated_runway_or_market_range(reason):
+    engines = _preview_engines()
+    engine = engines["models"]["11"]
+    engine["variant_details"] = {"1": {"observed_at": NOW,
+                                      "metrics": {"range_km": 2000, "required_runway_ft": 6500}}}
+    sample = _sample()
+    sample["destination_runway_ft"] = 6500
+    sample["route_detail"] = {"source": "game_route_detail", "observed_at": NOW,
+                              "origin_id": "2926", "destination_id": "3139",
+                              "origin_runway_ft": 6500, "destination_runway_ft": 6500}
+    if reason == "stale":
+        sample["route_detail"]["observed_at"] -= 901
+    elif reason == "endpoint":
+        sample["route_detail"]["origin_id"] = "3139"
+    elif reason == "conflict":
+        sample["destination_runway_ft"] = 6400
+    elif reason == "identity":
+        engine.update(model_detail_identity_verified=False, observed_model_id=None)
+    else:
+        engine.pop("variant_details")
+    page = build_owned_hub_research_queue(_inventory(), [sample], _market(), engines=engines, now=NOW)
+    row = next(item for item in page["items"] if item["engine_id"] == "1")
+    proof = row["physical_feasibility"]
+    assert proof["status"] == "unknown"
+    assert proof["checks"]["origin_runway"] == proof["checks"]["destination_runway"] == "unknown"
+    assert proof["checks"]["range"] == ("unknown" if reason in ("identity", "missing") else "sufficient")
+    assert row["purchase_eligible"] is False
+
+
 def test_economic_preview_uses_engine_specific_inputs_and_same_seats_in_stress():
     stats, engines = _preview_stats(), _preview_engines()
     page = build_owned_hub_research_queue(_inventory(), [_sample()], _market(), engines=engines,

@@ -1179,6 +1179,18 @@ const EN = {
   "Demanda residual da rota não confirmada": "Remaining route demand unverified",
   "Disponibilidade da rota não confirmada": "Route availability unverified",
   "Compatibilidade da pista não confirmada": "Runway compatibility unverified",
+  "Pista observada inferior à exigida": "Observed runway shorter than required",
+  "Triagem física direta": "Direct physical screening",
+  "Dimensões suficientes": "Dimensions sufficient",
+  "Dimensões insuficientes": "Dimensions insufficient",
+  "Dimensões pendentes": "Dimensions pending",
+  "Alcance direto": "Direct range",
+  "Pista de origem": "Origin runway",
+  "Pista de destino": "Destination runway",
+  "Suficiente": "Sufficient",
+  "Insuficiente": "Insufficient",
+  "Não confirmado": "Unconfirmed",
+  "Escala e trechos a confirmar": "Stopover and segments to confirm",
   "Configuração dos assentos não confirmada": "Seat configuration unverified",
   "Taxa da rota não confirmada": "Route fee unverified",
   "Custo do hangar não confirmado": "Hangar cost unverified",
@@ -1961,6 +1973,30 @@ function appendResearchEconomicsPreview(metrics, task) {
   addHubMetric(metrics, "Margem sobre receita", nf.format(preview.safety_margin_fraction * 100) + "%");
   addHubMetric(metrics, "Custos excluídos", tr("Manutenção, A-check, outras despesas e investimento"));
 }
+function appendPhysicalFeasibility(metrics, task) {
+  const proof = task.physical_feasibility;
+  if (!proof || proof.source !== "observed_direct_dimensions_v1" ||
+      proof.purchase_eligible !== false || !Number.isFinite(proof.expires_at) ||
+      Date.now() / 1000 >= proof.expires_at || !proof.checks) { return; }
+  const statuses = {direct_dimensions_sufficient: "Dimensões suficientes",
+    direct_shortfall: "Dimensões insuficientes", unknown: "Dimensões pendentes"};
+  const checks = {sufficient: "Suficiente", short: "Insuficiente", unknown: "Não confirmado"};
+  if (!Object.hasOwn(statuses, proof.status)) { return; }
+  addHubMetric(metrics, "Triagem física direta", tr(statuses[proof.status]));
+  for (const [label, key, available, minimum, unit] of [
+    ["Alcance direto", "range", proof.variant_range_km, proof.distance_km, "km"],
+    ["Pista de origem", "origin_runway", proof.origin_runway_ft, proof.required_runway_ft, "ft"],
+    ["Pista de destino", "destination_runway", proof.destination_runway_ft, proof.required_runway_ft, "ft"],
+  ]) {
+    if (!Object.hasOwn(checks, proof.checks[key])) { continue; }
+    const comparison = Number.isFinite(available) && Number.isFinite(minimum)
+      ? " · " + nf.format(available) + " / " + nf.format(minimum) + " " + unit : "";
+    addHubMetric(metrics, label, tr(checks[proof.checks[key]]) + comparison);
+  }
+  if (proof.stopover_research_required === true) {
+    addHubMetric(metrics, "Escala e trechos a confirmar", tr("Não confirmado"));
+  }
+}
 function appendEngineDetail(metrics, task) {
   const evidence = task.engine_detail;
   const now = Date.now() / 1000;
@@ -2100,6 +2136,8 @@ const hubResearchBlockerLabels = {
   demanda_evento_temporario: "Demanda elevada por evento temporário",
   disponibilidade_da_rota_a_confirmar: "Disponibilidade da rota não confirmada",
   pista_a_confirmar: "Compatibilidade da pista não confirmada",
+  pista_observada_insuficiente: "Pista observada inferior à exigida",
+  escala_e_trechos_a_confirmar: "Escala e trechos a confirmar",
   configuracao_assentos_a_confirmar: "Configuração dos assentos não confirmada",
   taxa_rota_a_confirmar: "Taxa da rota não confirmada",
   custo_hangar_a_confirmar: "Custo do hangar não confirmado",
@@ -2617,6 +2655,7 @@ function renderHubRecommendations(report) {
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
     appendEngineDetail(metrics, task);
+    appendPhysicalFeasibility(metrics, task);
     appendResearchEconomicsPreview(metrics, task);
     addHubMetric(metrics, "ROI", tr("Desconhecido"));
     addHubMetric(metrics, "Retorno estimado", tr("Desconhecido"));
@@ -3279,6 +3318,7 @@ function renderExternalHubResearch(page) {
     addHubMetric(metrics, "Custo total", tr("Desconhecido"));
     addHubMetric(metrics, "Lucro líquido diário", tr("Desconhecido"));
     appendEngineDetail(metrics, task);
+    appendPhysicalFeasibility(metrics, task);
     appendResearchEconomicsPreview(metrics, task);
     const reasons = document.createElement("ul"); reasons.className = "hub-research-reasons";
     for (const reason of task.pending || []) {

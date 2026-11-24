@@ -94,6 +94,20 @@ def test_observed_destination_runway_and_search_envelope_do_not_prove_feasibilit
         assert row["demand_verified"] is False
 
 
+def test_transient_physical_screening_is_not_a_persisted_feasibility_verdict(tmp_path):
+    queue = _queue()
+    item = queue["items"][0]
+    item["pending"].append("pista_observada_insuficiente")
+    item["physical_feasibility"] = {"status": "direct_shortfall", "expires_at": NOW + 10}
+    registry = OwnedHubResearchInputsRegistry(tmp_path / "research.json")
+    assert registry.record_queue(queue, now=NOW) == 2
+    row = next(row for row in registry.snapshot(now=NOW + 11) if row["model"] == item["model"])
+    assert "pista_observada_insuficiente" not in row["research_pending"]
+    assert "pista_a_confirmar" in row["research_pending"]
+    assert "physical_feasibility" not in row
+    assert row["route_feasible"] is None
+
+
 def test_persisted_inputs_are_isolated_idempotent_and_expire(tmp_path):
     first = OwnedHubResearchInputsRegistry(tmp_path / "company-a.json")
     other = OwnedHubResearchInputsRegistry(tmp_path / "company-b.json")

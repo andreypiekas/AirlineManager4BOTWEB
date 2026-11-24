@@ -18,6 +18,7 @@ from engine_detail import validate_metrics
 from route_detail_evidence import current_detail
 from market import recent_market_quotes
 from research_economics_preview import research_economics_preview, research_mode
+from research_physical_feasibility import assess_direct_route
 from research_route_occupancy import FleetRouteOccupancy
 
 MAX_EVIDENCE_AGE = 3 * 86400
@@ -502,6 +503,11 @@ def _build_hub_research_queue(
                     break
                 pending = [item for item in _RESEARCH_PENDING
                            if item != "motor_a_pesquisar" or variant is None]
+                physical = assess_direct_route(sample, variant, engine_evidence,
+                                               max_evidence_age=MAX_EVIDENCE_AGE)
+                if "short" in (physical["checks"]["origin_runway"],
+                               physical["checks"]["destination_runway"]):
+                    pending.append("pista_observada_insuficiente")
                 if external:
                     preview = _external_cost_preview(hubs[hub_id], external_budget)
                     pending.extend(["demanda_externa_a_confirmar", "compromissos_caixa_a_confirmar"])
@@ -538,11 +544,16 @@ def _build_hub_research_queue(
                         pending.append("rota_ocupada_frota_propria")
                     if occupancy["game_count_disagrees"]:
                         pending.append("contagem_rota_divergente")
-                economics = research_economics_preview(
-                    sample, model, variant, engine_evidence, operating_market, mode_key, preview_margin)
+                economics = None
+                if physical["status"] != "direct_shortfall":
+                    economics = research_economics_preview(
+                        sample, model, variant, engine_evidence, operating_market, mode_key, preview_margin)
                 if economics is not None:
                     economics["expires_at"] = min(economics["expires_at"],
-                                                  operating_market_stats.mode_read_at + 900)
+                                                  operating_market_stats.mode_read_at + 900,
+                                                  physical["expires_at"],
+                                                  engine_evidence["observed_at"] + MAX_EVIDENCE_AGE,
+                                                  market["observed_at"] + MAX_EVIDENCE_AGE)
                     if occupancy:
                         economics["expires_at"] = min(economics["expires_at"], occupancy["expires_at"])
                 queue.append({
@@ -566,6 +577,7 @@ def _build_hub_research_queue(
                     "engine_speed": variant["engine_speed"] if variant else None,
                     "engine_fuel": variant["engine_fuel"] if variant else None,
                     "engine_detail": variant["engine_detail"] if variant else None,
+                    "physical_feasibility": physical,
                     "final_aircraft_price": None,
                     **({"external_cost_preview": preview} if external else {}),
                     "economics_preview": economics,
