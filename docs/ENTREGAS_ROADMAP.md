@@ -4,7 +4,7 @@
 
 - A simulação econômica utiliza custo e intervalo de A-check observados no detalhe da variante com identidade confirmada. A reserva diária é o custo dividido pelo intervalo, multiplicado pelas horas de voo projetadas. São calculadas as horas reais (distância / velocidade efetiva × partidas) e nominais (distância / velocidade de cruzeiro × partidas), inclusive pelos dois trechos em uma escala exploratória. A maior reserva é deduzida da contribuição após margem, nos cenários base e stress, em um resultado condicional separado.
 - O painel PT/EN mostra custo, intervalo, as duas reservas e a contribuição após a reserva adicional por layout. Sem os dois parâmetros observados, a projeção adicional é omitida. A contribuição original mantém suas exclusões. O relógio de manutenção e as demais despesas ainda exigem comprovação; demanda residual, custo final de rota, lucro líquido auditado e elegibilidade continuam pendentes.
-- Validação Windows: 174 testes direcionados aprovados, incluindo Easy/Realism, evidência parcial por motor e painel. Ruff e `git diff --check` aprovados.
+- Validação Windows: 174 testes direcionados aprovados, incluindo Easy/Realism, evidência parcial por motor e painel. Ruff e `git diff --check` aprovados. Suíte Windows: 1.996 aprovados e 1 ignorado; testes de instalação Linux excluídos. A alteração final do rótulo do painel também passou nos 174 testes direcionados.
 - Próxima dependência: conectar observações nativas à avaliação auditada A3 e verificar demanda residual, preço final e contabilização de manutenção. Nenhuma transação real executada; objetivo integral ativo.
 
 ## 2026-11-24 — Autonomia Total A3, evidências de cotações nativas de rota (G0)
