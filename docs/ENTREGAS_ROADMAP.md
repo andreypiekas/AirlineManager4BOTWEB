@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-23 — Autonomia Total A3/A7, ocupação auditada no ranking de aeronaves (G0)
+
+- O ranking de cenários para hubs próprios reutiliza a mesma evidência de ocupação das filas de pesquisa. Uma recomendação viável exige auditoria completa e recente da frota com zero aeronaves na rota, além de disponibilidade e demanda residual verificadas independentemente. Uma relação histórica, uma lista vazia ou uma indicação isolada de cobertura não certificam uma rota livre.
+- Uma rota com ocupação positiva observada é rejeitada mesmo em uma auditoria parcial. Identidades repetidas, aeroportos conflitantes, auditoria vencida ou incompleta e divergência com contagem recente do jogo deixam a ocupação pendente. A auditoria atual completa pode substituir relações históricas de aeronaves que já saíram da rota.
+- A API retorna a contagem da frota própria e a validade da evidência por candidato. O painel PT/EN exibe a contagem auditada ou o mínimo observado e traduz as pendências. O ranking recalcula ocupação a cada consulta, sem promover as observações exploratórias a cenários verificados.
+- Permanecem pendentes homologação autenticada, obtenção de demanda residual e custos completos, identidade do modelo no detalhe dos motores e integração das evidências ao planejamento global auditado. G0 permanece ativo, sem execução de aquisição.
+- Validação Windows: 1.718 testes aprovados e 1 ignorado pela própria suíte, excluindo `tests/test_instalacao_linux.py` (permissões POSIX). A validação direcionada aprovou 222 testes, incluindo auditorias incompletas, relações históricas, aliases e identidades conflitantes. A revisão final da interface PT/EN passou nos 9 testes do painel. Ruff, compilação Python e `git diff --check` aprovados.
+
 ## 2026-11-23 — Autonomia Total A2/A3/A7, ocupação de rotas pela frota própria (G0)
 
 - As pesquisas de hubs próprios e externos cruzam as combinações de aeroportos com o roster atual e as relações de rotas da frota do perfil. O par de aeroportos é independente do sentido da rota e admite códigos IATA/ICAO resolvidos de forma inequívoca. Identidades conflitantes, relações vencidas ou aeronaves duplicadas impedem a certificação de ausência de ocupação.

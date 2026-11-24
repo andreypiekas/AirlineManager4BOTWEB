@@ -42,7 +42,8 @@ import re
 import time
 from typing import Iterable, Optional
 
-from route_registry import endpoint, route_key, same_route
+from research_route_occupancy import FleetRouteOccupancy
+from route_registry import endpoint, route_key
 
 
 MAX_AGE_SECONDS = 3 * 86400
@@ -54,7 +55,7 @@ _RESEARCH_EVIDENCE_FIELDS = (
     "source", "observed_at", "engine_id", "engine_label", "distance_km", "range_km", "runway_m",
     "required_runway_m", "demand_remaining", "demand_verified", "event_demand_boosted",
     "range_verified", "runway_verified", "route_feasible", "route_available",
-    "stopover", "financial", "costs",
+    "stopover", "financial", "costs", "observed_aircraft_on_route",
 )
 
 
@@ -91,21 +92,6 @@ def _endpoint(raw: object) -> dict:
     return endpoint(raw.get("id"), raw.get("code"), raw.get("name"))
 
 
-def _route_occupied(origin: dict, destination: dict, relations: list[dict]) -> bool:
-    candidate_key = route_key(origin, destination)
-    for entry in relations:
-        previous_origin = entry.get("origin")
-        previous_destination = entry.get("destination")
-        if (isinstance(previous_origin, dict) and isinstance(previous_destination, dict)
-                and same_route({"origin": origin, "destination": destination},
-                               {"origin": _endpoint(previous_origin),
-                                "destination": _endpoint(previous_destination)})):
-            return True
-        if candidate_key and entry.get("route_key") == candidate_key:
-            return True
-    return False
-
-
 def _ordering(row: dict) -> tuple:
     """Stable even when pagination delivers scenarios in different orders."""
     profit = row.get("profit_per_day")
@@ -138,8 +124,8 @@ def rank_next_aircraft(
     restrict all hubs to the same aircraft model for an apples-to-apples view.
     Inventory/route reads and evidence blocks must be independent game reads.
     Three-day research/pricing freshness and 15-minute balance freshness are
-    enforced. Unknown occupied routes on partial fleet pages require explicit
-    ``route_available=True`` game research before a viable recommendation.
+    enforced. A viable recommendation also requires a fresh, complete fleet
+    audit proving zero own aircraft on the route and explicit availability.
     """
     now = time.time() if now is None else float(now)
     inventory = hub_inventory if isinstance(hub_inventory, dict) else {}
@@ -163,12 +149,7 @@ def rank_next_aircraft(
     available = (max(0.0, cash_value - reserve_value)
                  if cash_value is not None and reserve_value is not None else None)
 
-    relations = route_report.get("relations") if isinstance(route_report, dict) else None
-    if isinstance(route_report, dict) and route_report.get("current_fleet_coverage_verified") is True:
-        relations = route_report.get("current_relations")
-    relations_known = (isinstance(relations, list)
-                       and all(isinstance(item, dict) for item in relations))
-    known_routes = relations if relations_known else []
+    fleet_occupancy = FleetRouteOccupancy(route_report, now)
     candidates = []
     observations_by_route = {}
     raw_scenarios = scenarios if isinstance(scenarios, Iterable) and not isinstance(
@@ -194,6 +175,11 @@ def rank_next_aircraft(
         origin = _endpoint(scenario.get("origin"))
         destination = _endpoint(scenario.get("destination"))
         key = route_key(origin, destination)
+        route_detail = (scenario if scenario.get("source") == "game_research"
+                        and _recent(scenario.get("observed_at"), now, MAX_CASH_AGE_SECONDS)
+                        else None)
+        occupancy = fleet_occupancy.evidence_for_endpoints(
+            scenario.get("origin"), scenario.get("destination"), route_detail)
         financial = scenario.get("financial") if isinstance(scenario.get("financial"), dict) else {}
         costs = scenario.get("costs") if isinstance(scenario.get("costs"), dict) else {}
         profit = _profit(financial.get("profit_per_day"))
@@ -214,7 +200,9 @@ def rank_next_aircraft(
             pending_inputs = scenario.get("research_pending")
             if isinstance(pending_inputs, list):
                 missing.extend(reason for reason in pending_inputs
-                               if isinstance(reason, str))
+                               if isinstance(reason, str) and reason not in (
+                                   "rota_ocupada_frota_propria", "contagem_rota_divergente",
+                                   "ocupacao_da_frota_a_confirmar"))
         elif not (scenario.get("source") == "game_research"
                   and _recent(scenario.get("observed_at"), now, MAX_AGE_SECONDS)):
             missing.append("pesquisa_desatualizada")
@@ -252,8 +240,10 @@ def rank_next_aircraft(
             missing.append("distancia_a_confirmar")
         if type(scenario.get("route_feasible")) is not bool:
             missing.append("viabilidade_a_confirmar")
-        if not relations_known:
+        if occupancy is None or not occupancy["count_complete"]:
             missing.append("ocupacao_da_frota_a_confirmar")
+        if occupancy and occupancy["game_count_disagrees"]:
+            missing.append("contagem_rota_divergente")
         if type(scenario.get("route_available")) is not bool:
             missing.append("disponibilidade_da_rota_a_confirmar")
         if available is None:
@@ -299,7 +289,7 @@ def rank_next_aircraft(
         elif distance is not None and aircraft_range is not None and distance > aircraft_range:
             infeasible = True
 
-        occupied = bool(key and relations_known and _route_occupied(origin, destination, known_routes))
+        occupied = bool(occupancy and occupancy["own_aircraft_count"] > 0)
         if occupied:
             status = "rota_ocupada"
         elif missing:
@@ -330,6 +320,8 @@ def rank_next_aircraft(
             "status": status, "pending": sorted(set(missing)),
             "financial_source": financial.get("source"), "costs_source": costs.get("source"),
         }
+        if occupancy is not None:
+            candidate["fleet_occupancy"] = occupancy
         if scenario.get("event_demand_boosted") is True:
             candidate["event_demand_boosted"] = True
         if scenario.get("source") == "derived_research_queue":

@@ -1151,6 +1151,7 @@ const EN = {
   "Mínimo observado": "Observed minimum",
   "Rota ocupada pela frota própria": "Route occupied by own fleet",
   "Divergência entre contagem do jogo e frota própria": "Disagreement between game count and own fleet",
+  "Ocupação da frota própria não confirmada": "Own-fleet route occupancy not confirmed",
   "Demanda elevada por evento temporário": "Demand boosted by a temporary event",
   "Evento de demanda": "Demand event",
   "Rotas com amostras conflitantes": "Routes with conflicting samples",
@@ -2060,6 +2061,7 @@ const hubResearchBlockerLabels = {
   demanda_residual_a_confirmar: "Demanda residual da rota não confirmada",
   rota_ocupada_frota_propria: "Rota ocupada pela frota própria",
   contagem_rota_divergente: "Divergência entre contagem do jogo e frota própria",
+  ocupacao_da_frota_a_confirmar: "Ocupação da frota própria não confirmada",
   demanda_evento_temporario: "Demanda elevada por evento temporário",
   disponibilidade_da_rota_a_confirmar: "Disponibilidade da rota não confirmada",
   pista_a_confirmar: "Compatibilidade da pista não confirmada",
@@ -2668,6 +2670,7 @@ function renderHubRecommendations(report) {
           ? candidate.engine_label + " (" + candidate.engine_id + ")" : candidate.engine_id);
       }
       addHubMetric(metrics, "Rota sugerida", route);
+      appendFleetRouteOccupancy(metrics, candidate);
       addHubMetric(metrics, "Lucro adicional estimado/dia", hubMoney(candidate.profit_per_day));
       addHubMetric(metrics, "Investimento inicial", hubMoney(candidate.investment));
       addHubMetric(metrics, "Retorno estimado", Number.isFinite(candidate.payback_days)
@@ -2685,7 +2688,7 @@ function renderHubRecommendations(report) {
       const list = document.createElement("ul"); list.className = "hub-aircraft-list";
       for (const reason of candidate.pending) {
         const item = document.createElement("li");
-        item.textContent = String(reason).replaceAll("_", " "); list.append(item);
+        item.textContent = hubResearchBlocker(reason); list.append(item);
       }
       details.append(title, list); card.append(details);
     }

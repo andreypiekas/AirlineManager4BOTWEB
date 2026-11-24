@@ -97,6 +97,24 @@ def test_invalid_fleet_evidence_cannot_create_exact_zero_or_known_match(invalid)
     assert occupancy.evidence("2941", "3139", None) is None
 
 
+def test_duplicate_route_identity_and_invalid_candidate_pairs_cannot_certify_zero():
+    from research_route_occupancy import FleetRouteOccupancy
+
+    report = _fleet_report()
+    complete = FleetRouteOccupancy(report, NOW)
+    assert complete.evidence("2926", "2926", None) is None
+    assert complete.evidence("", "3139", None) is None
+    assert complete.evidence_for_endpoints({"id": "999999999999", "code": "XAP"},
+                                           {"id": "3139"}) is None
+    duplicate = {**report["current_relations"][0], "aircraft_id": "2"}
+    report["current_relations"].append(duplicate)
+    report["current_roster_total"] = 2
+    report["fleet_coverage"].update(total=2, routes=2)
+    occupancy = FleetRouteOccupancy(report, NOW)
+    assert occupancy.evidence("2926", "3139", None) is None
+    assert occupancy.evidence("2941", "3139", None) is None
+
+
 def test_own_and_external_queues_share_fleet_occupancy_and_block_preview():
     inventory = {**_inventory(), "hub_catalog_fresh": True}
     report = _fleet_report()

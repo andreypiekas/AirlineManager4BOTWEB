@@ -39,11 +39,25 @@ def _scenario(hub_id="123", destination_id="456", **changes):
     return row
 
 
+def _audited_fleet(*routes, now=NOW, complete=True, historical=None):
+    rows = [{"aircraft_id": str(index), "game_route_id": index,
+             "observed_route_id": index, "source": "game", "route_data_stale": False,
+             "last_seen": now - 2, "origin": origin, "destination": destination}
+            for index, (origin, destination) in enumerate(routes, 1)]
+    return {"relations": historical or [], "partial": not complete,
+            "current_roster_verified": True, "current_roster_observed_at": now - 3,
+            "current_roster_total": len(rows), "current_relations": rows,
+            "current_fleet_coverage_verified": complete,
+            "fleet_coverage": {"source": "game_roster_and_route_audit",
+                               "observed_at": now - 1, "roster_observed_at": now - 3,
+                               "total": len(rows), "routes": len(rows), "parked": 0, "pending": 0}}
+
+
 def _rank(hubs=None, scenarios=_UNSET, **kwargs):
     return rank_next_aircraft(
         hubs if hubs is not None else _inventory("123"),
         [_scenario()] if scenarios is _UNSET else scenarios,
-        route_report={"relations": [], "partial": True},
+        route_report=kwargs.pop("route_report", _audited_fleet()),
         cash=20000, cash_observed_at=NOW, reserve=2000,
         now=NOW, **kwargs,
     )
@@ -254,7 +268,7 @@ def test_requires_recent_verified_money_and_nonnegative_reserve():
                                  (float("nan"), NOW, 0),
                                  (20000, NOW, -1)):
         result = rank_next_aircraft(
-            _inventory("123"), [_scenario()], route_report={"relations": []},
+            _inventory("123"), [_scenario()], route_report=_audited_fleet(),
             cash=cash, cash_observed_at=stamp, reserve=reserve, now=NOW)
         assert result["recommendations"] == []
         assert result["candidates"][0]["status"] == "dados_a_confirmar"
@@ -264,7 +278,7 @@ def test_requires_recent_verified_money_and_nonnegative_reserve():
 def test_cash_reserve_and_profit_classifications():
     scenario = _scenario()
     insufficient = rank_next_aircraft(
-        _inventory("123"), [scenario], route_report={"relations": []},
+        _inventory("123"), [scenario], route_report=_audited_fleet(),
         cash=12000, cash_observed_at=NOW, reserve=2000, now=NOW)
     assert insufficient["available_cash"] == 10000
     assert insufficient["candidates"][0]["status"] == "saldo_insuficiente"
@@ -278,12 +292,12 @@ def test_cash_reserve_and_profit_classifications():
 
 def test_occupied_route_is_rejected_even_on_partial_page():
     candidate = _scenario()
-    old_route = {"origin": endpoint("456"), "destination": endpoint("123")}
     result = rank_next_aircraft(
         _inventory("123"), [candidate],
-        route_report={"relations": [old_route], "partial": True},
+        route_report=_audited_fleet((endpoint("456"), endpoint("123")), complete=False),
         cash=20000, cash_observed_at=NOW, now=NOW)
     assert result["candidates"][0]["status"] == "rota_ocupada"
+    assert result["candidates"][0]["fleet_occupancy"]["count_complete"] is False
     assert result["recommendations"] == []
 
 
@@ -291,10 +305,43 @@ def test_verified_current_fleet_supersedes_historical_route_occupancy():
     old_route = {"origin": endpoint("456"), "destination": endpoint("123")}
     result = rank_next_aircraft(
         _inventory("123"), [_scenario()],
-        route_report={"relations": [old_route], "current_relations": [],
-                      "current_fleet_coverage_verified": True},
+        route_report=_audited_fleet(historical=[old_route]),
         cash=20000, cash_observed_at=NOW, now=NOW)
     assert result["candidates"][0]["status"] == "viavel"
+    assert result["candidates"][0]["fleet_occupancy"]["own_aircraft_count"] == 0
+
+
+@pytest.mark.parametrize("report", [
+    {"relations": []},
+    {"relations": [], "current_relations": [], "current_fleet_coverage_verified": True},
+    _audited_fleet(complete=False),
+    _audited_fleet(now=NOW - 901),
+    {**_audited_fleet(), "current_roster_total": 1},
+])
+def test_unknown_or_stale_fleet_coverage_never_recommends(report):
+    result = _rank(route_report=report)
+    assert not result["recommendations"]
+    assert "ocupacao_da_frota_a_confirmar" in result["candidates"][0]["pending"]
+    assert "fleet_occupancy" not in result["candidates"][0]
+
+
+def test_ranker_resolves_inverse_route_aliases_and_blocks_unresolved_candidate():
+    report = _audited_fleet(({"code": "SLSA"}, {"id": "2926", "code": "XAP"}))
+    rows = _rank(hubs=_inventory("2926"), scenarios=[
+        _scenario("2926", "3139"),
+        _scenario("2926", destination={"code": "ZZZ"}),
+        _scenario("2926", destination={"id": "999999999999", "code": "SLSA"}),
+    ], route_report=report)["candidates"]
+    assert rows[0]["status"] == "rota_ocupada"
+    assert rows[0]["fleet_occupancy"]["own_aircraft_count"] == 1
+    assert all("ocupacao_da_frota_a_confirmar" in row["pending"] for row in rows[1:])
+
+
+def test_game_route_count_conflicting_with_complete_fleet_blocks_recommendation():
+    row = _rank(scenarios=[_scenario(observed_aircraft_on_route=1)])["candidates"][0]
+    assert row["status"] == "dados_a_confirmar"
+    assert "contagem_rota_divergente" in row["pending"]
+    assert row["fleet_occupancy"]["game_count_disagrees"] is True
 
 
 def test_route_occupancy_needs_snapshot_and_positive_game_availability():
@@ -406,7 +453,7 @@ def test_only_explicit_current_observations_count_even_when_stale_prices_are_pre
     assert row["payback_days"] is None
 
 
-def test_route_key_matches_confirmed_endpoints_without_mutating_registry():
+def test_historical_route_key_does_not_certify_current_occupancy_or_mutate_registry():
     candidate = _scenario()
     known = {"route_key": route_key(endpoint("123"), endpoint("456"))}
     snapshot = {"relations": [known], "partial": True}
@@ -414,5 +461,6 @@ def test_route_key_matches_confirmed_endpoints_without_mutating_registry():
     result = rank_next_aircraft(_inventory("123"), [candidate],
                                 route_report=snapshot, cash=20000,
                                 cash_observed_at=NOW, now=NOW)
-    assert result["candidates"][0]["status"] == "rota_ocupada"
+    assert result["candidates"][0]["status"] == "dados_a_confirmar"
+    assert "ocupacao_da_frota_a_confirmar" in result["candidates"][0]["pending"]
     assert snapshot == original

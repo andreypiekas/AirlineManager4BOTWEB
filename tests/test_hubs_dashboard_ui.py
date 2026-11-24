@@ -304,6 +304,7 @@ const translations = {
   'Aeronaves da frota própria na rota': 'Own-fleet aircraft on route',
   'Auditoria completa': 'Complete audit',
   'Mínimo observado': 'Observed minimum',
+  'Ocupação da frota própria não confirmada': 'Own-fleet route occupancy not confirmed',
   'Rotas com amostras conflitantes': 'Routes with conflicting samples',
   'Cobertura parcial': 'Partial coverage',
   'Cotação de combustível (USD/1000)': 'Fuel quote (USD/1000)',
@@ -401,6 +402,12 @@ assert.equal(fleetMetrics.children[1].children[1].textContent, '0 · Complete au
 appendFleetRouteOccupancy(fleetMetrics, {fleet_occupancy:{...fleetEvidence, expires_at:marketNow-1}});
 appendFleetRouteOccupancy(fleetMetrics, {fleet_occupancy:{...fleetEvidence, own_aircraft_count:0}});
 assert.equal(fleetMetrics.children.length, 2);
+report.candidates[0].fleet_occupancy = {...fleetEvidence, own_aircraft_count:0, count_complete:true};
+renderHubRecommendations(report);
+assert.equal(researchMetrics($('hubRecommendationsGrid').children[0])['Own-fleet aircraft on route'],
+  '0 · Complete audit');
+assert.equal(hubResearchBlocker('ocupacao_da_frota_a_confirmar'), 'Own-fleet route occupancy not confirmed');
+delete report.candidates[0].fleet_occupancy;
 assert.equal(operatingMarketText({fuel:{price:600, observed_at:marketNow-5, expires_at:marketNow+60},
   co2:{price:100, observed_at:marketNow-60, expires_at:marketNow-1}}),
   'Fuel quote (USD/1000): $600 · CO₂ quote (USD/1000): Unknown');

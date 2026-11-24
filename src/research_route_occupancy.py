@@ -12,20 +12,33 @@ _ID = re.compile(r"[1-9][0-9]{0,11}")
 
 
 def _recent(stamp, now, age):
-    return (type(stamp) in (int, float) and math.isfinite(stamp)
-            and 0 <= now - stamp < age)
+    if type(stamp) not in (int, float):
+        return False
+    try:
+        return math.isfinite(stamp) and stamp > 0 and 0 <= now - stamp < age
+    except OverflowError:
+        return False
 
 
 def _airport_id(endpoint):
     if not isinstance(endpoint, dict):
         return None
     raw_id, code = endpoint.get("id"), endpoint.get("code")
+    if type(raw_id) is int and 0 < raw_id < 10**12:
+        raw_id = str(raw_id)
+    if isinstance(raw_id, str):
+        raw_id = raw_id.strip()
+    if isinstance(code, str):
+        code = code.strip().upper()
     if isinstance(raw_id, str) and _ID.fullmatch(raw_id):
         airport = by_id(raw_id)
         if airport and code and code not in (airport.iata, airport.icao):
             return None
+        code_airport = by_code(code) if isinstance(code, str) and code else None
+        if code_airport and code_airport.game_id != raw_id:
+            return None
         return raw_id
-    if raw_id or not isinstance(code, str):
+    if raw_id is not None and raw_id != "" or not isinstance(code, str):
         return None
     airport = by_code(code)
     return airport.game_id if airport else None
@@ -72,6 +85,8 @@ class FleetRouteOccupancy:
         identifiers = Counter(row.get("aircraft_id") for row in rows if isinstance(row, dict)
                               and isinstance(row.get("aircraft_id"), str)
                               and row["aircraft_id"])
+        route_ids = Counter(row["game_route_id"] for row in rows if isinstance(row, dict)
+                            and type(row.get("game_route_id")) is int and row["game_route_id"] > 0)
         for row in rows:
             if not isinstance(row, dict):
                 complete = False
@@ -83,6 +98,9 @@ class FleetRouteOccupancy:
                 complete = False
                 continue
             if route_id == 0:
+                continue
+            if route_ids[route_id] != 1:
+                complete = False
                 continue
             seen = row.get("last_seen")
             if (row.get("source") != "game" or row.get("route_data_stale") is not False
@@ -98,7 +116,18 @@ class FleetRouteOccupancy:
             self.expires_at = min(self.expires_at, seen + 3600)
         self.complete = bool(complete and sum(self.counts.values()) == coverage["routes"])
 
+    def evidence_for_endpoints(self, origin: dict, destination: dict,
+                               route_detail: dict | None = None) -> dict | None:
+        origin_id, destination_id = _airport_id(origin), _airport_id(destination)
+        if not origin_id or not destination_id:
+            return None
+        return self.evidence(origin_id, destination_id, route_detail)
+
     def evidence(self, origin_id: str, destination_id: str, route_detail: dict | None) -> dict | None:
+        if (not isinstance(origin_id, str) or not _ID.fullmatch(origin_id)
+                or not isinstance(destination_id, str) or not _ID.fullmatch(destination_id)
+                or origin_id == destination_id):
+            return None
         count = self.counts[_pair(origin_id, destination_id)]
         if not self.complete and not count:
             return None

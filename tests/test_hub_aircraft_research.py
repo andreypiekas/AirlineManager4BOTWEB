@@ -16,8 +16,8 @@ def _scenario(hub="123", destination="456"):
     return {
         "hub_id": hub, "model": "A320", "source": "game_research",
         "observed_at": 1_800_000_000,
-        "origin": {"id": hub, "code": "XAP"},
-        "destination": {"id": destination, "code": "GRU"},
+        "origin": {"id": hub},
+        "destination": {"id": destination},
         "distance_km": 1000, "range_km": 3000,
         "runway_m": 2700, "required_runway_m": 2000,
         "demand_verified": True, "demand_remaining": 300,
@@ -213,9 +213,16 @@ def test_equal_time_contradictory_research_is_quarantined_until_newer_proof(tmp_
     newer["observed_at"] += 1
     assert registry.record(newer)
     assert registry.snapshot() == [newer]
+    stamp = newer["observed_at"]
+    fleet = {"current_roster_verified": True, "current_roster_observed_at": stamp,
+             "current_roster_total": 0, "current_relations": [],
+             "current_fleet_coverage_verified": True,
+             "fleet_coverage": {"source": "game_roster_and_route_audit",
+                                "observed_at": stamp, "roster_observed_at": stamp,
+                                "total": 0, "routes": 0, "parked": 0, "pending": 0}}
     recovered = rank_next_aircraft(
         {**inventory, "observed_at": newer["observed_at"]},
-        registry.snapshot(), route_report={"relations": []},
+        registry.snapshot(), route_report=fleet,
         cash=30000, cash_observed_at=newer["observed_at"], now=newer["observed_at"])
     assert len(recovered["recommendations"]) == 1
     assert recovered["recommendations"][0]["investment"] == 13000
