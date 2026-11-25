@@ -51,6 +51,8 @@ def test_hub_api_exposes_cash_verification_time_and_omits_stale_money(monkeypatc
             return {"candidates": []}
 
     monkeypatch.setattr(web, "HubExpansionRegistry", Registry)
+    snapshot_id = "sha256:" + "a" * 64
+    monkeypatch.setattr(web, "snapshot_summary", lambda: {"status": "parcial", "snapshot_id": snapshot_id})
     monkeypatch.setattr(web, "load_state", lambda: {"money_samples": [[2990, 90000]]})
     monkeypatch.setattr("dashboard.time.time", lambda: 3000)
     fake = SimpleNamespace(bot=CashBot(10000, 1000),
@@ -61,6 +63,9 @@ def test_hub_api_exposes_cash_verification_time_and_omits_stale_money(monkeypatc
     assert called == {"cash": None, "reserve": 2000, "owned_hub_ids": {"1"},
                       "external_ownership_verified": False}
     assert response["cash_observed_at"] is None
+    assert response["planning_snapshot_id"] == snapshot_id
+    assert response["expansion_decision"]["status"] == "inconclusivo"
+    assert "snapshot_produtivo_hubs_proprios_nao_comprovado" in response["expansion_decision"]["blocking_reasons"]
 
     fake.bot = CashBot(8000, None)
     response = WebDashboard.hub_expansion(fake)

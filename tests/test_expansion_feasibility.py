@@ -200,6 +200,27 @@ def test_fractional_dom_timestamps_survive_all_owned_and_external_proofs():
     assert result["external_pending_count"] == 0
 
 
+def test_production_requires_independent_scope_on_owned_and_external_proofs():
+    data = inputs()
+    inventory, research, portfolio, external, coverage = data
+    scope = {"profile_id": "principal", "snapshot_id": "sha256:" + "a" * 64}
+    assert evaluate(data, **scope, require_snapshot_scope=True)["status"] == "inconclusivo"
+    for proof in (inventory, research, portfolio, coverage, *coverage["hubs"], external):
+        proof.update(scope)
+    for row in external["candidates"]:
+        scenario = row["scenario"]
+        for proof in (scenario, scenario["costs"], scenario["financial"]):
+            proof.update(scope)
+    assert len(evaluate(data, **scope, require_snapshot_scope=True)["top_three"]) == 3
+    assert evaluate(data, **scope, require_snapshot_scope=True)["external_pending_count"] == 0
+    external["candidates"][1]["scenario"]["costs"].pop("snapshot_id")
+    result = evaluate(data, **scope, require_snapshot_scope=True)
+    assert [row["id"] for row in result["top_three"]] == ["777", "789", "666"]
+    assert result["external_pending_count"] == 1
+    coverage["hubs"][0]["snapshot_id"] = "sha256:" + "b" * 64
+    assert evaluate(data, **scope, require_snapshot_scope=True)["status"] == "inconclusivo"
+
+
 @pytest.mark.parametrize("invalid", [
     True, False, None, "1800000000", -1, 0, float("nan"),
     float("inf"), -float("inf"), 10 ** 500,

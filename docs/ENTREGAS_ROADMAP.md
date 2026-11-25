@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A6/A7, escopo obrigatório da captura produtiva (G0)
+
+- `src/expansion_feasibility.py` permite consultar a análise histórica, mas o gate produtivo exige a identidade explícita de perfil e snapshot no inventário, pesquisa, portfólio, cobertura geral e por hub, catálogo externo e provas econômicas do cenário. Metadados ausentes ou divergentes impedem a recomendação; a mera presença de uma captura não certifica outras observações.
+- `src/web.py` utiliza o snapshot produtivo vigente e validado, expõe `planning_snapshot_id` e aplica o gate estrito. `src/expansion_alerts.py` reutiliza essa identidade, sem fabricar um snapshot a partir do hash de relatórios independentes. O Telegram preserva a deduplicação por mudança material e suprime alertas sem captura válida. `src/expansion_reporting.py` preserva timestamps fracionários na comparação de evidências.
+- 333 testes direcionados aprovados; suíte Windows com 2.161 testes coletados e código de saída 0 (instalação Linux excluída); Ruff, compileall e git diff --check aprovados. Auditorias independentes A3/A4 (188 testes) e A6 (333 testes) identificaram lacunas de saldo independente, integridade de candidatos, persistência temporal e custos excluídos; detalhes e sequência no checkpoint 12 de contexto.md. Rollback por reversão do commit desta entrega. G0 permanece vigente. A associação efetiva das fontes produtivas A3/A4/A6 ao snapshot, inclusive a cobertura integral de oportunidades, depende dos produtores e da homologação. Nenhuma transação real ou implantação executada.
+
 ## 2026-11-25 — Autonomia Total A6, identidade nativa e integridade de investimento (G0)
 
 - Cenários externos e suas provas de custos/lucro passam a distinguir modelo, motor, origem, destino e escala por IDs nativos. Observações históricas incompletas continuam acessíveis, porém inconclusivas. Contradições no mesmo horário, inclusive entre o campo legado e a lista moderna, bloqueiam a conclusão até evidência posterior. Mudanças de rótulos não criam novas identidades.

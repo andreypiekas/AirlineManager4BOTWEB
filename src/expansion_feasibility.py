@@ -16,6 +16,7 @@ from investment_policy import InvestmentPolicy
 
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _ENGINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_SNAPSHOT_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONCLUSIVE_STATUSES = {
     "viavel", "saldo_insuficiente", "sem_lucro", "rota_inviavel",
     "rota_ocupada", "rota_indisponivel",
@@ -43,9 +44,17 @@ def _nonnegative(value: object) -> bool:
         return False
 
 
+def _bound_to_capture(proof: Mapping, profile_id: str | None,
+                      snapshot_id: str | None) -> bool:
+    return (isinstance(profile_id, str) and bool(profile_id.strip())
+            and isinstance(snapshot_id, str) and _SNAPSHOT_ID.fullmatch(snapshot_id) is not None
+            and proof.get("profile_id") == profile_id
+            and proof.get("snapshot_id") == snapshot_id)
+
+
 def _valid_external(row: Mapping, external: Mapping, now: float, *,
                     max_age_seconds: int, profile_id: str | None,
-                    snapshot_id: str | None) -> bool:
+                    snapshot_id: str | None, require_snapshot_scope: bool) -> bool:
     """Recheck a candidate's exact engine, route, cost and profit evidence."""
     if ((profile_id is not None and row.get("profile_id") not in (None, profile_id))
             or (snapshot_id is not None and row.get("snapshot_id") not in (None, snapshot_id))):
@@ -60,6 +69,11 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
         return False
     if not scenario_scope_consistent(external, row, scenario, costs, financial, breakdown,
                                      profile_id=profile_id, snapshot_id=snapshot_id):
+        return False
+    if require_snapshot_scope and not all(
+        _bound_to_capture(proof, profile_id, snapshot_id)
+        for proof in (external, scenario, costs, financial)
+    ):
         return False
     origin = str(scenario.get("origin_id") or "")
     destination = str(scenario.get("destination_id") or "")
@@ -148,6 +162,7 @@ def assess_expansion(
     max_age_seconds: int = MAX_AGE_SECONDS,
     profile_id: str | None = None,
     snapshot_id: str | None = None,
+    require_snapshot_scope: bool = False,
     policy: InvestmentPolicy | None = None,
 ) -> dict:
     """Evaluate full owned-hub exhaustion before suggesting external hubs.
@@ -165,6 +180,17 @@ def assess_expansion(
     external = external_report if isinstance(external_report, Mapping) else {}
     scan = coverage if isinstance(coverage, Mapping) else {}
     reasons = []
+
+    # Historical reports may be inspected, but production decisions need an
+    # independently captured identity on every source used to exhaust owned hubs.
+    if not scenario_scope_consistent(inventory, research, portfolio, scan,
+                                     profile_id=profile_id, snapshot_id=snapshot_id):
+        reasons.append("escopo_hubs_proprios_divergente")
+    if require_snapshot_scope and not all(
+        _bound_to_capture(proof, profile_id, snapshot_id)
+        for proof in (inventory, research, portfolio, scan)
+    ):
+        reasons.append("snapshot_produtivo_hubs_proprios_nao_comprovado")
 
     hubs = inventory.get("hubs")
     owned_ids = [row.get("id") for row in hubs if isinstance(row, Mapping)] if isinstance(hubs, list) else []
@@ -213,7 +239,10 @@ def assess_expansion(
                     or item.get("models_complete") is not True
                     or item.get("engines_complete") is not True
                     or item.get("costs_complete") is not True
-                    or item.get("demand_complete") is not True):
+                    or item.get("demand_complete") is not True
+                    or not scenario_scope_consistent(item, scan, profile_id=profile_id,
+                                                     snapshot_id=snapshot_id)
+                    or (require_snapshot_scope and not _bound_to_capture(item, profile_id, snapshot_id))):
                 reasons.append("varredura_completa_hubs_proprios_nao_comprovada")
                 break
             scan_ids.add(item["hub_id"])
@@ -226,6 +255,8 @@ def assess_expansion(
                 or external.get("source") != "game_purchase_catalog"
                 or not _fresh(external.get("observed_at"), now, max_age_seconds)):
             reasons.append("catalogo_expansao_incompleto_ou_vencido")
+        elif require_snapshot_scope and not _bound_to_capture(external, profile_id, snapshot_id):
+            reasons.append("snapshot_produtivo_catalogo_externo_nao_comprovado")
         else:
             status = "avaliacao_expansao"
 
@@ -235,6 +266,7 @@ def assess_expansion(
         return isinstance(row, Mapping) and _valid_external(
             row, external, now, max_age_seconds=max_age_seconds,
             profile_id=profile_id, snapshot_id=snapshot_id,
+            require_snapshot_scope=require_snapshot_scope,
         )
 
     rankable = [dict(row) for row in all_external if valid(row)]

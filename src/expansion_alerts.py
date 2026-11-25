@@ -1,8 +1,6 @@
 """Read-only expansion alerts from the same registries used by the web panel."""
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 
 from expansion_reporting import ExpansionAlertDeduplicator, build_expansion_report
@@ -31,18 +29,20 @@ def publish_expansion_alert(bot) -> str:
     inventory = dashboard.hubs()
     research = dashboard.hub_recommendations()
     external = dashboard.hub_expansion(owned_inventory=inventory, owned_research=research)
-    evidence = {"inventory": inventory, "research": research, "external": external}
-    canonical = json.dumps(evidence, sort_keys=True, separators=(",", ":"),
-                           ensure_ascii=False, allow_nan=False)
-    snapshot_id = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-    report = build_expansion_report(
-        research, external, profile_id=config.profile.label,
-        snapshot_id=snapshot_id, owned_inventory=inventory,
-        owned_research=research,
-        opportunity_coverage=research.get("opportunity_coverage"),
-        policy=InvestmentPolicy.from_config(config),
-    )
+    snapshot_id = external.get("planning_snapshot_id")
+    if not snapshot_id:
+        return "inconclusivo"
+    try:
+        report = build_expansion_report(
+            research, external, profile_id=config.profile.label,
+            snapshot_id=snapshot_id, owned_inventory=inventory,
+            owned_research=research,
+            opportunity_coverage=research.get("opportunity_coverage"),
+            policy=InvestmentPolicy.from_config(config),
+            require_snapshot_scope=True,
+        )
+    except ValueError:
+        return "inconclusivo"
     if not report["alertable"]:
         return report["status"]
 

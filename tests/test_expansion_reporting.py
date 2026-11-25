@@ -252,6 +252,22 @@ def test_no_coverage_is_never_interpreted_as_no_owned_opportunities():
     assert "varredura_completa_hubs_proprios_nao_comprovada" in report["expansion_decision"]["blocking_reasons"]
 
 
+def test_report_preserves_fractional_capture_clock():
+    inventory, research, coverage = evidence()
+    row = hub()
+    external_data = external(row)
+    for proof in (inventory, coverage, *coverage["hubs"], external_data,
+                  row, row["scenario"], row["scenario"]["costs"], row["scenario"]["financial"]):
+        proof["observed_at"] = NOW + 0.25
+    row["hub_price_observed_at"] = row["hub_points_observed_at"] = NOW + 0.25
+    report = build_expansion_report(
+        owned(), external_data, profile_id="principal", snapshot_id=SNAPSHOT,
+        now=NOW + 0.75, owned_inventory=inventory, owned_research=research,
+        opportunity_coverage=coverage,
+    )
+    assert report["alertable"] is True
+
+
 def test_finished_owned_scan_and_incomplete_external_catalog_have_distinct_statuses(tmp_path):
     report = build(external_data=external(hub(), complete=False))
     assert report["status"] == "pesquisa_externa_pendente"

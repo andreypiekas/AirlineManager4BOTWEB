@@ -399,6 +399,7 @@ def build_expansion_report(
     owned_research: Mapping[str, Any] | None = None,
     opportunity_coverage: Mapping[str, Any] | None = None,
     policy: InvestmentPolicy | None = None,
+    require_snapshot_scope: bool = False,
 ) -> dict:
     """Prepare a top-three Telegram HTML analysis without granting approval.
 
@@ -432,10 +433,11 @@ def build_expansion_report(
     decision = assess_expansion(
         owned_inventory, owned_research, portfolio,
         _external_with_scoped_evidence(external, profile_id, snapshot_id),
-        coverage=opportunity_coverage, now=int(now),
+        coverage=opportunity_coverage, now=now,
         max_age_seconds=max_age_seconds, profile_id=profile_id,
         snapshot_id=snapshot_id,
         policy=policy,
+        require_snapshot_scope=require_snapshot_scope,
     )
     # Incomplete external catalog evidence cannot invalidate an otherwise
     # conclusive owned-hub sweep. Keep its independent outcome visible.

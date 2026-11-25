@@ -39,7 +39,8 @@ def prepare_alerts(monkeypatch, tmp_path, *, config=None, results=(True,)):
     bot = SimpleNamespace(config=config, telegram=Client(*results))
     evidence = {"inventory": {"partial_fleet": True, "hubs": []},
                 "research": {"portfolio": {"status": "inconclusivo"}},
-                "external": {"catalog_complete": False, "candidates": []}}
+                "external": {"catalog_complete": False, "candidates": [],
+                             "planning_snapshot_id": "sha256:" + "a" * 64}}
 
     class FakeDashboard:
         def __init__(self, supplied_bot, supplied_config, buffer):
@@ -74,6 +75,14 @@ def test_real_incomplete_coverage_suppresses_alert(monkeypatch, tmp_path):
     assert not list(tmp_path.glob("*.sqlite3"))
 
 
+def test_missing_productive_capture_never_sends_alert(monkeypatch, tmp_path):
+    bot, evidence = prepare_alerts(monkeypatch, tmp_path)
+    evidence["external"].pop("planning_snapshot_id")
+    assert expansion_alerts.publish_expansion_alert(bot) == "inconclusivo"
+    assert bot.telegram.calls == []
+    assert not list(tmp_path.glob("*.sqlite3"))
+
+
 def test_delivery_acknowledged_once_per_profile_and_material_change(monkeypatch, tmp_path):
     bot, evidence = prepare_alerts(monkeypatch, tmp_path, config=Config(tmp_path, profile="filial"),
                           results=(True, True))
@@ -83,6 +92,7 @@ def test_delivery_acknowledged_once_per_profile_and_material_change(monkeypatch,
         observed_ids.append(kwargs["snapshot_id"])
         assert kwargs["profile_id"] == "filial"
         assert kwargs["owned_inventory"] is evidence["inventory"]
+        assert kwargs["require_snapshot_scope"] is True
         return {"profile_id": "filial", "snapshot_id": kwargs["snapshot_id"],
                 "alertable": True, "html": "<b>Candidato testado</b>",
                 "material": {"status": evidence["external"].get("status", "primeiro"),
@@ -96,7 +106,7 @@ def test_delivery_acknowledged_once_per_profile_and_material_change(monkeypatch,
     assert expansion_alerts.publish_expansion_alert(bot) == "delivered"
     assert "Atualização relevante" in bot.telegram.calls[-1]
     assert observed_ids[0] == observed_ids[1]
-    assert observed_ids[2] != observed_ids[1]
+    assert observed_ids[2] == observed_ids[1] == evidence["external"]["planning_snapshot_id"]
     assert all(item.startswith("sha256:") and len(item) == 71 for item in observed_ids)
 
 

@@ -289,6 +289,11 @@ class WebDashboard:
         if owned_research is None:
             recommendations_reader = getattr(self, "hub_recommendations", None)
             owned_research = recommendations_reader() if callable(recommendations_reader) else {}
+        capture = snapshot_summary()
+        capture_id = capture.get("snapshot_id") if capture.get("status") == "parcial" else None
+        # This reference identifies the validated current capture. It does not
+        # certify independent registry rows as belonging to that capture.
+        report["planning_snapshot_id"] = capture_id
         report["expansion_decision"] = assess_expansion(
             owned_inventory,
             owned_research,
@@ -297,6 +302,8 @@ class WebDashboard:
             coverage=owned_research.get("opportunity_coverage")
             if isinstance(owned_research, dict) else None,
             profile_id=paths.current().label,
+            snapshot_id=capture_id,
+            require_snapshot_scope=True,
             policy=InvestmentPolicy.from_config(self.cfg),
         )
         return report
