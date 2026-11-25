@@ -157,6 +157,8 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 
 ### Fase A6 — "Nenhum hub próprio viável": sugestão de expansão (P1)
 
+- Progresso em 25/11/2026: identidade nativa de modelo/motor/itinerário, integridade das provas econômicas, deduplicação e comparação do investimento com caixa líquido da reserva implementadas e testadas. Cenários com identidade incompleta, escala não comprovada ou provas contraditórias continuam bloqueados. Coleta produtiva de pesquisa externa, vínculo obrigatório de snapshot e homologação seguem pendentes em G0.
+
 - Só entrar nesta fase com varredura dos hubs próprios conclusiva e sem proposta elegível (ou com política explícita de comparar expansão externa mesmo havendo oportunidades).
 - Pesquisar novos hubs por regiões e mercados, não apenas selecionar o mais barato. Comparar **hub candidato + modelo/motor + rota(s)**, considerando custo do hub, pontos, aeronave, rota, hangar e reserva.
 - Identificar se a pesquisa pré-compra permite calcular demanda confiável. Sem ela, **sugerir com ressalva**, nunca compra automática.

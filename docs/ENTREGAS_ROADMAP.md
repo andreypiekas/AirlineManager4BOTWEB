@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A6, identidade nativa e integridade de investimento (G0)
+
+- Cenários externos e suas provas de custos/lucro passam a distinguir modelo, motor, origem, destino e escala por IDs nativos. Observações históricas incompletas continuam acessíveis, porém inconclusivas. Contradições no mesmo horário, inclusive entre o campo legado e a lista moderna, bloqueiam a conclusão até evidência posterior. Mudanças de rótulos não criam novas identidades.
+- O gate de expansão valida a consistência do perfil e snapshot quando presentes, os tipos e composição do preço final do motor e os valores financeiros finitos. O painel informa o perfil atual. O vínculo obrigatório ao snapshot produtivo e a comprovação de regras de escala permanecem pendentes.
+- O cálculo de caixa e os relatórios deixam de descontar a reserva duas vezes: investimento é comparado ao caixa disponível líquido da reserva; caixa bruto exigido continua investimento mais reserva. O Telegram considera IDs nativos na deduplicação das recomendações.
+- Validação: 308 testes direcionados aprovados, Ruff e compileall aprovados, suíte Windows com 2.158 testes coletados e execução concluída com código 0 (instalação Linux excluída), git diff --check aprovado. Rollback por reversão do commit da entrega. Permanecem pendentes produtores produtivos de cenários completos, escopo obrigatório, evidências autenticadas e homologação A0–A9. Nenhuma transação real ou implantação executada.
+
 ## 2026-11-25 — Autonomia Total A3/A4/A9, vinculação da captura produtiva ao registro econômico (G0)
 
 - O worker inicializa o registro A3 após cada captura produtiva, antes da pesquisa contábil e da decisão A4. A captura parcial recebe identidade própria e substitui avaliações e controles de snapshots anteriores. A repetição idempotente da mesma captura preserva os casos; uma captura mais antiga ou de identidade distinta no mesmo horário é rejeitada. O modo de simulação continua fora da publicação do registro.

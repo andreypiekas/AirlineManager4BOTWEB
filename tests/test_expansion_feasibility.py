@@ -36,6 +36,7 @@ def inputs():
     for hub, profit, price in (("789", 900, 20000), ("888", 1200, 15000),
                                ("777", 600, 10000), ("666", 100, 10000)):
         identity = {"model": "A320", "engine_id": "engine-1",
+                    "model_id": "101", "stopover_id": None,
                     "origin_id": hub, "destination_id": "999", "route": "XAP ↔ GRU"}
         costs = {**identity, "source": "game_market", "observed_at": NOW,
                  "aircraft_price": price, "aircraft_price_includes_engine": True,
@@ -110,6 +111,39 @@ def test_hub_selection_filters_full_ranking_without_suppressing_analysis():
     assert selection["eligible_hub_ids"] == ["666"]
     assert selection["execution_available"] is False
     assert all(item["reasons"] == ["limite_por_compra_de_hub"] for item in selection["excluded"])
+
+
+def test_affordability_uses_cash_after_reserve_only_once():
+    data = inputs()
+    external = data[3]
+    row = external["candidates"][0]
+    external["candidates"] = [row]
+    external["available_cash"] = row["investment"]
+    row["cost_breakdown"]["reserve"] = 5000
+    row["cost_breakdown"]["cash_required"] = row["investment"] + 5000
+    assert [item["id"] for item in evaluate(data)["top_three"]] == ["789"]
+    external["available_cash"] -= 1
+    assert evaluate(data)["top_three"] == []
+
+
+@pytest.mark.parametrize("changes", [
+    {"aircraft_price_includes_engine": 1},
+    {"engine_delta_cost": True},
+    {"engine_delta_cost": 100},
+    {"engine_delta_invalid": True},
+])
+def test_gate_rejects_invalid_engine_price_composition(changes):
+    data = inputs()
+    row = data[3]["candidates"][0]
+    row["scenario"]["costs"].update(changes)
+    assert all(item["id"] != "789" for item in evaluate(data)["top_three"])
+    assert evaluate(data)["external_pending_count"] == 1
+
+
+def test_external_report_scope_cannot_conflict_with_scenario():
+    data = inputs()
+    data[3]["profile_id"] = "other"
+    assert evaluate(data, profile_id="principal")["top_three"] == []
 
 
 @pytest.mark.parametrize("policy", [None, InvestmentPolicy(),
@@ -251,7 +285,7 @@ def test_incomplete_external_catalog_never_yields_ranked_expansion():
 
 @pytest.mark.parametrize("change", [
     {"engine_id": None},
-    {"route": "X789-GRU"},
+    {"destination_id": "998"},
     {"demand_verified": False},
     {"external_demand_verified": False},
 ])
@@ -267,6 +301,12 @@ def test_missing_engine_route_or_demand_is_not_rankable(change):
 @pytest.mark.parametrize("alter", [
     lambda row: row["scenario"]["costs"].update(aircraft_price=1),
     lambda row: row["scenario"]["financial"].update(engine_id="unknown"),
+    lambda row: row["scenario"].pop("model_id"),
+    lambda row: row["scenario"]["costs"].pop("stopover_id"),
+    lambda row: row["scenario"]["financial"].update(model_id="102"),
+    lambda row: row["scenario"]["costs"].update(stopover_id=False),
+    lambda row: row["scenario"]["financial"].update(stopover_id="888"),
+    lambda row: row["scenario"].update(stopover_id="888"),
     lambda row: row["cost_breakdown"].update(total=0),
     lambda row: row.update(pending=["preco_a_confirmar"]),
     lambda row: row.update(purchase_evidence=False),
@@ -288,6 +328,16 @@ def test_unknown_coverage_does_not_treat_zero_candidates_as_no_opportunity():
     assert result["status"] == "inconclusivo"
     assert "varredura_completa_hubs_proprios_nao_comprovada" in result["blocking_reasons"]
     assert result["top_three"] == []
+
+
+def test_external_evidence_from_different_snapshots_is_rejected_by_gate():
+    data = inputs()
+    scenario = data[3]["candidates"][0]["scenario"]
+    scenario["snapshot_id"] = "capture-a"
+    scenario["costs"]["snapshot_id"] = "capture-b"
+    result = evaluate(data)
+    assert result["external_pending_count"] == 1
+    assert all(row["id"] != "789" for row in result["top_three"])
 
 
 def test_unhashable_hub_identifiers_fail_closed():

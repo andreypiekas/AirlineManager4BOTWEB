@@ -65,9 +65,12 @@ def _research(*, airport_id="123", **overrides):
     destination_id = overrides.get("destination_id", "789" if airport_id == "456" else "456")
     route = overrides.get("route", "fixture-route")
     evidence_identity = {"model": model, "engine_id": engine_id,
+                         "model_id": overrides.get("model_id", "101"),
+                         "stopover_id": overrides.get("stopover_id"),
                          "origin_id": origin_id, "destination_id": destination_id,
                          "route": route}
     data = {"source": "game_research", "observed_at": observed_at,
+            **evidence_identity,
             "model": model, "engine_id": engine_id, "engine_verified": True,
             "engine_label": "variant fixture", "route": route,
             "origin_id": origin_id, "destination_id": destination_id,
@@ -697,6 +700,81 @@ def test_external_research_conflict_is_local_to_the_engine_route(tmp_path):
                for option in row["alternatives"]) == 2
 
 
+def test_native_model_and_itinerary_are_independent_of_display_names(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    stamp = int(time.time()) - 20
+    original = _research(observed_at=stamp)
+    assert registry.record_research("123", original)
+    before = registry.path.read_bytes()
+    renamed = deepcopy(original)
+    for proof in (renamed, renamed["costs"], renamed["financial"]):
+        proof.update(model="updated name", route="updated display")
+    assert registry.record_research("123", renamed)
+    assert registry.path.read_bytes() == before
+    renamed["observed_at"] += 1
+    assert registry.record_research("123", renamed)
+    assert registry.record_research("123", _research(model_id="102", observed_at=stamp))
+    assert registry.record_research("123", _research(stopover_id="777", observed_at=stamp))
+    assert registry.record_research("123", _research(stopover_id="888", observed_at=stamp))
+    historical = deepcopy(original)
+    for proof in (historical, historical["costs"], historical["financial"]):
+        del proof["stopover_id"]
+    assert registry.record_research("123", historical)
+
+    row = HubExpansionRegistry(registry.path).snapshot(cash=50000)["candidates"][0]
+    assert len(row["alternatives"]) == 5
+    direct = [option for option in row["alternatives"] if option["purchase_evidence"]]
+    assert {option["model_id"] for option in direct} == {"101", "102"}
+    assert next(option for option in direct if option["model_id"] == "101")["model"] == "updated name"
+    historical = next(option for option in row["alternatives"] if "stopover_id" not in option)
+    assert "identidade_nativa_a_confirmar" in historical["pending"]
+    for option in row["alternatives"]:
+        if option.get("stopover_id") in ("777", "888"):
+            assert option["pending"] == ["regras_escala_a_confirmar"]
+            assert not option["purchase_evidence"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("model_id", None), ("model_id", True), ("model_id", "invalid"),
+    ("stopover_id", True), ("stopover_id", ""), ("stopover_id", "123"),
+    ("stopover_id", "456"),
+])
+def test_invalid_native_identity_does_not_replace_a_valid_scenario(tmp_path, field, value):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research())
+    before = registry.path.read_bytes()
+    assert not registry.record_research("123", _research(**{field: value}))
+    assert registry.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("block", ["costs", "financial"])
+@pytest.mark.parametrize("field", ["model_id", "stopover_id"])
+def test_missing_native_proof_field_blocks_ranking(tmp_path, block, field):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    research = _research()
+    del research[block][field]
+    assert registry.record_research("123", research)
+    row = registry.snapshot(cash=50000)["candidates"][0]
+    assert not row["purchase_evidence"]
+
+
+def test_invalid_nested_scale_does_not_become_direct_and_scope_is_preserved(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    research = _research()
+    research["snapshot_id"] = "capture-a"
+    research["costs"].update(stopover_id=False, snapshot_id="capture-b")
+    assert registry.record_research("123", research)
+    row = HubExpansionRegistry(registry.path).snapshot(cash=50000)["candidates"][0]
+    assert not row["purchase_evidence"]
+    assert row["scenario"]["costs"]["stopover_id"] is not None
+    assert "custos_motor_rota_a_confirmar" in row["pending"]
+    assert "escopo_pesquisa_divergente" in row["pending"]
+
+
 def test_persisted_stale_variant_cannot_override_newer_incomplete_research(tmp_path):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     assert registry.record_catalog([_candidate()])
@@ -773,9 +851,9 @@ def test_unbounded_total_cost_cannot_support_a_conclusive_ranking(tmp_path):
 
 @pytest.mark.parametrize("block", ["costs", "financial"])
 @pytest.mark.parametrize("identity_field,bad_value", [
-    ("model", "other-model"), ("engine_id", "other-engine"),
+    ("model_id", "102"), ("engine_id", "other-engine"),
     ("origin_id", "789"), ("destination_id", "999"),
-    ("route", "different-route")])
+    ("stopover_id", "999")])
 def test_cost_and_profit_proofs_must_match_exact_scenario_identity(
         tmp_path, block, identity_field, bad_value):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
@@ -878,6 +956,21 @@ def test_conflicting_persisted_duplicates_cannot_reuse_variant_proof(tmp_path):
     assert result["ranking_conclusive"] is False
     assert result["purchase_evidence"] is False
     assert result["alternatives"] == []
+
+
+def test_conflicting_legacy_slot_cannot_hide_same_time_native_observation(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    assert registry.record_research("123", _research())
+    saved = json.loads(registry.path.read_text(encoding="utf-8"))
+    row = saved["candidates"][0]
+    row["scenario"]["financial"]["profit_per_day"] = 1234
+    registry.path.write_text(json.dumps(saved), encoding="utf-8")
+
+    result = registry.snapshot(cash=50000)["candidates"][0]
+    assert result["status"] == "dados_a_confirmar"
+    assert "pesquisa_externa_conflitante" in result["pending"]
+    assert len(result["alternatives"]) == 2
 
 
 def test_expansion_dashboard_is_only_a_get_endpoint():

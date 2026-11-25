@@ -23,6 +23,7 @@ SNAPSHOT = "sha256:" + "a" * 64
 def hub(hub_id="789", *, profit=500, price=10000, engine_id="engine-3",
         hub_price=5000, includes_engine=False):
     identity = {"model": "A320", "engine_id": engine_id,
+                "model_id": "101", "stopover_id": None,
                 "origin_id": hub_id, "destination_id": "999", "route": "XAP ↔ GRU <B>"}
     engine_extra = 0 if includes_engine else 400
     investment = hub_price + price + engine_extra + 1000 + 100 + 50
@@ -377,6 +378,20 @@ def test_updated_provenance_is_material_but_refreshed_timestamps_are_not(tmp_pat
     replaced = hub()
     replaced["scenario"]["financial"]["source"] = "game_research"
     alert = store.claim(build(external_data=external(replaced)), now=NOW + 61)
+    assert alert and alert["reason"] == "mudanca_material"
+
+
+def test_native_model_change_is_material_even_with_same_display_name(tmp_path):
+    store = ExpansionAlertDeduplicator(tmp_path / "alerts.sqlite3")
+    first = store.claim(build(), now=NOW)
+    assert store.acknowledge(first, delivered=True, now=NOW)
+    changed = hub()
+    scenario = changed["scenario"]
+    for proof in (scenario, scenario["costs"], scenario["financial"]):
+        proof["model_id"] = "102"
+    report = build(external_data=external(changed))
+    assert report["candidates"][0]["model_id"] == "102"
+    alert = store.claim(report, now=NOW + 60)
     assert alert and alert["reason"] == "mudanca_material"
 
 

@@ -10,6 +10,7 @@ import math
 import re
 import threading
 import time
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Optional
@@ -74,13 +75,62 @@ def _fresh(stamp: object, now: int) -> bool:
             and now - stamp <= MAX_AGE_SECONDS)
 
 
+def native_scenario_identity(scenario: Mapping) -> tuple | None:
+    """Require explicit native model, engine, endpoints and itinerary."""
+    model = _airport_id(scenario.get("model_id"))
+    engine = _engine_id(scenario.get("engine_id"))
+    origin = _airport_id(scenario.get("origin_id"))
+    destination = _airport_id(scenario.get("destination_id"))
+    stopover = _airport_id(scenario.get("stopover_id"))
+    if (None in (model, engine, origin, destination) or origin == destination
+            or "stopover_id" not in scenario
+            or (scenario["stopover_id"] is not None
+                and stopover in (None, origin, destination))):
+        return None
+    return model, engine, origin, destination, stopover
+
+
 def _scenario_identity(scenario: dict) -> tuple:
-    """Keep different engine variants and routes independently addressable."""
-    return (str(scenario.get("model") or "").strip().casefold(),
-            _engine_id(scenario.get("engine_id")),
+    """Keep native identities independent of labels and historical records."""
+    native = native_scenario_identity(scenario)
+    if native is not None:
+        return ("native", *native)
+    return ("historical", str(scenario.get("model") or "").strip().casefold(),
+            _airport_id(scenario.get("model_id")), _engine_id(scenario.get("engine_id")),
             _airport_id(scenario.get("origin_id")),
             _airport_id(scenario.get("destination_id")),
+            "stopover_id" in scenario, str(scenario.get("stopover_id")),
             str(scenario.get("route") or "").strip().casefold())
+
+
+def _native_fields(source: Mapping) -> dict:
+    """Retain missing and malformed IDs without turning them into direct routes."""
+    fields = {}
+    if "model_id" in source:
+        fields["model_id"] = _airport_id(source["model_id"]) or ""
+    if "stopover_id" in source:
+        value = source["stopover_id"]
+        fields["stopover_id"] = None if value is None else _airport_id(value) or ""
+    return fields
+
+
+def _scope_fields(source: Mapping) -> dict:
+    return {key: source[key] if isinstance(source[key], str) else ""
+            for key in ("profile_id", "snapshot_id") if key in source}
+
+
+def scenario_scope_consistent(*proofs: Mapping, profile_id: str | None = None,
+                              snapshot_id: str | None = None) -> bool:
+    """Reject contradictory scope metadata, including in historical proofs."""
+    for key, expected in (("profile_id", profile_id), ("snapshot_id", snapshot_id)):
+        values = [proof[key] for proof in proofs if key in proof]
+        if expected is not None:
+            values.append(expected)
+        if any(not isinstance(value, str) or not value.strip() for value in values):
+            return False
+        if len(set(values)) > 1:
+            return False
+    return True
 
 
 def _scenarios(candidate: dict) -> list[dict]:
@@ -90,7 +140,7 @@ def _scenarios(candidate: dict) -> list[dict]:
     legacy_slot = candidate.get("scenario")
     if (isinstance(legacy_slot, dict) and legacy_slot
             and not any(_scenario_identity(item) == _scenario_identity(legacy_slot)
-                        for item in scenarios)):
+                        and _same_research_proof(item, legacy_slot) for item in scenarios)):
         scenarios.append(legacy_slot)
     return scenarios
 
@@ -107,7 +157,7 @@ def _research_stamp(scenario: dict) -> float:
 
 
 _RESEARCH_PROOF_FIELDS = (
-    "source", "observed_at", "route_feasible", "demand_verified",
+    "source", "observed_at", "profile_id", "snapshot_id", "route_feasible", "demand_verified",
     "external_demand_verified", "event_demand_boosted", "engine_verified", "costs", "financial",
     "aircraft_price", "route_fee", "hangar_price", "other_fees",
     "aircraft_price_includes_engine", "engine_delta_cost", "profit_per_day",
@@ -116,7 +166,13 @@ _RESEARCH_PROOF_FIELDS = (
 
 def _same_research_proof(first: dict, second: dict) -> bool:
     """Ignore display labels while comparing decision-making evidence."""
-    return all(first.get(field) == second.get(field)
+    def proof_value(scenario: dict, field: str):
+        value = scenario.get(field)
+        if field in ("costs", "financial") and isinstance(value, dict):
+            return {key: item for key, item in value.items() if key not in ("model", "route")}
+        return value
+
+    return all(proof_value(first, field) == proof_value(second, field)
                for field in _RESEARCH_PROOF_FIELDS)
 
 
@@ -151,6 +207,7 @@ def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
     costs = scenario.get("costs") if isinstance(scenario.get("costs"), dict) else {}
     financial = scenario.get("financial") if isinstance(scenario.get("financial"), dict) else {}
     explicit_engine = "engine_id" in scenario and engine_id is not None
+    native_identity = native_scenario_identity(scenario)
 
     # Old flat prices are useful historical information, but cannot prove the
     # selected engine's price or operating profit.
@@ -195,6 +252,12 @@ def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
         pending.append("pesquisa_desatualizada")
     if not model:
         pending.append("modelo_a_confirmar")
+    if native_identity is None:
+        pending.append("identidade_nativa_a_confirmar")
+    elif native_identity[-1] is not None:
+        pending.append("regras_escala_a_confirmar")
+    if not scenario_scope_consistent(scenario, costs, financial):
+        pending.append("escopo_pesquisa_divergente")
     if not route or origin != candidate["id"] or destination in (None, origin):
         pending.append("rota_da_base_a_confirmar")
     if not explicit_engine or scenario.get("engine_verified") is not True:
@@ -205,13 +268,8 @@ def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
         pending.append("demanda_externa_a_confirmar")
 
     def matches_identity(block: dict) -> bool:
-        name = block.get("model")
-        block_route = block.get("route")
-        return (isinstance(name, str) and name.strip().casefold() == model.casefold()
-                and isinstance(block_route, str) and block_route.strip().casefold() == route.casefold()
-                and _engine_id(block.get("engine_id")) == engine_id
-                and _airport_id(block.get("origin_id")) == origin
-                and _airport_id(block.get("destination_id")) == destination)
+        return (native_identity is not None
+                and native_scenario_identity(block) == native_identity)
 
     if (not explicit_engine or costs.get("source") not in ("game_market", "game_research")
             or not _fresh(costs.get("observed_at"), now)
@@ -693,12 +751,21 @@ class HubExpansionRegistry:
         engine_id = _engine_id(research.get("engine_id")) if explicit_engine else None
         if explicit_engine and engine_id is None:
             return False
+        native_fields = _native_fields(research)
+        if "" in native_fields.values():
+            return False
+        stopover = native_fields.get("stopover_id")
+        if stopover is not None and stopover in (
+                _airport_id(research.get("origin_id")), _airport_id(research.get("destination_id"))):
+            return False
 
         costs = research.get("costs") if isinstance(research.get("costs"), dict) else {}
         financial = research.get("financial") if isinstance(research.get("financial"), dict) else {}
 
         def proof(block: dict, *, price: bool) -> dict:
             evidence = {
+                **_native_fields(block),
+                **_scope_fields(block),
                 "source": block.get("source"), "observed_at": block.get("observed_at"),
                 "model": str(block.get("model") or "").strip()[:100],
                 "route": str(block.get("route") or "").strip()[:100],
@@ -723,6 +790,8 @@ class HubExpansionRegistry:
             return evidence
 
         scenario = {
+            **native_fields,
+            **_scope_fields(research),
             "source": "game_research",
             # Receipt time is not evidence of when an external-hub route was read.
             "observed_at": research.get("observed_at") if explicit_engine else int(time.time()),
@@ -1111,7 +1180,12 @@ class HubExpansionRegistry:
                 -(option["profit_per_day"] or 0) if option["ranking_conclusive"] else 0,
                 option["investment"] if option["investment"] is not None else float("inf"),
                 str(option.get("model") or "").casefold(),
+                str(option.get("model_id") or ""),
                 option.get("engine_id") or "",
+                str(option.get("origin_id") or ""),
+                str(option.get("destination_id") or ""),
+                "stopover_id" not in option,
+                str(option.get("stopover_id") or ""),
                 str(option.get("route") or "").casefold()))
             best = evaluated[0] if evaluated else None
             row.update({

@@ -10,7 +10,7 @@ import re
 import time
 from collections.abc import Mapping
 
-from hub_expansion import MAX_AGE_SECONDS
+from hub_expansion import MAX_AGE_SECONDS, native_scenario_identity, scenario_scope_consistent
 from investment_policy import InvestmentPolicy
 
 
@@ -58,6 +58,9 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
     breakdown = row.get("cost_breakdown")
     if not all(isinstance(part, Mapping) for part in (costs, financial, breakdown)):
         return False
+    if not scenario_scope_consistent(external, row, scenario, costs, financial, breakdown,
+                                     profile_id=profile_id, snapshot_id=snapshot_id):
+        return False
     origin = str(scenario.get("origin_id") or "")
     destination = str(scenario.get("destination_id") or "")
     model = scenario.get("model")
@@ -86,19 +89,13 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
                 financial.get("observed_at")))
             and costs.get("source") in ("game_market", "game_research")
             and financial.get("source") in ("route_optimizer", "game_research")
-            and costs.get("aircraft_price_includes_engine") in (True, False)
+            and type(costs.get("aircraft_price_includes_engine")) is bool
             and scenario.get("costs") == costs):
         return False
-    identity = (model.casefold(), engine, origin, destination, route.casefold())
-    for proof in (costs, financial):
-        proof_model = proof.get("model")
-        proof_route = proof.get("route")
-        if (not isinstance(proof_model, str) or not isinstance(proof_route, str)
-                or (proof_model.strip().casefold(), proof.get("engine_id"),
-                    str(proof.get("origin_id") or ""),
-                    str(proof.get("destination_id") or ""),
-                    proof_route.strip().casefold()) != identity):
-            return False
+    identity = native_scenario_identity(scenario)
+    if (identity is None or identity[-1] is not None
+            or any(native_scenario_identity(proof) != identity for proof in (costs, financial))):
+        return False
     cost_names = ("hub_price", "aircraft_price", "engine_extra_charged",
                   "route_fee", "hangar_price", "other_fees")
     if not all(_nonnegative(breakdown.get(key)) for key in cost_names):
@@ -113,7 +110,15 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
         return False
     investment = sum(breakdown[key] for key in cost_names)
     profit = financial.get("profit_per_day")
-    if not _nonnegative(profit) or profit <= 0 or investment <= 0:
+    if not _nonnegative(profit) or profit <= 0 or not _nonnegative(investment) or investment <= 0:
+        return False
+    includes_engine = costs["aircraft_price_includes_engine"]
+    engine_delta = costs.get("engine_delta_cost")
+    if (costs.get("engine_delta_invalid") is True
+            or (engine_delta is not None and not _nonnegative(engine_delta))
+            or breakdown.get("aircraft_price_includes_engine") is not includes_engine
+            or (includes_engine and engine_delta not in (None, 0))
+            or (not includes_engine and not _nonnegative(engine_delta))):
         return False
     if (any(not _nonnegative(costs.get(key)) or costs[key] != breakdown[key]
             for key in ("aircraft_price", "route_fee", "hangar_price", "other_fees"))
@@ -125,7 +130,7 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
             or abs(investment - row["investment"]) > 0.02
             or abs(investment - breakdown.get("total", float("inf"))) > 0.02
             or abs(investment + breakdown["reserve"] - breakdown["cash_required"]) > 0.02
-            or breakdown["cash_required"] > external["available_cash"]
+            or investment > external["available_cash"]
             or abs(profit - row["profit_per_day"]) > 0.02
             or abs(investment / profit - row["payback_days"]) > 0.06):
         return False

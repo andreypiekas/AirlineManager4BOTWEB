@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from expansion_feasibility import assess_expansion
-from hub_expansion import MAX_AGE_SECONDS
+from hub_expansion import MAX_AGE_SECONDS, native_scenario_identity
 from investment_policy import InvestmentPolicy
 
 
@@ -37,7 +37,9 @@ CLAIM_LEASE_SECONDS = 300
 _PROFILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _SNAPSHOT = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HUB_ID = re.compile(r"^[1-9][0-9]{0,11}$")
-_MATERIAL_FIELDS = ("hub", "aircraft", "engine_id", "motor", "route", "status", "pending", "excluded", "points", "sources")
+_MATERIAL_FIELDS = ("hub", "aircraft", "model_id", "engine_id", "motor", "route",
+                    "origin_id", "destination_id", "stopover_id", "status", "pending",
+                    "excluded", "points", "sources")
 _NUMERIC_FIELDS = ("hub_price", "aircraft_price", "engine_cost", "route_fee", "hangar_cost",
                    "other_fees", "reserve", "investment", "cash_required", "profit", "payback")
 
@@ -175,6 +177,14 @@ def _candidate(raw: Mapping[str, Any], external: Mapping[str, Any], now: float,
         pending.add(f"situação informada: {raw.get('status') or 'desconhecida'}")
 
     model = scenario.get("model")
+    identity = native_scenario_identity(scenario)
+    if identity is None or identity[-1] is not None:
+        pending.add("identidade nativa ou regras de escala a confirmar")
+    for field in ("costs", "financial"):
+        proof = scenario.get(field)
+        if (identity is None or not isinstance(proof, Mapping)
+                or native_scenario_identity(proof) != identity):
+            pending.add("identidade econômica divergente")
     engine_id = scenario.get("engine_id")
     engine_label = scenario.get("engine_label")
     route = scenario.get("route")
@@ -230,7 +240,7 @@ def _candidate(raw: Mapping[str, Any], external: Mapping[str, Any], now: float,
     available_cash = _amount(external.get("available_cash"))
     if available_cash is None:
         pending.add("saldo disponível a confirmar")
-    elif cash_required is not None and cash_required > available_cash:
+    elif investment is not None and investment > available_cash:
         pending.add("saldo insuficiente para investimento e reserva")
 
     profit = _number(scenario.get("profit_per_day"))
@@ -259,9 +269,13 @@ def _candidate(raw: Mapping[str, Any], external: Mapping[str, Any], now: float,
     return {
         "hub": f"{raw.get('code') or raw.get('name') or hub_id} (ID {hub_id})",
         "hub_id": hub_id, "aircraft": model if isinstance(model, str) else None,
+        "model_id": scenario.get("model_id"),
         "engine_id": str(engine_id) if engine_id is not None else None,
         "motor": engine_label or f"ID {engine_id}" if engine_id is not None else None,
         "route": route if isinstance(route, str) else None, "points": points,
+        "origin_id": scenario.get("origin_id"),
+        "destination_id": scenario.get("destination_id"),
+        "stopover_id": scenario.get("stopover_id"),
         **costs, "reserve": reserve, "investment": investment, "cash_required": cash_required,
         "profit": profit, "payback": payback, "pending": sorted(pending),
         "excluded": sorted(set(excluded)), "status": "análise consistente" if not pending else "dados a confirmar",
@@ -336,9 +350,13 @@ def _verified_candidate(raw: Mapping[str, Any], external: Mapping[str, Any],
         "hub": f"{raw.get('code') or raw.get('name') or hub_id} (ID {hub_id})",
         "hub_id": hub_id,
         "aircraft": scenario.get("model"),
+        "model_id": scenario.get("model_id"),
         "engine_id": str(engine_id),
         "motor": scenario.get("engine_label") or f"ID {engine_id}",
         "route": scenario.get("route"),
+        "origin_id": scenario.get("origin_id"),
+        "destination_id": scenario.get("destination_id"),
+        "stopover_id": scenario.get("stopover_id"),
         "points": raw.get("hub_points"),
         "hub_price": _amount(breakdown.get("hub_price")),
         "aircraft_price": _amount(breakdown.get("aircraft_price")),
