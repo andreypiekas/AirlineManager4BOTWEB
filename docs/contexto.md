@@ -11,6 +11,7 @@ Leia este arquivo no início de cada tarefa e após toda compactação. Antes de
 - A3/A4 têm snapshot auditado e teto pelo menor saldo entre A3, captura e observação viva, com reserva e compromissos deduzidos uma vez. A PR #47 reforçou a validade da evidência, a cobertura verificável e o checkout do preço final. Uma consulta autenticada mostrou 50 rotas com aviso de demanda de evento e sem continuação identificada. O coletor preserva o aviso de qualquer leitura correlacionada. A projeção econômica fica bloqueada para essas amostras. Cobertura e casos completos seguem pendentes.
 - A6/A7 compartilham a prova de propriedade no replay, painel e Telegram. Conflito de inventário bloqueia conclusões. Catálogo, demanda e economia de expansão têm cobertura parcial. A5 incorporou proteções para recuperar a execução simulada. A5/A8 aguardam homologação do executor e A9 depende de observações reais para calibrar o lucro.
 - Validação da consolidação em 25/11/2026 com suíte Windows, casos adicionais de expiração e 16 testes simulados do instalador no Ubuntu via WSL. Homologação integral e instalação real no servidor pendentes.
+- Último checkpoint de trabalho. A revisão A3/A4 e A6/A7 localizou a composição do snapshot em `src/audited_game_snapshot.py`, o registro A3/A4 em `src/audited_economics_registry.py`, a fila de pesquisa própria em `src/owned_hub_research_ingestion.py` e o registro externo em `src/hub_expansion.py`. Os 228 testes direcionados passaram. Retome pela integração no worker e use fixtures onde faltarem dados autenticados, preservando os bloqueios do G0.
 
 ## Próxima ação
 
@@ -22,4 +23,5 @@ Leia este arquivo no início de cada tarefa e após toda compactação. Antes de
 
 - Os checkpoints anteriores estão no [histórico de entregas](ENTREGAS_ROADMAP.md) e na revisão `8fdab91` deste arquivo no Git.
 - O [índice multiparte](codex_multipart_commit.md) aponta para o arquivo bruto compactado localmente. O Codex Cloud consegue retomar pela branch de desenvolvimento apenas com os documentos versionados. Se o bruto estiver ausente, siga normalmente. Faça a transição de conversa pelo caminho deste arquivo, sem copiar seu conteúdo, o histórico ou o multipart para o chat.
+- Se o envio automático de uma compactação for rejeitado por tamanho, inicie outra tarefa Cloud na branch de desenvolvimento e envie apenas `Leia docs/contexto.md e continue a próxima ação do roadmap.`
 - Antes de editar, confira branch, status e diff. Trabalhe na branch de tarefa, registre resultados e limitações, faça commit e push. Merge em `main` e implantação dependem de autorização explícita.

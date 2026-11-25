@@ -1,5 +1,10 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Recuperação do checkpoint de compactação (G0)
+
+- O checkpoint foi reconstruído a partir do trecho disponível e do estado versionado. A retomada segue pela integração dos registros A3/A4 e A6/A7 no worker, com coleta autenticada e cobertura integral ainda pendentes. Em caso de rejeição por tamanho da compactação automática, a instrução de retomada indica somente `docs/contexto.md` em uma nova tarefa Cloud.
+- Passaram 228 testes de registro econômico, ciclo de planejamento, ingestão de pesquisa própria, expansão e avaliação econômica. A atualização foi documental. G0 continua vigente.
+
 ## 2026-11-25 — Retomada do roadmap no Codex Cloud (G0)
 
 - `AGENTS.md` orienta retomar por `docs/contexto.md` e ler o roadmap e este histórico por trechos. O índice multiparte é versionado. O arquivo bruto local é opcional e fica fora do Git e das mensagens. Uma tarefa no Codex Cloud pode seguir quando esse bruto estiver ausente.
