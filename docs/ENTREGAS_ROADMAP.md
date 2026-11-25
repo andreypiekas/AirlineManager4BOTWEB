@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total, revisão documental do estado e da retomada (G0)
+
+- A revisão consolida o estado de A0–A9 e ordena a coleta nativa de A1/A2, a publicação das evidências A3/A4 pelo worker e a recomendação A6/A7 com cobertura e prova de esgotamento interno. A base de código é `b9af7d2` na branch `codex/autonomia-a0-a1-20261122`. A PR #44 aponta para `33d081b`.
+- O [contexto permanente](contexto.md) registra a sequência de retomada. O histórico multiparte local recebeu um checkpoint e preserva o arquivo bruto separado.
+- Validação documental com `git diff --check`, verificação das referências locais e verificação de preservação do conteúdo original do multipart. A suíte e os testes simulados do instalador da base estão descritos na entrega seguinte. Homologação autenticada e validação em servidor seguem pendentes. Nenhuma compra ou implantação realizada. Rollback dos documentos rastreados por reversão do commit.
+
 ## 2026-11-25 — Autonomia Total A1/A6, revalidação do checkout e propriedade auditada (G0)
 
 - A1: o pré-voo planejado consulta o painel atual após verificar modelo, variante, base e estabilidade do preço final. Um aviso `#accountLow` visível nessa etapa interrompe a validação. A regressão foi reproduzida em simulação e bloqueada antes do envio do pedido. Na evidência registrada, as variantes do A320-200 mudaram velocidade e consumo sem alterar `#acCost`; a amostra do A380-800 não apresentou fonte explícita de preço final. A validação por modelo, variante e hub segue pendente.

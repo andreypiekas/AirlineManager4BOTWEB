@@ -5,6 +5,20 @@
 **Estado deste documento:** planejamento com implementação incremental em andamento. Entregas, testes e pendências de homologação são registrados em [ENTREGAS_ROADMAP.md](ENTREGAS_ROADMAP.md).
 **Relação:** complementa [ROADMAP_HUBS_AERONAVES.md](ROADMAP_HUBS_AERONAVES.md), [ENTREGAS_ROADMAP.md](ENTREGAS_ROADMAP.md) e o trabalho em andamento na PR #44. Não substitui nem considera homologadas as pendências dessa PR.
 
+## Estado em 25/11/2026
+
+**Base de implementação** `b9af7d2` na branch `codex/autonomia-a0-a1-20261122`. A PR #44 aponta para `33d081b` e deve ser conferida antes de qualquer promoção.
+
+| Frente | Implementação disponível | Evidência ou trabalho pendente |
+| --- | --- | --- |
+| A0 | Proteções do G0 e testes automatizados de regressão. | Homologação autenticada e validação da instalação no servidor. |
+| A1/A2 | Checkout revalida modelo, motor, base, estabilidade do preço e aviso de saldo. Inventário, pesquisa de rotas e cobertura incremental disponíveis. | Provar o preço final por modelo, variante e hub de entrega, o vínculo permanente aeronave–hub e a cobertura de rotas. A observação de `#acCost` no A320-200 e a amostra do A380-800 ainda não comprovam o preço por variante. Manter `price_verified=false` onde faltar prova. |
+| A3/A4 | O worker vincula a análise ao snapshot auditado e limita a decisão pelo menor dos três saldos independentes, líquido de compromissos e reserva. | Coletar layout Y/J/F, disponibilidade, demanda residual, tarifas, taxa de rota e custos incrementais. Publicar casos completos e cobertura auditada da fila de oportunidades. |
+| A6/A7 | Replay externo, painel e Telegram reutilizam a propriedade auditada. Conflitos de inventário impedem a recomendação. | Completar catálogo, demanda e cenários externos com custos próprios de expansão. Demonstrar o esgotamento das opções internas com cobertura auditada antes de recomendar um hub. |
+| A5/A8/A9 | Existem contratos de pré-voo, controles de execução e métricas. | Homologar o executor, testar a conciliação após falhas e calibrar o lucro previsto com observações reais. A execução segue bloqueada em G0. |
+
+A validação da base registrou 2.204 testes aprovados e 1 ignorado no Windows, além de 16 testes simulados do instalador no Ubuntu via WSL. Evidências e resultados por entrega constam no [histórico de entregas](ENTREGAS_ROADMAP.md). Para retomar, leia o [contexto permanente](contexto.md).
+
 ## 1. Visão e regra central
 
 Objetivo: tornar o AirlineManager4BOTWEB capaz de decidir **se, onde, quando e com que configuração investir**, usando dados verificáveis da conta ativa, sem depender de decisões manuais no fluxo normal.
@@ -284,13 +298,13 @@ Em **cada PR** registrar:
 
 Nenhum agente marca uma etapa como concluída por apenas gerar código ou mock. **Entregue**, **testado**, **homologado no jogo** e **implantado** são estados diferentes, exibidos separadamente.
 
-## 10. Primeira execução recomendada
+## 10. Próxima sequência de execução
 
-1. Preservar main atual e a PR #44. Abrir PRs por contrato e módulo, não começar por compra real de hub.
-2. Prioridade máxima: **A1** (motor/preço), **A2** (observações/cobertura) e contratos **A0**, em paralelo com oportunidade/economia (A3).
-3. O navegador autenticado deve primeiro validar: estrutura do catálogo de motores; mudança de preço com motor; seleção do hub da encomenda; associação permanente hub-aeronave; busca de demanda em hub ainda não adquirido; controles e confirmação de compra de hub **sem clicar em comprar**.
-4. Habilitar recomendações no painel, depois compra de aeronave com rota aprovada; só por último compra automática de hub.
-5. Revisar resultados com critérios de aceite e registrar evidência a cada etapa.
+1. **A1/A2.** Investigar em sessão autenticada, somente leitura, o preço final por modelo, motor e hub de entrega, o vínculo permanente aeronave–hub, a paginação e as fontes nativas de layout, demanda e tarifas. Registrar a origem e a vigência de cada observação.
+2. **A3/A4.** Com as evidências válidas, publicar casos completos via `AuditedEconomicsRegistry.record()` e cobertura via `record_portfolio_evidence()` no worker que possui a captura. Vincular preço, layout Y/J/F, disponibilidade, demanda residual, tarifas, taxa de rota, custos incrementais e compromissos ao mesmo snapshot e manter os bloqueios quando faltarem dados.
+3. **A6/A7.** Completar os produtores de catálogo, demanda e custos externos e persistir cenários via `HubExpansionRegistry.record_research()`. Exigir prova de esgotamento interno com cobertura por hub antes de habilitar recomendações conclusivas no painel e no Telegram.
+4. **A5/A8/A9.** Validar pré-voo, conciliação de timeout e reinício, confirmação de propriedade e calibração conforme os gates. A base permanece em G0. Qualquer ensaio real exige avanço de gate, homologação e autorização explícita.
+5. Atualizar o contexto e o histórico a cada entrega. Preservar a PR #44 e conferir sua associação com a branch antes de qualquer promoção.
 
 ### Prompt de execução para um orquestrador multiagente
 

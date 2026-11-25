@@ -70,7 +70,7 @@ Evitar duplicar registros e motores já existentes. O processo proprietário do 
 
 ## 6. Estado conhecido do roadmap em 25/11/2026
 
-O histórico detalhado está em `docs/ENTREGAS_ROADMAP.md`. As entregas recentes abrangem A1, A3, A4, A6, A7, A8 e A9, em diferentes níveis de implementação e teste. A maioria permanece no gate G0, sem autorização de execução real.
+O histórico detalhado está em `docs/ENTREGAS_ROADMAP.md`. As entregas recentes abrangem A1, A3, A4, A6, A7, A8 e A9, em diferentes níveis de implementação e teste. A branch de trabalho permanece no gate G0. Homologação autenticada e autorização explícita são necessárias para qualquer ensaio real.
 
 ### Motores e encomenda (A1)
 
@@ -128,11 +128,11 @@ O histórico detalhado está em `docs/ENTREGAS_ROADMAP.md`. As entregas recentes
 
 ## 8. Próxima sequência de trabalho
 
-1. Continuar a integração produtiva do A3/A4. A captura do worker já inicializa o registro auditado A3, inclusive quando parcial, por meio de `AuditedEconomicsRegistry.begin_capture()`. `record()` e `record_portfolio_evidence()` ainda não possuem produtores de casos completos/cobertura verificada em produção. Separar a construção das observações, avaliação e gravação de casos elegíveis, sempre vinculados à mesma captura. `research_accounting_gate.evaluate_research_gate()` ainda fornece somente pré-requisitos parciais e hipóteses de assentos não verificadas; preservar esses bloqueios.
-2. Continuar A6: integrar produtor de cenários externos em `HubExpansionRegistry.record_research()`, comprovar escopo de captura de ponta a ponta e revisar robustez numérica. A identidade nativa e a correção de reserva foram entregues no checkpoint 11.
-3. Obter evidências autenticadas somente leitura dos preços de cada variante, disponibilidade e preço de rota, demanda residual, layout efetivo, tarifas, custo recorrente, inventário de hubs, cobertura e vínculo permanente aeronave–hub. Sem esses dados, não ativar os gates de compra.
-4. Integrar A4/A5 e o executor conforme o roadmap, com conciliação de timeout/reinício e limites de investimento, e estender o contrato de execução para escalas quando houver suporte comprovado. Continuar A6–A9 (expansão externa, Telegram, compra de hub, interface e calibração).
-5. Registrar cada entrega em `docs/ENTREGAS_ROADMAP.md`, atualizar este contexto e fazer commit e push da branch de trabalho. Na próxima conversa, leia este arquivo e continue do estado real do Git, sem repetir as correções já confirmadas.
+1. Investigar em sessão autenticada, somente leitura, fontes nativas de preço final por modelo, motor e hub de entrega, vínculo permanente aeronave–hub, paginação, layout Y/J/F, disponibilidade, demanda residual, tarifas, taxa de rota e custos incrementais. Registrar origem, vigência e cobertura observada. Manter `price_verified=false` quando faltar prova.
+2. No worker proprietário, vincular as evidências válidas à captura de `AuditedEconomicsRegistry.begin_capture()`. Integrar os produtores com `record()` para casos completos e `record_portfolio_evidence()` para cobertura verificada. Preservar os bloqueios de `research_accounting_gate.evaluate_research_gate()` para hipóteses e dados parciais.
+3. Completar catálogo, demanda e custos de aquisição de hubs externos e conectar o produtor a `HubExpansionRegistry.record_research()`. Comprovar esgotamento das oportunidades internas com cobertura auditada, antes de uma recomendação conclusiva em A6/A7.
+4. Validar o executor nas fases A5 e A8, incluindo conciliação após falhas e confirmação de propriedade, e usar observações reais na calibração A9. Manter o G0 até evidência suficiente para avançar. Compra real depende de homologação e autorização explícita.
+5. Registrar os checkpoints neste arquivo e as entregas em `docs/ENTREGAS_ROADMAP.md`. Ao concluir uma alteração, criar o commit e enviar a branch de trabalho. Ao retomar, começar por este arquivo e conferir o estado do Git.
 
 ## 9. Comandos de referência no Windows
 
@@ -217,3 +217,9 @@ O teste `tests/test_instalacao_linux.py` requer ambiente POSIX e deve ser valida
 - A6 deriva `owned_inventory` do snapshot auditado e compartilha a prova com replay, painel e Telegram. A validação exige perfil, origem, IDs únicos e observações vigentes. Divergência entre inventários vigentes invalida a prova e exclui da lista diagnóstica os hubs de ambos. Inventário vivo vencido não invalida propriedade capturada e vigente. O escopo de frota segue parcial.
 - Validação: 176 testes direcionados A1 e 433 testes direcionados da versão integrada A1/A6. Suíte Windows consolidada com 2.204 aprovados e 1 ignorado (134,79 s, instalação Linux excluída). Os 16 testes simulados do instalador passaram no Ubuntu via WSL. Ruff, compileall e `git diff --check` aprovados. Instalação real no servidor e homologação autenticada pendentes. Nenhuma compra ou implantação realizada. Rollback por reversão do commit da entrega.
 - Próxima frente: investigar fontes nativas somente leitura de preço final efetivo por variante e hub, layout Y/J/F, disponibilidade de rota, demanda residual, tarifas, taxa de rota, custos recorrentes incrementais e vínculo permanente aeronave–hub. O produtor de casos completos A3 ainda não chama `AuditedEconomicsRegistry.record()` e a cobertura A4 ainda não chama `record_portfolio_evidence()`; `planning_cycle._research_summary()` agrega somente hipóteses e bloqueios. Vincular casos e cobertura ao snapshot no worker proprietário depois de coletar provas válidas. Para A6, alimentar `HubExpansionRegistry.record_research()` com custos externos e demonstrar esgotamento interno. Continuar A5–A9 conforme os gates. O objetivo de autonomia total continua em andamento.
+
+## 18. Checkpoint de 25/11/2026 — revisão do roadmap e retomada
+
+- Base de código `b9af7d2` na branch `codex/autonomia-a0-a1-20261122`. A referência da PR #44 segue em `33d081b`. Conferir o HEAD local e remoto antes de retomar.
+- O roadmap agora resume o estado atual e a ordem das dependências. O registro multiparte local recebeu um checkpoint para retomar pelo contexto. Preserve `docs/codex_multipart_commit.md` e `uv.lock` locais.
+- Entrega documental em G0. Os testes de código e do instalador citados dizem respeito à base `b9af7d2`. Continuam pendentes homologação autenticada, validação do servidor e produtores completos de evidência. O próximo passo está na seção 8.
