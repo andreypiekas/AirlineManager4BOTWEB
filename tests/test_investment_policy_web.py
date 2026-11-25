@@ -139,7 +139,8 @@ def test_external_research_endpoint_requires_auth_and_validates_cursor(tmp_path,
 
 def test_external_research_endpoint_exposes_recent_cash_and_catalog_costs(tmp_path, monkeypatch):
     from time import time
-    from types import SimpleNamespace
+    import paths
+    from audited_game_snapshot import compose_snapshot, replay_external_research_page
 
     now = time()
     inventory = {"source": "game_hub_select", "hub_catalog_fresh": True,
@@ -153,21 +154,26 @@ def test_external_research_endpoint_exposes_recent_cash_and_catalog_costs(tmp_pa
                              "y": 100, "j": 20, "f": 5}]}
     market = {"source": "bot_aircraft_market_cache", "fresh": True, "observed_at": now,
               "models": [{"id": "1", "name": "Model", "price": 1000}]}
-    monkeypatch.setattr(web_module, "HubRegistry", lambda: SimpleNamespace(snapshot=lambda: inventory))
-    monkeypatch.setattr(web_module, "HubExpansionRegistry", lambda: SimpleNamespace(
-        external_demand_snapshot=lambda owned: external if owned == {"123"} else {}))
-    monkeypatch.setattr(web_module, "EngineCatalogRegistry", lambda: SimpleNamespace(snapshot=lambda: {}))
-    monkeypatch.setattr(web_module, "load_market_evidence", lambda: market)
-    monkeypatch.setattr(web_module, "load_state", lambda: {})
-    monkeypatch.setattr(web_module, "recent_verified_money", lambda bot: (5000, now))
+    path = tmp_path / "snapshot.json"
+    monkeypatch.setattr(web_module, "replay_external_research_page",
+                        lambda **kwargs: replay_external_research_page(path=path, **kwargs))
     with served(tmp_path) as (port, config):
+        snapshot = compose_snapshot(profile_id=paths.current().label, routes={}, inventory=inventory,
+                                    demand={"samples": []}, engines={}, market=market, quotes={},
+                                    cash=5000, cash_at=now, now=now, external_demand=external,
+                                    operational_reserve=config.get_int("settings", "cash_reserve", 0))
+        path.write_text(json.dumps(snapshot), encoding="utf-8")
         status, report = request(port, "GET", "/api/hubs/expansion/research", headers=auth())
         assert status == 200
+        assert report["snapshot_id"] == snapshot["snapshot_id"]
         assert report["external_budget"]["cash"] == 5000
         assert report["external_budget"]["reserve"] == config.get_int("settings", "cash_reserve", 0)
         assert report["items"][0]["external_cost_preview"]["hub_price"] == 10000
         assert report["items"][0]["external_cost_preview"]["hub_only_exceeds_available"] is True
         assert report["items"][0]["purchase_eligible"] is False
+        path.unlink()
+        _, report = request(port, "GET", "/api/hubs/expansion/research", headers=auth())
+        assert report["status"] == "sem_coleta" and report["items"] == []
 
 
 @pytest.mark.parametrize("simulation", [True, False])

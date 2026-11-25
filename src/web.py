@@ -48,7 +48,7 @@ from hub_expansion import HubExpansionRegistry
 from engine_catalog import EngineCatalogRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
 from owned_hub_research_ingestion import OwnedHubResearchInputsRegistry
-from owned_hub_research_feed import build_external_hub_research_queue, build_owned_hub_research_queue
+from owned_hub_research_feed import build_owned_hub_research_queue
 from research_economics_preview import configured_price_assumptions
 from route_detail_evidence import RouteDetailRegistry
 from hub_recommendations import rank_next_aircraft
@@ -62,7 +62,7 @@ from portfolio_planner import compare_portfolio
 from portfolio_planner import compare_audited_portfolio
 from expansion_economics import rank_expansion_economics
 from audited_economics_registry import AuditedEconomicsRegistry
-from audited_game_snapshot import replay_research_page, snapshot_summary
+from audited_game_snapshot import replay_external_research_page, replay_research_page, snapshot_summary
 from planning_cycle import planning_cycle_summary
 from expansion_feasibility import assess_expansion
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
@@ -317,25 +317,8 @@ class WebDashboard:
 
     def external_hub_research(self, *, research_offset: int = 0,
                               research_fingerprint: str | None = None) -> dict:
-        """Serve external combinations from independent, read-only cached evidence."""
-        routes = RouteRegistry().snapshot()
-        inventory = HubRegistry().snapshot()
-        owned = {hub["id"] for hub in inventory.get("hubs", [])
-                 if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
-        external = HubExpansionRegistry().external_demand_snapshot(owned)
-        cash, observed_at = recent_verified_money(self.bot)
-        stats_reader = getattr(self.bot, "stats", None)
-        return build_external_hub_research_queue(
-            inventory, external, load_market_evidence(),
-            engines=EngineCatalogRegistry().snapshot(), offset=research_offset,
-            expected_fingerprint=research_fingerprint,
-            cash=cash, cash_observed_at=observed_at,
-            reserve=self.cfg.get_int("settings", "cash_reserve", 0),
-            operating_market_stats=stats_reader() if callable(stats_reader) else None,
-            preview_margin=max(0, min(100, self.cfg.get_int("investment", "preview_margin_pct", 10))) / 100,
-            configured_prices=configured_price_assumptions(self.cfg),
-            route_report=routes,
-        )
+        """Serve external combinations from the worker's audited capture."""
+        return replay_external_research_page(offset=research_offset, expected_fingerprint=research_fingerprint)
 
     def hub_recommendations(self, *, research_offset: int = 0,
                             research_fingerprint: str | None = None) -> dict:

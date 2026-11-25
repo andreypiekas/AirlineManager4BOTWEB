@@ -4107,6 +4107,18 @@ $("snapshotResearchNext").addEventListener("click", () => {
 function renderExternalHubResearch(page) {
   const list = $("externalResearchList");
   list.replaceChildren();
+  if (page.status !== "parcial") {
+    const messages = {
+      expirado: "Snapshot expirado. Aguarde nova coleta.",
+      sem_coleta: "Aguardando nova captura de evidências.",
+      recoleta_necessaria: "Aguardando nova captura de evidências.",
+      registro_invalido: "Falha ao consultar o snapshot.",
+    };
+    $("externalResearchStatus").textContent = tr(messages[page.status] || "Falha ao consultar o snapshot.");
+    $("externalResearchPrev").disabled = true;
+    $("externalResearchNext").disabled = true;
+    return;
+  }
   $("externalResearchStatus").textContent = tr("Cobertura parcial") + " · " +
     nf.format(page.sampled_hubs) + " / " + nf.format(page.external_hubs) + " · " +
     tr("Amostras de rotas") + ": " + nf.format(page.sampled_routes) + " · " +

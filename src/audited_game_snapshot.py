@@ -137,7 +137,7 @@ def _catalog_scopes(coverage, now):
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                      quotes, cash, cash_at, now, mode=None, mode_at=None,
                      preview_margin=0.10, native_quotes=(), configured_prices=None, policy_values=None,
-                     external_demand=None):
+                     external_demand=None, operational_reserve=None):
     """Translate independently collected observations without upgrading their provenance."""
     hub_at = inventory.get("observed_at")
     raw_hubs = inventory.get("hubs", [])
@@ -224,6 +224,7 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                     "research_inputs": {
                         "mode": mode, "mode_observed_at": mode_at,
                         "preview_margin": preview_margin,
+                        "operational_reserve": operational_reserve,
                         "configured_prices": configured_prices,
                         "route_report": {key: routes.get(key) for key in (
                             "current_roster_verified", "current_roster_observed_at",
@@ -285,6 +286,7 @@ def capture_game_snapshot(bot):
                                 mode_at=stats.mode_read_at if mode else None, preview_margin=margin,
                                 native_quotes=native_route_quotes(bot, now=now),
                                 configured_prices=configured_price_assumptions(config), external_demand=external,
+                                operational_reserve=config.get_int("settings", "cash_reserve", -1) if config else None,
                                 policy_values=audited_policy_values(
                                     InvestmentPolicy.from_config(config),
                                     config.get_int("settings", "cash_reserve", -1) if config else -1))
@@ -369,6 +371,67 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
             )
         return {**result, "status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": captured, "historical_replay": True}
+    except FileNotFoundError:
+        return {**unavailable, "status": "sem_coleta"}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        return {**unavailable, "status": "registro_invalido"}
+
+
+def replay_external_research_page(*, offset=0, expected_fingerprint=None, now=None, path=None):
+    """Evaluate external research exclusively from the current profile's captured evidence."""
+    from types import SimpleNamespace
+
+    from market import MarketQuote
+    from owned_hub_research_feed import build_external_hub_research_queue
+
+    now = time.time() if now is None else now
+    path = path if path is not None else paths.current().data / FILENAME
+    unavailable = {"source": "derived_external_research_queue", "snapshot_id": None,
+                   "items": [], "offset": 0, "next_offset": None, "read_only": True,
+                   "purchase_eligible": False, "coverage": "partial"}
+    try:
+        snapshot = _load_snapshot(path)
+        observed = snapshot["observations"]
+        captured = observed["captured_at"]
+        snapshot_id = snapshot["snapshot_id"]
+        unavailable["snapshot_id"] = snapshot_id
+        if not _fresh(captured, now):
+            return {**unavailable, "status": "expirado"}
+        if "external_route_research" not in observed or "research_inputs" not in observed:
+            return {**unavailable, "status": "recoleta_necessaria"}
+        inputs = observed["research_inputs"]
+        hubs = snapshot["hubs"]
+        inventory = {"source": "game_hub_select", "hubs": hubs,
+                     "hub_catalog_fresh": snapshot["coverage"]["scopes"]["hubs"],
+                     "observed_at": min((hub["observed_at"] for hub in hubs), default=None),
+                     "fleet_commitment_observations": observed["fleet_commitments"],
+                     "staff_observations": observed.get("staff_salary")}
+        external = _external_research(observed["external_route_research"],
+                                      _verified_owned_hubs(inventory, now), now)
+        stats = SimpleNamespace(mode=inputs["mode"], mode_read_at=inputs["mode_observed_at"])
+        for kind in ("fuel", "co2"):
+            quote = observed["market_quotes"].get(kind)
+            if quote is not None and quote.get("source") == "game_market" and quote.get("unit") == "USD/1000":
+                setattr(stats, f"{kind}_quote", MarketQuote(quote["price"], quote["observed_at"], quote["expires_at"]))
+        reserve = inputs.get("operational_reserve")
+        if reserve is None:
+            reserve = (observed.get("investment_policy") or {}).get("operational_reserve")
+        minimum, maximum = AUDITED_POLICY_LIMITS["operational_reserve"]
+        if type(reserve) is not int or not minimum <= reserve <= maximum:
+            reserve = None
+        cash = observed["cash"]
+        prefix = snapshot_id + ":"
+        inner = (expected_fingerprint[len(prefix):] if isinstance(expected_fingerprint, str)
+                 and expected_fingerprint.startswith(prefix) else None)
+        result = build_external_hub_research_queue(
+            inventory, external, observed["aircraft_market"], now=now,
+            engines=observed["engine_catalog"], offset=offset, expected_fingerprint=inner,
+            cash=cash["available"], cash_observed_at=cash["observed_at"], reserve=reserve,
+            operating_market_stats=stats, preview_margin=inputs["preview_margin"],
+            configured_prices=inputs.get("configured_prices"), route_report=inputs["route_report"],
+        )
+        return {**result, "status": "parcial", "snapshot_id": snapshot_id,
+                "captured_at": captured, "snapshot_fingerprint": prefix + result["snapshot_fingerprint"]}
     except FileNotFoundError:
         return {**unavailable, "status": "sem_coleta"}
     except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):

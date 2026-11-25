@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A6, replay auditado da pesquisa externa (G0)
+
+- `src/audited_game_snapshot.py` passa a capturar a reserva operacional e disponibiliza `replay_external_research_page()`. O replay utiliza exclusivamente as evidências do perfil capturado, verifica identidade, integridade e vigência, revalida propriedade, preço, pontos e demanda com o relógio atual e vincula a paginação à captura e às evidências vigentes. Reserva auditada anterior pode ser usada quando a nova observação está ausente. Valores inválidos permanecem desconhecidos. O orçamento apresentado é anterior aos compromissos.
+- `src/web.py` substitui as leituras independentes no endpoint de pesquisa externa pelo replay. `assets/web/index.html` limpa resultados e desabilita paginação diante de captura ausente, vencida ou inválida. Compatibilidade com captura anterior preservada mediante nova coleta. Resultado somente leitura, parcial e inelegível para compra. Não certifica lucro, custo total ou esgotamento de hubs próprios.
+- Testes direcionados (222 aprovados), incluindo UI/JavaScript, API, paginação, alteração da captura, expiração independente de preço/pontos, propriedade, adulteração e isolamento por perfil. Suíte Windows consolidada: 2.200 aprovados e 1 ignorado (138,41 s; instalação Linux excluída). Ruff, compileall e git diff --check aprovados. Homologação autenticada e instalação Linux pendentes. G0 preservado; nenhuma transação real ou implantação. Rollback por reversão do commit desta entrega.
+
 ## 2026-11-25 — Autonomia Total A6, captura auditada da pesquisa externa (G0)
 
 - O snapshot produtivo passa a incluir observações do catálogo de aquisição e da pesquisa externa de rotas, separadas da pesquisa dos hubs próprios e vinculadas ao fingerprint da captura. A inclusão depende de inventário próprio vigente, procedência correta e identidades de candidatos e rotas não ambíguas. Preço e pontos expiram independentemente; amostras inválidas, vencidas, conflitantes ou pertencentes a hubs próprios são excluídas. O resumo disponibiliza contagens vigentes de candidatos, preços, pontos e amostras, sem identidades privadas.

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import paths
 from native_route_quotes import native_route_quotes, record_native_route_quote
 from audited_game_snapshot import (
-    FILENAME, capture_game_snapshot, compose_snapshot, replay_research_page, snapshot_summary,
+    FILENAME, capture_game_snapshot, compose_snapshot, replay_external_research_page, replay_research_page, snapshot_summary,
 )
 from opportunity_models import fingerprint_snapshot
 
@@ -119,6 +119,63 @@ def test_external_snapshot_rejects_stale_and_future_costs_and_samples():
     research = compose_snapshot(**observations(), external_demand=external)["observations"]["external_route_research"]
     assert research["candidate_inventory"] == [{"id": "12", "code": "EXT", "observed_at": NOW - 10}]
     assert research["samples"] == []
+
+
+def test_external_replay_binds_cursor_to_capture_and_expires_costs(tmp_path, monkeypatch):
+    from test_owned_hub_research_feed import _market, _preview_engines
+
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    evidence = observations()
+    external = external_observations()
+    external["samples"] = [{**external["samples"][0], "destination_id": str(i)} for i in range(100, 150)]
+    evidence.update(market=_market(), engines=_preview_engines(), operational_reserve=100)
+    path = tmp_path / FILENAME
+    snapshot = compose_snapshot(**evidence, external_demand=external)
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    first = replay_external_research_page(now=NOW, path=path)
+    assert first["status"] == "parcial" and first["snapshot_id"] == snapshot["snapshot_id"]
+    assert first["external_budget"]["available_before_commitments"] == 1100
+    assert first["has_more"] and first["purchase_eligible"] is False
+    assert first["items"] and all(item["external_cost_preview"]["hub_points"] == 0 for item in first["items"])
+    cursor = first["snapshot_fingerprint"]
+    second = replay_external_research_page(now=NOW, path=path, offset=first["next_offset"],
+                                          expected_fingerprint=cursor)
+    assert not second["cursor_reset"] and second["offset"] == first["next_offset"]
+    later = replay_external_research_page(now=NOW + 875, path=path,
+                                         offset=first["next_offset"], expected_fingerprint=cursor)
+    assert later["items"] and later["cursor_reset"] and later["offset"] == 0
+    assert all(item["external_cost_preview"]["hub_points"] is None for item in later["items"])
+    assert all(item["external_cost_preview"]["hub_price"] == 1000 for item in later["items"])
+    expired_ownership = replay_external_research_page(now=NOW + 881, path=path)
+    assert expired_ownership["items"] == [] and expired_ownership["external_hubs"] == 0
+    evidence["cash"] = 1201
+    replacement = compose_snapshot(**evidence, external_demand=external)
+    path.write_text(json.dumps(replacement), encoding="utf-8")
+    changed = replay_external_research_page(now=NOW, path=path, offset=first["next_offset"],
+                                           expected_fingerprint=cursor)
+    assert changed["cursor_reset"] and changed["offset"] == 0
+    assert replay_external_research_page(now=NOW + 901, path=path)["status"] == "expirado"
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile("other"))
+    assert replay_external_research_page(now=NOW, path=path)["status"] == "registro_invalido"
+
+
+def test_external_replay_rejects_missing_legacy_and_tampered_capture(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    path = tmp_path / FILENAME
+    assert replay_external_research_page(now=NOW, path=path)["status"] == "sem_coleta"
+    evidence = observations()
+    evidence["policy_values"] = {"operational_reserve": 100}
+    legacy = compose_snapshot(**evidence)
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+    assert replay_external_research_page(now=NOW, path=path)["status"] == "recoleta_necessaria"
+    snapshot = compose_snapshot(**evidence, external_demand=external_observations())
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    report = replay_external_research_page(now=NOW, path=path)
+    assert report["external_budget"]["available_before_commitments"] == 1100
+    snapshot["observations"]["cash"]["available"] = 999999
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    invalid = replay_external_research_page(now=NOW, path=path)
+    assert invalid["status"] == "registro_invalido" and invalid["items"] == []
 
 
 def test_capture_reads_external_registry_for_current_profile(tmp_path, monkeypatch):
