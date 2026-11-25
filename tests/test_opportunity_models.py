@@ -494,10 +494,19 @@ def test_aircraft_price_basis_prevents_double_counting(basis, engine_cost, expec
     assert result["economics"]["total_investment"] is None
 
 
-def test_final_price_with_explicit_zero_delta_is_accepted():
+def checkout_proof(candidate):
+    cost = candidate["costs"]["aircraft_cost"]
+    return evidence("game_aircraft_checkout", snapshot_id=candidate["snapshot_id"],
+                    model_id=cost["model_id"], engine_id=cost["engine_id"],
+                    amount_usd=cost["value"], price_source="data_final_price",
+                    status="verified", reason=None, price_includes_engine=True)
+
+
+def test_final_price_with_verified_checkout_and_explicit_zero_delta_is_accepted():
     snapshot, candidate = sample()
     candidate["costs"]["aircraft_cost"]["price_basis"] = "final_including_engine"
     candidate["costs"]["engine_delta_cost"]["value"] = 0
+    candidate["costs"]["aircraft_cost"]["checkout"] = checkout_proof(candidate)
     result = evaluate(snapshot, candidate)
     assert result["status"] == "suggested"
     assert result["economics"]["total_investment"] == 10_150.0
@@ -571,3 +580,32 @@ def test_placeholder_engine_id_is_blocked():
     snapshot, candidate = sample()
     candidate["aircraft"]["engine_id"] = "0"
     assert "ENGINE_ID_UNVERIFIED" in codes(evaluate(snapshot, candidate))
+
+
+@pytest.mark.parametrize("expiry", [NOW, NOW - 1, None, True, "later", float("inf")])
+@pytest.mark.parametrize("field", ["financial", "aircraft_cost"])
+def test_financial_explicit_expiry_blocks_even_recent_observations(expiry, field):
+    snapshot, candidate = sample()
+    proof = candidate["financial"] if field == "financial" else candidate["costs"][field]
+    proof["expires_at"] = expiry
+    result = evaluate(snapshot, candidate)
+    assert "EVIDENCE_STALE" in codes(result)
+    assert result["economics"]["payback_days"] is None
+
+
+@pytest.mark.parametrize("changes", [
+    None, {"engine_id": "other"}, {"model_id": "999"}, {"amount_usd": 10001},
+    {"price_source": "displayed_cost_usd"}, {"price_includes_engine": False},
+    {"status": "unknown"}, {"verified": False}, {"snapshot_id": "foreign"},
+    {"profile_id": "foreign"}, {"expires_at": NOW},
+])
+def test_final_price_requires_current_exact_variant_checkout(changes):
+    snapshot, candidate = sample()
+    cost = candidate["costs"]["aircraft_cost"]
+    cost["price_basis"] = "final_including_engine"
+    candidate["costs"]["engine_delta_cost"]["value"] = 0
+    if changes is not None:
+        cost["checkout"] = {**checkout_proof(candidate), **changes}
+    result = evaluate(snapshot, candidate)
+    assert result["status"] == "blocked"
+    assert result["economics"]["total_investment"] is None

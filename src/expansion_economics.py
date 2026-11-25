@@ -26,7 +26,7 @@ from copy import deepcopy
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
-from opportunity_models import DEFAULT_MAX_AGE_SECONDS, evaluate_investment
+from opportunity_models import DEFAULT_MAX_AGE_SECONDS, evidence_is_current, evaluate_investment
 from route_optimizer import CLASS_WEIGHTS
 
 
@@ -117,7 +117,7 @@ def _evidenced_inputs(
                        for key in _SUBJECTS[field])):
             _reason(reasons, "EVIDENCE_CONTRADICTORY", f"inputs.{field}")
             continue
-        if stamp is None or not 0 <= Decimal(str(now)) - stamp <= Decimal(str(max_age_seconds)):
+        if stamp is None or not evidence_is_current(item, now, max_age_seconds):
             _reason(reasons, "EVIDENCE_STALE", f"inputs.{field}")
             continue
         values[field] = item.get("value")
@@ -126,6 +126,7 @@ def _evidenced_inputs(
             "profile_id": profile_id, "snapshot_id": snapshot_id,
             **{key: item[key] for key in _SUBJECTS[field]},
             "value": deepcopy(item.get("value")),
+            **({"expires_at": item["expires_at"]} if "expires_at" in item else {}),
         }
     return values, provenance
 

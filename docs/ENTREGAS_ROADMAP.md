@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A3/A4, validade de preços e cobertura econômica (G0)
+
+- A avaliação econômica respeita a expiração explícita das evidências além da idade máxima da observação. O registro mantém esse prazo na proveniência e o planejador A4 revalida os controles e insumos financeiros ao consultar o resultado.
+- O preço final que inclui motor exige checkout vinculado ao mesmo perfil, snapshot, modelo e variante, com fonte final admitida pelo contrato A1, valor idêntico e confirmação de inclusão do motor. Checkout ausente, divergente, vencido ou preço apenas anunciado impede o cálculo do investimento elegível.
+- A cobertura integral é revalidada pelo fingerprint do snapshot original A3, seu prazo de validade, escopos, contagem de aeronaves e páginas e IDs únicos. Flags persistidas isoladamente não provam a pesquisa; a API A4 passa a exigir o snapshot estruturado. As verificações da captura corrente permanecem obrigatórias.
+- Validação local: testes de registro econômico, avaliação, contrato e portfólio aprovados; suíte Windows aprovada, com um teste ignorado e instalação POSIX excluída; Ruff, compileall e git diff --check aprovados. Rollback por reversão deste commit. As fontes reais de preço final por variante, cobertura integral e alimentação produtiva do registro A3 ainda precisam de homologação. Testes sintéticos não constituem essa evidência. Nenhuma transação real, implantação ou merge em main realizado.
+
 ## 2026-11-24 — Autonomia Total A1, preço final vinculado à variante de motor (G0)
 
 - Cada variante do catálogo passa a carregar um contrato tipado `FinalCheckoutPrice`, com identidade do motor, valor, fonte e estado de verificação. As leituras atuais permanecem como `unknown`, pois a observação autenticada de 23/11 identificou `#engSelection` e `#acCost`, mas não comprovou um preço final associado a cada variante.

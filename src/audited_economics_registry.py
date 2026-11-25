@@ -17,6 +17,7 @@ from typing import Any, Mapping
 
 import paths
 from expansion_economics import evaluate_expansion_economics
+from opportunity_models import complete_coverage_snapshot
 
 
 _LOCK = threading.RLock()
@@ -169,6 +170,7 @@ class AuditedEconomicsRegistry:
             return {"status": "registro_invalido", "snapshot_id": None,
                     "evaluations": [], "portfolio_evidence": {}, "read_only": True}
         results = []
+        coverage_snapshot = None
         for entry in stored.get("cases", []):
             if not isinstance(entry, dict):
                 return {"status": "registro_invalido", "snapshot_id": None,
@@ -188,10 +190,22 @@ class AuditedEconomicsRegistry:
                 return {"status": "registro_invalido", "snapshot_id": None,
                         "evaluations": [], "portfolio_evidence": {}, "read_only": True}
             results.append(result)
+            if complete_coverage_snapshot(entry["snapshot"], profile_id=profile_id,
+                                          snapshot_id=stored["snapshot_id"], now=now):
+                coverage_snapshot = entry["snapshot"]
+        portfolio_evidence = deepcopy(stored.get("portfolio") or {})
+        # Legacy flags cannot create coverage. Only the original, current
+        # fingerprinted A3 snapshot can prove the complete A4 search scope.
+        portfolio_evidence.pop("coverage_snapshot", None)
+        if coverage_snapshot is not None:
+            portfolio_evidence["coverage_snapshot"] = deepcopy(coverage_snapshot)
+        else:
+            portfolio_evidence["fleet_coverage_verified"] = False
+            portfolio_evidence["research_coverage_verified"] = False
         return {
             "status": "registrado" if stored else "sem_avaliacoes",
             "snapshot_id": stored.get("snapshot_id"),
             "evaluations": results,
-            "portfolio_evidence": deepcopy(stored.get("portfolio") or {}),
+            "portfolio_evidence": portfolio_evidence,
             "read_only": True,
         }

@@ -9,6 +9,7 @@ from expansion_economics import (
     _SOURCES as A3_PROVENANCE_SOURCES,
     _SUBJECTS as A3_PROVENANCE_SUBJECTS,
 )
+from opportunity_models import fingerprint_snapshot
 from portfolio_planner import _audited_a3_cash, compare_audited_portfolio, compare_portfolio
 
 
@@ -443,7 +444,19 @@ def test_zero_weight_does_not_require_or_invent_optional_evidence():
 # A4 fixtures are synthetic A3 output contracts. They never claim to describe
 # a real game observation or imply that the acquisition gates were homologated.
 PROFILE = "synthetic-profile"
-SNAPSHOT = "synthetic-snapshot"
+
+COVERAGE_SNAPSHOT = {
+    "schema_version": 1, "profile_id": PROFILE, "source": "game_snapshot",
+    "verified": True, "observed_at": NOW,
+    "coverage": {"source": "game_fleet_scan", "profile_id": PROFILE,
+                 "verified": True, "observed_at": NOW, "status": "complete",
+                 "observed_pages": 1, "expected_pages": 1,
+                 "expected_aircraft_count": 1, "count_source": "game_fleet_total",
+                 "observed_aircraft_ids": ["101"],
+                 "scopes": dict.fromkeys(("hubs", "fleet", "routes", "models", "engines", "prices"), True)},
+}
+SNAPSHOT = fingerprint_snapshot(COVERAGE_SNAPSHOT)
+COVERAGE_SNAPSHOT["snapshot_id"] = SNAPSHOT
 
 
 def a4_proof(value, source, *, hub_id=None, economics_id=None, **changes):
@@ -529,6 +542,7 @@ def a4_compare(*evaluations, controls=None, capacities=None, **changes):
                 "controls": a4_controls() if controls is None else controls,
                 "passenger_hangar": default_capacity if capacities is None else capacities,
                 "fleet_coverage_verified": True, "research_coverage_verified": True,
+                "coverage_snapshot": COVERAGE_SNAPSHOT,
                 "commitments_verified": True, "max_single_investment": 9000,
                 "current_cash_reserve": 0, "max_daily_spend": 30000,
                 "max_cycle_spend": 20000,
@@ -945,3 +959,26 @@ def test_a4_return_and_confidence_weights_require_real_a3_or_snapshot_proof():
                             max_single_investment=12000)
     assert confidence["best"]["hub_id"] == "123"
     assert confidence["execution_available"] is False
+
+
+@pytest.mark.parametrize("change", [None, {"status": "partial"}, {"observed_pages": 0},
+                                    {"observed_aircraft_ids": []}, {"expires_at": NOW},
+                                    {"scopes": {"fleet": True}}, {"profile_id": "foreign"}])
+def test_a4_requires_structured_current_complete_coverage(change):
+    from copy import deepcopy
+    snapshot = None if change is None else deepcopy(COVERAGE_SNAPSHOT)
+    if snapshot is not None:
+        snapshot["coverage"].update(change)
+    result = a4_compare(a4_evaluation(), coverage_snapshot=snapshot)
+    assert result["decision"] == "nao_comprar"
+    assert "cobertura_frota_a_confirmar" in result["blocking_reasons"]
+    assert "cobertura_pesquisa_a_confirmar" in result["blocking_reasons"]
+
+
+def test_a4_rechecks_explicit_provenance_and_control_expiry():
+    row = a4_evaluation()
+    row["provenance"]["fuel_price_per_1000"]["expires_at"] = NOW
+    assert a4_compare(row)["decision"] == "nao_comprar"
+    controls = a4_controls()
+    controls["cycle_spent"]["expires_at"] = NOW
+    assert a4_compare(a4_evaluation(), controls=controls)["decision"] == "nao_comprar"
