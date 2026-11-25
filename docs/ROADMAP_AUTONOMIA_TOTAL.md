@@ -7,17 +7,17 @@
 
 ## Estado em 25/11/2026
 
-**Base de implementação** `b9af7d2` na branch `codex/autonomia-a0-a1-20261122`. A PR #44 aponta para `33d081b` e deve ser conferida antes de qualquer promoção.
+**Branch de implementação** `codex/autonomia-a0-a1-20261122`, acompanhada pela [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46). A PR #44 aponta para `33d081b` e deve ser conferida antes de qualquer promoção.
 
 | Frente | Implementação disponível | Evidência ou trabalho pendente |
 | --- | --- | --- |
 | A0 | Proteções do G0 e testes automatizados de regressão. | Homologação autenticada e validação da instalação no servidor. |
-| A1/A2 | Checkout revalida modelo, motor, base, estabilidade do preço e aviso de saldo. Inventário, pesquisa de rotas e cobertura incremental disponíveis. | Provar o preço final por modelo, variante e hub de entrega, o vínculo permanente aeronave–hub e a cobertura de rotas. A observação de `#acCost` no A320-200 e a amostra do A380-800 ainda não comprovam o preço por variante. Manter `price_verified=false` onde faltar prova. |
+| A1/A2 | Checkout revalida modelo, motor, base, estabilidade do preço e aviso de saldo. A coleta auditada preserva o aviso de demanda de evento das leituras correlacionadas. | Provar o preço final por modelo, variante e hub de entrega, o vínculo permanente aeronave–hub e a cobertura de rotas. `#acCost` no A320-200 e no A380-800 exibiu valores estáveis nas configurações amostradas. Manter `price_verified=false` onde faltar prova do preço final. |
 | A3/A4 | O worker vincula a análise ao snapshot auditado e limita a decisão pelo menor dos três saldos independentes, líquido de compromissos e reserva. | Coletar layout Y/J/F, disponibilidade, demanda residual, tarifas, taxa de rota e custos incrementais. Publicar casos completos e cobertura auditada da fila de oportunidades. |
 | A6/A7 | Replay externo, painel e Telegram reutilizam a propriedade auditada. Conflitos de inventário impedem a recomendação. | Completar catálogo, demanda e cenários externos com custos próprios de expansão. Demonstrar o esgotamento das opções internas com cobertura auditada antes de recomendar um hub. |
 | A5/A8/A9 | Existem contratos de pré-voo, controles de execução e métricas. | Homologar o executor, testar a conciliação após falhas e calibrar o lucro previsto com observações reais. A execução segue bloqueada em G0. |
 
-A validação da base registrou 2.204 testes aprovados e 1 ignorado no Windows, além de 16 testes simulados do instalador no Ubuntu via WSL. Evidências e resultados por entrega constam no [histórico de entregas](ENTREGAS_ROADMAP.md). Para retomar, leia o [contexto permanente](contexto.md).
+A última validação registrou 2.205 testes aprovados e 1 ignorado no Windows. A base anterior passou em 16 testes simulados do instalador no Ubuntu via WSL. Evidências e resultados por entrega constam no [histórico de entregas](ENTREGAS_ROADMAP.md). Para retomar, leia o [contexto permanente](contexto.md).
 
 ## 1. Visão e regra central
 
@@ -131,6 +131,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 - Testar todas as variantes, seleção explícita, simulação, mudança de preço, reconstrução de DOM e seletores inesperados.
 - **Aceite:** nenhuma compra confirma motor/modelo/preço/hub diferentes dos previstos, e nenhuma alteração ocorre no modo análise.
 - Progresso em 25/11/2026: o pré-voo planejado reabre o painel atual após duas verificações de preço e bloqueia a encomenda se o jogo exibir aviso de saldo insuficiente. A evidência disponível ainda não confirma a fonte do preço final por modelo, variante e hub. G0 permanece vigente.
+- Consulta autenticada ao A380-800 em 25/11/2026: `#engSelection` apresentou três variantes. O valor em `#acCost` ficou estável ao alternar GP7270 e RR Trent 972 e consultar duas bases de entrega. O elemento observado não expôs `data-final-price`. A cotação final vinculada à configuração continua pendente.
 
 ### Fase A2 — Hubs, cobertura e dados de rota completos (P0)
 
@@ -139,12 +140,14 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 - Completar coleta de preço, pontos, pista, país, disponibilidade e demanda dos hubs candidatos; descobrir se pesquisa de rota pode partir de **hub ainda não comprado**.
 - Montar feed de cenários para HubAircraftResearchRegistry.record() e HubExpansionRegistry.record_research(), com fonte e data comprovadas.
 - Armazenar mapas de cobertura por hub, rota, modelo e ciclo; expirados não habilitam compra.
+- Evidência em 25/11/2026: uma consulta autenticada retornou 50 linhas de pesquisa, todas sinalizadas como demanda de evento, sem controle de continuação identificado. O fim das combinações da amostra continua insuficiente para provar a enumeração de destinos por hub ou o esgotamento interno. A aba de frota consultada exibiu contagens agregadas. Paginação da frota e vínculo por aeronave seguem pendentes.
 - **Aceite:** painel mostra evidência e cobertura; ausência de pesquisa de hub externo aparece como impeditivo, não como candidato viável.
 
 ### Fase A3 — Otimizador de rotas e rentabilidade por motor (P0)
 
 - Gerar candidatos para cada combinação admissível **hub próprio × rota × modelo × motor × configuração de assentos**; aplicar poda de inviáveis antes de estimar retorno.
 - Validar distância, alcance por segmento e escalas, comprimento de pista na unidade oficial do jogo, demanda residual após outras aeronaves, horários/rotação, competição da própria frota e regras de rotas duplicadas.
+- Registrar separadamente a demanda ampliada por evento. Se uma leitura correlacionada exibir o aviso, manter o bloqueio da projeção econômica para a amostra.
 - Calcular receita diária por Y/J/F e voos possíveis, combustível e CO₂ em preço configurado e cenários de stress. Incluir custos de rota/hangar/aeronave/motor e projetar manutenção, A-check e demais despesas **apenas se houver fórmula/evidência verificada**; caso contrário, marcar como excluídos e aplicar reserva/margem conservadora configurável.
 - Reportar lucro incremental, capex, caixa após compra, payback, ROI e sensibilidade (demanda, combustível, CO₂, ocupação), mais confiabilidade da observação.
 - Comparar alternativas para diferentes hubs e motores, não só o maior score de modelo.

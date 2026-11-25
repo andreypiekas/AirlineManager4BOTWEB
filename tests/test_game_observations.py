@@ -371,19 +371,24 @@ def test_demand_script_keeps_missing_attributes_visible_to_validator():
 const attrs = {onclick: 'route_research_route.php?dep=2926&arr=3139',
                'data-distance': '1992.763', 'data-yclass': '120',
                'data-jclass': '106', 'data-fclass': '40', 'data-rwy': '5013'};
-const row = {getAttribute: name => attrs[name] ?? null};
+const row = {getAttribute: name => attrs[name] ?? null, querySelector: () => null,
+             dataset: {distance: '1992.763', yclass: '120', jclass: '106', fclass: '40', rwy: '5013'}};
 const result = {querySelector: () => null,
                 querySelectorAll: () => [row]};
-globalThis.document = {querySelector: () => result};
+globalThis.document = {querySelector: () => result, querySelectorAll: result.querySelectorAll};
 const observe = new Function(process.argv[1]);
+const search = new Function(process.argv[2]);
 const valid = observe();
+const ordinaryCandidate = search()[0];
 row.textContent = '*Demand is currently boosted due to a special event';
 const boosted = observe();
+const boostedCandidate = search()[0];
 delete attrs['data-yclass'];
 const missing = observe();
-console.log(JSON.stringify({valid, boosted, missing}));
+console.log(JSON.stringify({valid, boosted, missing, ordinaryCandidate, boostedCandidate}));
 """
-    response = subprocess.run(["node", "-e", js, game_observations._VERIFIED_ROUTE_DEMAND_JS],
+    response = subprocess.run(["node", "-e", js, game_observations._VERIFIED_ROUTE_DEMAND_JS,
+                               fleet._CANDIDATES_JS],
                               capture_output=True, text=True, check=True, timeout=8)
     data = json.loads(response.stdout)
     assert data["valid"] == [{"dep_id": "2926", "arr_id": "3139", "distance": "1992.763",
@@ -391,6 +396,8 @@ console.log(JSON.stringify({valid, boosted, missing}));
                               "event_demand_boosted": None}]
     assert data["boosted"][0]["event_demand_boosted"] is True
     assert data["missing"][0]["y"] is None
+    assert data["ordinaryCandidate"]["event_demand_boosted"] is False
+    assert data["boostedCandidate"]["event_demand_boosted"] is True
 
 
 def test_price_collection_requires_identical_correlated_reads(tmp_path, monkeypatch):
@@ -872,6 +879,27 @@ def test_event_demand_retains_only_explicit_positive_observation():
     for flag in (None, False, "true", 1, True):
         row = game_observations._verified_demand(candidates, [{**raw, "event_demand_boosted": flag}], "2926")[0]
         assert row.get("event_demand_boosted") is (True if flag is True else None)
+
+
+def test_search_keeps_event_warning_when_followup_dom_read_loses_it(tmp_path, monkeypatch):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    monkeypatch.setattr(fleet, "HubExpansionRegistry", lambda: registry)
+
+    class Bot:
+        def ajax(self, *_args):
+            pass
+
+        def js(self, _script):
+            return [{"arr": "3139", "name": "SBL", "distance": "2000",
+                     "y": "100", "j": "20", "f": "5", "rwy": "5013", "event_demand_boosted": True}]
+
+    candidates = fleet.search_routes(Bot(), "2926", 3000, 1000, persist_demand=True)
+    assert registry.demand_research_snapshot({"2926"})["samples"][0]["event_demand_boosted"] is True
+
+    raw = {"dep_id": "2926", "arr_id": "3139", "distance": "2000",
+           "y": "100", "j": "20", "f": "5", "runway": "5013"}
+    samples = game_observations._verified_demand(candidates, [raw], "2926")
+    assert samples[0]["event_demand_boosted"] is True
 
 
 def test_demand_collector_persists_dom_read_time_even_when_processing_is_late(

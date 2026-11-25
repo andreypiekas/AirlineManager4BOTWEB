@@ -9,6 +9,7 @@ import time
 
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
+from fleet import ROUTE_EVENT_WARNING_JS
 from engine_catalog import EngineCatalogRegistry, MODEL_ROSTER_JS
 from engine_detail import (
     MODEL_DETAIL_IDENTITY_JS, parse_displayed_metrics, parse_operational_requirements, parse_seat_observation,
@@ -232,9 +233,9 @@ return rows.map(el => ({
   y: el.getAttribute('data-yclass'),
   j: el.getAttribute('data-jclass'),
   f: el.getAttribute('data-fclass'),
-  event_demand_boosted: /\bDemand is currently boosted due to a special event\b/i.test(el.textContent || '') ? true : null
+  event_demand_boosted: EVENT_WARNING.test(el.textContent || '') ? true : null
 }));
-"""
+""".replace("EVENT_WARNING", ROUTE_EVENT_WARNING_JS)
 
 _AIRPORT_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _COUNT = re.compile(r"^[0-9]{1,9}$")
@@ -293,7 +294,8 @@ def _verified_demand(candidates: list, rows: object, origin: str) -> list[dict]:
             return []
         sample = {"arr_id": destination, "distance": distance,
                   "y": counts[0], "j": counts[1], "f": counts[2]}
-        if raw.get("event_demand_boosted") is True:
+        # Keep a positive warning from either correlated DOM read.
+        if candidate.event_demand_boosted is True or raw.get("event_demand_boosted") is True:
             sample["event_demand_boosted"] = True
         runway = raw.get("runway")
         if (isinstance(runway, str) and _COUNT.fullmatch(runway)

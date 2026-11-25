@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A1–A3, demanda de evento na pesquisa auditada (G0)
+
+- Na consulta autenticada e somente leitura em Fleet → Research, as 50 linhas em `#resResult #list .sorter` exibiram o aviso `Demand is currently boosted due to a special event`. As linhas traziam atributos de distância e demanda Y/J/F. Nenhum controle de continuação foi identificado na amostra. Em Fleet, a vista consultada exibiu contagens agregadas por categoria. A evidência não confirma paginação, vínculo permanente aeronave–hub, demanda residual ou cobertura integral por hub.
+- No A380-800, o catálogo apresentou GP7270, RR Trent 970 e RR Trent 972. O valor exibido em `#acCost` permaneceu em US$ 215.629.503 ao alternar GP7270 e RR Trent 972 e consultar duas bases de entrega. O elemento não apresentou `data-final-price`. O preço final por configuração segue pendente, com `price_verified=false`.
+- O coletor preserva o aviso explícito da pesquisa inicial ou da leitura estável posterior quando origem, destino, distância e demanda concordam. Os resultados com aviso continuam disponíveis como observações parciais e bloqueiam a projeção econômica auditada. Uma revisão independente confirmou que o fim da fila amostrada não promove a cobertura de A4 ou A6. O texto observado e coberto pelos testes está em inglês.
+- Os 335 testes direcionados passaram, incluindo o desaparecimento do aviso entre as leituras. A suíte Windows terminou com 2.205 aprovados e 1 ignorado, excluindo os testes do instalador Linux. Ruff, compileall e `git diff --check` passaram. A coleta autenticada sondou o catálogo e os resultados visíveis. G0 vigente, sem compra, criação de rota ou implantação. Casos econômicos completos, cobertura por hub e homologação integral seguem pendentes. Rollback por reversão do commit da entrega. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46)
+
 ## 2026-11-25 — Autonomia Total, compactação dos arquivos de retomada (G0)
 
 - O [contexto permanente](contexto.md) guarda o checkpoint ativo e remete à revisão `8fdab91` no Git para os detalhes anteriores. O [índice multiparte](codex_multipart_commit.md) substitui o texto longo na leitura de retomada. O histórico bruto foi compactado em GZip local, ignorado pelo Git.

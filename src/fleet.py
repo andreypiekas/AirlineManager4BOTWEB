@@ -138,8 +138,7 @@ Promise.all(ids.map(async aircraft_id => {
 })).then(done, () => done([]));
 """
 
-# Everything below reads the game by structure (ids, classes, data attributes, onclick handlers),
-# never by visible text, so the bot works with the game in English, Spanish or any other language.
+# Read game identities and numeric values from IDs, classes, data attributes and handlers.
 
 # "A/C on route": first row of the small table under the demand table in the route details.
 _ON_ROUTE_JS = """
@@ -156,16 +155,19 @@ return Array.from(document.querySelectorAll("#routesContainer [id^='routeMainPar
 });
 """
 
-_CANDIDATES_JS = """
+ROUTE_EVENT_WARNING_JS = r"/\bDemand is currently boosted due to a special event\b/i"
+
+_CANDIDATES_JS = r"""
 return Array.from(document.querySelectorAll("#resResult #list .sorter")).map(el => {
-  const arr = ((el.getAttribute("onclick") || "").match(/arr=(\\d+)/) || [])[1];
+  const arr = ((el.getAttribute("onclick") || "").match(/arr=(\d+)/) || [])[1];
   const title = el.querySelector(".exo");
   return {arr: arr || null, name: title ? title.textContent.trim() : "?",
           code: el.dataset.iata || el.dataset.icao || el.dataset.code || (title ? title.getAttribute("data-code") || title.title || "" : ""),
           distance: el.dataset.distance || "0",
-          y: el.dataset.yclass || "0", j: el.dataset.jclass || "0", f: el.dataset.fclass || "0", rwy: el.dataset.rwy || "0"};
+          y: el.dataset.yclass || "0", j: el.dataset.jclass || "0", f: el.dataset.fclass || "0", rwy: el.dataset.rwy || "0",
+          event_demand_boosted: EVENT_WARNING.test(el.textContent || "")};
 });
-"""
+""".replace("EVENT_WARNING", ROUTE_EVENT_WARNING_JS)
 
 _HUB_OPTIONS_JS = """
 const select = document.getElementById("hubSelect");
@@ -207,6 +209,7 @@ class RouteCandidate:
     f: int
     runway: int
     code: str = ""  # game-confirmed IATA/ICAO when available
+    event_demand_boosted: bool = False
 
 
 @dataclass
@@ -1282,11 +1285,12 @@ def search_routes(bot: "Bot", hub_id: str, max_distance: int, min_runway: int, *
         candidates.append(RouteCandidate(
             row["arr"], row["name"], distance,
             to_int(row["y"]) or 0, to_int(row["j"]) or 0, to_int(row["f"]) or 0, to_int(row["rwy"]) or 0,
-            code_from_candidate(row),
+            code_from_candidate(row), event_demand_boosted=row.get("event_demand_boosted") is True,
         ))
     if persist_demand and candidates:
         samples = [{"arr_id": item.arr_id, "distance": item.distance,
-                    "y": item.y, "j": item.j, "f": item.f} for item in candidates]
+                    "y": item.y, "j": item.j, "f": item.f,
+                    "event_demand_boosted": item.event_demand_boosted} for item in candidates]
         count = HubExpansionRegistry().record_demand(hub_id, samples)
         log.info("Pesquisa de rotas: %d amostras de demanda persistidas para hub %s.", count, hub_id)
     return candidates
