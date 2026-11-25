@@ -3,17 +3,17 @@
 **Criado em:** 22/11/2026  
 **Base de análise:** main, commit cd15a32af2a9ed7c10a78017ce0f90c09b439216  
 **Estado deste documento:** planejamento com implementação incremental em andamento. Entregas, testes e pendências de homologação são registrados em [ENTREGAS_ROADMAP.md](ENTREGAS_ROADMAP.md).
-**Relação:** complementa [ROADMAP_HUBS_AERONAVES.md](ROADMAP_HUBS_AERONAVES.md), [ENTREGAS_ROADMAP.md](ENTREGAS_ROADMAP.md) e o trabalho em andamento na PR #44. Não substitui nem considera homologadas as pendências dessa PR.
+**Relação** — complementa [ROADMAP_HUBS_AERONAVES.md](ROADMAP_HUBS_AERONAVES.md) e [ENTREGAS_ROADMAP.md](ENTREGAS_ROADMAP.md). Os requisitos e as pendências da implementação inicial de hubs estão na [PR #44](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/44).
 
 ## Estado em 25/11/2026
 
-**Branch de implementação** `codex/autonomia-a0-a1-20261122`, acompanhada pela [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46). A PR #44 aponta para `33d081b` e deve ser conferida antes de qualquer promoção.
+**Branches permanentes** — `main` e `codex/autonomia-a0-a1-20261122`. A segunda concentra o desenvolvimento da [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46). A implementação inicial da PR #44 está arquivada no commit `33d081b` e serve de referência para a revisão de uma futura promoção.
 
 | Frente | Implementação disponível | Evidência ou trabalho pendente |
 | --- | --- | --- |
 | A0 | Proteções do G0 e testes automatizados de regressão. | Homologação autenticada e validação da instalação no servidor. |
 | A1/A2 | Checkout revalida modelo, motor, base, estabilidade do preço e aviso de saldo. A coleta auditada preserva o aviso de demanda de evento das leituras correlacionadas. | Provar o preço final por modelo, variante e hub de entrega, o vínculo permanente aeronave–hub e a cobertura de rotas. `#acCost` no A320-200 e no A380-800 exibiu valores estáveis nas configurações amostradas. Manter `price_verified=false` onde faltar prova do preço final. |
-| A3/A4 | O worker vincula a análise ao snapshot auditado e limita a decisão pelo menor dos três saldos independentes, líquido de compromissos e reserva. | Coletar layout Y/J/F, disponibilidade, demanda residual, tarifas, taxa de rota e custos incrementais. Publicar casos completos e cobertura auditada da fila de oportunidades. |
+| A3/A4 | O worker vincula a análise ao snapshot auditado e limita a decisão pelo menor dos três saldos independentes, líquido de compromissos e reserva. O cálculo revalida o prazo das evidências, a prova de cobertura e o checkout do preço final. | Coletar layout Y/J/F, disponibilidade, demanda residual, tarifas, taxa de rota e custos incrementais. Publicar casos completos e cobertura auditada da fila de oportunidades. |
 | A6/A7 | Replay externo, painel e Telegram reutilizam a propriedade auditada. Conflitos de inventário impedem a recomendação. | Completar catálogo, demanda e cenários externos com custos próprios de expansão. Demonstrar o esgotamento das opções internas com cobertura auditada antes de recomendar um hub. |
 | A5/A8/A9 | Existem contratos de pré-voo, controles de execução e métricas. | Homologar o executor, testar a conciliação após falhas e calibrar o lucro previsto com observações reais. A execução segue bloqueada em G0. |
 
@@ -307,8 +307,8 @@ Nenhum agente marca uma etapa como concluída por apenas gerar código ou mock. 
 2. **A3/A4.** Com as evidências válidas, publicar casos completos via `AuditedEconomicsRegistry.record()` e cobertura via `record_portfolio_evidence()` no worker que possui a captura. Vincular preço, layout Y/J/F, disponibilidade, demanda residual, tarifas, taxa de rota, custos incrementais e compromissos ao mesmo snapshot e manter os bloqueios quando faltarem dados.
 3. **A6/A7.** Completar os produtores de catálogo, demanda e custos externos e persistir cenários via `HubExpansionRegistry.record_research()`. Exigir prova de esgotamento interno com cobertura por hub antes de habilitar recomendações conclusivas no painel e no Telegram.
 4. **A5/A8/A9.** Validar pré-voo, conciliação de timeout e reinício, confirmação de propriedade e calibração conforme os gates. A base permanece em G0. Qualquer ensaio real exige avanço de gate, homologação e autorização explícita.
-5. Atualizar o contexto e o histórico a cada entrega. Preservar a PR #44 e conferir sua associação com a branch antes de qualquer promoção.
+5. Atualizar o contexto e o histórico a cada entrega. Conferir os requisitos e as pendências da PR #44 na revisão da PR #46 antes de qualquer promoção.
 
 ### Prompt de execução para um orquestrador multiagente
 
-> Seguir docs/ROADMAP_AUTONOMIA_TOTAL.md integralmente no repositório andreypiekas/AirlineManager4BOTWEB. Usar o número máximo de agentes paralelos realmente disponível, em branches e módulos independentes, com um coordenador para integração e um único proprietário do navegador autenticado por perfil. Priorizar A0, A1, A2 e A3, manter PR #44 preservada, respeitar os gates G0–G5, não implantar nem fazer merge direto na main e não executar compras reais sem autorização/homologação explícita. Em cada entrega: código completo, testes, evidências e registro no histórico, PR e próxima dependência. Continuar nas frentes independentes disponíveis, sem tratar dados ausentes como validação positiva e sem afirmar que testes simulados equivalem a homologação real.
+> Seguir docs/ROADMAP_AUTONOMIA_TOTAL.md integralmente no repositório andreypiekas/AirlineManager4BOTWEB. Usar o número máximo de agentes paralelos realmente disponível, em branches e módulos independentes, com um coordenador para integração e um único proprietário do navegador autenticado por perfil. Priorizar A0, A1, A2 e A3 e usar a PR #44 como referência histórica de hubs na revisão da PR #46. Respeitar os gates G0–G5. Exigir autorização explícita para promoção à main e implantação, e também homologação para compras reais. Em cada entrega, registrar código, testes, evidências, PR e próxima dependência no histórico. Continuar nas frentes independentes disponíveis e manter a validação pendente onde faltarem dados autenticados.

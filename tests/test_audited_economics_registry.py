@@ -77,6 +77,7 @@ def compare_registry(registry):
         snapshot_id=stored["snapshot_id"] or "",
         controls=evidence.get("controls"),
         passenger_hangar=matching_capture(stored["snapshot_id"])["passenger_hangar_control"],
+        coverage_snapshot=evidence.get("coverage_snapshot"),
         fleet_coverage_verified=evidence.get("fleet_coverage_verified") is True,
         research_coverage_verified=evidence.get("research_coverage_verified") is True,
         commitments_verified=evidence.get("commitments_verified") is True,
@@ -680,3 +681,20 @@ def test_a5_preview_fails_closed_for_missing_or_ambiguous_a3_economics(
     assert expected_blocker in result["purchase_plan_blockers"]
     assert result["read_only"] is True
     assert result["execution_available"] is False
+
+
+def test_registry_derives_coverage_and_does_not_trust_persisted_flags(registry):
+    data = record_fixture(registry)
+    sid = data[0]["snapshot_id"]
+    assert registry.record_portfolio_evidence(snapshot_id=sid, controls=controls(sid),
+                                               hub_capacity={}, fleet_coverage_verified=True,
+                                               research_coverage_verified=True, commitments_verified=True)
+    assert registry.snapshot(now=NOW)["portfolio_evidence"]["coverage_snapshot"] == data[0]
+    stored = json.loads(registry.path.read_text(encoding="utf-8"))
+    stored["portfolio"]["coverage_snapshot"] = {"forged": True}
+    registry.path.write_text(json.dumps(stored), encoding="utf-8")
+    assert registry.snapshot(now=NOW)["portfolio_evidence"]["coverage_snapshot"] == data[0]
+    expired = registry.snapshot(now=NOW + 901)["portfolio_evidence"]
+    assert "coverage_snapshot" not in expired
+    assert expired["fleet_coverage_verified"] is False
+    assert expired["research_coverage_verified"] is False

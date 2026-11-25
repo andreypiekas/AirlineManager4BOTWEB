@@ -486,6 +486,7 @@ class WebDashboard:
             passenger_hangar=passenger_hangar,
             confidence_evidence=proof.get("confidence_evidence"),
             diversification_evidence=proof.get("diversification_evidence"),
+            coverage_snapshot=proof.get("coverage_snapshot"),
             fleet_coverage_verified=fleet_verified,
             research_coverage_verified=research_verified,
             commitments_verified=proof.get("commitments_verified") is True,

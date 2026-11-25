@@ -38,6 +38,7 @@ import time
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Mapping
 
+from engine_detail import FinalCheckoutPrice, validate_final_checkout_price
 from fleet_commitment_observations import MAX_AGE as HANGAR_MAX_AGE, SOURCE as HANGAR_SOURCE, _hangar
 
 SCHEMA_VERSION = 1
@@ -115,8 +116,27 @@ def _number(value: Decimal | None) -> float | None:
 def _valid_time(value: object, now: float, max_age_seconds: float) -> bool:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
-    timestamp = float(value)
+    try:
+        timestamp = float(value)
+    except OverflowError:
+        return False
     return math.isfinite(timestamp) and timestamp > 0 and 0 <= now - timestamp <= max_age_seconds
+
+
+def evidence_is_current(value: Mapping[str, Any], now: float, max_age_seconds: float) -> bool:
+    """Honor an explicit expiry in addition to maximum observation age."""
+    observed = value.get("observed_at")
+    if not _valid_time(observed, now, max_age_seconds):
+        return False
+    if "expires_at" not in value:
+        return True
+    expiry = value["expires_at"]
+    if type(expiry) not in (int, float):
+        return False
+    try:
+        return math.isfinite(expiry) and observed < expiry and now < expiry
+    except OverflowError:
+        return False
 
 
 def _evidence(
@@ -142,8 +162,7 @@ def _evidence(
         _block(reasons, "EVIDENCE_SOURCE_INVALID", field, f"Fonte exigida: {source}.")
     if value.get("verified") is not True or (identity and value.get("id_source") != "game"):
         _block(reasons, "EVIDENCE_UNVERIFIED", field, "Leitura real do jogo não comprovada.")
-    timestamp = value.get("observed_at")
-    if not _valid_time(timestamp, now, max_age_seconds):
+    if not evidence_is_current(value, now, max_age_seconds):
         _block(reasons, "EVIDENCE_STALE", field, "Observação ausente, futura ou vencida.")
     return value
 
@@ -198,6 +217,24 @@ def _coverage(
     if not coherent:
         _block(reasons, "COVERAGE_INCOHERENT", "coverage", "Páginas, total de aeronaves e IDs únicos não conferem com o jogo.")
     return status if isinstance(status, str) else "unknown"
+
+
+def complete_coverage_snapshot(snapshot: object, *, profile_id: str, snapshot_id: str,
+                               now: float, max_age_seconds: float = DEFAULT_MAX_AGE_SECONDS) -> bool:
+    """Validate the original fingerprinted snapshot and its full coverage contract."""
+    if not isinstance(snapshot, Mapping) or snapshot.get("snapshot_id") != snapshot_id:
+        return False
+    try:
+        if (fingerprint_snapshot(snapshot) != snapshot_id
+                or type(snapshot.get("schema_version")) is not int
+                or snapshot["schema_version"] != SCHEMA_VERSION):
+            return False
+    except (TypeError, ValueError, OverflowError):
+        return False
+    reasons: list[dict[str, str]] = []
+    _evidence(snapshot, "snapshot", "game_snapshot", profile_id, now, max_age_seconds, reasons)
+    _coverage(snapshot.get("coverage"), profile_id, now, max_age_seconds, reasons)
+    return not reasons
 
 
 def _validate_route(
@@ -391,6 +428,25 @@ def _validate_costs(
             "costs.engine_delta_cost",
             "Preço final já inclui o motor, portanto seu custo adicional deve ser zero.",
         )
+    if basis == "final_including_engine":
+        checkout = _evidence(
+            aircraft_evidence.get("checkout"), "costs.aircraft_cost.checkout",
+            "game_aircraft_checkout", profile_id, now, max_age_seconds, reasons,
+            snapshot_id=snapshot_id,
+        )
+        price = validate_final_checkout_price(
+            FinalCheckoutPrice(engine_id=checkout.get("engine_id"),
+                               amount_usd=checkout.get("amount_usd"),
+                               source=checkout.get("price_source"),
+                               status=checkout.get("status"),
+                               reason=checkout.get("reason")),
+            identities.get("engine_id"),
+        )
+        if (price.status != "verified" or checkout.get("model_id") != identities.get("model_id")
+                or checkout.get("price_includes_engine") is not True
+                or price.amount_usd != values.get("aircraft_cost")):
+            _block(reasons, "CHECKOUT_PRICE_UNVERIFIED", "costs.aircraft_cost.checkout",
+                   "Preco final exige checkout verificado para o modelo, motor e valor selecionados.")
     valid_cost_evidence = not any(reason["field"].startswith("costs.") for reason in reasons)
     total = sum(values.values(), Decimal(0)) if len(values) == len(_COST_FIELDS) and valid_cost_evidence else None
     return output, total

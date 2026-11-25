@@ -5,12 +5,12 @@ Leia este arquivo no início de cada tarefa e após toda compactação. Antes de
 ## Objetivo e estado
 
 - Autonomia de investimentos no Airline Manager 4. Avaliar rota, hub, aeronave, motor e layout antes de recomendar compra. Estudar hubs externos após comprovar o esgotamento das alternativas internas.
-- Branch `codex/autonomia-a0-a1-20261122` com PR #46. PR #44 em `33d081b`, com referência distinta da branch. Confira o HEAD local e remoto. Preserve `uv.lock` local.
+- Branches permanentes `main` e `codex/autonomia-a0-a1-20261122`. Desenvolva na segunda, acompanhada pela PR #46. A PR #44 em `33d081b` é referência histórica para a promoção de hubs. O [histórico](ENTREGAS_ROADMAP.md) registra a recuperação das branches arquivadas. Preserve `uv.lock` local e o trabalho ainda aberto em `AirlineManager4BOTWEB-a3-route`.
 - Gate **G0**. Compras planejadas estão bloqueadas. Compra real exige homologação e autorização explícita. Preserve a compatibilidade do fluxo legado, e concilie qualquer resposta incerta antes de repetir uma operação.
 - A1/A2 revalidam `#accountLow`, inventário e amostras incrementais. Em sessão autenticada, `#acCost` ficou estável nas configurações amostradas do A320-200 e do A380-800. Preço final por variante e base, vínculo permanente aeronave–hub e paginação da frota seguem sem prova.
-- A3/A4 têm snapshot auditado e teto pelo menor saldo entre A3, captura e observação viva, com reserva e compromissos deduzidos uma vez. Uma consulta autenticada mostrou 50 rotas com aviso de demanda de evento e sem continuação identificada. O coletor preserva o aviso de qualquer leitura correlacionada. A projeção econômica fica bloqueada para essas amostras. Cobertura e casos completos seguem pendentes.
-- A6/A7 compartilham a prova de propriedade no replay, painel e Telegram. Conflito de inventário bloqueia conclusões. Catálogo, demanda e economia de expansão ainda têm cobertura parcial. A5/A8 aguardam homologação do executor e A9 depende de observações reais para calibrar o lucro.
-- Validação em 25/11/2026 com 2.205 testes aprovados e 1 ignorado no Windows. A base anterior passou em 16 testes simulados do instalador no Ubuntu via WSL. Homologação integral e instalação real no servidor pendentes.
+- A3/A4 têm snapshot auditado e teto pelo menor saldo entre A3, captura e observação viva, com reserva e compromissos deduzidos uma vez. A PR #47 reforçou a validade da evidência, a cobertura verificável e o checkout do preço final. Uma consulta autenticada mostrou 50 rotas com aviso de demanda de evento e sem continuação identificada. O coletor preserva o aviso de qualquer leitura correlacionada. A projeção econômica fica bloqueada para essas amostras. Cobertura e casos completos seguem pendentes.
+- A6/A7 compartilham a prova de propriedade no replay, painel e Telegram. Conflito de inventário bloqueia conclusões. Catálogo, demanda e economia de expansão têm cobertura parcial. A5 incorporou proteções para recuperar a execução simulada. A5/A8 aguardam homologação do executor e A9 depende de observações reais para calibrar o lucro.
+- Validação da consolidação em 25/11/2026 com suíte Windows, casos adicionais de expiração e 16 testes simulados do instalador no Ubuntu via WSL. Homologação integral e instalação real no servidor pendentes.
 
 ## Próxima ação
 

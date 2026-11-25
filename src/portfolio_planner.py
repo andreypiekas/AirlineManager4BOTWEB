@@ -19,7 +19,7 @@ from expansion_economics import (
     _SUBJECTS as A3_PROVENANCE_SUBJECTS,
     rank_expansion_economics,
 )
-from opportunity_models import DEFAULT_MAX_AGE_SECONDS
+from opportunity_models import DEFAULT_MAX_AGE_SECONDS, complete_coverage_snapshot, evidence_is_current
 from fleet_commitment_observations import SOURCE as HANGAR_SOURCE, _hangar
 from finance_observations import SOURCE as FINANCE_SOURCE
 
@@ -442,7 +442,7 @@ def _audited_value(
             or proof.get("profile_id") != profile_id
             or proof.get("snapshot_id") != snapshot_id
             or stamp is None or value is None
-            or not 0 <= now - stamp <= DEFAULT_MAX_AGE_SECONDS):
+            or not evidence_is_current(proof, now, DEFAULT_MAX_AGE_SECONDS)):
         return None
     if hub_id is not None and proof.get("hub_id") != hub_id:
         return None
@@ -471,7 +471,7 @@ def _audited_a3_cash(
         if (proof.get("verified") is not True or proof.get("source") != source
                 or proof.get("profile_id") != profile_id
                 or proof.get("snapshot_id") != snapshot_id
-                or stamp is None or not 0 <= now - stamp <= DEFAULT_MAX_AGE_SECONDS
+                or stamp is None or not evidence_is_current(proof, now, DEFAULT_MAX_AGE_SECONDS)
                 or any(proof.get(field) != identity.get(field)
                        for field in A3_PROVENANCE_SUBJECTS[name])
                 or (name in A3_ROUTE_INPUTS and proof.get("stopover_id") != identity.get("stopover_id"))):
@@ -539,6 +539,7 @@ def compare_audited_portfolio(
     fleet_coverage_verified: bool = False,
     research_coverage_verified: bool = False,
     commitments_verified: bool = False,
+    coverage_snapshot: Mapping[str, Any] | None = None,
     current_cash_reserve: object = None,
     max_daily_spend: object = None,
     max_cycle_spend: object = None,
@@ -586,9 +587,11 @@ def compare_audited_portfolio(
         now = 0
     if policy_valid is not True:
         blockers.append("politica_invalida")
+    coverage_complete = complete_coverage_snapshot(
+        coverage_snapshot, profile_id=profile_id, snapshot_id=snapshot_id, now=now)
     for verified, reason in (
-        (fleet_coverage_verified, "cobertura_frota_a_confirmar"),
-        (research_coverage_verified, "cobertura_pesquisa_a_confirmar"),
+        (fleet_coverage_verified is True and coverage_complete, "cobertura_frota_a_confirmar"),
+        (research_coverage_verified is True and coverage_complete, "cobertura_pesquisa_a_confirmar"),
         (commitments_verified, "compromissos_a_conciliar"),
     ):
         if verified is not True:

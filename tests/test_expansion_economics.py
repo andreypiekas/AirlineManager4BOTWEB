@@ -120,7 +120,8 @@ def fixture():
 
 
 def evaluate(data, **kwargs):
-    return evaluate_expansion_economics(*data, now=NOW, **kwargs)
+    kwargs.setdefault("now", NOW)
+    return evaluate_expansion_economics(*data, **kwargs)
 
 
 def test_itinerary_specific_proofs_and_ranking():
@@ -269,6 +270,9 @@ def test_fees_engine_price_basis_and_reserve_are_consistent():
     data[1]["costs"]["aircraft_cost"]["price_basis"] = "final_including_engine"
     data[1]["costs"]["aircraft_cost"]["value"] = 10500
     data[1]["costs"]["engine_delta_cost"]["value"] = 0
+    assert evaluate(data)["status"] == "blocked"
+    from test_opportunity_models import checkout_proof
+    data[1]["costs"]["aircraft_cost"]["checkout"] = checkout_proof(data[1])
     assert evaluate(data)["status"] == "evaluated"
 
 
@@ -413,3 +417,23 @@ def test_invalid_extreme_inputs_do_not_create_a_usable_recommendation():
     assert result["status"] == "blocked"
     assert result["components"] is None
     assert "ACCOUNTING_INPUT_INVALID" in codes(result)
+
+
+@pytest.mark.parametrize("field", ["fuel_price_per_1000", "co2_price_per_1000", "cash", "recurring_costs"])
+@pytest.mark.parametrize("expiry", [NOW, NOW - 1, None, True, "later"])
+def test_accounting_respects_explicit_expiry(field, expiry):
+    data = fixture()
+    data[2][field]["expires_at"] = expiry
+    result = evaluate(data)
+    assert result["status"] == "blocked"
+    assert "EVIDENCE_STALE" in codes(result)
+    assert field not in result["provenance"]
+
+
+def test_accounting_retains_valid_expiry_for_downstream_a4():
+    data = fixture()
+    data[2]["fuel_price_per_1000"]["expires_at"] = NOW + 1
+    result = evaluate(data)
+    assert result["status"] == "evaluated"
+    assert result["provenance"]["fuel_price_per_1000"]["expires_at"] == NOW + 1
+    assert evaluate(data, now=NOW + 1)["status"] == "blocked"

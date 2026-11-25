@@ -17,7 +17,7 @@ from typing import Any, Mapping
 
 import paths
 from expansion_economics import evaluate_expansion_economics
-from opportunity_models import DEFAULT_MAX_AGE_SECONDS, fingerprint_snapshot
+from opportunity_models import DEFAULT_MAX_AGE_SECONDS, complete_coverage_snapshot, fingerprint_snapshot
 
 
 _LOCK = threading.RLock()
@@ -265,6 +265,7 @@ class AuditedEconomicsRegistry:
             return {"status": "registro_invalido", "snapshot_id": None,
                     "evaluations": [], "portfolio_evidence": {}, "read_only": True}
         results = []
+        coverage_snapshot = None
         for entry in stored.get("cases", []):
             if not isinstance(entry, dict):
                 return {"status": "registro_invalido", "snapshot_id": None,
@@ -291,12 +292,23 @@ class AuditedEconomicsRegistry:
                 return {"status": "registro_invalido", "snapshot_id": None,
                         "evaluations": [], "portfolio_evidence": {}, "read_only": True}
             results.append(result)
+            if coverage_snapshot is None and complete_coverage_snapshot(
+                source, profile_id=profile_id, snapshot_id=stored["snapshot_id"], now=now
+            ):
+                coverage_snapshot = source
         portfolio = deepcopy(stored.get("portfolio") or {})
+        portfolio.pop("coverage_snapshot", None)
         if portfolio.get("research_coverage_verified") is True:
             case_ids = sorted(result["economics_id"] for result in results)
             if (not results or stored.get("research_storage_truncated", False)
                     or portfolio.get("research_case_ids") != case_ids):
                 portfolio["research_coverage_verified"] = False
+        # Coverage depends on the original fingerprinted snapshot.
+        if coverage_snapshot is not None:
+            portfolio["coverage_snapshot"] = deepcopy(coverage_snapshot)
+        elif portfolio:
+            portfolio["fleet_coverage_verified"] = False
+            portfolio["research_coverage_verified"] = False
         return {
             "status": "registrado" if results else "sem_avaliacoes",
             "snapshot_id": stored.get("snapshot_id"),
