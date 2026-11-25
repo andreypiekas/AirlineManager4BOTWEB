@@ -1,5 +1,10 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Contexto padrão no launcher Codex Web GPT (G0)
+
+- O Codex Web GPT 6.2.0 gerava `<codex_multipart_commit>` com **Bigger Context (experimental)**. A rejeição por tamanho foi observada no navegador do launcher. A opção foi desativada pela interface e confirmada nos arquivos de configuração do launcher e do serviço local. O contexto e o índice passaram a explicar a retomada pelo arquivo versionado em uma conversa nova.
+- A alteração no repositório é documental. Uma nova execução completa pelo launcher ainda está pendente. A retomada do roadmap e a homologação permanecem no G0.
+
 ## 2026-11-25 — Recuperação do checkpoint de compactação (G0)
 
 - O checkpoint foi reconstruído a partir do trecho disponível e do estado versionado. A retomada segue pela integração dos registros A3/A4 e A6/A7 no worker, com coleta autenticada e cobertura integral ainda pendentes. Em caso de rejeição por tamanho da compactação automática, a instrução de retomada indica somente `docs/contexto.md` em uma nova tarefa Cloud.
