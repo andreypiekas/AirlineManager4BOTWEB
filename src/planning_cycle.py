@@ -180,6 +180,7 @@ def capture_and_plan(bot):
     if bot.dry_run:
         return capture_game_snapshot(bot)
     from expansion_metrics import _audited_metrics
+    from audited_economics_registry import AuditedEconomicsRegistry
     from web import WebDashboard
 
     profile = paths.current()
@@ -192,6 +193,8 @@ def capture_and_plan(bot):
     try:
         snapshot = capture_game_snapshot(bot)
         record["snapshot_id"] = snapshot["snapshot_id"]
+        if not AuditedEconomicsRegistry().begin_capture(snapshot):
+            raise ValueError("Registro econômico da coleta indisponível.")
         research, next_cursor, audit = _research_summary(record["snapshot_id"], cursor)
         if not _valid_research_summary(research) or not _valid_research_audit(audit, research, record["snapshot_id"]):
             raise ValueError("Resumo de pesquisa inválido.")

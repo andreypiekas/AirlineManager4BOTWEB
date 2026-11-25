@@ -137,6 +137,8 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 
 ### Fase A4 — Planejamento global de aquisições (P1)
 
+- Progresso em 25/11/2026: a captura produtiva inicializa o registro A3/A4 ativo e invalida os casos anteriores quando muda a identidade da coleta. Uma captura parcial sem casos permanece inconclusiva para investimento, com decisão de não comprar. A alimentação de casos completos e certificação da cobertura ainda dependem das evidências A1–A3; nenhum gate de gasto foi promovido.
+
 - Gerar ranking **global** dos hubs próprios, cada um com suas melhores oportunidades e com a melhor oportunidade da companhia.
 - Antes da compra, descontar pedidos pendentes, aeronaves sem rota, custos/compromissos futuros, limite de hangar, reserva operacional e gasto máximo por ciclo/período.
 - Reavaliar modelo/motor se a rota lucrativa só for viável com propulsão diferente; não gastar o orçamento na alternativa inferior sem justificativa.

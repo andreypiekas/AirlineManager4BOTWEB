@@ -36,6 +36,12 @@ def test_worker_replans_after_capture_with_real_a4_and_no_game_mutations(worker,
     assert result["read_only"] and result["historical_only"]
     assert result["blocking_reasons"]
     assert not (tmp_path / "investment_journal.sqlite3").exists()
+    from audited_economics_registry import AuditedEconomicsRegistry
+
+    registry = AuditedEconomicsRegistry().snapshot()
+    assert registry["snapshot_id"] == first["snapshot_id"]
+    assert registry["status"] == "sem_avaliacoes"
+    assert registry["evaluations"] == [] and registry["portfolio_evidence"] == {}
 
     # New observations must invalidate the preceding decision until re-evaluated.
     worker.stats = lambda: SimpleNamespace(money=200, money_read_at=time.time() - 2)
@@ -46,6 +52,7 @@ def test_worker_replans_after_capture_with_real_a4_and_no_game_mutations(worker,
     result = planning_cycle.planning_cycle_summary()
     assert result["snapshot_id"] == third["snapshot_id"]
     assert result["decision"] == "nao_comprar"
+    assert AuditedEconomicsRegistry().snapshot()["snapshot_id"] == third["snapshot_id"]
     assert planning_cycle.planning_cycle_summary(now=time.time() + 901)["status"] == "expirado"
 
 
@@ -92,8 +99,8 @@ def test_worker_evaluates_sampled_combinations_and_layouts_with_real_replay(work
     from test_audited_game_snapshot import NOW, observations
     from test_owned_hub_research_feed import _fleet_report, _inventory, _market, _preview_engines, _sample
 
-    monkeypatch.setattr(time, "time", lambda: NOW)
     evidence = observations()
+    monkeypatch.setattr(time, "time", lambda: evidence["now"])
     evidence.update(profile_id="isolated", inventory={**_inventory(), "hub_catalog_fresh": True},
                     routes=_fleet_report(), market=_market(), engines=_preview_engines(),
                     mode="realista", mode_at=NOW - 10,
@@ -159,6 +166,7 @@ def test_worker_evaluates_sampled_combinations_and_layouts_with_real_replay(work
     # A temporary missing catalog must also preserve the scheduling position.
     market = evidence["market"]
     evidence["market"] = {}
+    evidence["now"] += 1
     snapshot = compose_snapshot(**evidence)
     planning_cycle.capture_and_plan(worker)
     assert planning_cycle.planning_cycle_summary()["research"]["queue_blocking_reasons"]
@@ -166,6 +174,7 @@ def test_worker_evaluates_sampled_combinations_and_layouts_with_real_replay(work
     evidence["market"] = market
     # Capture fresh financial observations with the same ordered identities.
     evidence["cash"] = 1500
+    evidence["now"] += 1
     snapshot = compose_snapshot(**evidence)
     planning_cycle.capture_and_plan(worker)
     resumed = planning_cycle.planning_cycle_summary()
@@ -175,6 +184,7 @@ def test_worker_evaluates_sampled_combinations_and_layouts_with_real_replay(work
     assert resumed["research"]["sample_sweep_complete"] is False
     # A changed set of routes resets the cursor rather than skipping new identities.
     evidence["demand"]["samples"].pop(0)
+    evidence["now"] += 1
     snapshot = compose_snapshot(**evidence)
     planning_cycle.capture_and_plan(worker)
     reset = planning_cycle.planning_cycle_summary()

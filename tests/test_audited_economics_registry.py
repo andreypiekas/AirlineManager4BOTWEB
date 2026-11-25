@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,6 +20,7 @@ from test_investment_policy_web import auth, request, served
 def registry(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
     monkeypatch.setattr(paths.Profile, "data", property(lambda self: tmp_path))
+    monkeypatch.setattr("audited_economics_registry.time", SimpleNamespace(time=lambda: NOW))
     return AuditedEconomicsRegistry(tmp_path / "audited_expansion.json")
 
 
@@ -100,6 +102,81 @@ def test_record_is_idempotent_and_recomputes_economics_from_evidence(registry):
     assert result["evaluations"][0]["components"]["daily_net_profit_estimate"] == 6656.5
     assert result["read_only"] is True
     assert len(json.loads(registry.path.read_text(encoding="utf-8"))["cases"]) == 1
+
+
+def test_worker_capture_supersedes_previous_cases_without_certifying_empty_coverage(registry):
+    from opportunity_models import fingerprint_snapshot
+
+    previous, *_ = record_fixture(registry)
+    assert registry.record_portfolio_evidence(
+        snapshot_id=previous["snapshot_id"], controls=controls(previous["snapshot_id"]),
+        hub_capacity={}, research_coverage_verified=True, commitments_verified=True,
+    )
+    capture = {**previous, "observed_at": None, "verified": False,
+               "observations": {"captured_at": NOW}}
+    capture["snapshot_id"] = fingerprint_snapshot(capture)
+    assert registry.begin_capture(capture, now=NOW)
+    assert registry.begin_capture(deepcopy(capture), now=NOW)
+    result = registry.snapshot(now=NOW)
+    assert result["status"] == "sem_avaliacoes"
+    assert result["snapshot_id"] == capture["snapshot_id"]
+    assert result["evaluations"] == [] and result["portfolio_evidence"] == {}
+    assert not registry.record_portfolio_evidence(
+        snapshot_id=capture["snapshot_id"], controls={}, hub_capacity={},
+        research_coverage_verified=True,
+    )
+    assert not registry.record(*fixture(), now=NOW)
+    assert not registry.begin_capture({**capture, "verified": True}, now=NOW)
+    collision = {**capture, "verified": True}
+    collision["snapshot_id"] = fingerprint_snapshot(collision)
+    assert not registry.begin_capture(collision, now=NOW)
+    assert not registry.begin_capture(capture, now=NOW + 100000)
+
+
+def test_evaluated_case_can_be_registered_after_worker_capture(registry):
+    from opportunity_models import fingerprint_snapshot
+
+    snapshot, candidate, inputs = fixture()
+    snapshot["observations"] = {"captured_at": NOW}
+    snapshot["snapshot_id"] = fingerprint_snapshot(snapshot)
+    candidate["snapshot_id"] = snapshot["snapshot_id"]
+    for entry in (candidate["route"], candidate["aircraft"], candidate["financial"],
+                  *candidate["costs"].values(), *inputs.values()):
+        entry["snapshot_id"] = snapshot["snapshot_id"]
+    assert registry.begin_capture(snapshot, now=NOW)
+    assert registry.record(snapshot, candidate, inputs, now=NOW)
+    assert registry.begin_capture(snapshot, now=NOW + 1)
+    report = registry.snapshot(now=NOW)
+    assert report["status"] == "registrado"
+    assert len(report["evaluations"]) == 1
+    assert report["evaluations"][0]["status"] == "evaluated"
+
+
+@pytest.mark.parametrize("field,value", [("captured_at", True), ("captured_at", NOW + 1),
+                                         ("observed_at", float("nan")), ("observed_at", NOW + 1)])
+def test_empty_capture_rejects_invalid_temporal_metadata(registry, field, value):
+    from opportunity_models import fingerprint_snapshot
+
+    snapshot, *_ = fixture()
+    snapshot["observations"] = {"captured_at": NOW}
+    snapshot["snapshot_id"] = fingerprint_snapshot(snapshot)
+    assert registry.begin_capture(snapshot, now=NOW)
+    stored = json.loads(registry.path.read_text(encoding="utf-8"))
+    stored[field] = value
+    registry.path.write_text(json.dumps(stored), encoding="utf-8")
+    assert registry.snapshot(now=NOW)["status"] == "registro_invalido"
+
+
+def test_case_metadata_and_empty_coverage_tampering_fail_closed(registry):
+    record_fixture(registry)
+    stored = json.loads(registry.path.read_text(encoding="utf-8"))
+    stored["observed_at"] -= 1
+    registry.path.write_text(json.dumps(stored), encoding="utf-8")
+    assert registry.snapshot(now=NOW)["status"] == "registro_invalido"
+    stored["cases"] = []
+    stored["portfolio"] = {"research_coverage_verified": True, "research_case_ids": []}
+    registry.path.write_text(json.dumps(stored), encoding="utf-8")
+    assert registry.snapshot(now=NOW)["portfolio_evidence"]["research_coverage_verified"] is False
 
 
 def test_expired_or_unsupported_evidence_cannot_be_refreshed_by_reading(registry):

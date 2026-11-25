@@ -17,10 +17,30 @@ from typing import Any, Mapping
 
 import paths
 from expansion_economics import evaluate_expansion_economics
+from opportunity_models import DEFAULT_MAX_AGE_SECONDS, fingerprint_snapshot
 
 
 _LOCK = threading.RLock()
 _MAX_SCENARIOS = 256
+
+
+def _positive_timestamp(value):
+    try:
+        return type(value) in (int, float) and math.isfinite(value) and value > 0
+    except OverflowError:
+        return False
+
+
+def _record_timestamp(record):
+    return record.get("captured_at", record.get("observed_at"))
+
+
+def _valid_record_times(record, now):
+    captured = _record_timestamp(record)
+    observed = record.get("observed_at")
+    return (_positive_timestamp(now) and _positive_timestamp(captured) and captured <= now
+            and ((observed is None and "captured_at" in record and not record.get("cases"))
+                 or (_positive_timestamp(observed) and observed <= captured)))
 
 
 class AuditedEconomicsRegistry:
@@ -46,6 +66,54 @@ class AuditedEconomicsRegistry:
             return {}, False
         return payload, True
 
+    def begin_capture(self, snapshot: Mapping[str, Any], *, now: float | None = None) -> bool:
+        """Bind the active register to a worker capture, including a partial capture.
+
+        A capture establishes only identity and ordering. It cannot certify any
+        opportunity, coverage or financial commitment by itself.
+        """
+        now = time.time() if now is None else now
+        try:
+            captured = snapshot["observations"]["captured_at"]
+            snapshot_id = snapshot["snapshot_id"]
+            observed = snapshot["observed_at"]
+            if (type(snapshot["schema_version"]) is not int or snapshot["schema_version"] != 1
+                    or snapshot["source"] != "game_snapshot"
+                    or snapshot["profile_id"] != paths.current().label
+                    or not _positive_timestamp(captured) or not _positive_timestamp(now)
+                    or (observed is not None and (not _positive_timestamp(observed) or observed > captured))
+                    or not 0 <= now - captured <= DEFAULT_MAX_AGE_SECONDS
+                    or snapshot_id != fingerprint_snapshot(snapshot)):
+                return False
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return False
+        with _LOCK:
+            existing, valid = self._read()
+            if not valid or (existing and existing["profile_id"] != paths.current().label):
+                return False
+            if existing:
+                if self.snapshot(now=now)["status"] == "registro_invalido":
+                    return False
+                previous = _record_timestamp(existing)
+                if not _positive_timestamp(previous) or captured < previous:
+                    return False
+                if existing["snapshot_id"] == snapshot_id:
+                    return captured == previous and observed == existing.get("observed_at")
+                if captured == previous:
+                    return False
+            payload = {
+                "schema_version": 1, "profile_id": paths.current().label,
+                "snapshot_id": snapshot_id, "observed_at": observed,
+                "captured_at": captured, "cases": [], "portfolio": None,
+                "research_storage_truncated": False,
+            }
+            try:
+                paths.write_atomic(self.path, json.dumps(payload, ensure_ascii=False, allow_nan=False),
+                                   private=True)
+            except (OSError, TypeError, ValueError, OverflowError):
+                return False
+        return True
+
     def record(self, snapshot: Mapping[str, Any], candidate: Mapping[str, Any],
                inputs: Mapping[str, Any], *, now: float | None = None,
                safety_margin_fraction: float = 0.10,
@@ -69,9 +137,14 @@ class AuditedEconomicsRegistry:
                 or not isinstance(evaluated.get("snapshot_id"), str)
                 or not evaluated["snapshot_id"]):
             return False
-        timestamp = snapshot.get("observed_at") if isinstance(snapshot, Mapping) else None
-        if (isinstance(timestamp, bool) or not isinstance(timestamp, (int, float))
-                or not math.isfinite(timestamp) or timestamp <= 0):
+        observed_at = snapshot.get("observed_at")
+        observations = snapshot.get("observations")
+        captured_at = observations.get("captured_at") if isinstance(observations, Mapping) else None
+        timestamp = captured_at if captured_at is not None else observed_at
+        if (not _positive_timestamp(now) or not _positive_timestamp(observed_at)
+                or not _positive_timestamp(timestamp)
+                or (isinstance(observations, Mapping) and "captured_at" in observations and captured_at is None)
+                or not observed_at <= timestamp <= now):
             return False
         entry = {
             "economics_id": evaluated["economics_id"],
@@ -86,14 +159,15 @@ class AuditedEconomicsRegistry:
             if existing and self.snapshot(now=now)["status"] == "registro_invalido":
                 return False
             if existing:
-                previous = existing.get("observed_at")
-                if (isinstance(previous, bool) or not isinstance(previous, (int, float))
-                        or not math.isfinite(previous)):
+                previous = _record_timestamp(existing)
+                if not _positive_timestamp(previous):
                     return False
                 if timestamp < previous or (timestamp == previous
                                            and existing["snapshot_id"] != evaluated["snapshot_id"]):
                     return False
             if existing.get("snapshot_id") == evaluated["snapshot_id"]:
+                if timestamp != _record_timestamp(existing) or observed_at != existing.get("observed_at"):
+                    return False
                 cases = existing["cases"]
                 if any(not isinstance(row, dict) for row in cases):
                     return False
@@ -109,7 +183,8 @@ class AuditedEconomicsRegistry:
                         existing["portfolio"] = portfolio
                         existing["research_storage_truncated"] = True
                         try:
-                            paths.write_atomic(self.path, json.dumps(existing, ensure_ascii=False, allow_nan=False))
+                            paths.write_atomic(self.path, json.dumps(existing, ensure_ascii=False, allow_nan=False),
+                                               private=True)
                         except (OSError, TypeError, ValueError, OverflowError):
                             return False
                     return False
@@ -121,12 +196,14 @@ class AuditedEconomicsRegistry:
                 truncated = False
             payload = {
                 "schema_version": 1, "profile_id": paths.current().label,
-                "snapshot_id": evaluated["snapshot_id"], "observed_at": timestamp,
+                "snapshot_id": evaluated["snapshot_id"], "observed_at": observed_at,
                 "cases": cases, "portfolio": portfolio, "research_storage_truncated": truncated,
             }
+            if captured_at is not None:
+                payload["captured_at"] = captured_at
             try:
                 serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False)
-                paths.write_atomic(self.path, serialized)
+                paths.write_atomic(self.path, serialized, private=True)
             except (OSError, TypeError, ValueError, OverflowError):
                 return False
         return True
@@ -166,13 +243,13 @@ class AuditedEconomicsRegistry:
                 return False
             if self.snapshot()["status"] == "registro_invalido":
                 return False
-            if research_coverage_verified and current.get("research_storage_truncated", False):
+            if research_coverage_verified and (not current["cases"] or current.get("research_storage_truncated", False)):
                 return False
             if research_coverage_verified:
                 evidence["research_case_ids"] = sorted(row["economics_id"] for row in current["cases"])
             current["portfolio"] = evidence
             try:
-                paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, allow_nan=False))
+                paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, allow_nan=False), private=True)
             except (OSError, TypeError, ValueError, OverflowError):
                 return False
         return True
@@ -183,7 +260,8 @@ class AuditedEconomicsRegistry:
         with _LOCK:
             stored, valid = self._read()
         profile_id = paths.current().label
-        if not valid or (stored and stored.get("profile_id") != profile_id):
+        if not valid or (stored and (stored.get("profile_id") != profile_id
+                                    or not _valid_record_times(stored, now))):
             return {"status": "registro_invalido", "snapshot_id": None,
                     "evaluations": [], "portfolio_evidence": {}, "read_only": True}
         results = []
@@ -192,12 +270,19 @@ class AuditedEconomicsRegistry:
                 return {"status": "registro_invalido", "snapshot_id": None,
                         "evaluations": [], "portfolio_evidence": {}, "read_only": True}
             try:
+                source = entry["snapshot"]
+                observed = source.get("observed_at")
+                observations = source.get("observations")
+                captured = observations.get("captured_at", observed) if isinstance(observations, Mapping) else observed
+                if (not _positive_timestamp(observed) or not _positive_timestamp(captured)
+                        or observed != stored.get("observed_at") or captured != _record_timestamp(stored)):
+                    raise ValueError("Metadados temporais divergentes.")
                 result = evaluate_expansion_economics(
                     entry["snapshot"], entry["candidate"], entry["inputs"], now=now,
                     safety_margin_fraction=entry["safety_margin_fraction"],
                     stress=entry.get("stress"),
                 )
-            except (KeyError, TypeError, ValueError, OverflowError):
+            except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
                 return {"status": "registro_invalido", "snapshot_id": None,
                         "evaluations": [], "portfolio_evidence": {}, "read_only": True}
             if (result.get("economics_id") != entry.get("economics_id")
@@ -209,11 +294,11 @@ class AuditedEconomicsRegistry:
         portfolio = deepcopy(stored.get("portfolio") or {})
         if portfolio.get("research_coverage_verified") is True:
             case_ids = sorted(result["economics_id"] for result in results)
-            if (stored.get("research_storage_truncated", False)
+            if (not results or stored.get("research_storage_truncated", False)
                     or portfolio.get("research_case_ids") != case_ids):
                 portfolio["research_coverage_verified"] = False
         return {
-            "status": "registrado" if stored else "sem_avaliacoes",
+            "status": "registrado" if results else "sem_avaliacoes",
             "snapshot_id": stored.get("snapshot_id"),
             "evaluations": results,
             "portfolio_evidence": portfolio,

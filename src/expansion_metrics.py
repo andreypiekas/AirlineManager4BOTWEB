@@ -45,7 +45,7 @@ def _audited_metrics(report: Mapping | None, *, profile_id: str, simulation: boo
     blockers_valid = isinstance(blockers, list) and all(isinstance(reason, str) and reason for reason in blockers)
     if blockers_valid:
         result["blocking_reasons"] = list(dict.fromkeys(blockers))
-    if (report.get("status") == "sem_avaliacoes" and report.get("snapshot_id") is None
+    if (report.get("status") == "sem_avaliacoes" and report.get("snapshot_id") in (None, snapshot_id)
             and report.get("evaluation_count") == 0):
         result.update(status="sem_avaliacoes", evaluated_count=0, eligible_count=0, decision="nao_comprar")
         return result

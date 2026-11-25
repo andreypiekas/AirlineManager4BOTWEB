@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A3/A4/A9, vinculação da captura produtiva ao registro econômico (G0)
+
+- O worker inicializa o registro A3 após cada captura produtiva, antes da pesquisa contábil e da decisão A4. A captura parcial recebe identidade própria e substitui avaliações e controles de snapshots anteriores. A repetição idempotente da mesma captura preserva os casos; uma captura mais antiga ou de identidade distinta no mesmo horário é rejeitada. O modo de simulação continua fora da publicação do registro.
+- O registro valida fingerprint, perfil, origem, versão e metadados temporais de captura e observação. Casos persistidos exigem correspondência de horários com o cabeçalho; registros antigos sem horário de captura continuam compatíveis. Cobertura integral não é certificada com zero casos, inclusive após releitura de um registro adulterado. As gravações são atômicas e privadas. O arquivo representa a captura ativa; a preservação de um histórico completo de casos econômicos continua pendente.
+- As métricas A9 reconhecem o registro vazio vinculado à coleta atual, com zero avaliações, zero elegíveis e decisão de não comprar. A fila de pesquisa permanece parcial e a conclusão de uma amostra não certifica cobertura.
+- Validação: 56 testes direcionados aprovados (19,55 s); suíte Windows com 2.130 testes coletados, 2.129 aprovados e 1 ignorado, sem falhas (instalação Linux excluída); Ruff e `git diff --check` aprovados. Rollback por reversão deste commit. Permanecem pendentes os produtores de casos econômicos completos e da certificação de cobertura/compromissos, as evidências autenticadas faltantes e a homologação A0–A9. Nenhuma transação ou implantação executada.
+
 ## 2026-11-25 — Autonomia Total A0/A2/A3/A4, integridade da identidade e cobertura (G0)
 
 - A0/A3: a taxa da rota, a projeção financeira e os insumos contábeis dependentes da rota exigem correspondência com a escala proposta. Evidências de escala divergente ou ausente são rejeitadas. Rotas diretas continuam compatíveis com registros antigos; itinerários com escalas diferentes são alternativas econômicas distintas. A conversão A5 para intenção de compra com escala permanece bloqueada até implementação e homologação do executor.
