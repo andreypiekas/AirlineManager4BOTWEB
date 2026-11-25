@@ -1951,6 +1951,11 @@ def order_aircraft(
                 expected_engine_id=expected_engine_id,
                 checkout_price=checkout_price,
             )
+            # Consultar o painel atual após as leituras, pois o aviso pode
+            # aparecer durante uma atualização do formulário.
+            detail = bot.driver.find_element(By.ID, "acModel")
+            if any(warning.is_displayed() for warning in detail.find_elements(By.XPATH, ".//*[@id='accountLow']")):
+                raise ValueError("O jogo informa saldo insuficiente após a validação do checkout.")
         except Exception as exc:
             log_market.warning("Pré-voo de %s não confirmado. Encomenda bloqueada: %s", choice.name, exc)
             return False

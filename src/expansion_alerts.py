@@ -26,16 +26,15 @@ def publish_expansion_alert(bot) -> str:
         return "disabled"
 
     dashboard = WebDashboard(bot, config, buffer=None)
-    inventory = dashboard.hubs()
     research = dashboard.hub_recommendations()
-    external = dashboard.hub_expansion(owned_inventory=inventory, owned_research=research)
+    external = dashboard.hub_expansion(owned_research=research)
     snapshot_id = external.get("planning_snapshot_id")
     if not snapshot_id:
         return "inconclusivo"
     try:
         report = build_expansion_report(
             research, external, profile_id=config.profile.label,
-            snapshot_id=snapshot_id, owned_inventory=inventory,
+            snapshot_id=snapshot_id, owned_inventory=external.get("planning_owned_inventory"),
             owned_research=research,
             opportunity_coverage=research.get("opportunity_coverage"),
             policy=InvestmentPolicy.from_config(config),

@@ -74,3 +74,45 @@ def test_hub_api_exposes_cash_verification_time_and_omits_stale_money(monkeypatc
 
     WebDashboard.hub_expansion(fake, owned_inventory={"hubs": [{"id": "1"}], "hub_catalog_fresh": True})
     assert called["external_ownership_verified"] is True
+
+
+@pytest.mark.parametrize("live_ids,live_fresh,expected_ids,reconciled", [
+    (("11",), True, {"11"}, True),
+    (("12",), False, {"11"}, True),
+    (("12",), True, {"11", "12"}, False),
+])
+def test_expansion_uses_captured_ownership_until_fresh_inventory_disagrees(
+    monkeypatch, live_ids, live_fresh, expected_ids, reconciled,
+):
+    import web
+
+    snapshot_id = "sha256:" + "b" * 64
+    profile_id = web.paths.current().label
+    scope = {"profile_id": profile_id, "snapshot_id": snapshot_id}
+    captured = {**scope, "source": "game_hub_select", "observed_at": 2980,
+                "hubs": [{"id": "11"}], "hub_catalog_fresh": True, "partial_fleet": True}
+    live = {"hubs": [{"id": hub_id} for hub_id in live_ids], "hub_catalog_fresh": live_fresh}
+    research = {**scope, "portfolio": scope, "opportunity_coverage": scope}
+    monkeypatch.setattr(web, "snapshot_summary", lambda: {
+        "status": "parcial", "snapshot_id": snapshot_id, "owned_inventory": captured,
+    })
+    monkeypatch.setattr("dashboard.time.time", lambda: 3000)
+    called = {}
+
+    def expansion_snapshot(**kwargs):
+        called.update(kwargs)
+        return {"candidates": []}
+
+    monkeypatch.setattr(web, "HubExpansionRegistry", lambda: SimpleNamespace(snapshot=expansion_snapshot))
+    fake = SimpleNamespace(bot=CashBot(8000, 2990), cfg=SimpleNamespace(get_int=lambda *args: 2000))
+
+    result = WebDashboard.hub_expansion(fake, owned_inventory=live, owned_research=research)
+
+    assert called["owned_hub_ids"] == expected_ids
+    assert called["external_ownership_verified"] is reconciled
+    assert result["planning_snapshot_id"] == snapshot_id
+    assert result["planning_owned_inventory"] == (captured if reconciled else None)
+    decision = result["expansion_decision"]
+    assert decision["status"] == "inconclusivo"
+    assert "cobertura_frota_incompleta" in decision["blocking_reasons"]
+    assert ("inventario_hubs_proprios_a_confirmar" not in decision["blocking_reasons"]) is reconciled

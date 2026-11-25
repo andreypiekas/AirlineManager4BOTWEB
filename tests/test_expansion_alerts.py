@@ -41,19 +41,16 @@ def prepare_alerts(monkeypatch, tmp_path, *, config=None, results=(True,)):
                 "research": {"portfolio": {"status": "inconclusivo"}},
                 "external": {"catalog_complete": False, "candidates": [],
                              "planning_snapshot_id": "sha256:" + "a" * 64}}
+    evidence["external"]["planning_owned_inventory"] = evidence["inventory"]
 
     class FakeDashboard:
         def __init__(self, supplied_bot, supplied_config, buffer):
             assert supplied_bot is bot and supplied_config is config and buffer is None
 
-        def hubs(self):
-            return evidence["inventory"]
-
         def hub_recommendations(self):
             return evidence["research"]
 
-        def hub_expansion(self, *, owned_inventory, owned_research):
-            assert owned_inventory is evidence["inventory"]
+        def hub_expansion(self, *, owned_research):
             assert owned_research is evidence["research"]
             return evidence["external"]
 

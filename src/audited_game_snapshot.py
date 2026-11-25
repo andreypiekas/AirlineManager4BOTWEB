@@ -303,6 +303,24 @@ def _load_snapshot(path):
     return snapshot
 
 
+def _captured_owned_inventory(snapshot, now):
+    hubs = snapshot["hubs"]
+    captured = snapshot["observations"]["captured_at"]
+    if not snapshot["coverage"]["scopes"]["hubs"] or not hubs or not all(
+        hub.get("owned") is True and hub.get("verified") is True
+        and hub.get("source") == "game_hub_select" and hub.get("profile_id") == snapshot["profile_id"]
+        and _fresh(hub["observed_at"], now) and hub["observed_at"] <= captured for hub in hubs
+    ):
+        return None
+    inventory = {"source": "game_hub_select", "hubs": [{"id": hub["id"]} for hub in hubs],
+                 "observed_at": min(hub["observed_at"] for hub in hubs), "hub_catalog_fresh": True}
+    if not _verified_owned_hubs(inventory, now):
+        return None
+    # Ownership alone does not establish the fleet-to-hub link.
+    return {**inventory, "profile_id": snapshot["profile_id"], "snapshot_id": snapshot["snapshot_id"],
+            "partial_fleet": True}
+
+
 def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerprint=None,
                          expected_layout_fingerprint=None, now=None, path=None):
     """Replay a bounded page using only the captured inputs and capture clock."""
@@ -400,10 +418,7 @@ def replay_external_research_page(*, offset=0, expected_fingerprint=None, now=No
         if "external_route_research" not in observed or "research_inputs" not in observed:
             return {**unavailable, "status": "recoleta_necessaria"}
         inputs = observed["research_inputs"]
-        hubs = snapshot["hubs"]
-        inventory = {"source": "game_hub_select", "hubs": hubs,
-                     "hub_catalog_fresh": snapshot["coverage"]["scopes"]["hubs"],
-                     "observed_at": min((hub["observed_at"] for hub in hubs), default=None),
+        inventory = {**(_captured_owned_inventory(snapshot, now) or {}),
                      "fleet_commitment_observations": observed["fleet_commitments"],
                      "staff_observations": observed.get("staff_salary")}
         external = _external_research(observed["external_route_research"],
@@ -439,7 +454,7 @@ def replay_external_research_page(*, offset=0, expected_fingerprint=None, now=No
 
 
 def snapshot_summary(*, now=None, path: Path | None = None):
-    """Expose aggregate progress only. Never return private aircraft identities."""
+    """Expose progress and scoped controls without returning aircraft identities."""
     now = time.time() if now is None else now
     path = path if path is not None else paths.current().data / FILENAME
     try:
@@ -449,8 +464,8 @@ def snapshot_summary(*, now=None, path: Path | None = None):
         if not _fresh(observations["captured_at"], now):
             return {"status": "expirado", "snapshot_id": snapshot["snapshot_id"]}
         scopes = dict(coverage["scopes"])
-        scopes["hubs"] = scopes["hubs"] and all(
-            _fresh(hub["observed_at"], now) for hub in snapshot["hubs"])
+        owned_inventory = _captured_owned_inventory(snapshot, now)
+        scopes["hubs"] = owned_inventory is not None
         fleet = observations["fleet"]
         counts = [fleet["routes"], fleet["parked"], fleet["pending"]]
         scopes["fleet"] = (scopes["fleet"] and coverage["verified"] is True
@@ -528,6 +543,7 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                 "observed_at": snapshot["observed_at"],
                 "scopes": scopes,
                 "owned_hub_count": len(snapshot["hubs"]) if scopes["hubs"] else None,
+                "owned_inventory": owned_inventory,
                 "fleet_count": coverage["expected_aircraft_count"] if scopes["fleet"] else None,
                 "unrouted_aircraft_control": unrouted,
                 "passenger_hangar_control": hangar_control,

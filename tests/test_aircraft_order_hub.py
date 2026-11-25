@@ -306,7 +306,7 @@ def test_simulacao_de_plano_bloqueia_checkout_sem_preco_verificado(monkeypatch):
 
 @pytest.mark.parametrize("case", [
     "valid", "price_changed", "engine_excluded", "untrusted_source", "model_changed",
-    "hub_changed", "ajax_active", "second_price_changed", "engine_changed", "live_gate",
+    "hub_changed", "ajax_active", "second_price_changed", "engine_changed", "late_low_balance", "live_gate",
 ])
 def test_prevoo_planejado_valida_checkout_sem_submeter_pedido(monkeypatch, case):
     snapshot = SimpleNamespace(selected_engine_id="engine-1")
@@ -378,11 +378,18 @@ def test_prevoo_planejado_valida_checkout_sem_submeter_pedido(monkeypatch, case)
         def find_elements(self, *_args):
             return []
 
+    def current_detail(*_args):
+        assert len(probes) == 2
+        if case == "late_low_balance":
+            warning = SimpleNamespace(is_displayed=lambda: True)
+            return SimpleNamespace(find_elements=lambda *_args: [warning])
+        return Detail()
+
     bot = SimpleNamespace(
         config=SimpleNamespace(get=lambda section, key, fallback: fallback),
         dry_run=case != "live_gate",
         ajax=lambda *_args: Detail(),
-        driver=SimpleNamespace(find_element=lambda *_args: Detail()),
+        driver=SimpleNamespace(find_element=current_detail),
         js=lambda *_args: "PP-123",
         notify=lambda *args, **kwargs: calls.append(("notify", args, kwargs)),
         read_money=lambda: pytest.fail("A simulação não deve consultar saldo para comprar"),
@@ -397,6 +404,8 @@ def test_prevoo_planejado_valida_checkout_sem_submeter_pedido(monkeypatch, case)
     )
     assert prepared == ([] if case == "live_gate" else [("default", "engine-1")])
     assert result is (case == "valid")
+    if case == "late_low_balance":
+        assert len(checkout_price_checks) == 1
     if case != "valid":
         assert calls == []
         return

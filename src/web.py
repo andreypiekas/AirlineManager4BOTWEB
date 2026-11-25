@@ -284,25 +284,37 @@ class WebDashboard:
         """Compare candidate hubs against a recently verified balance."""
         if owned_inventory is None:
             owned_inventory = self.hubs()
+        capture = snapshot_summary()
+        capture_id = capture.get("snapshot_id") if capture.get("status") == "parcial" else None
+        captured_inventory = capture.get("owned_inventory") if capture_id else None
         owned = {hub["id"] for hub in owned_inventory["hubs"]}
+        live_ownership_verified = owned_inventory.get("hub_catalog_fresh") is True
+        ownership_verified = live_ownership_verified
+        if captured_inventory is not None:
+            captured_owned = {hub["id"] for hub in captured_inventory["hubs"]}
+            ownership_verified = not live_ownership_verified or owned == captured_owned
+            if not ownership_verified:
+                # Exclude any hub currently reported as owned while waiting for
+                # a capture that reconciles the two inventories.
+                owned |= captured_owned
+                captured_inventory = None
+            else:
+                owned = captured_owned
         cash, observed_at = recent_verified_money(self.bot)
         report = HubExpansionRegistry().snapshot(
             cash=cash,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
             owned_hub_ids=owned,
-            external_ownership_verified=owned_inventory.get("hub_catalog_fresh") is True,
+            external_ownership_verified=ownership_verified,
         )
         report["cash_observed_at"] = observed_at
         if owned_research is None:
             recommendations_reader = getattr(self, "hub_recommendations", None)
             owned_research = recommendations_reader() if callable(recommendations_reader) else {}
-        capture = snapshot_summary()
-        capture_id = capture.get("snapshot_id") if capture.get("status") == "parcial" else None
-        # This reference identifies the validated current capture. It does not
-        # certify independent registry rows as belonging to that capture.
         report["planning_snapshot_id"] = capture_id
+        report["planning_owned_inventory"] = captured_inventory
         report["expansion_decision"] = assess_expansion(
-            owned_inventory,
+            captured_inventory,
             owned_research,
             owned_research.get("portfolio") if isinstance(owned_research, dict) else None,
             report,

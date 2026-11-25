@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A1/A6, revalidação do checkout e propriedade auditada (G0)
+
+- A1: o pré-voo planejado consulta o painel atual após verificar modelo, variante, base e estabilidade do preço final. Um aviso `#accountLow` visível nessa etapa interrompe a validação. A regressão foi reproduzida em simulação e bloqueada antes do envio do pedido. Na evidência registrada, as variantes do A320-200 mudaram velocidade e consumo sem alterar `#acCost`; a amostra do A380-800 não apresentou fonte explícita de preço final. A validação por modelo, variante e hub segue pendente.
+- A6: o snapshot valida perfil, origem, identidade, vigência e IDs dos hubs próprios. Replay, painel e Telegram reutilizam essa prova. Em caso de divergência com inventário vivo vigente, o ranking diagnóstico exclui os hubs indicados pelas duas fontes e a decisão perde a prova de propriedade. O vínculo permanente aeronave–hub, a varredura completa e os cenários econômicos conclusivos continuam pendentes.
+- `AGENTS.md` e `docs/contexto.md` determinam que os checkpoints sejam gravados no arquivo canônico e relidos após compactação. O histórico multiparte original fica no arquivo local `docs/codex_multipart_commit.md`.
+- Validação direcionada: 433 testes aprovados. Suíte Windows consolidada: 2.204 aprovados e 1 ignorado (134,79 s, instalação Linux excluída). Ruff, compileall e `git diff --check` aprovados. Os 16 testes simulados do instalador passaram no Ubuntu via WSL. Instalação real em servidor e homologação autenticada permanecem pendentes. G0 vigente. Nenhuma compra real ou implantação realizada. Rollback por reversão do commit desta entrega.
+
 ## 2026-11-25 — Autonomia Total A6, replay auditado da pesquisa externa (G0)
 
 - `src/audited_game_snapshot.py` passa a capturar a reserva operacional e disponibiliza `replay_external_research_page()`. O replay utiliza exclusivamente as evidências do perfil capturado, verifica identidade, integridade e vigência, revalida propriedade, preço, pontos e demanda com o relógio atual e vincula a paginação à captura e às evidências vigentes. Reserva auditada anterior pode ser usada quando a nova observação está ausente. Valores inválidos permanecem desconhecidos. O orçamento apresentado é anterior aos compromissos.

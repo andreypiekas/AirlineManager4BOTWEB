@@ -116,6 +116,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 - Modo padrão só pode ser aceito após leitura da opção final quando houver múltiplas variantes. Ambiguidade bloqueia.
 - Testar todas as variantes, seleção explícita, simulação, mudança de preço, reconstrução de DOM e seletores inesperados.
 - **Aceite:** nenhuma compra confirma motor/modelo/preço/hub diferentes dos previstos, e nenhuma alteração ocorre no modo análise.
+- Progresso em 25/11/2026: o pré-voo planejado reabre o painel atual após duas verificações de preço e bloqueia a encomenda se o jogo exibir aviso de saldo insuficiente. A evidência disponível ainda não confirma a fonte do preço final por modelo, variante e hub. G0 permanece vigente.
 
 ### Fase A2 — Hubs, cobertura e dados de rota completos (P0)
 
@@ -164,6 +165,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 
 - Captura A6 em 25/11/2026: o worker incorpora o catálogo externo e as amostras nativas de demanda à mesma identidade de snapshot usada por A3/A4. A propriedade vigente é pré-requisito; candidatos próprios, identidades duplicadas, fontes incompatíveis e observações vencidas são excluídos. Preço e pontos mantêm relógios independentes. O resumo agregado reavalia a validade temporal e permanece parcial e inelegível para compras.
 - Replay A6 em 25/11/2026: a API e a interface de pesquisa externa avaliam somente dados da captura produtiva do perfil (inventário, demanda, motores, mercado, saldo, reserva e parâmetros). A paginação é vinculada ao snapshot e às evidências vigentes; expiração ou substituição da captura reinicia o cursor. O caixa acima da reserva é anterior aos compromissos. Captura ausente, antiga ou inválida deixa a pesquisa indisponível. A avaliação continua diagnóstica e parcial; faltam comprovação do esgotamento interno, fontes econômicas nativas completas e gravação produtiva de cenários conclusivos.
+- Propriedade A6 em 25/11/2026: painel e Telegram compartilham a prova de hubs próprios da captura auditada. Se o inventário vivo vigente divergir, o gate perde a prova e o ranking diagnóstico exclui os hubs conhecidos pelas duas fontes. A cobertura da frota e o esgotamento dos hubs próprios continuam por comprovar.
 
 - Só entrar nesta fase com varredura dos hubs próprios conclusiva e sem proposta elegível (ou com política explícita de comparar expansão externa mesmo havendo oportunidades).
 - Pesquisar novos hubs por regiões e mercados, não apenas selecionar o mais barato. Comparar **hub candidato + modelo/motor + rota(s)**, considerando custo do hub, pontos, aeronave, rota, hangar e reserva.
