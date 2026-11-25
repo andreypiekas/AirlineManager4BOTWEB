@@ -6,7 +6,8 @@ import pytest
 import engine_catalog
 import game_observations
 from engine_detail import (
-    parse_displayed_metrics, parse_operational_requirements, parse_seat_observation,
+    FinalCheckoutPrice, parse_displayed_metrics, parse_operational_requirements,
+    parse_seat_observation, validate_final_checkout_price,
     validate_operational_requirements, validate_seat_observation,
 )
 from engine_selection import parse_engine_catalog
@@ -69,6 +70,52 @@ def test_authenticated_emissions_fixture_preserves_every_selected_variant():
 ])
 def test_bad_units_and_ambiguous_values_fail_closed(raw):
     assert parse_displayed_metrics(raw) is None
+
+
+def test_final_checkout_price_requires_the_selected_engine_identity():
+    price = FinalCheckoutPrice(
+        engine_id="10", amount_usd=6_770_196, source="data_final_price",
+        status="verified", reason=None,
+    )
+
+    missing_variant = validate_final_checkout_price(price, None)
+    assert missing_variant.status == "unknown"
+    assert missing_variant.engine_id is None
+    assert missing_variant.reason == "selected_engine_unavailable"
+
+    divergent_variant = validate_final_checkout_price(price, "9")
+    assert divergent_variant.status == "unknown"
+    assert divergent_variant.engine_id == "9"
+    assert divergent_variant.reason == "checkout_price_variant_mismatch"
+
+    assert validate_final_checkout_price(price, "10") == price
+
+
+@pytest.mark.parametrize("price", [
+    None,
+    FinalCheckoutPrice(engine_id="10"),
+    FinalCheckoutPrice(engine_id="10", amount_usd=0, source="data_final_price", status="verified"),
+    FinalCheckoutPrice(engine_id="10", amount_usd=True, source="data_final_price", status="verified"),
+    FinalCheckoutPrice(engine_id="10", amount_usd=123.5, source="data_final_price", status="verified"),
+    FinalCheckoutPrice(engine_id="10", amount_usd=1000, source="observed_cost", status="verified"),
+])
+def test_final_checkout_price_invalid_or_unavailable_stays_unknown(price):
+    result = validate_final_checkout_price(price, "10")
+    assert result.status == "unknown"
+    assert result.amount_usd is None
+    assert result.source is None
+
+
+def test_displayed_detail_cost_is_never_promoted_to_final_checkout_price():
+    metrics = parse_displayed_metrics(FIXTURE["variants"]["10"])
+    assert metrics["displayed_cost_usd"] == 6_770_196
+
+    result = validate_final_checkout_price(FinalCheckoutPrice(
+        engine_id="10", amount_usd=metrics["displayed_cost_usd"],
+        source="observed_cost", status="verified", reason=None,
+    ), "10")
+    assert result.status == "unknown"
+    assert result.reason == "checkout_price_invalid"
 
 
 def test_observations_bound_to_selected_variant_and_persisted(tmp_path, monkeypatch):

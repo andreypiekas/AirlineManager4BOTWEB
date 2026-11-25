@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-24 — Autonomia Total A1, preço final vinculado à variante de motor (G0)
+
+- Cada variante do catálogo passa a carregar um contrato tipado `FinalCheckoutPrice`, com identidade do motor, valor, fonte e estado de verificação. As leituras atuais permanecem como `unknown`, pois a observação autenticada de 23/11 identificou `#engSelection` e `#acCost`, mas não comprovou um preço final associado a cada variante.
+- O pré-voo planejado associa o preço à variante selecionada somente após duas leituras idênticas do checkout, confirmação de que o valor inclui o motor, correlação entre modelo e base e revalidação da seleção. A validação exige ID do motor, valor positivo, estado verificado e fonte final autorizada. A verificação de seleção permanece independente da verificação de preço.
+- Validação: 2.187 testes aprovados e 1 ignorado na suíte Windows, excluindo `tests/test_instalacao_linux.py`. Ruff e `git diff --check` aprovados. A execução integral no Windows confirmou três falhas restritas aos testes Linux de permissões POSIX e sintaxe Bash. Permanecem pendentes a identificação de um campo nativo confiável para preço final e a homologação autenticada do vínculo entre preço e variante. O diagnóstico atual continua com `price_verified=false`, mantendo compras planejadas bloqueadas. Nenhuma transação real executada.
+
 ## 2026-11-24 — Autonomia Total A6/A8, seleção externa por limites de hub (G0)
 
 - O seletor percorre o ranking completo de candidatos externos com evidência conclusiva, aplicando os limites individuais de capital e pontos por perfil ao custo do hub. A seleção pode alcançar candidatos abaixo do Top 3 e preserva a comparação econômica para análise, mesmo com os limites zerados ou inválidos. A exigência de pontos positivos continua pendente de comprovação do saldo correspondente.

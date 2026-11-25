@@ -317,6 +317,14 @@ def test_prevoo_planejado_valida_checkout_sem_submeter_pedido(monkeypatch, case)
     motor_checks = []
     monkeypatch.setattr(engine_selection, "verify_engine_selection",
                         lambda _bot, expected: motor_checks.append(expected) or "Trent 970")
+    checkout_price_checks = []
+
+    def require_checkout_price(catalog, *, expected_engine_id, checkout_price):
+        checkout_price_checks.append((catalog, expected_engine_id, checkout_price))
+        assert checkout_price.engine_id == expected_engine_id
+        return checkout_price.amount_usd
+
+    monkeypatch.setattr(engine_selection, "require_verified_checkout_price", require_checkout_price)
     hub_checks = []
     monkeypatch.setattr(aircraft_order_hub, "verify_order_hub_selection",
                         lambda _bot, expected: hub_checks.append(expected) or expected)
@@ -389,6 +397,12 @@ def test_prevoo_planejado_valida_checkout_sem_submeter_pedido(monkeypatch, case)
     assert len(probes) == 2
     assert len(motor_checks) == 2
     assert hub_checks == ["202"]
+    assert len(checkout_price_checks) == 1
+    _, checked_engine_id, checked_price = checkout_price_checks[0]
+    assert checked_engine_id == "engine-1"
+    assert checked_price.amount_usd == 310_000_000
+    assert checked_price.source == "data_final_price"
+    assert checked_price.status == "verified"
     assert len(calls) == 1
     assert calls[0][0] == "notify"
     assert "310,000,000" in calls[0][1][0]

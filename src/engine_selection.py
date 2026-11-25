@@ -11,6 +11,10 @@ import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from engine_detail import (
+    FinalCheckoutPrice, unknown_final_checkout_price, validate_final_checkout_price,
+)
+
 if TYPE_CHECKING:
     from bot import Bot
 
@@ -119,6 +123,7 @@ class EngineVariant:
     selected: bool
     speed: float | None
     fuel: float | None
+    final_checkout_price: FinalCheckoutPrice | None = None
 
 
 @dataclass(frozen=True)
@@ -272,6 +277,8 @@ def parse_engine_catalog(groups: object) -> EngineCatalog:
             selected=option["selected"],
             speed=_positive_number(option.get("speed")),
             fuel=_positive_number(option.get("fuel")),
+            # Current DOM evidence does not expose a final price bound to this option.
+            final_checkout_price=unknown_final_checkout_price(engine_id),
         ))
 
     selected = [variant for variant in variants if variant.selected]
@@ -296,6 +303,36 @@ def parse_engine_catalog(groups: object) -> EngineCatalog:
 def read_engine_catalog(bot: "Bot") -> EngineCatalog:
     """Inventaria variantes reais, exclusivamente por leitura do formulário."""
     return parse_engine_catalog(bot.js(_ENGINE_OPTIONS_JS))
+
+
+def require_verified_checkout_price(
+    catalog: EngineCatalog, *, expected_engine_id: str | None = None,
+    checkout_price: FinalCheckoutPrice | None = None,
+) -> int:
+    """Require final checkout evidence explicitly bound to the selected variant."""
+    selected_engine_id = catalog.selected_engine_id
+    if not selected_engine_id:
+        raise EngineSelectionError("O jogo não confirmou a variante de motor para validar o preço final.")
+    if expected_engine_id is not None and selected_engine_id != expected_engine_id:
+        raise EngineSelectionError("A variante selecionada diverge da variante aprovada para o preço final.")
+
+    selected = next(
+        (variant for variant in catalog.variants if variant.engine_id == selected_engine_id),
+        None,
+    )
+    if selected is None or not selected.available or not selected.selected:
+        raise EngineSelectionError("A variante selecionada está ausente ou indisponível para validar o preço final.")
+
+    evidence = selected.final_checkout_price if checkout_price is None else checkout_price
+    price = validate_final_checkout_price(evidence, selected_engine_id)
+    if price.status != "verified":
+        if price.reason == "checkout_price_variant_mismatch":
+            raise EngineSelectionError("O preço final está vinculado a outra variante de motor.")
+        if price.reason == "checkout_price_invalid":
+            raise EngineSelectionError("O preço final do checkout é inválido.")
+        raise EngineSelectionError("O preço final do checkout é desconhecido para a variante selecionada.")
+    return int(price.amount_usd)
+
 
 def verify_engine_selection(bot: "Bot", expected: EngineCatalog) -> str:
     """Confirma que a variante selecionada permaneceu idêntica após outro AJAX."""

@@ -1809,8 +1809,9 @@ def order_aircraft(
     # explícita NÃO aceita fallback silencioso para a seleção padrão do jogo.
     from engine_selection import (
         EngineSelectionError, prepare_engine, read_engine_catalog,
-        verify_engine_selection,
+        require_verified_checkout_price, verify_engine_selection,
     )
+    from engine_detail import FinalCheckoutPrice
     from aircraft_order_hub import verify_order_hub_selection
 
     try:
@@ -1903,7 +1904,18 @@ def order_aircraft(
             if second_price != first_price:
                 raise ValueError("O preço final mudou durante as verificações de motor e base.")
             verify_engine_selection(bot, engine_snapshot)
-            confirmed_cost = second_price[0]
+            checkout_price = FinalCheckoutPrice(
+                engine_id=engine_snapshot.selected_engine_id,
+                amount_usd=second_price[0],
+                source=second_price[1],
+                status="verified",
+                reason=None,
+            )
+            confirmed_cost = require_verified_checkout_price(
+                engine_snapshot,
+                expected_engine_id=expected_engine_id,
+                checkout_price=checkout_price,
+            )
         except Exception as exc:
             log_market.warning("Pré-voo de %s não confirmado. Encomenda bloqueada: %s", choice.name, exc)
             return False

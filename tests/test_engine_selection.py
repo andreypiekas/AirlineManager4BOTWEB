@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 import json
 from pathlib import Path
 import shutil
@@ -13,6 +14,7 @@ import pytest
 import engine_selection
 import fleet
 import web
+from engine_detail import FinalCheckoutPrice
 
 
 _OBSERVED_ORDER_MODELS = json.loads(
@@ -104,6 +106,101 @@ def test_catalogo_somente_leitura_expoe_ids_reais_e_disponibilidade(groups, kind
     assert [v.selected for v in catalog.variants] == [selected == "1", selected == "2", False]
     assert catalog.variants[1].label == "GP7270"
     assert catalog.variants[1].speed == 921
+
+
+def test_catalogo_legado_mantem_preco_final_desconhecido_por_variante():
+    catalog = engine_selection.parse_engine_catalog(engines())
+
+    assert catalog.selected_engine_id == "1"
+    for variant in catalog.variants:
+        assert variant.final_checkout_price.engine_id == variant.engine_id
+        assert variant.final_checkout_price.status == "unknown"
+        assert variant.final_checkout_price.amount_usd is None
+
+
+def test_preflight_bloqueia_preco_final_desconhecido_no_motor_selecionado():
+    groups = engines()
+    catalog = engine_selection.parse_engine_catalog(groups)
+
+    with pytest.raises(engine_selection.EngineSelectionError, match="preço final.*desconhecido"):
+        engine_selection.require_verified_checkout_price(catalog, expected_engine_id="1")
+
+    class Bot:
+        def js(self, script, *args):
+            assert script == engine_selection._ENGINE_OPTIONS_JS
+            assert not args
+            return deepcopy(groups)
+
+    assert engine_selection.verify_engine_selection(Bot(), catalog) == "Trent 970"
+
+
+def test_checkout_verificado_pode_ser_vinculado_ao_motor_selecionado():
+    catalog = engine_selection.parse_engine_catalog(engines())
+    checkout_price = FinalCheckoutPrice(
+        engine_id="1", amount_usd=6_770_196, source="data_final_price",
+        status="verified", reason=None,
+    )
+
+    assert engine_selection.require_verified_checkout_price(
+        catalog, expected_engine_id="1", checkout_price=checkout_price,
+    ) == 6_770_196
+
+    divergent_price = replace(checkout_price, engine_id="2")
+    with pytest.raises(engine_selection.EngineSelectionError, match="outra variante"):
+        engine_selection.require_verified_checkout_price(
+            catalog, expected_engine_id="1", checkout_price=divergent_price,
+        )
+
+
+def test_preflight_bloqueia_motor_ausente_divergente_ou_indisponivel():
+    catalog = engine_selection.parse_engine_catalog(engines())
+
+    without_selection = replace(catalog, selected_engine_id=None)
+    with pytest.raises(engine_selection.EngineSelectionError, match="não confirmou"):
+        engine_selection.require_verified_checkout_price(without_selection)
+
+    with pytest.raises(engine_selection.EngineSelectionError, match="diverge"):
+        engine_selection.require_verified_checkout_price(catalog, expected_engine_id="2")
+
+    selected = next(variant for variant in catalog.variants if variant.engine_id == "1")
+    unavailable = replace(selected, available=False)
+    unavailable_catalog = replace(
+        catalog,
+        variants=tuple(unavailable if variant.engine_id == "1" else variant
+                       for variant in catalog.variants),
+    )
+    with pytest.raises(engine_selection.EngineSelectionError, match="indisponível"):
+        engine_selection.require_verified_checkout_price(unavailable_catalog)
+
+
+def test_preflight_bloqueia_preco_vinculado_a_outro_motor_ou_invalido():
+    catalog = engine_selection.parse_engine_catalog(engines())
+
+    divergent_price = FinalCheckoutPrice(
+        engine_id="2", amount_usd=6_770_196, source="data_final_price",
+        status="verified", reason=None,
+    )
+    divergent_catalog = replace(
+        catalog,
+        variants=tuple(replace(variant, final_checkout_price=divergent_price)
+                       if variant.engine_id == "1" else variant
+                       for variant in catalog.variants),
+    )
+    with pytest.raises(engine_selection.EngineSelectionError, match="outra variante"):
+        engine_selection.require_verified_checkout_price(divergent_catalog)
+
+    invalid_price = FinalCheckoutPrice(
+        engine_id="1", amount_usd=True, source="data_final_price",
+        status="verified", reason=None,
+    )
+    invalid_catalog = replace(
+        catalog,
+        variants=tuple(replace(variant, final_checkout_price=invalid_price)
+                       if variant.engine_id == "1" else variant
+                       for variant in catalog.variants),
+    )
+    with pytest.raises(engine_selection.EngineSelectionError, match="inválido"):
+        engine_selection.require_verified_checkout_price(invalid_catalog)
 
 
 @pytest.mark.parametrize("groups,reason", [

@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
+from dataclasses import dataclass
 
 
 # Both the catalog collector and checkout probe must identify the same loaded
@@ -44,6 +45,53 @@ _FIELDS = {
 }
 _INTEGER_FIELDS = {"capacity_pax", "required_runway_ft", "range_km",
                    "a_check_cost_usd", "maintenance_interval_hours", "displayed_cost_usd"}
+_FINAL_CHECKOUT_PRICE_SOURCES = {"data_final_price", "data_total_price"}
+
+
+@dataclass(frozen=True)
+class FinalCheckoutPrice:
+    """Final order amount tied to one engine variant, when native evidence exists."""
+
+    engine_id: str | None
+    amount_usd: int | None = None
+    source: str | None = None
+    status: str = "unknown"
+    reason: str | None = "checkout_price_unavailable"
+
+
+def unknown_final_checkout_price(
+    engine_id: object = None, *, reason: str = "checkout_price_unavailable",
+) -> FinalCheckoutPrice:
+    """Represent an unverified final price without promoting the detail-panel amount."""
+    identity = engine_id.strip() if isinstance(engine_id, str) and engine_id.strip() else None
+    return FinalCheckoutPrice(engine_id=identity, reason=reason)
+
+
+def validate_final_checkout_price(
+    raw: object, selected_engine_id: object,
+) -> FinalCheckoutPrice:
+    """Accept only a positive final amount explicitly bound to the selected variant."""
+    if not isinstance(selected_engine_id, str) or not selected_engine_id.strip():
+        return unknown_final_checkout_price(reason="selected_engine_unavailable")
+    if not isinstance(raw, FinalCheckoutPrice):
+        return unknown_final_checkout_price(selected_engine_id)
+    if raw.engine_id != selected_engine_id:
+        return unknown_final_checkout_price(
+            selected_engine_id, reason="checkout_price_variant_mismatch",
+        )
+    if raw.status != "verified" or raw.reason is not None:
+        return unknown_final_checkout_price(
+            selected_engine_id,
+            reason=raw.reason if isinstance(raw.reason, str) and raw.reason
+            else "checkout_price_unavailable",
+        )
+    if (type(raw.amount_usd) is not int or not 0 < raw.amount_usd <= 10**12
+            or not isinstance(raw.source, str)
+            or raw.source not in _FINAL_CHECKOUT_PRICE_SOURCES):
+        return unknown_final_checkout_price(
+            selected_engine_id, reason="checkout_price_invalid",
+        )
+    return raw
 
 
 def _number(text: object, unit: str | None, maximum: int) -> float | None:
