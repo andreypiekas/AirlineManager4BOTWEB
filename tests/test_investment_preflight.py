@@ -109,6 +109,29 @@ def test_without_approved_intent_or_independent_checkout_preflight_fails(tmp_pat
     assert validate_aircraft_preflight({}, checkout(intent))["ready"] is False
 
 
+@pytest.mark.parametrize("timestamp", [True, "1800000000", float("nan"), float("inf"), 10 ** 1000])
+def test_malformed_or_unrepresentable_checkout_timestamps_fail_closed(tmp_path, timestamp):
+    intent = approved_intent(tmp_path)
+    observation = checkout(intent, observed_at=timestamp)
+    observation["delivery_hub_mapping"]["observed_at"] = timestamp
+
+    result = validate_aircraft_preflight(intent, observation, now=NOW)
+
+    assert result["ready"] is False
+    assert "checkout_desatualizado" in result["reasons"]
+    assert "correspondencia_hub_entrega_nao_verificada" in result["reasons"]
+
+
+@pytest.mark.parametrize("current_time", [True, "1800000000", float("nan"), float("inf"), -(10 ** 1000)])
+def test_invalid_current_time_fails_closed(tmp_path, current_time):
+    intent = approved_intent(tmp_path)
+
+    result = validate_aircraft_preflight(intent, checkout(intent), now=current_time)
+
+    assert result["ready"] is False
+    assert "checkout_desatualizado" in result["reasons"]
+
+
 @pytest.mark.parametrize(("changes", "reason"), [
     ({"source": "simulation_hub_crosswalk"}, "correspondencia_hub_entrega_nao_verificada"),
     ({"verified": False}, "correspondencia_hub_entrega_nao_verificada"),

@@ -1,6 +1,7 @@
 """Crash-safe simulated acquisition intents. No game or Selenium calls."""
 from __future__ import annotations
 
+import os
 import socket
 import sqlite3
 import subprocess
@@ -277,6 +278,10 @@ def test_restart_quarantines_timeout_and_requires_plan_specific_game_proof(tmp_p
         aircraft_proof(verified=False),
         aircraft_proof(observed_at=time.time() - 901),
         aircraft_proof(observed_at=time.time() + 901),
+        aircraft_proof(observed_at=True),
+        aircraft_proof(observed_at=float("nan")),
+        aircraft_proof(observed_at=float("inf")),
+        aircraft_proof(observed_at=10 ** 1000),
     )
     for proof in invalid_proofs:
         with pytest.raises(ValueError):
@@ -381,10 +386,12 @@ def test_stale_executor_guard_requires_proof_that_owner_process_is_gone(tmp_path
 
     monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: True)
     assert not ledger.release_stale_executor()
+    assert not ledger.release_stale_executor(expected_owner_token="owner-123")
     assert ledger.executor_busy()
 
     monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: False)
-    assert ledger.release_stale_executor()
+    assert not ledger.release_stale_executor(expected_owner_token="different-owner")
+    assert ledger.release_stale_executor(expected_owner_token="owner-123")
     assert not ledger.executor_busy()
 
 
@@ -420,7 +427,75 @@ def test_stale_executor_guard_from_another_host_remains_locked(tmp_path, monkeyp
         conn.commit()
     monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: False)
     assert not ledger.release_stale_executor()
+    assert not ledger.release_executor("owner-123")
     assert ledger.executor_busy()
+
+
+def test_executor_token_cannot_release_a_live_owner_from_another_process(tmp_path, monkeypatch):
+    ledger = journal(tmp_path)
+    assert ledger.acquire_executor("owner-123")
+    other_pid = os.getpid() + 10000
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE executor_guards SET owner_pid=? WHERE profile_id=?",
+            (other_pid, ledger.profile_id),
+        )
+        conn.commit()
+
+    monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: True)
+    assert not ledger.release_executor("owner-123")
+    assert ledger.executor_busy()
+
+    monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: False)
+    assert ledger.release_executor("owner-123")
+    assert not ledger.executor_busy()
+
+
+def test_duplicate_journal_environment_markers_are_rejected(tmp_path):
+    ledger = journal(tmp_path)
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO journal_environment (environment) VALUES ('simulation')"
+        )
+        conn.commit()
+
+    with pytest.raises(ValueError, match="ambiente incompatível"):
+        InvestmentJournal(ledger.path, profile_id="principal")
+
+
+def test_journal_rejects_unrepresentable_timestamps_without_overflow(tmp_path):
+    ledger = journal(tmp_path)
+    with pytest.raises(ValueError, match="Início de janela inválido"):
+        ledger.unresolved(since=10 ** 1000)
+    with pytest.raises(ValueError, match="Início de janela inválido"):
+        ledger.budget_exposure_since(10 ** 1000)
+    with pytest.raises(ValueError, match="Início de janela inválido"):
+        ledger.acquisition_count_since(float("inf"))
+    with pytest.raises(ValueError, match="Início de janela inválido"):
+        ledger.audit_metrics(10 ** 1000)
+    with pytest.raises(ValueError, match="Início de janela inválido"):
+        ledger.audit_metrics(True)
+    assert ledger.unresolved(since=10 ** 100)["period_usage"]["acquisition_count"] == 0
+    assert ledger.budget_exposure_since(10 ** 100) == 0
+
+
+def test_journal_uses_bounded_sqlite_wait_and_full_synchronous_mode(tmp_path):
+    ledger = journal(tmp_path)
+    with ledger._connect() as conn:
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 10000
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 2
+
+
+def test_simulation_cannot_reuse_unmarked_journal_with_only_executor_guard(tmp_path):
+    path = tmp_path / "legacy-game.sqlite3"
+    ledger = InvestmentJournal(path, profile_id="principal")
+    assert ledger.acquire_executor("legacy-owner")
+    with ledger._connect() as conn:
+        conn.execute("DELETE FROM journal_environment")
+        conn.commit()
+
+    with pytest.raises(ValueError, match="não pode virar simulação"):
+        InvestmentJournal(path, profile_id="principal", simulation=True)
 
 
 def test_existing_journal_guard_schema_is_migrated_without_releasing_legacy_owner(tmp_path):
