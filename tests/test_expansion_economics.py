@@ -123,6 +123,35 @@ def evaluate(data, **kwargs):
     return evaluate_expansion_economics(*data, now=NOW, **kwargs)
 
 
+def test_itinerary_specific_proofs_and_ranking():
+    direct = evaluate(fixture())
+    alternatives = [direct]
+    for stop in ("333", "334"):
+        data = fixture()
+        _, candidate, inputs = data
+        candidate["route"].update(stopover_id=stop, stopover_verified=True,
+                                  legs_km=[600, 600], stopover_runway_m=2500)
+        candidate["financial"]["stopover_id"] = stop
+        candidate["costs"]["route_fee"]["stopover_id"] = stop
+        assert evaluate(data)["status"] == "blocked"
+        for name, subjects in SUBJECTS.items():
+            if "destination_id" in subjects:
+                inputs[name]["stopover_id"] = stop
+        result = evaluate(data)
+        assert result["status"] == "evaluated", result["blocking_reasons"]
+        assert result["identity"]["stopover_id"] == stop
+        assert result["provenance"]["fares"]["stopover_id"] == stop
+        alternatives.append(result)
+        inputs["fares"]["stopover_id"] = "999"
+        assert evaluate(data)["status"] == "blocked"
+    report = rank_expansion_economics(alternatives)
+    assert len(report["alternatives"]) == 3
+    assert report["conflicting_identities"] == 0
+    data = fixture()
+    data[2]["fares"]["stopover_id"] = "333"
+    assert evaluate(data)["status"] == "blocked"
+
+
 def codes(result):
     return {item["code"] for item in result["blocking_reasons"]}
 

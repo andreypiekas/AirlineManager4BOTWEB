@@ -451,11 +451,27 @@ def test_verified_stopover_needs_real_airport_and_physical_checks():
         legs_km=[700, 800],
         stopover_runway_m=2400,
     )
+    candidate["financial"]["stopover_id"] = "333"
+    candidate["costs"]["route_fee"]["stopover_id"] = "333"
     assert evaluate(snapshot, candidate)["status"] == "suggested"
     candidate["route"]["legs_km"] = [3100, 200]
     assert "ROUTE_PHYSICALLY_INFEASIBLE" in codes(evaluate(snapshot, candidate))
     candidate["route"]["stopover_verified"] = False
     assert "STOPOVER_UNVERIFIED" in codes(evaluate(snapshot, candidate))
+
+
+@pytest.mark.parametrize("route_stop,proof_stop", [("333", "999"), ("333", None), (None, "333")])
+def test_stopover_must_match_financial_and_route_fee_evidence(route_stop, proof_stop):
+    snapshot, candidate = sample()
+    if route_stop:
+        candidate["route"].update(stopover_id=route_stop, stopover_verified=True,
+                                  legs_km=[700, 800], stopover_runway_m=2400)
+    candidate["financial"]["stopover_id"] = proof_stop
+    candidate["costs"]["route_fee"]["stopover_id"] = proof_stop
+    result = evaluate(snapshot, candidate)
+    assert result["status"] == "blocked"
+    assert {"COST_IDENTITY_MISMATCH", "PROFIT_IDENTITY_MISMATCH"} <= codes(result)
+    assert result["economics"]["payback_days"] is None
 
 
 @pytest.mark.parametrize(

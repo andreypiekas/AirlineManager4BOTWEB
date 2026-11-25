@@ -357,7 +357,8 @@ def _validate_costs(
         evidence = _evidence(
             costs.get(field), f"costs.{field}", source, profile_id, now, max_age_seconds, reasons, snapshot_id=snapshot_id
         )
-        if any(identities.get(key) is None or evidence.get(key) != identities[key] for key in _COST_SUBJECTS[field]):
+        if (any(identities.get(key) is None or evidence.get(key) != identities[key] for key in _COST_SUBJECTS[field])
+                or (field == "route_fee" and evidence.get("stopover_id") != identities.get("stopover_id"))):
             _block(
                 reasons,
                 "COST_IDENTITY_MISMATCH",
@@ -405,10 +406,10 @@ def _validate_financial(
     identities: Mapping[str, object],
 ) -> Decimal | None:
     financial = _evidence(raw, "financial", "route_optimizer", profile_id, now, max_age_seconds, reasons, snapshot_id=snapshot_id)
-    if any(
+    if (any(
         identities.get(key) is None or financial.get(key) != identities[key]
         for key in ("hub_id", "origin_id", "destination_id", "model_id", "engine_id")
-    ):
+    ) or financial.get("stopover_id") != identities.get("stopover_id")):
         _block(
             reasons,
             "PROFIT_IDENTITY_MISMATCH",
@@ -521,6 +522,7 @@ def evaluate_investment(
         "hub_id": hub_id,
         "origin_id": route["origin_id"],
         "destination_id": route["destination_id"],
+        "stopover_id": route["stopover_id"],
         "model_id": aircraft["model_id"],
         "engine_id": aircraft["engine_id"],
     }

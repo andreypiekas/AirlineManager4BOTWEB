@@ -83,6 +83,21 @@ def test_legacy_migration_keeps_unidentified_engine_alongside_explicit_variants(
     assert {row["engine_id"] for row in rows if "engine_id" in row} == {"1", "2"}
 
 
+def test_native_model_id_preserves_homonyms_and_legacy_observations(tmp_path):
+    registry = HubAircraftResearchRegistry(tmp_path / "research.json")
+    legacy = _scenario()
+    first = {**legacy, "model_id": "11"}
+    second = {**legacy, "model_id": "22"}
+    for row in (legacy, first, second):
+        assert registry.record(row)
+    assert registry.record({**first, "model": "A320 renamed", "observed_at": first["observed_at"] + 1})
+    rows = registry.snapshot()
+    assert len(rows) == 3
+    assert {row.get("model_id") for row in rows} == {None, "11", "22"}
+    assert next(row for row in rows if row.get("model_id") == "11")["model"] == "A320 renamed"
+    assert not registry.record({**first, "model_id": {}})
+
+
 def test_engine_variants_deduplicate_by_id_with_reverse_routes(tmp_path):
     registry = HubAircraftResearchRegistry(tmp_path / "research.json")
     first = {**_scenario(), "engine_id": 1, "engine_name": "CFM56"}

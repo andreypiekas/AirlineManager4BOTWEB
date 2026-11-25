@@ -58,6 +58,8 @@ def build_aircraft_intent_plan(
     identity = evaluation.get("identity")
     if not isinstance(winner, Mapping) or not isinstance(identity, Mapping):
         raise ValueError("Identidade da oportunidade ausente.")
+    if identity.get("stopover_id") is not None:
+        raise ValueError("Execucao de itinerario com escala ainda nao homologada.")
     if (any(winner.get(field) != evaluation.get(field) for field in
             ("plan_id", "profile_id", "snapshot_id", "economics_id"))
             or winner.get("identity") != identity

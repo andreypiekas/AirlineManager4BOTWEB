@@ -202,6 +202,25 @@ def test_verified_scenarios_win_same_identity_without_erasing_other_models(tmp_p
     assert len(registry.snapshot(now=NOW)) == 2
 
 
+def test_homonymous_native_models_remain_distinct_through_persistence_and_ranking(tmp_path):
+    inventory, routes, market = _inputs()
+    market["models"][1]["name"] = "A320"
+    page = build_owned_hub_research_queue(inventory, routes, market, now=NOW)
+    registry = OwnedHubResearchInputsRegistry(tmp_path / "research.json")
+    assert registry.record_queue(page, now=NOW) == 2
+    assert registry.record_queue(page, now=NOW) == 2
+    rows = registry.snapshot(now=NOW)
+    assert {row["model_id"] for row in rows} == {"11", "22"}
+    report = rank_next_aircraft(inventory, rows, now=NOW)
+    assert {row["model_id"] for row in report["candidates"]} == {"11", "22"}
+    assert all("pesquisas_conflitantes" not in row["pending"] for row in report["candidates"])
+    verified = {"source": "game_research", "hub_id": "2926", "model": "A320",
+                "origin": {"id": "2926"}, "destination": {"id": "3139"}}
+    assert len(registry.snapshot(verified=[verified], now=NOW)) == 2
+    verified["model_id"] = "11"
+    assert [row["model_id"] for row in registry.snapshot(verified=[verified], now=NOW)] == ["22"]
+
+
 def test_conflicting_or_unverified_input_never_grants_approval(tmp_path):
     registry = OwnedHubResearchInputsRegistry(tmp_path / "research.json")
     initial = _queue()

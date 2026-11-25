@@ -9,6 +9,7 @@ import aircraft_order_hub
 import engine_selection
 import fleet
 import game_source_probe
+import investment_policy
 
 
 def hub_state(selected="101", options=None, *, selector_count=1, disabled=False):
@@ -213,6 +214,11 @@ def test_plano_bloqueia_compra_quando_preco_final_nao_esta_verificado(monkeypatc
 
 
 def test_fluxo_legado_nao_depende_do_novo_diagnostico_de_checkout(monkeypatch):
+    monkeypatch.setattr(
+        investment_policy.InvestmentPolicy,
+        "from_config",
+        classmethod(lambda cls, _config: pytest.fail("O fluxo legado não depende da nova política")),
+    )
     monkeypatch.setattr(engine_selection, "prepare_engine", lambda *_args, **_kwargs: "Trent 970")
     monkeypatch.setattr(engine_selection, "read_engine_catalog",
                         lambda _bot: pytest.fail("Fluxo legado não usa snapshot novo"))

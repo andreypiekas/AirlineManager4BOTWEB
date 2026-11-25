@@ -50,6 +50,8 @@ _SUBJECTS = {
     "other_fees": _IDENTITY,
     "cash": (),
 }
+_ROUTE_INPUTS = frozenset(field for field, subjects in _SUBJECTS.items()
+                          if "destination_id" in subjects)
 _SOURCES = {
     "layout": "game_aircraft_shop",
     "capacity": "game_aircraft_shop",
@@ -114,7 +116,8 @@ def _evidenced_inputs(
         if (item.get("verified") is not True or item.get("source") != source
                 or item.get("profile_id") != profile_id or item.get("snapshot_id") != snapshot_id
                 or any(item.get(key) != identity.get(key) or identity.get(key) is None
-                       for key in _SUBJECTS[field])):
+                       for key in _SUBJECTS[field])
+                or (field in _ROUTE_INPUTS and item.get("stopover_id") != identity.get("stopover_id"))):
             _reason(reasons, "EVIDENCE_CONTRADICTORY", f"inputs.{field}")
             continue
         if stamp is None or not 0 <= Decimal(str(now)) - stamp <= Decimal(str(max_age_seconds)):
@@ -125,6 +128,8 @@ def _evidenced_inputs(
             "source": source, "observed_at": float(stamp), "verified": True,
             "profile_id": profile_id, "snapshot_id": snapshot_id,
             **{key: item[key] for key in _SUBJECTS[field]},
+            **({"stopover_id": item["stopover_id"]}
+               if field in _ROUTE_INPUTS and identity.get("stopover_id") is not None else {}),
             "value": deepcopy(item.get("value")),
         }
     return values, provenance
@@ -228,6 +233,8 @@ def evaluate_expansion_economics(
         "model_id": base["aircraft"]["model_id"],
         "engine_id": base["aircraft"]["engine_id"],
     }
+    if base["route"]["stopover_id"] is not None:
+        identity["stopover_id"] = base["route"]["stopover_id"]
     route = candidate.get("route") if isinstance(candidate.get("route"), Mapping) else {}
     if route.get("occupied") is True:
         _reason(reasons, "ROUTE_OCCUPIED", "candidate.route.occupied")
@@ -430,6 +437,8 @@ def rank_expansion_economics(evaluations: Sequence[Mapping[str, Any]]) -> dict[s
         if (not isinstance(identity, Mapping) or not isinstance(layout, Mapping)
                 or not isinstance(components, Mapping) or not isinstance(costs, Mapping)
                 or any(not isinstance(identity.get(key), str) or not identity[key] for key in _IDENTITY)
+                or (identity.get("stopover_id") is not None
+                    and (not isinstance(identity["stopover_id"], str) or not identity["stopover_id"]))
                 or not all(type(layout.get(key)) is int and layout[key] >= 0 for key in _CLASSES)
                 or _decimal(components.get("daily_net_profit_estimate"), minimum=Decimal("0.000001")) is None
                 or _decimal(costs.get("total_investment"), minimum=Decimal("0.000001")) is None
@@ -452,7 +461,8 @@ def rank_expansion_economics(evaluations: Sequence[Mapping[str, Any]]) -> dict[s
         if Decimal(str(components["roi_365d_percent"])) != rounded_roi:
             excluded += 1
             continue
-        key = tuple(identity[key] for key in _IDENTITY) + tuple(layout[key] for key in _CLASSES)
+        key = (tuple(identity[key] for key in _IDENTITY) + (identity.get("stopover_id"),)
+               + tuple(layout[key] for key in _CLASSES))
         if key in conflicts:
             excluded += 1
         elif key in unique and unique[key] != row:
@@ -466,6 +476,7 @@ def rank_expansion_economics(evaluations: Sequence[Mapping[str, Any]]) -> dict[s
         -row["components"]["daily_net_profit_estimate"],
         row["capital_costs"]["total_investment"],
         tuple(str(row["identity"][key]) for key in _IDENTITY),
+        row["identity"].get("stopover_id") or "",
         tuple(row["configuration_yjf"][key] for key in _CLASSES),
     ))
     return {"best": ranked[0] if ranked else None, "alternatives": ranked,

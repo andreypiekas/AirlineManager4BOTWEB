@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from expansion_economics import (
+    _ROUTE_INPUTS as A3_ROUTE_INPUTS,
     _SOURCES as A3_PROVENANCE_SOURCES,
     _SUBJECTS as A3_PROVENANCE_SUBJECTS,
     rank_expansion_economics,
@@ -307,7 +308,9 @@ def compare_portfolio(
             excluded["limite_de_aquisicoes_em_24h"] += 1
             continue
 
-        identity = (hub_id, route_key, model.casefold(), engine_id)
+        model_id = row.get("model_id")
+        model_key = ("id", model_id) if isinstance(model_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", model_id) else ("name", model.casefold())
+        identity = (hub_id, route_key, model_key, engine_id)
         item = dict(row)
         for key in ("profit_index", "efficiency_index", "risk_index",
                     "confidence_index", "diversification_index", "score",
@@ -376,6 +379,7 @@ def compare_portfolio(
         alternatives.sort(key=lambda item: (
             -item["score"], -item["profit_per_day"], item["payback_days"],
             item["investment"], item["hub_id"], item["model"].casefold(),
+            item.get("model_id") or "",
             item["engine_id"], item["route_key"],
         ))
     else:
@@ -469,7 +473,8 @@ def _audited_a3_cash(
                 or proof.get("snapshot_id") != snapshot_id
                 or stamp is None or not 0 <= now - stamp <= DEFAULT_MAX_AGE_SECONDS
                 or any(proof.get(field) != identity.get(field)
-                       for field in A3_PROVENANCE_SUBJECTS[name])):
+                       for field in A3_PROVENANCE_SUBJECTS[name])
+                or (name in A3_ROUTE_INPUTS and proof.get("stopover_id") != identity.get("stopover_id"))):
             return None
     cash = provenance.get("cash")
     if not isinstance(cash, Mapping) or not isinstance(cash.get("value"), Mapping):
@@ -872,6 +877,7 @@ def compare_audited_portfolio(
             item["investment"],
             tuple(item["identity"][key] for key in
                   ("hub_id", "origin_id", "destination_id", "model_id", "engine_id")),
+            item["identity"].get("stopover_id") or "",
             tuple(item["configuration_yjf"][key] for key in ("y", "j", "f")),
             item["economics_id"],
         ))

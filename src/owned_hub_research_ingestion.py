@@ -43,7 +43,14 @@ def _identity(row: dict) -> tuple | None:
     engine = row.get("engine_id")
     if engine is not None and (not isinstance(engine, str) or not engine):
         return None
-    return hub_id, model.strip().casefold(), key, engine
+    model_id = row.get("model_id")
+    if model_id is not None:
+        if not isinstance(model_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", model_id):
+            return None
+        model_key = ("id", model_id)
+    else:
+        model_key = ("name", model.strip().casefold())
+    return hub_id, model_key, key, engine
 
 
 def _recent(value: object, now: float) -> bool:
@@ -179,8 +186,9 @@ class OwnedHubResearchInputsRegistry:
                  now: Optional[float] = None) -> list[dict]:
         """Verified scenarios always have priority for the same investment."""
         now = time.time() if now is None else now
-        identities = {_identity(item) for item in (verified or [])
-                      if isinstance(item, dict) and item.get("source") == "game_research"}
+        proofs = [item for item in (verified or []) if isinstance(item, dict)
+                  and item.get("source") == "game_research" and _identity(item) is not None]
+        identities = {_identity(item) for item in proofs}
         with _LOCK:
             rows = self._load().get("items")
         result = deepcopy([
@@ -190,6 +198,17 @@ class OwnedHubResearchInputsRegistry:
             and _recent(row.get("observed_at"), now)
             and _evidence_current(row, now)
         ]) if isinstance(rows, list) else []
+        # Legacy evidence without a model ID can only replace a uniquely
+        # identified name. Never erase multiple native IDs sharing that name.
+        named = {}
+        for row in [*result, *proofs]:
+            identity = _identity(row)
+            if identity[1][0] == "id":
+                name_key = _identity({**row, "model_id": None})
+                named.setdefault(name_key, set()).add(identity)
+        legacy = {identity for identity in identities if identity[1][0] == "name"}
+        covered = {next(iter(named[key])) for key in legacy if len(named.get(key, ())) == 1}
+        result = [row for row in result if _identity(row) not in covered]
         # A failed or contradictory new observation invalidates the separate
         # registry immediately, including previously materialized queue pages.
         detail_registry = RouteDetailRegistry(self.path.with_name("hub_expansion_route_details.json"))

@@ -39,6 +39,7 @@ class AuditedEconomicsRegistry:
         if (not isinstance(payload.get("cases"), list)
                 or not isinstance(payload.get("profile_id"), str)
                 or not isinstance(payload.get("snapshot_id"), str)
+                or type(payload.get("research_storage_truncated", False)) is not bool
                 or (payload.get("portfolio") is not None
                     and not isinstance(payload["portfolio"], dict))
                 or len(payload["cases"]) > _MAX_SCENARIOS):
@@ -98,17 +99,30 @@ class AuditedEconomicsRegistry:
                     return False
                 if entry in cases:
                     return True
+                portfolio = deepcopy(existing.get("portfolio"))
+                if portfolio is not None:
+                    # Coverage applies to the exact set reviewed by the planner.
+                    portfolio["research_coverage_verified"] = False
+                    portfolio.pop("research_case_ids", None)
                 if len(cases) >= _MAX_SCENARIOS:
+                    if not existing.get("research_storage_truncated", False) or portfolio != existing.get("portfolio"):
+                        existing["portfolio"] = portfolio
+                        existing["research_storage_truncated"] = True
+                        try:
+                            paths.write_atomic(self.path, json.dumps(existing, ensure_ascii=False, allow_nan=False))
+                        except (OSError, TypeError, ValueError, OverflowError):
+                            return False
                     return False
                 cases = [*cases, entry]
-                portfolio = existing.get("portfolio")
+                truncated = existing.get("research_storage_truncated", False)
             else:
                 cases = [entry]
                 portfolio = None
+                truncated = False
             payload = {
                 "schema_version": 1, "profile_id": paths.current().label,
                 "snapshot_id": evaluated["snapshot_id"], "observed_at": timestamp,
-                "cases": cases, "portfolio": portfolio,
+                "cases": cases, "portfolio": portfolio, "research_storage_truncated": truncated,
             }
             try:
                 serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False)
@@ -152,6 +166,10 @@ class AuditedEconomicsRegistry:
                 return False
             if self.snapshot()["status"] == "registro_invalido":
                 return False
+            if research_coverage_verified and current.get("research_storage_truncated", False):
+                return False
+            if research_coverage_verified:
+                evidence["research_case_ids"] = sorted(row["economics_id"] for row in current["cases"])
             current["portfolio"] = evidence
             try:
                 paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, allow_nan=False))
@@ -188,10 +206,16 @@ class AuditedEconomicsRegistry:
                 return {"status": "registro_invalido", "snapshot_id": None,
                         "evaluations": [], "portfolio_evidence": {}, "read_only": True}
             results.append(result)
+        portfolio = deepcopy(stored.get("portfolio") or {})
+        if portfolio.get("research_coverage_verified") is True:
+            case_ids = sorted(result["economics_id"] for result in results)
+            if (stored.get("research_storage_truncated", False)
+                    or portfolio.get("research_case_ids") != case_ids):
+                portfolio["research_coverage_verified"] = False
         return {
             "status": "registrado" if stored else "sem_avaliacoes",
             "snapshot_id": stored.get("snapshot_id"),
             "evaluations": results,
-            "portfolio_evidence": deepcopy(stored.get("portfolio") or {}),
+            "portfolio_evidence": portfolio,
             "read_only": True,
         }

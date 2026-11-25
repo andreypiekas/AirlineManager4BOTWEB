@@ -1,5 +1,19 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A0/A2/A3/A4, integridade da identidade e cobertura (G0)
+
+- A0/A3: a taxa da rota, a projeção financeira e os insumos contábeis dependentes da rota exigem correspondência com a escala proposta. Evidências de escala divergente ou ausente são rejeitadas. Rotas diretas continuam compatíveis com registros antigos; itinerários com escalas diferentes são alternativas econômicas distintas. A conversão A5 para intenção de compra com escala permanece bloqueada até implementação e homologação do executor.
+- A2: a pesquisa incremental, o registro de cenários, as recomendações e o planejador preservam IDs nativos de modelos homônimos e distinguem registros antigos sem ID. A identificação apenas pelo nome não elimina alternativas nativas distintas. A situação foi reproduzida com dados simulados; homônimos no catálogo real ainda não foram confirmados.
+- A3/A4: a cobertura de pesquisa é vinculada ao conjunto exato de IDs econômicas revisadas. Inclusões, remoções e truncamento invalidam a certificação. O limite de armazenamento marca o snapshot persistentemente como truncado, impedindo recertificação até uma coleta nova. Repetições idempotentes não invalidam cobertura. Compromissos financeiros independentes são preservados.
+- Validação: 340 testes direcionados aprovados; 186 aprovados após a extensão A2 ao registro de cenários; suíte Windows consolidada 2.121 aprovados e 1 ignorado (131,60 s; testes de instalação Linux excluídos; últimas alterações A2 validadas também em testes direcionados); Ruff e `git diff --check` aprovados. Os testes POSIX de instalação e a homologação autenticada continuam pendentes. A busca de produção confirmou que o registro auditado A3 ainda não possui um consumidor que grave casos completos e certifique cobertura. A integração desse registro com o worker e a obtenção de evidências reais são os próximos passos. Nenhuma transação real ou implantação executada.
+
+## 2026-11-25 — Autonomia Total A3, validação da rentabilidade com tarifas do jogo (G0)
+
+- A criação de rotas diretas agora recebe o modelo e os custos operacionais usados na pesquisa e recalcula o lucro depois que o jogo preenche as tarifas automáticas. O cálculo usa a distância nativa confirmada no formulário e as tarifas Y/J/F efetivamente lidas antes da submissão. A estimativa de mercado permanece como critério de ordenação, sem ser reutilizada como lucro final da rota.
+- Em execução real, a taxa da rota não é paga quando faltam dados do modelo ou dos custos, quando o lucro é desconhecido, não finito ou não positivo. A simulação continua permitindo registrar a cotação observada sem enviar a mutação. Chamadas antigas de `create_route()` sem os novos parâmetros mantêm compatibilidade.
+- O gate G0 da nova política de investimento continua restrito às encomendas planejadas. O fluxo legado permanece independente da política nova até uma migração explícita, conforme a regra de compatibilidade do roadmap. Nenhuma compra real ou implantação foi executada.
+- Validação: 2.114 testes aprovados e 1 ignorado na suíte Windows, excluindo `tests/test_instalacao_linux.py`; 154 testes direcionados de rota, seleção de motor e hub passaram; `ruff check src tests` e `git diff --check` aprovados. A homologação autenticada das tarifas e da rentabilidade no jogo permanece pendente.
+
 ## 2026-11-24 — Autonomia Total A1, preço final vinculado à variante de motor (G0)
 
 - Cada variante do catálogo passa a carregar um contrato tipado `FinalCheckoutPrice`, com identidade do motor, valor, fonte e estado de verificação. As leituras atuais permanecem como `unknown`, pois a observação autenticada de 23/11 identificou `#engSelection` e `#acCost`, mas não comprovou um preço final associado a cada variante.

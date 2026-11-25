@@ -22,6 +22,7 @@ from route_registry import endpoint, route_key
 _LOCK = threading.RLock()
 _HUB_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _ENGINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_MODEL_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class HubAircraftResearchRegistry:
@@ -57,6 +58,9 @@ class HubAircraftResearchRegistry:
         model = str(scenario.get("model") or "").strip()
         if not _HUB_ID.fullmatch(hub_id) or not model or len(model) > 100:
             return False
+        model_id = scenario.get("model_id")
+        if model_id is not None and (not isinstance(model_id, str) or not _MODEL_ID.fullmatch(model_id)):
+            return False
         has_engine_id = "engine_id" in scenario
         engine_id = self._engine_id(scenario) if has_engine_id else None
         if has_engine_id and engine_id is None:
@@ -76,8 +80,11 @@ class HubAircraftResearchRegistry:
             saved["engine_id"] = engine_id
 
         def same_identity(entry: dict) -> bool:
+            same_model = (entry.get("model_id") == model_id if model_id is not None
+                          else entry.get("model_id") is None
+                          and str(entry.get("model") or "").strip().casefold() == model.casefold())
             return (str(entry.get("hub_id") or "").strip() == hub_id
-                    and str(entry.get("model") or "").strip().casefold() == model.casefold()
+                    and same_model
                     and self._scenario_key(entry) == key
                     and ("engine_id" in entry) == has_engine_id
                     and (not has_engine_id or self._engine_id(entry) == engine_id))

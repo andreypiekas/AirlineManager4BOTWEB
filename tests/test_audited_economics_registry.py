@@ -167,6 +167,80 @@ def test_a4_needs_snapshot_bound_controls_and_verified_coverage(registry):
     assert compare_registry(registry)["decision"] == "nao_comprar"
 
 
+def test_research_coverage_applies_only_to_the_reviewed_case_set(registry):
+    data = record_fixture(registry)
+    snapshot_id = data[0]["snapshot_id"]
+
+    def certify():
+        assert registry.record_portfolio_evidence(
+            snapshot_id=snapshot_id, controls=controls(snapshot_id), hub_capacity={},
+            fleet_coverage_verified=True, research_coverage_verified=True,
+            commitments_verified=True,
+        )
+
+    certify()
+    assert registry.record(*deepcopy(data), now=NOW)
+    assert compare_registry(registry)["decision"] == "sugestao_para_analise"
+
+    other = deepcopy(data)
+    other[1]["route"]["destination_id"] = "457"
+    other[1]["financial"]["destination_id"] = "457"
+    other[1]["costs"]["route_fee"]["destination_id"] = "457"
+    for entry in other[2].values():
+        if "destination_id" in entry:
+            entry["destination_id"] = "457"
+    assert registry.record(*other, now=NOW)
+    report = registry.snapshot(now=NOW)
+    assert len(report["evaluations"]) == 2
+    assert report["portfolio_evidence"]["research_coverage_verified"] is False
+    assert report["portfolio_evidence"]["commitments_verified"] is True
+    assert "cobertura_pesquisa_a_confirmar" in compare_registry(registry)["blocking_reasons"]
+
+    certify()
+    assert compare_registry(registry)["decision"] == "sugestao_para_analise"
+    stored = json.loads(registry.path.read_text(encoding="utf-8"))
+    stored["cases"].pop()
+    registry.path.write_text(json.dumps(stored), encoding="utf-8")
+    assert registry.snapshot(now=NOW)["portfolio_evidence"]["research_coverage_verified"] is False
+
+
+def test_rejected_case_at_storage_limit_revokes_research_coverage(registry, monkeypatch):
+    data = record_fixture(registry)
+    snapshot_id = data[0]["snapshot_id"]
+    assert registry.record_portfolio_evidence(
+        snapshot_id=snapshot_id, controls=controls(snapshot_id), hub_capacity={},
+        research_coverage_verified=True,
+    )
+    monkeypatch.setattr("audited_economics_registry._MAX_SCENARIOS", 1)
+    assert registry.record(*data, now=NOW)
+    assert not json.loads(registry.path.read_text(encoding="utf-8"))["research_storage_truncated"]
+    assert not registry.record(*data, now=NOW, safety_margin_fraction=0.20)
+    reloaded = AuditedEconomicsRegistry(registry.path)
+    assert reloaded.snapshot(now=NOW)["portfolio_evidence"]["research_coverage_verified"] is False
+    assert json.loads(registry.path.read_text(encoding="utf-8"))["research_storage_truncated"] is True
+    assert reloaded.record(*data, now=NOW)
+    assert not reloaded.record_portfolio_evidence(
+        snapshot_id=snapshot_id, controls=controls(snapshot_id), hub_capacity={},
+        research_coverage_verified=True,
+    )
+
+    from opportunity_models import fingerprint_snapshot
+
+    snapshot, candidate, inputs = deepcopy(data)
+    snapshot["observed_at"] += 1
+    snapshot["snapshot_id"] = fingerprint_snapshot(snapshot)
+    candidate["snapshot_id"] = snapshot["snapshot_id"]
+    for proof in (candidate["route"], candidate["aircraft"], candidate["financial"],
+                  *candidate["costs"].values(), *inputs.values()):
+        proof["snapshot_id"] = snapshot["snapshot_id"]
+    assert reloaded.record(snapshot, candidate, inputs, now=NOW + 1)
+    assert not json.loads(registry.path.read_text(encoding="utf-8"))["research_storage_truncated"]
+    assert reloaded.record_portfolio_evidence(
+        snapshot_id=snapshot["snapshot_id"], controls=controls(snapshot["snapshot_id"]),
+        hub_capacity={}, research_coverage_verified=True,
+    )
+
+
 def test_authenticated_a3_api_exposes_only_read_only_analysis(tmp_path, monkeypatch):
     empty = AuditedEconomicsRegistry(tmp_path / "audited_expansion.json")
     monkeypatch.setattr("web.AuditedEconomicsRegistry", lambda: empty)

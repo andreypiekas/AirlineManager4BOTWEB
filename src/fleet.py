@@ -23,6 +23,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field, replace
+from math import isfinite
 from typing import TYPE_CHECKING, Callable, Optional
 
 from selenium.common.exceptions import TimeoutException
@@ -1304,6 +1305,13 @@ def _route_demand(candidate: RouteCandidate, premium: bool) -> int:
     return candidate.y + 2 * candidate.j + 3 * candidate.f if premium else candidate.y
 
 
+def _valid_route_profit(value: object) -> bool:
+    try:
+        return type(value) in (int, float) and isfinite(value) and value > 0
+    except OverflowError:
+        return False
+
+
 def _try_stopover(bot, aircraft, origin, reach, limit, runway, economics, available, allow_duplicates):
     if not operating_prices_valid(economics.get("fuel_price"), economics.get("co2_price")):
         return "none", None
@@ -1459,6 +1467,7 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
                     bot, aircraft, candidate, origin_id=hub_id,
                     profit_per_day=estimated.profit_per_day if estimated is not None else None,
                     allow_duplicates=allow_duplicates,
+                    route_economics=economics,
                 )
                 if outcome != "none":
                     break
@@ -1476,7 +1485,8 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
 def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate,
                  *, origin_id: str = "", reroute: bool = False,
                  profit_per_day: Optional[float] = None, stopover: Optional[Stopover] = None,
-                 stopover_economics: Optional[dict] = None, allow_duplicates: bool = True) -> str:
+                 stopover_economics: Optional[dict] = None, allow_duplicates: bool = True,
+                 route_economics: Optional[dict] = None) -> str:
     """Return the outcome, including 'none' when a stopover candidate is rejected before submission."""
     if has_pending_creation():
         return "stop"
@@ -1513,6 +1523,7 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         if abs(native_distance - candidate.distance) > 5:
             bot.js("$('#newRouteInfo').hide();")
             return "none"
+        candidate = replace(candidate, distance=native_distance)
     if not bot.can_spend(fee, f"a rota {candidate.name}", essential=not reroute):  # reroutes must preserve cash reserve
         bot.js("$('#newRouteInfo').hide();")
         return "none" if stop else "stop"
@@ -1528,13 +1539,33 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         log.warning("O preço automático não preencheu as passagens de %s; a rota não será criada.", candidate.name)
         bot.js("$('#newRouteInfo').hide();")
         return "none" if stop else "stop"
-    if stop:
-        estimate = estimate_route(candidate, **stopover_economics, prices=prices, extra_stops=1)
-        if not estimate or estimate.profit_per_day <= 0:
+    economics = stopover_economics if stop else route_economics
+    if stop or economics:
+        if not stop:
+            # The market-price estimate is only a ranking hint. The live form
+            # fares must determine the profit stored with a direct route.
+            profit_per_day = None
+        estimate = estimate_route(
+            candidate, **economics, prices=prices, extra_stops=1 if stop else 0,
+        )
+        if estimate is None:
+            if stop or not bot.dry_run:
+                log.info("%s: lucro da rota %s não pôde ser confirmado com as tarifas do jogo.",
+                         aircraft.reg, name)
+                bot.js("$('#newRouteInfo').hide();")
+                return "none"
+        elif not _valid_route_profit(estimate.profit_per_day):
             log.info("%s: rota %s sem lucro estimado positivo com os preços do jogo.", aircraft.reg, name)
             bot.js("$('#newRouteInfo').hide();")
             return "none"
-        profit_per_day = estimate.profit_per_day
+        else:
+            profit_per_day = estimate.profit_per_day
+    if ((profit_per_day is None and not bot.dry_run)
+            or (profit_per_day is not None and not _valid_route_profit(profit_per_day))):
+        log.warning("%s: lucro diário da rota %s desconhecido ou não positivo. A taxa não será paga.",
+                    aircraft.reg, name)
+        bot.js("$('#newRouteInfo').hide();")
+        return "none"
     reg = bot.js("return $('#routeReg').val();") or ""
     summary = (
         f"{name} ({candidate.distance:,.0f} km, demanda Y {candidate.y} / J {candidate.j} / F {candidate.f}) "
@@ -1796,13 +1827,17 @@ def order_aircraft(
             return False
         hub_id = normalized_hub_id
         expected_engine_id = expected_engine_id.strip()
-        if not bot.dry_run:
-            from investment_policy import InvestmentPolicy
 
-            policy_report = InvestmentPolicy.from_config(bot.config).report()
-            if not policy_report["execution_available"]:
-                log_market.warning("Compra planejada bloqueada pelo gate %s.", policy_report["release_gate"])
-                return False
+    if plan_requested and not bot.dry_run:
+        from investment_policy import InvestmentPolicy
+
+        policy_report = InvestmentPolicy.from_config(bot.config).report()
+        if not policy_report["execution_available"]:
+            log_market.warning(
+                "Encomenda de %s bloqueada pelo gate %s.",
+                choice.name, policy_report["release_gate"],
+            )
+            return False
 
     detail = bot.ajax(f"ac_orders.php?mode=detail&id={choice.id}&charter=0", "acModel")
     # O motor só pode ser escolhido antes de encomendar. Uma preferência
@@ -1925,12 +1960,15 @@ def order_aircraft(
         bot.notify(f"🧪 SIMULAÇÃO: encomendaria {esc(summary)}.", silent=True, category="simulation")
         return True
 
-    if plan_requested:
+    if plan_requested and not bot.dry_run:
         from investment_policy import InvestmentPolicy
 
         policy_report = InvestmentPolicy.from_config(bot.config).report()
         if not policy_report["execution_available"]:
-            log_market.warning("Compra planejada bloqueada pelo gate %s.", policy_report["release_gate"])
+            log_market.warning(
+                "Encomenda de %s cancelada pelo gate %s durante a validação.",
+                choice.name, policy_report["release_gate"],
+            )
             return False
 
     before = bot.read_money()

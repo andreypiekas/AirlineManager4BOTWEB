@@ -5,6 +5,7 @@ import pytest
 
 import reroute
 import fleet
+from gamemode import EASY
 from native_route_quotes import native_route_quotes
 from route_stopover import read_route_fares
 from airport_catalog import by_code
@@ -109,7 +110,7 @@ def test_parked_direct_route_aborts_before_submit_when_form_or_cash_changes(monk
     aircraft = fleet.ParkedAircraft("5", "A320", "TEST", 180)
     candidate = fleet.RouteCandidate(by_code("MIA").game_id, "Miami", 1000, 500, 50, 20, 8000)
     assert fleet.create_route(bot, aircraft, candidate, origin_id=by_code("LAX").game_id,
-                              allow_duplicates=False) == "stop"
+                              profit_per_day=100, allow_duplicates=False) == "stop"
     assert actions == ["autoprice"]
     retained = native_route_quotes(bot)
     if second == (1000, 1000, 0) and second_fares == (100, 200, 300):
@@ -134,6 +135,122 @@ def test_dry_run_collects_quote_without_submitting(monkeypatch):
     assert fleet.create_route(bot, aircraft, candidate, origin_id=by_code("LAX").game_id) == "dry"
     assert actions == ["autoprice"]
     assert native_route_quotes(bot)[0]["purchase_eligible"] is False
+
+
+def _prepare_live_direct_route(monkeypatch, *, fares=(1000, 1200, 1500), direct_form=(1004, 1000, 0)):
+    actions = []
+    staged = {}
+    quotes = []
+    panel = SimpleNamespace(
+        find_elements=lambda *_: ["autoprice"],
+        find_element=lambda *_: "create",
+    )
+
+    class Registry:
+        def invalidate_fleet_coverage(self):
+            pass
+
+    def stage(_aircraft, _origin, _destination, _stopover, _fee, profit, **_kwargs):
+        staged["profit_per_day"] = profit
+        return {"intent_id": "test"}
+
+    monkeypatch.setattr(fleet, "has_pending_creation", lambda: False)
+    monkeypatch.setattr(fleet, "read_direct_form", lambda *_args, **_kwargs: direct_form)
+    monkeypatch.setattr(fleet, "read_route_fares", lambda *_: fares)
+    monkeypatch.setattr(fleet, "record_native_route_quote",
+                        lambda *args, **kwargs: quotes.append((args, kwargs)))
+    monkeypatch.setattr(fleet, "RouteRegistry", Registry)
+    monkeypatch.setattr(fleet, "stage_creation", stage)
+    monkeypatch.setattr(fleet, "finish_creation", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(fleet, "confirm_direct_route", lambda *_: True)
+
+    bot = SimpleNamespace(
+        ajax=lambda *_args, **_kwargs: panel,
+        js=lambda *_args, **_kwargs: None,
+        click_element=actions.append,
+        pause=lambda *_: None,
+        can_spend=lambda *_args, **_kwargs: True,
+        dry_run=False,
+        stopping=False,
+        read_money=lambda: 5000,
+        config=SimpleNamespace(get_int=lambda *_: 0),
+        wait_text=lambda *_args, **_kwargs: "Rota criada",
+        notify=lambda *_args, **_kwargs: None,
+    )
+    return bot, actions, staged, quotes
+
+
+def test_direct_route_recalculates_profit_with_live_form_fares(monkeypatch):
+    fares = (1000, 1200, 1500)
+    bot, actions, staged, quotes = _prepare_live_direct_route(monkeypatch, fares=fares)
+    aircraft = fleet.ParkedAircraft("5", "A320", "TEST", 180)
+    candidate = fleet.RouteCandidate(by_code("MIA").game_id, "Miami", 1000, 500, 50, 20, 8000)
+    economics = dict(
+        seats=180, model={"speed": 800, "fuel": 7, "capacity": 180}, mode=EASY,
+        load_factor=0.8, fuel_price=650, co2_price=125, premium=False,
+    )
+    expected = fleet.estimate_route(
+        fleet.RouteCandidate(candidate.arr_id, candidate.name, 1004, candidate.y,
+                             candidate.j, candidate.f, candidate.runway, candidate.code),
+        **economics, prices=fares,
+    )
+
+    result = fleet.create_route(
+        bot, aircraft, candidate, origin_id=by_code("LAX").game_id,
+        profit_per_day=123, route_economics=economics,
+    )
+
+    assert result == "created"
+    assert staged["profit_per_day"] == pytest.approx(expected.profit_per_day)
+    assert staged["profit_per_day"] != 123
+    assert len(quotes) == 1
+    assert actions == ["autoprice", "create"]
+
+
+def test_direct_route_keeps_legacy_profit_when_economics_are_omitted(monkeypatch):
+    bot, _actions, staged, _quotes = _prepare_live_direct_route(monkeypatch)
+    aircraft = fleet.ParkedAircraft("5", "A320", "TEST", 180)
+    candidate = fleet.RouteCandidate(by_code("MIA").game_id, "Miami", 1000, 500, 50, 20, 8000)
+
+    result = fleet.create_route(
+        bot, aircraft, candidate, origin_id=by_code("LAX").game_id, profit_per_day=123,
+    )
+
+    assert result == "created"
+    assert staged["profit_per_day"] == 123
+
+
+@pytest.mark.parametrize(
+    "route_economics,initial_profit,actual_profit",
+    [
+        (None, None, None),
+        ({"model": {"speed": 800, "fuel": 7}}, 250, None),
+        ({"model": {"speed": 800, "fuel": 7}}, 250, 0),
+        ({"model": {"speed": 800, "fuel": 7}}, 250, -1),
+        ({"model": {"speed": 800, "fuel": 7}}, 250, float("nan")),
+    ],
+)
+def test_direct_route_does_not_submit_when_live_profit_is_unknown_or_nonpositive(
+    monkeypatch, route_economics, initial_profit, actual_profit,
+):
+    bot, actions, staged, quotes = _prepare_live_direct_route(monkeypatch)
+    if route_economics is not None:
+        estimate = (None if actual_profit is None
+                    else SimpleNamespace(profit_per_day=actual_profit))
+        monkeypatch.setattr(fleet, "estimate_route", lambda *_args, **_kwargs: estimate)
+    bot.read_money = lambda: pytest.fail("Unknown-profit route reached the balance check")
+    aircraft = fleet.ParkedAircraft("5", "A320", "TEST", 180)
+    candidate = fleet.RouteCandidate(by_code("MIA").game_id, "Miami", 1000, 500, 50, 20, 8000)
+
+    result = fleet.create_route(
+        bot, aircraft, candidate, origin_id=by_code("LAX").game_id,
+        profit_per_day=initial_profit, route_economics=route_economics,
+    )
+
+    assert result == "none"
+    assert actions == ["autoprice"]
+    assert staged == {}
+    assert quotes == []
 
 
 @pytest.mark.parametrize("codes,paused,via,expected", [

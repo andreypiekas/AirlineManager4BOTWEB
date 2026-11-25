@@ -102,6 +102,7 @@ def _ordering(row: dict) -> tuple:
     return (-profit if profit is not None else float("inf"),
             row["investment"] if row["investment"] is not None else float("inf"),
             row["hub_code"], row["hub_id"], row["model"].casefold(),
+            row.get("model_id") or "",
             row["engine_id"] or "", row["engine_label"] or "",
             row["route_key"] or "", -(_number(row.get("observed_at")) or 0),
             row["model"],
@@ -267,6 +268,10 @@ def rank_next_aircraft(
         cost_total = sum(cost_parts) if all(v is not None for v in cost_parts) else None
         investment = round(cost_total, 2) if _number(cost_total) is not None else None
         missing = []
+        raw_model_id = scenario.get("model_id")
+        if raw_model_id is not None and (not isinstance(raw_model_id, str)
+                                         or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", raw_model_id)):
+            missing.append("modelo_a_confirmar")
         if scenario.get("event_demand_boosted") is True:
             missing.append("demanda_evento_temporario")
         if not inventory_fresh:
@@ -405,6 +410,9 @@ def rank_next_aircraft(
             "status": status, "pending": sorted(set(missing)),
             "financial_source": financial.get("source"), "costs_source": costs.get("source"),
         }
+        model_id = scenario.get("model_id")
+        if isinstance(model_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", model_id):
+            candidate["model_id"] = model_id
         if occupancy is not None:
             candidate["fleet_occupancy"] = occupancy
         if physical is not None:
@@ -418,7 +426,8 @@ def rank_next_aircraft(
             candidate["research_evidence"] = scenario.get("research_evidence")
         candidates.append(candidate)
         if key and aircraft_model:
-            identity = (hub_id, aircraft_model.casefold(), key, engine_id)
+            model_key = ("id", candidate["model_id"]) if "model_id" in candidate else ("name", aircraft_model.casefold())
+            identity = (hub_id, model_key, key, engine_id)
             observations_by_route.setdefault(identity, []).append((candidate, scenario))
 
     # A later game observation replaces an earlier one for the same hub,
