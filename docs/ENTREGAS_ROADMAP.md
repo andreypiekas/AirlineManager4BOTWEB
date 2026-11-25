@@ -1,5 +1,10 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total, compactação dos arquivos de retomada (G0)
+
+- O [contexto permanente](contexto.md) guarda o checkpoint ativo e remete à revisão `8fdab91` no Git para os detalhes anteriores. O [índice multiparte](codex_multipart_commit.md) substitui o texto longo na leitura de retomada. O histórico bruto foi compactado em GZip local, ignorado pelo Git.
+- Validação documental por `git diff --check`, verificação dos links, conferência das regras de exclusão e comparação integral dos bytes descompactados com o original. A entrega alterou documentação e armazenamento local do histórico. G0 permanece vigente.
+
 ## 2026-11-25 — Autonomia Total, revisão documental do estado e da retomada (G0)
 
 - A revisão consolida o estado de A0–A9 e ordena a coleta nativa de A1/A2, a publicação das evidências A3/A4 pelo worker e a recomendação A6/A7 com cobertura e prova de esgotamento interno. A base de código é `b9af7d2` na branch `codex/autonomia-a0-a1-20261122`. A PR #44 aponta para `33d081b`.
