@@ -9,6 +9,8 @@ import json
 import math
 import re
 import time
+from collections import Counter
+from copy import deepcopy
 from pathlib import Path
 
 import paths
@@ -21,12 +23,87 @@ FILENAME = "audited_game_snapshot.json"
 
 
 def _fresh(stamp, now):
-    return (type(stamp) in (int, float) and math.isfinite(stamp)
-            and stamp > 0 and 0 <= now - stamp <= DEFAULT_MAX_AGE_SECONDS)
+    try:
+        return (type(stamp) in (int, float) and math.isfinite(stamp)
+                and stamp > 0 and 0 <= now - stamp <= DEFAULT_MAX_AGE_SECONDS)
+    except OverflowError:
+        return False
 
 
 def _game_id(value):
     return isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,11}", value) is not None
+
+
+def _verified_owned_hubs(inventory, now):
+    rows = inventory.get("hubs", [])
+    if (inventory.get("source") == "game_hub_select"
+            and inventory.get("hub_catalog_fresh") is True
+            and _fresh(inventory.get("observed_at"), now) and isinstance(rows, list) and bool(rows)
+            and all(isinstance(row, dict) and _game_id(row.get("id")) for row in rows)
+            and len({row["id"] for row in rows}) == len(rows)):
+        return {row["id"] for row in rows}
+    return set()
+
+
+def _unique_rows(rows, identity):
+    """Discard ambiguous identities instead of choosing a conflicting row."""
+    if not isinstance(rows, list):
+        return []
+    keyed = [(identity(row), row) for row in rows if isinstance(row, dict)]
+    counts = Counter(key for key, _ in keyed if key is not None)
+    return [row for key, row in keyed if key is not None and counts[key] == 1]
+
+
+def _external_research(external, owned_ids, now):
+    from hub_expansion import _amount, _demand_sample, _points
+
+    result = {"coverage": "partial", "origin_scope": None, "candidate_source": None,
+              "candidate_inventory": [], "samples": [], "hub_progress": []}
+    if (not owned_ids or not isinstance(external, dict)
+            or external.get("origin_scope") != "external_catalog"
+            or external.get("candidate_source") != "game_purchase_catalog"):
+        return result
+    result.update(origin_scope="external_catalog", candidate_source="game_purchase_catalog")
+    candidates = _unique_rows(external.get("candidate_inventory"),
+                              lambda row: row["id"] if _game_id(row.get("id")) else None)
+    for row in candidates:
+        if row["id"] in owned_ids or not _fresh(row.get("observed_at"), now):
+            continue
+        candidate = {"id": row["id"], "observed_at": row["observed_at"]}
+        if isinstance(row.get("code"), str):
+            candidate["code"] = row["code"]
+        for field, normalize in (("hub_price", _amount), ("hub_points", _points)):
+            stamp = row.get(f"{field}_observed_at")
+            value = normalize(row.get(field))
+            if (value is not None and row.get(f"{field}_conflict_at") is None
+                    and _fresh(stamp, now) and stamp <= row["observed_at"]):
+                candidate.update({field: value, f"{field}_observed_at": stamp})
+        result["candidate_inventory"].append(candidate)
+
+    candidate_ids = {row["id"] for row in result["candidate_inventory"]}
+
+    def route_identity(row):
+        origin, destination = row.get("origin_id"), row.get("destination_id")
+        if _game_id(origin) and _game_id(destination) and origin != destination:
+            return origin, destination
+        return None
+
+    for row in _unique_rows(external.get("samples"), route_identity):
+        if (row["origin_id"] not in candidate_ids or row.get("source") != "game_route_search"
+                or not _fresh(row.get("observed_at"), now)):
+            continue
+        sample = _demand_sample(row["origin_id"], {"arr_id": row["destination_id"],
+                                "distance": row.get("distance_km"), "y": row.get("y"),
+                                "j": row.get("j"), "f": row.get("f")})
+        if sample is not None:
+            result["samples"].append(deepcopy(row))
+    for row in _unique_rows(external.get("hub_progress"),
+                            lambda row: row["hub_id"] if _game_id(row.get("hub_id")) else None):
+        stamp = row.get("last_attempt_at")
+        if (row["hub_id"] in candidate_ids and row.get("coverage") == "partial"
+                and (stamp is None or _fresh(stamp, now))):
+            result["hub_progress"].append(deepcopy(row))
+    return result
 
 
 def _catalog_scopes(coverage, now):
@@ -59,15 +136,13 @@ def _catalog_scopes(coverage, now):
 
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                      quotes, cash, cash_at, now, mode=None, mode_at=None,
-                     preview_margin=0.10, native_quotes=(), configured_prices=None, policy_values=None):
+                     preview_margin=0.10, native_quotes=(), configured_prices=None, policy_values=None,
+                     external_demand=None):
     """Translate independently collected observations without upgrading their provenance."""
     hub_at = inventory.get("observed_at")
     raw_hubs = inventory.get("hubs", [])
-    hubs_verified = (inventory.get("source") == "game_hub_select"
-                     and inventory.get("hub_catalog_fresh") is True
-                     and _fresh(hub_at, now) and bool(raw_hubs)
-                     and all(_game_id(row.get("id")) for row in raw_hubs)
-                     and len({row["id"] for row in raw_hubs}) == len(raw_hubs))
+    owned_ids = _verified_owned_hubs(inventory, now)
+    hubs_verified = bool(owned_ids)
     hubs = [{"id": row["id"], "code": row.get("code"), "owned": True,
              "profile_id": profile_id, "source": "game_hub_select", "id_source": "game",
              "verified": True, "observed_at": hub_at} for row in raw_hubs] if hubs_verified else []
@@ -165,6 +240,11 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                 }}
     if policy_values is not None:
         snapshot["observations"]["investment_policy"] = policy_values
+    if external_demand is not None:
+        # Keep the authenticated external registry distinct from owned research.
+        # Ownership must be current even if the external catalogue is fresh.
+        snapshot["observations"]["external_route_research"] = _external_research(
+            external_demand, owned_ids, now)
     snapshot["snapshot_id"] = fingerprint_snapshot(snapshot)
     return snapshot
 
@@ -186,8 +266,10 @@ def capture_game_snapshot(bot):
     routes = RouteRegistry().snapshot()
     inventory = HubRegistry().snapshot(routes)
     now = time.time()
-    demand = HubExpansionRegistry().demand_research_snapshot(
-        {row["id"] for row in inventory["hubs"]}, now=now)
+    expansion = HubExpansionRegistry()
+    owned_ids = _verified_owned_hubs(inventory, now)
+    demand = expansion.demand_research_snapshot(owned_ids, now=now)
+    external = expansion.external_demand_snapshot(owned_ids, now=now)
     cash, cash_at = recent_verified_money(bot, now=now)
     stats = bot.stats()
     mode_key = research_mode(stats, now)
@@ -202,7 +284,7 @@ def capture_game_snapshot(bot):
                                 cash_at=cash_at, now=now, mode=mode,
                                 mode_at=stats.mode_read_at if mode else None, preview_margin=margin,
                                 native_quotes=native_route_quotes(bot, now=now),
-                                configured_prices=configured_price_assumptions(config),
+                                configured_prices=configured_price_assumptions(config), external_demand=external,
                                 policy_values=audited_policy_values(
                                     InvestmentPolicy.from_config(config),
                                     config.get_int("settings", "cash_reserve", -1) if config else -1))
@@ -365,6 +447,19 @@ def snapshot_summary(*, now=None, path: Path | None = None):
             and _fresh(cash_stamp, now) and cash_stamp <= observations["captured_at"]
             else None
         )
+        external_summary = {}
+        if "external_route_research" in observations:
+            external = _external_research(
+                observations["external_route_research"],
+                {hub["id"] for hub in snapshot["hubs"]} if scopes["hubs"] else set(), now)
+            candidates = external["candidate_inventory"]
+            external_summary["external_route_research"] = {
+                "coverage": "partial", "candidate_count": len(candidates),
+                "fresh_price_count": sum("hub_price" in row for row in candidates),
+                "fresh_points_count": sum("hub_points" in row for row in candidates),
+                "fresh_sample_count": len(external["samples"]),
+                "read_only": True, "purchase_eligible": False,
+            }
         return {"status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": observations["captured_at"],
                 "observed_at": snapshot["observed_at"],
@@ -376,6 +471,7 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                 "historical_investment_spending": historical_spending,
                 **({"policy_controls": policy_controls} if "investment_policy" in observations else {}),
                 "route_samples": len(observations["route_research"]["samples"]),
+                **external_summary,
                 "native_route_quote_count": sum(_fresh(row.get("observed_at"), now)
                                                 for row in observations.get("native_route_quotes", [])),
                 "engine_coverage": observations["engine_coverage"],

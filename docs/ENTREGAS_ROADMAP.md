@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A6, captura auditada da pesquisa externa (G0)
+
+- O snapshot produtivo passa a incluir observações do catálogo de aquisição e da pesquisa externa de rotas, separadas da pesquisa dos hubs próprios e vinculadas ao fingerprint da captura. A inclusão depende de inventário próprio vigente, procedência correta e identidades de candidatos e rotas não ambíguas. Preço e pontos expiram independentemente; amostras inválidas, vencidas, conflitantes ou pertencentes a hubs próprios são excluídas. O resumo disponibiliza contagens vigentes de candidatos, preços, pontos e amostras, sem identidades privadas.
+- Compatibilidade com capturas anteriores preservada. Cobertura de rotas e preços continua parcial e o resumo é somente leitura, inelegível para compra. A captura é uma fonte de entrada para a futura avaliação A6; o produtor de cenários econômicos conclusivos e sua integração ao planejador ainda estão pendentes. G0 mantido.
+- Validação Windows: 2.199 testes coletados, 2.198 aprovados e 1 ignorado por permissões POSIX (instalação Linux excluída). Após a proteção adicional contra overflow de timestamp, 118 testes direcionados, Ruff, compilação Python e verificação de diff aprovados. Homologação autenticada e instalação Linux permanecem pendentes. Rollback por reversão do commit desta entrega.
+
 ## 2026-11-25 — Autonomia Total A3/A4/A7, conciliação de caixa antes do ranking (G0)
 
 - O planejamento produtivo exige saldo auditado A3, saldo autenticado da captura e leitura viva verificada. O menor saldo bruto limita as alternativas antes da classificação; compromissos, pedidos incrementais e a maior reserva aplicável são deduzidos uma única vez. Saldo maior não amplia orçamento; divergência bloqueia recomendação e ausência de prova deixa orçamento desconhecido. A revalidação posterior rejeita alteração de saldo, tipo inválido ou regressão temporal antes da criação da prévia de compra.

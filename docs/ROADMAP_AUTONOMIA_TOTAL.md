@@ -162,6 +162,8 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 
 - Progresso adicional em 25/11/2026 (A6–A8): o ranking exclui IDs duplicados e hubs próprios, valida montantes, preços, pontos e frescor. Despesas recorrentes excluídas geram projeções condicionais, sem elegibilidade para A8; o painel e o Telegram preservam as ressalvas. O gate produtivo exige declaração explícita das exclusões. Testes simulados aprovados, homologação autenticada pendente.
 
+- Captura A6 em 25/11/2026: o worker incorpora o catálogo externo e as amostras nativas de demanda à mesma identidade de snapshot usada por A3/A4. A propriedade vigente é pré-requisito; candidatos próprios, identidades duplicadas, fontes incompatíveis e observações vencidas são excluídos. Preço e pontos mantêm relógios independentes. O resumo agregado reavalia a validade temporal e permanece parcial e inelegível para compras. Ainda falta consumir essa captura na avaliação econômica externa, comprovar esgotamento interno e gerar cenários conclusivos com fontes nativas completas.
+
 - Só entrar nesta fase com varredura dos hubs próprios conclusiva e sem proposta elegível (ou com política explícita de comparar expansão externa mesmo havendo oportunidades).
 - Pesquisar novos hubs por regiões e mercados, não apenas selecionar o mais barato. Comparar **hub candidato + modelo/motor + rota(s)**, considerando custo do hub, pontos, aeronave, rota, hangar e reserva.
 - Identificar se a pesquisa pré-compra permite calcular demanda confiável. Sem ela, **sugerir com ressalva**, nunca compra automática.

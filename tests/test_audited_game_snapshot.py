@@ -48,6 +48,100 @@ def test_snapshot_binds_verified_fleet_and_hubs_without_inventing_complete_cover
     assert snapshot["observations"]["cash"]["committed"] is None
 
 
+def external_observations():
+    return {"candidate_source": "game_purchase_catalog", "origin_scope": "external_catalog",
+            "candidate_inventory": [{"id": "12", "code": "EXT", "observed_at": NOW - 10,
+                                     "hub_price": 1000, "hub_price_observed_at": NOW - 20,
+                                     "hub_points": 0, "hub_points_observed_at": NOW - 30}],
+            "samples": [{"origin_id": "12", "destination_id": "11", "source": "game_route_search",
+                         "observed_at": NOW - 15, "distance_km": 500, "y": 10, "j": 2, "f": 1}],
+            "hub_progress": [{"hub_id": "12", "coverage": "partial", "last_attempt_at": NOW - 15}]}
+
+
+def test_external_snapshot_has_independent_clocks_and_fingerprint(tmp_path, monkeypatch):
+    external = external_observations()
+    external["candidate_inventory"].append({"id": "11", "observed_at": NOW})
+    snapshot = compose_snapshot(**observations(), external_demand=external)
+    research = snapshot["observations"]["external_route_research"]
+    assert [row["id"] for row in research["candidate_inventory"]] == ["12"]
+    assert len(research["samples"]) == len(research["hub_progress"]) == 1
+    assert research["candidate_inventory"][0]["hub_points"] == 0
+    assert snapshot["coverage"]["scopes"]["routes"] is False
+    assert snapshot["coverage"]["scopes"]["prices"] is False
+    external["samples"][0]["y"] = 99
+    assert research["samples"][0]["y"] == 10
+    assert fingerprint_snapshot(snapshot) == snapshot["snapshot_id"]
+    assert compose_snapshot(**observations(), external_demand=external)["snapshot_id"] != snapshot["snapshot_id"]
+    path = tmp_path / FILENAME
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    summary = snapshot_summary(now=NOW, path=path)["external_route_research"]
+    assert summary == {"coverage": "partial", "candidate_count": 1, "fresh_price_count": 1,
+                       "fresh_points_count": 1, "fresh_sample_count": 1,
+                       "read_only": True, "purchase_eligible": False}
+    later = snapshot_summary(now=NOW + 875, path=path)["external_route_research"]
+    assert later["candidate_count"] == later["fresh_price_count"] == 1
+    assert later["fresh_points_count"] == 0
+    assert snapshot_summary(now=NOW + 881, path=path)["external_route_research"]["candidate_count"] == 0
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile("other"))
+    assert snapshot_summary(now=NOW, path=path)["status"] == "registro_invalido"
+
+
+def test_external_snapshot_rejects_wrong_sources_stale_ownership_and_duplicates():
+    for field in ("candidate_source", "origin_scope"):
+        external = external_observations()
+        external[field] = "unverified"
+        research = compose_snapshot(**observations(), external_demand=external)["observations"]["external_route_research"]
+        assert research["candidate_inventory"] == research["samples"] == []
+    for hubs in (None, [None], [{"id": "11"}, {"id": "11"}], [{"id": "11"}, {"id": "12"}]):
+        evidence = observations()
+        evidence["inventory"]["hubs"] = hubs
+        research = compose_snapshot(**evidence, external_demand=external_observations())["observations"]["external_route_research"]
+        assert research["candidate_inventory"] == research["samples"] == []
+    evidence = observations()
+    evidence["inventory"]["observed_at"] = NOW - 901
+    assert not compose_snapshot(**evidence, external_demand=external_observations())["observations"]["external_route_research"]["samples"]
+    external = external_observations()
+    external["candidate_inventory"].extend([None, {"id": "12", "observed_at": NOW}, {"id": [], "observed_at": NOW}])
+    assert not compose_snapshot(**observations(), external_demand=external)["observations"]["external_route_research"]["candidate_inventory"]
+    external = external_observations()
+    external["samples"].extend([None, {**external["samples"][0], "y": 999}])
+    external["hub_progress"] = "invalid"
+    research = compose_snapshot(**observations(), external_demand=external)["observations"]["external_route_research"]
+    assert research["samples"] == research["hub_progress"] == []
+
+
+def test_external_snapshot_rejects_stale_and_future_costs_and_samples():
+    external = external_observations()
+    candidate = external["candidate_inventory"][0]
+    candidate.update(hub_price_observed_at=NOW - 901, hub_points_observed_at=NOW + 1)
+    external["samples"][0]["observed_at"] = NOW - 901
+    research = compose_snapshot(**observations(), external_demand=external)["observations"]["external_route_research"]
+    assert research["candidate_inventory"] == [{"id": "12", "code": "EXT", "observed_at": NOW - 10}]
+    assert research["samples"] == []
+
+
+def test_capture_reads_external_registry_for_current_profile(tmp_path, monkeypatch):
+    from hub_expansion import HubExpansionRegistry
+    from hub_registry import HubRegistry
+
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile("isolated"))
+    monkeypatch.setattr(paths.Profile, "data", property(lambda self: tmp_path))
+    monkeypatch.setattr(HubRegistry, "snapshot", lambda self, routes: {
+        **observations()["inventory"], "observed_at": time.time() - 1})
+    registry = HubExpansionRegistry()
+    assert registry.record_catalog([{"id": "12", "code": "EXT", "name": "Fixture",
+                                     "purchasable": True, "hub_price": 1000, "hub_points": 0}])
+    assert registry.external_demand_registry().record_demand(
+        "12", [{"arr_id": "11", "distance": 500, "y": 10, "j": 2, "f": 1}]) == 1
+    bot = SimpleNamespace(stats=lambda: SimpleNamespace(money=2500, money_read_at=time.time() - 1))
+    snapshot = capture_game_snapshot(bot)
+    assert snapshot["profile_id"] == "isolated"
+    assert snapshot["observations"]["external_route_research"]["samples"][0]["origin_id"] == "12"
+    assert snapshot["observations"]["route_research"]["samples"] == []
+    assert json.loads((tmp_path / FILENAME).read_text(encoding="utf-8")) == snapshot
+
+
 def test_missing_native_partition_or_revoked_page_audit_cannot_certify_fleet():
     for field in ("native_identity_status", "native_observation_id"):
         evidence = observations()
