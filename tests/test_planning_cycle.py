@@ -41,7 +41,11 @@ def test_worker_replans_after_capture_with_real_a4_and_no_game_mutations(worker,
     registry = AuditedEconomicsRegistry().snapshot()
     assert registry["snapshot_id"] == first["snapshot_id"]
     assert registry["status"] == "sem_avaliacoes"
-    assert registry["evaluations"] == [] and registry["portfolio_evidence"] == {}
+    assert registry["sweep_published"] is True
+    assert registry["evaluations"] == []
+    assert registry["portfolio_evidence"]["research_coverage_verified"] is False
+    assert registry["portfolio_evidence"]["commitments_verified"] is False
+    assert registry["portfolio_evidence"]["controls"] == snapshot_summary()["policy_controls"]
 
     # New observations must invalidate the preceding decision until re-evaluated.
     worker.stats = lambda: SimpleNamespace(money=200, money_read_at=time.time() - 2)
@@ -84,6 +88,89 @@ def test_worker_dry_run_does_not_publish_or_call_a4(worker, monkeypatch, tmp_pat
     assert planning_cycle.planning_cycle_summary()["status"] == "sem_execucao"
 
 
+@pytest.mark.parametrize("case_mode", ["complete", "missing", "mismatched", "second_page_invalid",
+                                       "two_pages", "all_blocked"])
+def test_worker_registers_complete_economics_before_a4(worker, monkeypatch, case_mode):
+    from copy import deepcopy
+
+    from audited_economics_registry import AuditedEconomicsRegistry
+    from expansion_economics import evaluate_expansion_economics
+    from opportunity_models import fingerprint_snapshot
+    from test_expansion_economics import NOW, fixture
+
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
+    monkeypatch.setattr(time, "time", lambda: NOW)
+    snapshot, candidate, inputs = fixture()
+    snapshot["observations"] = {"captured_at": NOW}
+    sid = snapshot["snapshot_id"] = fingerprint_snapshot(snapshot)
+    for envelope in (candidate, candidate["route"], candidate["aircraft"],
+                     candidate["financial"], *candidate["costs"].values(), *inputs.values()):
+        envelope["snapshot_id"] = sid
+    result = evaluate_expansion_economics(snapshot, candidate, inputs, now=NOW)
+    assert result["status"] == "evaluated", result["blocking_reasons"]
+    capture = {"status": "parcial", "snapshot_id": sid, "captured_at": NOW,
+               "scopes": snapshot["coverage"]["scopes"]}
+    monkeypatch.setattr(planning_cycle, "capture_game_snapshot", lambda bot: snapshot)
+    monkeypatch.setattr(planning_cycle, "snapshot_summary", lambda **kwargs: capture)
+    monkeypatch.setattr("web.snapshot_summary", lambda **kwargs: capture)
+
+    multi_page = case_mode in ("second_page_invalid", "two_pages")
+    second_inputs = deepcopy(inputs)
+    second_inputs["cash"]["value"]["available"] += 100
+    second_result = evaluate_expansion_economics(snapshot, candidate, second_inputs, now=NOW)
+    assert second_result["status"] == "evaluated"
+    assert second_result["economics_id"] != result["economics_id"]
+
+    def replay(**kwargs):
+        offset = kwargs["offset"]
+        evaluation = second_result if offset else result
+        supplied = deepcopy(second_inputs if offset else inputs)
+        blocked = case_mode == "all_blocked"
+        if case_mode not in ("missing", "all_blocked"):
+            if case_mode == "mismatched" or (offset and case_mode == "second_page_invalid"):
+                supplied["cash"]["value"]["available"] += 100
+            kwargs["on_evaluated"](evaluation["economics_id"], candidate, supplied, 0.10)
+        return {"status": "parcial", "snapshot_id": sid, "historical_replay": True,
+                "read_only": True, "purchase_eligible": False, "offset": offset,
+                "cursor_reset": False, "total_candidates": 2 if multi_page else 1,
+                "next_offset": 1 if multi_page and not offset else None,
+                "snapshot_fingerprint": "a" * 24, "layout_fingerprint": "b" * 24,
+                "blocking_reasons": [], "items": [{"accounting_gate": {
+                    "economics_id": evaluation["economics_id"],
+                    "status": "blocked" if blocked else "evaluated",
+                    "blocking_reasons": [{"code": "demanda_ausente", "field": "daily_demand"}] if blocked else [],
+                    "read_only": True, "purchase_eligible": False,
+                    "layout_evaluations": [],
+                }}]}
+
+    monkeypatch.setattr(planning_cycle, "replay_research_page", replay)
+    if case_mode in ("missing", "mismatched", "second_page_invalid"):
+        with pytest.raises(RuntimeError, match="Falha no planejamento de expansão"):
+            planning_cycle.capture_and_plan(worker)
+        assert planning_cycle.planning_cycle_summary()["status"] == "falhou"
+        assert AuditedEconomicsRegistry().snapshot()["evaluations"] == []
+        return
+
+    planning_cycle.capture_and_plan(worker)
+    stored = AuditedEconomicsRegistry().snapshot()
+    expected_results = [] if case_mode == "all_blocked" else [result, second_result] if multi_page else [result]
+    assert stored["evaluations"] == expected_results
+    assert stored["portfolio_evidence"]["research_coverage_verified"] is False
+    assert stored["portfolio_evidence"]["commitments_verified"] is False
+    report = planning_cycle.planning_cycle_summary()
+    assert report["evaluated_count"] == len(expected_results) and report["eligible_count"] == 0
+    assert report["decision"] == "nao_comprar"
+    assert report["research"]["sample_sweep_complete"] is True
+    assert report["research"]["blocked_combinations"] == (1 if case_mode == "all_blocked" else 0)
+    assert report["research"]["coverage"] == "partial"
+    assert "research_audit" not in report
+    planning_cycle.capture_and_plan(worker)
+    assert AuditedEconomicsRegistry().snapshot()["evaluations"] == expected_results
+    # The oldest underlying observation expires before the capture itself.
+    if expected_results:
+        assert planning_cycle.planning_cycle_summary(now=NOW + 890)["status"] == "expirado"
+
+
 def test_worker_summary_rejects_wrong_profile_and_invalid_record(worker, tmp_path):
     planning_cycle.capture_and_plan(worker)
     path = tmp_path / planning_cycle.FILENAME
@@ -91,6 +178,18 @@ def test_worker_summary_rejects_wrong_profile_and_invalid_record(worker, tmp_pat
     path.write_text(json.dumps({**record, "profile_id": "other"}), encoding="utf-8")
     assert planning_cycle.planning_cycle_summary()["status"] == "registro_invalido"
     path.write_text(json.dumps({**record, "eligible_count": 5}), encoding="utf-8")
+    assert planning_cycle.planning_cycle_summary()["status"] == "registro_invalido"
+
+
+def test_worker_summary_rejects_unpublished_empty_sweep(worker, tmp_path):
+    from audited_economics_registry import AuditedEconomicsRegistry
+
+    planning_cycle.capture_and_plan(worker)
+    registry = AuditedEconomicsRegistry()
+    stored = json.loads(registry.path.read_text(encoding="utf-8"))
+    stored.pop("sweep_published")
+    stored["portfolio"] = None
+    registry.path.write_text(json.dumps(stored), encoding="utf-8")
     assert planning_cycle.planning_cycle_summary()["status"] == "registro_invalido"
 
 

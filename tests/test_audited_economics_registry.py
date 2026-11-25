@@ -154,6 +154,51 @@ def test_evaluated_case_can_be_registered_after_worker_capture(registry):
     assert report["evaluations"][0]["status"] == "evaluated"
 
 
+@pytest.mark.parametrize("empty", [True, False])
+def test_worker_sweep_is_immutable_and_recovers_from_failed_write(registry, monkeypatch, empty):
+    from expansion_economics import evaluate_expansion_economics
+    from opportunity_models import fingerprint_snapshot
+
+    snapshot, candidate, inputs = fixture()
+    snapshot["observations"] = {"captured_at": NOW}
+    sid = snapshot["snapshot_id"] = fingerprint_snapshot(snapshot)
+    for envelope in (candidate, candidate["route"], candidate["aircraft"], candidate["financial"],
+                     *candidate["costs"].values(), *inputs.values()):
+        envelope["snapshot_id"] = sid
+    evaluation = evaluate_expansion_economics(snapshot, candidate, inputs, now=NOW)
+    assert evaluation["status"] == "evaluated"
+    cases = [(evaluation["economics_id"], candidate, inputs, 0.10)]
+    batch = [] if empty else cases
+    kwargs = {"controls": controls(sid), "fleet_coverage_verified": True, "now": NOW}
+    assert registry.begin_capture(snapshot, now=NOW)
+    before = registry.path.read_bytes()
+
+    def fail_write(*args, **kwargs):
+        raise OSError("simulated write failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(paths, "write_atomic", fail_write)
+        assert not registry.record_sweep(snapshot, batch, **kwargs)
+    assert registry.path.read_bytes() == before
+    assert not registry.snapshot(now=NOW)["sweep_published"]
+    assert registry.record_sweep(snapshot, batch, **kwargs)
+    assert registry.snapshot(now=NOW)["sweep_published"]
+    published = registry.path.read_bytes()
+    assert registry.record_sweep(snapshot, batch, **kwargs)
+    assert not registry.record_sweep(snapshot, cases if empty else [], **kwargs)
+    assert not registry.record_sweep(snapshot, batch, **{**kwargs, "controls": {}})
+    assert registry.record(snapshot, candidate, inputs, now=NOW) is not empty
+    assert registry.path.read_bytes() == published
+
+    assert registry.record_portfolio_evidence(snapshot_id=sid, controls=kwargs["controls"],
+                                              hub_capacity={}, fleet_coverage_verified=True,
+                                              commitments_verified=True)
+    enriched = registry.path.read_bytes()
+    assert registry.record_sweep(snapshot, batch, **kwargs)
+    assert registry.path.read_bytes() == enriched
+    assert registry.snapshot(now=NOW)["portfolio_evidence"]["commitments_verified"] is True
+
+
 @pytest.mark.parametrize("field,value", [("captured_at", True), ("captured_at", NOW + 1),
                                          ("observed_at", float("nan")), ("observed_at", NOW + 1)])
 def test_empty_capture_rejects_invalid_temporal_metadata(registry, field, value):

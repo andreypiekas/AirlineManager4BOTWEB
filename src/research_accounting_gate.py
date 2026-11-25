@@ -11,7 +11,8 @@ from opportunity_models import DEFAULT_MAX_AGE_SECONDS, native_free_passenger_ha
 from route_detail_evidence import current_detail
 
 
-def evaluate_research_gate(snapshot, item, *, now, margin, native_reference=None):
+def evaluate_research_gate(snapshot, item, *, now, margin, native_reference=None,
+                           on_evaluated=None):
     """Evaluate shared prerequisites for all hypothetical layouts of one row."""
     binding = {key: snapshot[key] for key in ("profile_id", "snapshot_id")}
 
@@ -100,6 +101,8 @@ def evaluate_research_gate(snapshot, item, *, now, margin, native_reference=None
 
     result = evaluate_expansion_economics(snapshot, candidate, inputs, now=now,
                                           safety_margin_fraction=margin)
+    if on_evaluated is not None and result["status"] == "evaluated":
+        on_evaluated(result["economics_id"], candidate, inputs, margin)
     layout_evaluations = []
     preview = item.get("economics_preview") or {}
     for row in preview.get("layouts", []):
@@ -113,6 +116,8 @@ def evaluate_research_gate(snapshot, item, *, now, margin, native_reference=None
         }}
         evaluation = evaluate_expansion_economics(snapshot, candidate, layout_inputs,
                                                  now=now, safety_margin_fraction=margin)
+        if on_evaluated is not None and evaluation["status"] == "evaluated":
+            on_evaluated(evaluation["economics_id"], candidate, layout_inputs, margin)
         layout_evaluations.append({
             "configuration_yjf": layout, "configuration_verified": False,
             "economics_id": evaluation["economics_id"], "status": evaluation["status"],

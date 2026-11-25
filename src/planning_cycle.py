@@ -47,7 +47,7 @@ def _load_cursor(profile):
     return None
 
 
-def _research_summary(snapshot_id, cursor=None):
+def _research_summary(snapshot_id, cursor=None, *, on_evaluated=None):
     """Evaluate sampled combinations within a bounded, single-snapshot sweep."""
     offset = cursor["next_offset"] if cursor else 0
     expected_layout = cursor["layout_fingerprint"] if cursor else None
@@ -55,14 +55,15 @@ def _research_summary(snapshot_id, cursor=None):
     fingerprint = None
     layout_fingerprint = None
     total = None
-    combinations = layouts = pages = 0
+    combinations = layouts = pages = blocked_combinations = 0
     blockers = Counter()
     evidence_rows = []
     queue_blockers = []
     for _ in range(RESEARCH_PAGE_BUDGET):
         page = replay_research_page(offset=offset, expected_snapshot=snapshot_id,
                                     expected_fingerprint=fingerprint,
-                                    expected_layout_fingerprint=expected_layout if not pages else None)
+                                    expected_layout_fingerprint=expected_layout if not pages else None,
+                                    on_evaluated=on_evaluated)
         if (page.get("status") != "parcial" or page.get("snapshot_id") != snapshot_id
                 or page.get("historical_replay") is not True or page.get("read_only") is not True
                 or page.get("purchase_eligible") is not False):
@@ -89,13 +90,15 @@ def _research_summary(snapshot_id, cursor=None):
             evaluations = []
             for evaluation in [gate, *gate["layout_evaluations"]]:
                 if (evaluation["read_only"] is not True or evaluation["purchase_eligible"] is not False
-                        or evaluation["status"] != "blocked"):
+                        or evaluation["status"] not in ("blocked", "evaluated")
+                        or bool(evaluation["blocking_reasons"]) != (evaluation["status"] == "blocked")):
                     raise ValueError("Resultado de pesquisa incompatível.")
                 blockers.update({reason["code"] for reason in evaluation["blocking_reasons"]})
                 evaluations.append({"economics_id": evaluation["economics_id"],
                                     "blocking_reasons": evaluation["blocking_reasons"]})
             evidence_rows.append({"offset": row_offset,
                                   "evaluations": evaluations})
+            blocked_combinations += all(entry["blocking_reasons"] for entry in evaluations)
             layouts += len(gate["layout_evaluations"])
         combinations += len(items)
         pages += 1
@@ -107,7 +110,7 @@ def _research_summary(snapshot_id, cursor=None):
             raise ValueError("Paginação de pesquisa inválida.")
         offset = next_offset
     summary = {"coverage": "partial", "total_sampled_combinations": total,
-            "examined_combinations": combinations, "blocked_combinations": combinations,
+            "examined_combinations": combinations, "blocked_combinations": blocked_combinations,
             "hypothetical_layouts": layouts, "pages": pages,
             "first_offset": first_offset, "next_offset": next_offset,
             "sample_sweep_complete": first_offset == 0 and combinations == total and not queue_blockers,
@@ -137,7 +140,7 @@ def _valid_research_summary(research):
     return (all(type(value) is int and value >= 0 for value in (total, examined, blocked, layouts, pages))
             and type(first) is int and 0 <= first <= end <= total
             and (next_offset is None if end == total else type(next_offset) is int and next_offset == end)
-            and blocked == examined and 1 <= pages <= RESEARCH_PAGE_BUDGET
+            and blocked <= examined and 1 <= pages <= RESEARCH_PAGE_BUDGET
             and isinstance(queue, list) and all(isinstance(code, str) and code for code in queue)
             and isinstance(counts, dict) and all(isinstance(code, str) and code
                 and type(value) is int and 0 < value <= examined + layouts for code, value in counts.items())
@@ -154,7 +157,7 @@ def _valid_research_audit(audit, research, snapshot_id):
         return False
     counts = Counter()
     ids = set()
-    layouts = 0
+    layouts = blocked = 0
     for offset, row in enumerate(audit["rows"], research["first_offset"]):
         if (not isinstance(row, dict) or row.get("offset") != offset
                 or not isinstance(row.get("evaluations"), list) or not row["evaluations"]):
@@ -165,14 +168,46 @@ def _valid_research_audit(audit, research, snapshot_id):
                 return False
             identifier, reasons = entry.get("economics_id"), entry.get("blocking_reasons")
             if (not isinstance(identifier, str) or not _ECONOMICS_ID.fullmatch(identifier)
-                    or identifier in ids or not isinstance(reasons, list) or not reasons
+                    or identifier in ids or not isinstance(reasons, list)
                     or any(not isinstance(reason, dict) or set(reason) != {"code", "field"}
                            or any(not isinstance(value, str) or not value for value in reason.values())
                            for reason in reasons)):
                 return False
             ids.add(identifier)
             counts.update({reason["code"] for reason in reasons})
-    return layouts == research["hypothetical_layouts"] and counts == research["accounting_blocker_counts"]
+        blocked += all(entry["blocking_reasons"] for entry in row["evaluations"])
+    return (layouts == research["hypothetical_layouts"] and blocked == research["blocked_combinations"]
+            and counts == research["accounting_blocker_counts"])
+
+
+def _evaluated_ids(audit):
+    return {entry["economics_id"] for row in audit["rows"] for entry in row["evaluations"]
+            if not entry["blocking_reasons"]}
+
+
+def _publish_evaluated_cases(registry, snapshot, cases, audit):
+    """Publish only independently revalidated cases from the current sweep."""
+    expected = _evaluated_ids(audit)
+    if len(cases) != len(expected) or {case[0] for case in cases} != expected:
+        raise ValueError("Evidências econômicas da pesquisa divergentes.")
+    capture = snapshot_summary()
+    if capture.get("status") != "parcial" or capture.get("snapshot_id") != snapshot["snapshot_id"]:
+        raise ValueError("Coleta alterada durante o registro econômico.")
+    # Sampled research and captured policy limits do not prove global coverage
+    # or reconciliation of commitments. Keep both gates closed.
+    if not registry.record_sweep(
+        snapshot, cases, controls=capture.get("policy_controls", {}),
+        fleet_coverage_verified=capture.get("scopes", {}).get("fleet") is True,
+    ):
+        raise ValueError("Lote econômico indisponível para registro.")
+    stored = registry.snapshot()
+    if (stored["snapshot_id"] != snapshot["snapshot_id"]
+            or stored.get("sweep_published") is not True
+            or stored["status"] != ("registrado" if expected else "sem_avaliacoes")
+            or len(stored["evaluations"]) != len(expected)
+            or expected != {row["economics_id"] for row in stored["evaluations"]
+                            if row["status"] == "evaluated"}):
+        raise ValueError("Revalidação econômica do registro divergente.")
 
 
 def capture_and_plan(bot):
@@ -193,11 +228,16 @@ def capture_and_plan(bot):
     try:
         snapshot = capture_game_snapshot(bot)
         record["snapshot_id"] = snapshot["snapshot_id"]
-        if not AuditedEconomicsRegistry().begin_capture(snapshot):
+        registry = AuditedEconomicsRegistry()
+        if not registry.begin_capture(snapshot):
             raise ValueError("Registro econômico da coleta indisponível.")
-        research, next_cursor, audit = _research_summary(record["snapshot_id"], cursor)
+        cases = []
+        research, next_cursor, audit = _research_summary(
+            record["snapshot_id"], cursor, on_evaluated=lambda *case: cases.append(case),
+        )
         if not _valid_research_summary(research) or not _valid_research_audit(audit, research, record["snapshot_id"]):
             raise ValueError("Resumo de pesquisa inválido.")
+        _publish_evaluated_cases(registry, snapshot, cases, audit)
         dashboard = WebDashboard(bot, bot.config, buffer=None)
         report = dashboard.audited_expansion()
         current = time.time()
@@ -266,6 +306,19 @@ def planning_cycle_summary(*, now=None):
                 or not _valid_research_summary(research)
                 or not _valid_research_audit(record.get("research_audit"), research, record["snapshot_id"])):
             return {**unavailable, "status": "registro_invalido"}
+        expected = _evaluated_ids(record["research_audit"])
+        from audited_economics_registry import AuditedEconomicsRegistry
+
+        stored = AuditedEconomicsRegistry().snapshot(now=now)
+        if (stored["snapshot_id"] != record["snapshot_id"]
+                or stored.get("sweep_published") is not True
+                or stored["status"] != ("registrado" if expected else "sem_avaliacoes")
+                or len(stored["evaluations"]) != len(expected)
+                or expected != {row["economics_id"] for row in stored["evaluations"]}):
+            return {**unavailable, "status": "registro_invalido"}
+        if expected != {row["economics_id"] for row in stored["evaluations"]
+                        if row["status"] == "evaluated"}:
+            return {**unavailable, "status": "expirado"}
         return {**unavailable, "status": record["status"], "started_at": started,
                 "finished_at": finished, "snapshot_id": record["snapshot_id"],
                 "decision": decision, "evaluated_count": evaluated,

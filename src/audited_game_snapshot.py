@@ -322,7 +322,7 @@ def _captured_owned_inventory(snapshot, now):
 
 
 def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerprint=None,
-                         expected_layout_fingerprint=None, now=None, path=None):
+                         expected_layout_fingerprint=None, now=None, path=None, on_evaluated=None):
     """Replay a bounded page using only the captured inputs and capture clock."""
     from types import SimpleNamespace
 
@@ -385,7 +385,7 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
                         item["pending"].append("rota_ocupada_frota_propria")
             item["accounting_gate"] = evaluate_research_gate(
                 snapshot, item, now=captured, margin=inputs["preview_margin"],
-                native_reference=reference,
+                native_reference=reference, on_evaluated=on_evaluated,
             )
         return {**result, "status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": captured, "historical_replay": True}

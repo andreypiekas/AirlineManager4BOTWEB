@@ -43,6 +43,29 @@ def _valid_record_times(record, now):
                  or (_positive_timestamp(observed) and observed <= captured)))
 
 
+def _validated_case(snapshot, candidate, inputs, *, now, safety_margin_fraction,
+                    stress=None, expected_economics_id=None):
+    try:
+        evaluated = evaluate_expansion_economics(
+            snapshot, candidate, inputs, now=now,
+            safety_margin_fraction=safety_margin_fraction, stress=stress,
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if (evaluated.get("status") != "evaluated"
+            or (expected_economics_id is not None and evaluated.get("economics_id") != expected_economics_id)
+            or evaluated.get("profile_id") != paths.current().label
+            or not isinstance(evaluated.get("snapshot_id"), str)
+            or not evaluated["snapshot_id"]):
+        return None
+    return {
+        "economics_id": evaluated["economics_id"],
+        "snapshot": deepcopy(snapshot), "candidate": deepcopy(candidate),
+        "inputs": deepcopy(inputs), "safety_margin_fraction": safety_margin_fraction,
+        "stress": deepcopy(stress),
+    }
+
+
 class AuditedEconomicsRegistry:
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path is not None else paths.current().data / "audited_expansion.json"
@@ -60,6 +83,10 @@ class AuditedEconomicsRegistry:
                 or not isinstance(payload.get("profile_id"), str)
                 or not isinstance(payload.get("snapshot_id"), str)
                 or type(payload.get("research_storage_truncated", False)) is not bool
+                or type(payload.get("sweep_published", False)) is not bool
+                or (payload.get("sweep_published", False)
+                    and (payload.get("portfolio") is None
+                         or payload.get("research_storage_truncated", False)))
                 or (payload.get("portfolio") is not None
                     and not isinstance(payload["portfolio"], dict))
                 or len(payload["cases"]) > _MAX_SCENARIOS):
@@ -117,7 +144,8 @@ class AuditedEconomicsRegistry:
     def record(self, snapshot: Mapping[str, Any], candidate: Mapping[str, Any],
                inputs: Mapping[str, Any], *, now: float | None = None,
                safety_margin_fraction: float = 0.10,
-               stress: Mapping[str, float] | None = None) -> bool:
+               stress: Mapping[str, float] | None = None,
+               expected_economics_id: str | None = None) -> bool:
         """Accept one fully validated A3 case for the active game profile.
 
         Distinct observations of the same opportunity remain separate so the
@@ -125,17 +153,10 @@ class AuditedEconomicsRegistry:
         snapshots cannot overwrite a more recent research pass.
         """
         now = time.time() if now is None else now
-        try:
-            evaluated = evaluate_expansion_economics(
-                snapshot, candidate, inputs, now=now,
-                safety_margin_fraction=safety_margin_fraction, stress=stress,
-            )
-        except (TypeError, ValueError, OverflowError):
-            return False
-        if (evaluated.get("status") != "evaluated"
-                or evaluated.get("profile_id") != paths.current().label
-                or not isinstance(evaluated.get("snapshot_id"), str)
-                or not evaluated["snapshot_id"]):
+        entry = _validated_case(snapshot, candidate, inputs, now=now,
+                                safety_margin_fraction=safety_margin_fraction, stress=stress,
+                                expected_economics_id=expected_economics_id)
+        if entry is None:
             return False
         observed_at = snapshot.get("observed_at")
         observations = snapshot.get("observations")
@@ -146,12 +167,7 @@ class AuditedEconomicsRegistry:
                 or (isinstance(observations, Mapping) and "captured_at" in observations and captured_at is None)
                 or not observed_at <= timestamp <= now):
             return False
-        entry = {
-            "economics_id": evaluated["economics_id"],
-            "snapshot": deepcopy(snapshot), "candidate": deepcopy(candidate),
-            "inputs": deepcopy(inputs), "safety_margin_fraction": safety_margin_fraction,
-            "stress": deepcopy(stress),
-        }
+        snapshot_id = snapshot["snapshot_id"]
         with _LOCK:
             existing, valid = self._read()
             if not valid or (existing and existing["profile_id"] != paths.current().label):
@@ -163,9 +179,9 @@ class AuditedEconomicsRegistry:
                 if not _positive_timestamp(previous):
                     return False
                 if timestamp < previous or (timestamp == previous
-                                           and existing["snapshot_id"] != evaluated["snapshot_id"]):
+                                           and existing["snapshot_id"] != snapshot_id):
                     return False
-            if existing.get("snapshot_id") == evaluated["snapshot_id"]:
+            if existing.get("snapshot_id") == snapshot_id:
                 if timestamp != _record_timestamp(existing) or observed_at != existing.get("observed_at"):
                     return False
                 cases = existing["cases"]
@@ -173,6 +189,8 @@ class AuditedEconomicsRegistry:
                     return False
                 if entry in cases:
                     return True
+                if existing.get("sweep_published", False):
+                    return False
                 portfolio = deepcopy(existing.get("portfolio"))
                 if portfolio is not None:
                     # Coverage applies to the exact set reviewed by the planner.
@@ -196,7 +214,7 @@ class AuditedEconomicsRegistry:
                 truncated = False
             payload = {
                 "schema_version": 1, "profile_id": paths.current().label,
-                "snapshot_id": evaluated["snapshot_id"], "observed_at": observed_at,
+                "snapshot_id": snapshot_id, "observed_at": observed_at,
                 "cases": cases, "portfolio": portfolio, "research_storage_truncated": truncated,
             }
             if captured_at is not None:
@@ -204,6 +222,70 @@ class AuditedEconomicsRegistry:
             try:
                 serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False)
                 paths.write_atomic(self.path, serialized, private=True)
+            except (OSError, TypeError, ValueError, OverflowError):
+                return False
+        return True
+
+    def record_sweep(self, snapshot: Mapping[str, Any], cases, *,
+                     controls: Mapping[str, Any], fleet_coverage_verified: bool,
+                     now: float | None = None) -> bool:
+        """Publish one worker sweep and its partial A4 proof in a single write.
+
+        A retry may publish the same set of cases. A different set for the same
+        capture is rejected rather than silently mixing independent sweeps.
+        """
+        now = time.time() if now is None else now
+        if not isinstance(controls, Mapping) or type(fleet_coverage_verified) is not bool:
+            return False
+        try:
+            snapshot_id = snapshot["snapshot_id"]
+            captured = snapshot["observations"]["captured_at"]
+            if (snapshot_id != fingerprint_snapshot(snapshot)
+                    or snapshot["profile_id"] != paths.current().label
+                    or not _positive_timestamp(now) or not _positive_timestamp(captured)
+                    or not 0 <= now - captured <= DEFAULT_MAX_AGE_SECONDS
+                    or len(cases) > _MAX_SCENARIOS):
+                return False
+            entries = []
+            for economics_id, candidate, inputs, margin in cases:
+                entry = _validated_case(snapshot, candidate, inputs, now=now,
+                                        safety_margin_fraction=margin,
+                                        expected_economics_id=economics_id)
+                if entry is None or entry["economics_id"] != economics_id:
+                    return False
+                entries.append(entry)
+            if len({entry["economics_id"] for entry in entries}) != len(entries):
+                return False
+            portfolio = {
+                "controls": deepcopy(dict(controls)), "hub_capacity": {},
+                "fleet_coverage_verified": fleet_coverage_verified,
+                "research_coverage_verified": False, "commitments_verified": False,
+                "confidence_evidence": {}, "diversification_evidence": {},
+            }
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return False
+        with _LOCK:
+            current, valid = self._read()
+            if (not valid or not current or current["profile_id"] != paths.current().label
+                    or current["snapshot_id"] != snapshot_id
+                    or _record_timestamp(current) != captured
+                    or current.get("observed_at") != snapshot.get("observed_at")
+                    or current.get("research_storage_truncated", False)
+                    or self.snapshot(now=now)["status"] == "registro_invalido"):
+                return False
+            if current["cases"] and current["cases"] != entries:
+                return False
+            if current.get("sweep_published", False):
+                # Preserve separately validated portfolio evidence on retries.
+                return (current["cases"] == entries
+                        and current["portfolio"].get("controls") == portfolio["controls"]
+                        and current["portfolio"].get("fleet_coverage_verified") == fleet_coverage_verified)
+            if current.get("portfolio") is not None and current["portfolio"] != portfolio:
+                return False
+            current.update(cases=entries, portfolio=portfolio, sweep_published=True)
+            try:
+                paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, allow_nan=False),
+                                   private=True)
             except (OSError, TypeError, ValueError, OverflowError):
                 return False
         return True
@@ -312,6 +394,7 @@ class AuditedEconomicsRegistry:
         return {
             "status": "registrado" if results else "sem_avaliacoes",
             "snapshot_id": stored.get("snapshot_id"),
+            "sweep_published": stored.get("sweep_published", False),
             "evaluations": results,
             "portfolio_evidence": portfolio,
             "read_only": True,
