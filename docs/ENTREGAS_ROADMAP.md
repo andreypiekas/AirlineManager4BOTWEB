@@ -1,5 +1,10 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Retomada do roadmap no Codex Cloud (G0)
+
+- `AGENTS.md` orienta retomar por `docs/contexto.md` e ler o roadmap e este histórico por trechos. O índice multiparte é versionado. O arquivo bruto local é opcional e fica fora do Git e das mensagens. Uma tarefa no Codex Cloud pode seguir quando esse bruto estiver ausente.
+- A verificação documental abrangeu os arquivos versionados, a regra que ignora o bruto e `git diff --check`. A execução no Codex Cloud depende do acesso ao repositório e à branch de desenvolvimento. Gate G0 vigente, com coleta autenticada e homologação ainda pendentes.
+
 ## 2026-11-25 — Consolidação das branches e auditorias A3–A5 (G0)
 
 - As branches permanentes são `main` e `codex/autonomia-a0-a1-20261122`. A [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46) acompanha o desenvolvimento. A [PR #44](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/44) documenta a implementação inicial de hubs em `33d081b`. A branch de desenvolvimento já usa o inventário auditado do `HubRegistry` no painel e na API. O histórico da PR #44 segue como referência para a revisão de uma promoção.

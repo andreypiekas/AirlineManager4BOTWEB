@@ -21,5 +21,5 @@ Leia este arquivo no início de cada tarefa e após toda compactação. Antes de
 ## Histórico e arquivos
 
 - Os checkpoints anteriores estão no [histórico de entregas](ENTREGAS_ROADMAP.md) e na revisão `8fdab91` deste arquivo no Git.
-- O [índice multiparte](codex_multipart_commit.md) aponta para o arquivo bruto compactado localmente. Consulte o índice quando necessário e deixe o bruto fora do contexto da conversa.
+- O [índice multiparte](codex_multipart_commit.md) aponta para o arquivo bruto compactado localmente. O Codex Cloud consegue retomar pela branch de desenvolvimento apenas com os documentos versionados. Se o bruto estiver ausente, siga normalmente. Faça a transição de conversa pelo caminho deste arquivo, sem copiar seu conteúdo, o histórico ou o multipart para o chat.
 - Antes de editar, confira branch, status e diff. Trabalhe na branch de tarefa, registre resultados e limitações, faça commit e push. Merge em `main` e implantação dependem de autorização explícita.
