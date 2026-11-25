@@ -553,6 +553,63 @@ def test_a4_current_policy_caps_audited_budget_without_double_counting():
     assert reserved["best"]["economics_id"] == cheap["economics_id"]
 
 
+def test_a4_independent_cash_caps_budget_before_ranking():
+    cheap = a4_evaluation(cost=2000)
+    expensive = a4_evaluation("789", "999", cost=7000, profit=350)
+    controls = a4_controls(pending_orders_incremental=500, future_commitments_incremental=1000)
+    captured = a4_proof(25000, "game_snapshot")
+    result = a4_compare(cheap, expensive, controls=controls, captured_cash=captured,
+                        live_cash=(10000, NOW), require_independent_cash=True)
+    assert result["budget_after_reservations_and_limits"] == 4000
+    assert result["best"]["economics_id"] == cheap["economics_id"]
+    assert result["eligible_count"] == 1
+    assert result["decision"] == "nao_comprar"
+    assert "saldo_vivo_divergente_a3" in result["blocking_reasons"]
+
+    higher = a4_compare(cheap, expensive, controls=controls,
+                        captured_cash=a4_proof(50000, "game_snapshot"),
+                        live_cash=(60000, NOW), require_independent_cash=True)
+    assert higher["cash_limits"]["gross_ceiling"] == 25000
+    assert higher["decision"] == "nao_comprar"
+    assert "saldo_coleta_divergente_a3" in higher["blocking_reasons"]
+    assert "saldo_vivo_divergente_a3" in higher["blocking_reasons"]
+
+    lower = a4_compare(cheap, expensive, controls=controls,
+                       captured_cash=a4_proof(9000, "game_snapshot"),
+                       live_cash=(25000, NOW), require_independent_cash=True)
+    assert lower["budget_after_reservations_and_limits"] == 3000
+    assert lower["eligible_count"] == 1
+    assert lower["decision"] == "nao_comprar"
+
+
+def test_a4_required_independent_cash_rejects_missing_or_invalid_evidence():
+    candidate = a4_evaluation()
+    captured = a4_proof(25000, "game_snapshot")
+    for proof, live, reason in (
+        (None, (25000, NOW), "saldo_coleta_a_confirmar"),
+        ({**captured, "snapshot_id": "other"}, (25000, NOW), "saldo_coleta_a_confirmar"),
+        ({**captured, "observed_at": NOW - 901}, (25000, NOW), "saldo_coleta_a_confirmar"),
+        ({**captured, "value": 25000.0}, (25000, NOW), "saldo_coleta_a_confirmar"),
+        (captured, None, "saldo_vivo_a_confirmar"),
+        (captured, (25000, NOW - 1), "saldo_vivo_a_confirmar"),
+        (captured, (25000, NOW + 1), "saldo_vivo_a_confirmar"),
+        (captured, (True, NOW), "saldo_vivo_a_confirmar"),
+    ):
+        result = a4_compare(candidate, captured_cash=proof, live_cash=live,
+                            require_independent_cash=True)
+        assert result["budget_after_reservations_and_limits"] is None
+        assert result["eligible_count"] == 0
+        assert reason in result["blocking_reasons"]
+    matching = a4_compare(candidate, captured_cash=captured, live_cash=(25000, NOW),
+                          require_independent_cash=True)
+    assert matching["decision"] == "sugestao_para_analise"
+    later_capture = a4_compare(candidate, captured_cash={**captured, "observed_at": NOW + 5},
+                               live_cash=(25000, NOW + 1), require_independent_cash=True,
+                               now=NOW + 5)
+    assert later_capture["budget_after_reservations_and_limits"] is None
+    assert "saldo_vivo_a_confirmar" in later_capture["blocking_reasons"]
+
+
 def test_a4_native_historical_spending_caps_budget_independently():
     proof = {**a4_proof(16000, "game_transaction_summary"),
              "historical_only": True, "window_hours": 24}

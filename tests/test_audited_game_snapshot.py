@@ -109,11 +109,17 @@ def test_summary_preserves_source_age_and_is_profile_bound(tmp_path, monkeypatch
         "snapshot_id": snapshot["snapshot_id"], "verified": True,
         "observed_at": NOW - 30, "value": 1,
     }
+    assert summary["cash_control"] == {
+        "source": "game_snapshot", "profile_id": "principal",
+        "snapshot_id": snapshot["snapshot_id"], "verified": True,
+        "observed_at": NOW - 5, "value": 1200,
+    }
     assert "observed_aircraft_ids" not in json.dumps(summary)
     summary = snapshot_summary(now=NOW + 875, path=path)
     assert not summary["scopes"]["fleet"] and summary["fleet_count"] is None
     assert summary["unrouted_aircraft_control"] is None
     assert summary["scopes"]["hubs"] and summary["cash_observed"]
+    assert snapshot_summary(now=NOW + 896, path=path)["cash_control"] is None
     assert snapshot_summary(now=NOW + 901, path=path)["status"] == "expirado"
     monkeypatch.setattr(paths, "current", lambda: paths.Profile("other"))
     assert snapshot_summary(now=NOW, path=path)["status"] == "registro_invalido"

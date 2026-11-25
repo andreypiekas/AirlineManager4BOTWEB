@@ -903,7 +903,7 @@ const nf = new Intl.NumberFormat('en-GB');
 const money = value => '$' + String(value);
 """ + translations + r"""
 let LANG = 'en';
-const tr = value => EN[value] || value;
+const tr = value => LANG === 'en' ? EN[value] || value : value;
 class Element {
   constructor(tag = 'div') {
     this.tag = tag;
@@ -1042,6 +1042,37 @@ assert.match($('hubExpansionPlannerExplanation').textContent,
 assert.match($('hubExpansionPlannerExplanation').textContent, /Verified A3 calculations/);
 assert.equal($('hubExpansionPlannerGrid').children[0].children[1].textContent,
   'A3 economics analysis');
+
+report.portfolio.cash_limits = {required:true, audited_available:40000,
+  captured_available:0, live_available:null, gross_ceiling:null};
+report.portfolio.budget_after_reservations_and_limits = null;
+report.portfolio.blocking_reasons = ['saldo_coleta_divergente_a3', 'saldo_vivo_a_confirmar'];
+renderAuditedExpansionPlanner(report, hubs);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Audited A3 balance: \$40000/);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Captured balance: \$0/);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Live balance: Unconfirmed/);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Gross cash ceiling: Unconfirmed/);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Cash for investments after commitments: Unconfirmed/);
+assert.equal($('hubExpansionPlannerBlockers').children[0].textContent,
+  'Captured balance differs from the A3 snapshot');
+assert.equal(hubResearchBlocker('saldo_coleta_a_confirmar'), 'Captured balance requires verification');
+
+report.portfolio.alternatives = [a4];
+report.portfolio.best = a4;
+report.portfolio.budget_after_reservations_and_limits = 0;
+renderAuditedExpansionPlanner(report, hubs);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Top alternative for diagnosis/);
+assert.doesNotMatch($('hubExpansionPlannerExplanation').textContent, /Best global alternative/);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Cash for investments after commitments: \$0/);
+assert.equal($('hubExpansionPlannerGrid').children[0].children[1].dataset.state, 'dados_a_confirmar');
+LANG = 'pt_BR';
+renderAuditedExpansionPlanner(report, hubs);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Primeira alternativa para diagnóstico/);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Saldo capturado: \$0/);
+assert.match($('hubExpansionPlannerExplanation').textContent, /Saldo vivo: Não confirmado/);
+assert.equal($('hubExpansionPlannerBlockers').children[0].textContent,
+  'Saldo da coleta diverge do snapshot A3');
+LANG = 'en';
 
 report.status = 'registro_invalido';
 renderAuditedExpansionPlanner(report, hubs);

@@ -138,6 +138,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 ### Fase A4 — Planejamento global de aquisições (P1)
 
 - Progresso em 25/11/2026: a captura produtiva inicializa o registro A3/A4 ativo e invalida os casos anteriores quando muda a identidade da coleta. Uma captura parcial sem casos permanece inconclusiva para investimento, com decisão de não comprar. A alimentação de casos completos e certificação da cobertura ainda dependem das evidências A1–A3; nenhum gate de gasto foi promovido.
+- A comparação produtiva passou a exigir saldo A3, saldo da captura e leitura viva verificada. O menor saldo bruto limita os candidatos antes do ranking, descontando compromissos e reserva uma única vez. Divergências ou falta de prova mantêm a decisão inconclusiva, e a leitura posterior ao ranking impede criação de plano com saldo alterado ou regressão temporal. O painel distingue os três valores, o teto bruto e o orçamento líquido, inclusive quando não há candidato A4.
 
 - Gerar ranking **global** dos hubs próprios, cada um com suas melhores oportunidades e com a melhor oportunidade da companhia.
 - Antes da compra, descontar pedidos pendentes, aeronaves sem rota, custos/compromissos futuros, limite de hangar, reserva operacional e gasto máximo por ciclo/período.

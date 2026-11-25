@@ -354,6 +354,17 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                     policy_controls[name] = {"source": "investment_policy", "profile_id": snapshot["profile_id"],
                                              "snapshot_id": snapshot["snapshot_id"], "verified": True,
                                              "observed_at": observations["captured_at"], "value": value}
+        cash = observations["cash"]
+        cash_amount = cash["available"]
+        cash_stamp = cash["observed_at"]
+        cash_control = (
+            {"source": "game_snapshot", "profile_id": snapshot["profile_id"],
+             "snapshot_id": snapshot["snapshot_id"], "verified": True,
+             "observed_at": cash_stamp, "value": cash_amount}
+            if type(cash_amount) is int and cash_amount >= 0
+            and _fresh(cash_stamp, now) and cash_stamp <= observations["captured_at"]
+            else None
+        )
         return {"status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": observations["captured_at"],
                 "observed_at": snapshot["observed_at"],
@@ -368,7 +379,8 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                 "native_route_quote_count": sum(_fresh(row.get("observed_at"), now)
                                                 for row in observations.get("native_route_quotes", [])),
                 "engine_coverage": observations["engine_coverage"],
-                "cash_observed": _fresh(observations["cash"]["observed_at"], now),
+                "cash_observed": cash_control is not None,
+                "cash_control": cash_control,
                 "read_only": True}
     except FileNotFoundError:
         return {"status": "sem_coleta", "snapshot_id": None}

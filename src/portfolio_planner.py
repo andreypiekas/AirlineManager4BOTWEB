@@ -545,6 +545,9 @@ def compare_audited_portfolio(
     max_acquisitions_per_day: object = None,
     local_journal: Mapping[str, Any] | None = None,
     historical_investment_spending: Mapping[str, Any] | None = None,
+    captured_cash: Mapping[str, Any] | None = None,
+    live_cash: tuple[int | None, float | None] | None = None,
+    require_independent_cash: bool = False,
     max_single_investment: object = None,
     min_daily_profit: object = 0,
     max_payback_days: object = None,
@@ -567,6 +570,8 @@ def compare_audited_portfolio(
     slot count, bound to this snapshot. Unknown controls or slots exclude a purchase.
     Current policy and the rolling 24-hour local journal impose additional caps.
     Local estimates do not replace the independently reconciled game commitments.
+    In production, require both captured cash and a current live cash reading.
+    Each is a gross cash ceiling, before the same reconciled deductions.
 
     Risk, when weighted, uses the worst A3 stress scenario (individual or
     combined) relative to the base profit. Optional confidence and diversification require their
@@ -742,6 +747,36 @@ def compare_audited_portfolio(
     if len(cash_baselines) > 1:
         blockers.append("saldos_a3_contraditorios")
     baseline = next(iter(cash_baselines)) if len(cash_baselines) == 1 else None
+    captured_amount = _audited_value(captured_cash, source="game_snapshot",
+                                     profile_id=profile_id, snapshot_id=snapshot_id, now=now)
+    if captured_amount is not None and type(captured_cash.get("value")) is not int:
+        captured_amount = None
+    captured_stamp = captured_cash["observed_at"] if captured_amount is not None else None
+    live_amount = live_stamp = None
+    if isinstance(live_cash, tuple) and len(live_cash) == 2:
+        raw_amount, raw_stamp = live_cash
+        stamp = _number(raw_stamp, positive=True)
+        if type(raw_amount) is int and stamp is not None and 0 <= now - stamp <= DEFAULT_MAX_AGE_SECONDS:
+            live_amount = _number(raw_amount)
+            live_stamp = stamp if live_amount is not None else None
+    if live_stamp is not None:
+        if ((captured_stamp is not None and live_stamp < captured_stamp)
+                or any(live_stamp < row["provenance"]["cash"]["observed_at"] for row in prepared)):
+            live_amount = live_stamp = None
+    if captured_amount is None and (require_independent_cash or captured_cash is not None):
+        blockers.append("saldo_coleta_a_confirmar")
+    if live_amount is None and (require_independent_cash or live_cash is not None):
+        blockers.append("saldo_vivo_a_confirmar")
+    gross_cash_ceiling = None
+    if baseline is not None:
+        gross_cash_ceiling = min(value for value in (baseline[0], captured_amount, live_amount)
+                                 if value is not None)
+        if captured_amount is not None and captured_amount != baseline[0]:
+            blockers.append("saldo_coleta_divergente_a3")
+        if live_amount is not None and live_amount != baseline[0]:
+            blockers.append("saldo_vivo_divergente_a3")
+    if require_independent_cash and (captured_amount is None or live_amount is None):
+        gross_cash_ceiling = None
     budget = None
     remaining_cycle_spend = None
     if (local_cycle_remaining is not None and observed["cycle_limit"] is not None
@@ -754,11 +789,12 @@ def compare_audited_portfolio(
         )
         if remaining_cycle_spend == 0:
             blockers.append("limite_ciclo_esgotado")
-    if (baseline is not None and all(value is not None for value in observed.values())
+    if (baseline is not None and gross_cash_ceiling is not None
+            and all(value is not None for value in observed.values())
             and current_reserve is not None and remaining_spend is not None
             and remaining_acquisitions is not None and remaining_cycle_spend is not None):
-        available, committed, reserve = baseline
-        remaining_cash = (available - committed - observed["pending_orders_incremental"]
+        _, committed, reserve = baseline
+        remaining_cash = (gross_cash_ceiling - committed - observed["pending_orders_incremental"]
                           - observed["future_commitments_incremental"]
                           - max(reserve, observed["operational_reserve"], current_reserve))
         budget = max(0.0, min(remaining_cash,
@@ -918,6 +954,15 @@ def compare_audited_portfolio(
         "eligible_count": len(candidates),
         "excluded": dict(sorted(excluded.items())),
         "budget_after_reservations_and_limits": budget,
+        "cash_limits": {
+            "required": require_independent_cash,
+            "audited_available": baseline[0] if baseline is not None else None,
+            "captured_available": captured_amount,
+            "captured_observed_at": captured_stamp,
+            "live_available": live_amount,
+            "live_observed_at": live_stamp,
+            "gross_ceiling": gross_cash_ceiling,
+        },
         "remaining_cycle_spend": remaining_cycle_spend,
         "historical_period_limits": {
             "source": FINANCE_SOURCE, "historical_only": True, "window_hours": 24,

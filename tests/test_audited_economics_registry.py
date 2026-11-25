@@ -65,6 +65,7 @@ def matching_capture(snapshot_id, *, unrouted=0, research=True, fleet=True):
         "unrouted_aircraft_control": (proof(unrouted, "game_fleet_scan", snapshot_id)
                                       if fleet else None),
         "passenger_hangar_control": proof(2, "game_hangar_and_fleet_status", snapshot_id),
+        "cash_control": proof(40000, "game_snapshot", snapshot_id),
     }
 
 
@@ -425,6 +426,7 @@ def test_a4_api_enforces_live_policy_and_rolling_journal(registry, monkeypatch):
         assert status == 200
         assert result["purchase_plan_preview"] is not None, result["purchase_plan_blockers"]
         assert result["portfolio"]["local_period_limits"]["remaining_acquisitions"] == 1
+        assert result["portfolio"]["cash_limits"]["gross_ceiling"] == 40000
 
         cfg.set("investment", "profit_weight", 0)
         cfg.set("investment", "efficiency_weight", 0)
@@ -434,6 +436,32 @@ def test_a4_api_enforces_live_policy_and_rolling_journal(registry, monkeypatch):
         assert result["portfolio"]["criteria"]["return_weight"] == 100
         assert result["portfolio"]["best"]["score_components"] == {"return": 1.0}
         assert result["purchase_plan_preview"] is not None
+
+        monkeypatch.setattr("web.recent_verified_money", lambda _bot: (1000, NOW))
+        status, result = request(port, "GET", endpoint, headers=auth())
+        assert status == 200
+        assert result["portfolio"]["cash_limits"]["gross_ceiling"] == 1000
+        assert result["portfolio"]["budget_after_reservations_and_limits"] == 0
+        assert result["portfolio"]["eligible_count"] == 0
+        assert result["portfolio"]["best"] is None
+        assert "saldo_vivo_divergente_a3" in result["purchase_plan_blockers"]
+        assert result["purchase_plan_preview"] is None
+        monkeypatch.setattr("web.recent_verified_money", lambda _bot: (40000, NOW))
+
+        for second_read, reason in (
+            ((40000, NOW - 1), "saldo_vivo_a_confirmar"),
+            ((40000.0, NOW), "saldo_vivo_a_confirmar"),
+            ((40000, float("nan")), "saldo_vivo_a_confirmar"),
+            ((39000, NOW), "saldo_vivo_divergente_a3"),
+        ):
+            readings = iter(((40000, NOW), second_read))
+            monkeypatch.setattr("web.recent_verified_money", lambda _bot, reads=readings: next(reads))
+            status, result = request(port, "GET", endpoint, headers=auth())
+            assert status == 200
+            assert result["portfolio"]["decision"] == "nao_comprar"
+            assert result["purchase_plan_preview"] is None
+            assert reason in result["purchase_plan_blockers"]
+        monkeypatch.setattr("web.recent_verified_money", lambda _bot: (40000, NOW))
 
         cfg.set("investment", "max_cycle_spend", 10000)
         status, result = request(port, "GET", endpoint, headers=auth())

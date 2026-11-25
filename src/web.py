@@ -122,12 +122,19 @@ def _block_portfolio(portfolio: dict, blockers: list[str]) -> None:
 
 
 def _current_audited_finance_blockers(bot, evaluation: dict, record: dict, journal: dict,
-                                      controls: dict, passenger_hangar: dict) -> list[str]:
+                                      controls: dict, passenger_hangar: dict,
+                                      cash_limits: dict) -> list[str]:
     """Require the audited snapshot to agree with the current account and ledger."""
     blockers = []
     money, observed_at = recent_verified_money(bot)
     cash = evaluation["provenance"]["cash"]
-    if money is None or observed_at is None or observed_at < cash["observed_at"]:
+    previous_stamps = [cash["observed_at"]]
+    for key in ("captured_observed_at", "live_observed_at"):
+        stamp = cash_limits.get(key)
+        if stamp is not None:
+            previous_stamps.append(stamp)
+    if (type(money) is not int or money < 0 or type(observed_at) not in (int, float)
+            or not math.isfinite(observed_at) or observed_at < max(previous_stamps)):
         blockers.append("saldo_vivo_a_confirmar")
     elif money != cash["value"]["available"]:
         blockers.append("saldo_vivo_divergente_a3")
@@ -472,6 +479,10 @@ class WebDashboard:
             controls["unrouted_aircraft_count"] = game_snapshot["unrouted_aircraft_control"]
         passenger_hangar = game_snapshot.get("passenger_hangar_control") if matching_capture else None
         journal = _local_investment_snapshot()
+        try:
+            live_cash = recent_verified_money(self.bot)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            live_cash = (None, None)
         portfolio = compare_audited_portfolio(
             evaluations,
             profile_id=paths.current().label,
@@ -490,6 +501,9 @@ class WebDashboard:
             local_journal=journal,
             historical_investment_spending=(game_snapshot.get("historical_investment_spending")
                                             if matching_capture else None),
+            captured_cash=game_snapshot.get("cash_control") if matching_capture else None,
+            live_cash=live_cash,
+            require_independent_cash=True,
             max_single_investment=(policy.max_single_investment
                                    if policy.enabled and policy.max_single_investment > 0 else None),
             min_daily_profit=policy.min_daily_profit,
@@ -534,8 +548,9 @@ class WebDashboard:
                 try:
                     finance_blockers = _current_audited_finance_blockers(
                         self.bot, matches[0], record, journal, controls, passenger_hangar,
+                        portfolio.get("cash_limits", {}),
                     )
-                except (AttributeError, ValueError, TypeError, KeyError):
+                except (AttributeError, ValueError, TypeError, KeyError, OverflowError):
                     finance_blockers = ["conciliacao_financeira_a_confirmar"]
                 _block_portfolio(portfolio, finance_blockers)
                 purchase_plan_blockers.extend(finance_blockers)

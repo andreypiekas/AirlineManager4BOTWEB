@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A3/A4/A7, conciliação de caixa antes do ranking (G0)
+
+- O planejamento produtivo exige saldo auditado A3, saldo autenticado da captura e leitura viva verificada. O menor saldo bruto limita as alternativas antes da classificação; compromissos, pedidos incrementais e a maior reserva aplicável são deduzidos uma única vez. Saldo maior não amplia orçamento; divergência bloqueia recomendação e ausência de prova deixa orçamento desconhecido. A revalidação posterior rejeita alteração de saldo, tipo inválido ou regressão temporal antes da criação da prévia de compra.
+- O painel PT/EN explica separadamente os três saldos, teto bruto e orçamento após compromissos, mesmo quando não há alternativas. Preserva zero como valor observado e identifica alternativas de diagnóstico quando a comparação permanece inconclusiva.
+- Validação: 159 testes direcionados aprovados, Ruff, compileall e git diff --check aprovados. Suíte Windows consolidada: 2.194 aprovados e 1 ignorado (131,99 s; instalação Linux excluída). Rollback por reversão deste commit. Produção das provas econômicas completas, cobertura real e homologação no jogo e Linux permanecem pendentes. G0 vigente; nenhuma compra ou implantação.
+
 ## 2026-11-25 — Autonomia Total A6/A7/A8, integridade financeira e projeções condicionais (G0)
 
 - O ranking externo rejeita hubs próprios, IDs duplicados (inclusive colisões de tipos legados), preços/pontos conflitantes, observações vencidas ou futuras e valores financeiros inválidos. A revalidação confere investimento, composição, lucro, payback e caixa líquido da reserva com arredondamento monetário consistente. O limite técnico para valores financeiros é 10^15 em moeda do jogo.

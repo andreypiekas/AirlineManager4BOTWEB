@@ -1115,6 +1115,13 @@ const EN = {
   "Avaliações A3 inválidas ou conflitantes": "Invalid or conflicting A3 evaluations",
   "Avaliações A3 incompatíveis": "Incompatible A3 evaluations",
   "Saldo A3 não confirmado": "A3 balance unverified",
+  "Saldo da coleta a confirmar": "Captured balance requires verification",
+  "Saldo da coleta diverge do snapshot A3": "Captured balance differs from the A3 snapshot",
+  "Saldo auditado A3": "Audited A3 balance",
+  "Saldo capturado": "Captured balance",
+  "Saldo vivo": "Live balance",
+  "Teto financeiro bruto": "Gross cash ceiling",
+  "Primeira alternativa para diagnóstico": "Top alternative for diagnosis",
   "Saldo atual a confirmar": "Current balance requires verification",
   "Saldo atual diverge do snapshot A3": "Current balance differs from the A3 snapshot",
   "Snapshot anterior à compra confirmada": "Snapshot predates a confirmed purchase",
@@ -2558,6 +2565,8 @@ const hubResearchBlockerLabels = {
   avaliacoes_a3_invalidas_ou_conflitantes: "Avaliações A3 inválidas ou conflitantes",
   avaliacoes_a3_incompativeis: "Avaliações A3 incompatíveis",
   saldo_a3_a_confirmar: "Saldo A3 não confirmado",
+  saldo_coleta_a_confirmar: "Saldo da coleta a confirmar",
+  saldo_coleta_divergente_a3: "Saldo da coleta diverge do snapshot A3",
   saldo_vivo_a_confirmar: "Saldo atual a confirmar",
   saldo_vivo_divergente_a3: "Saldo atual diverge do snapshot A3",
   snapshot_anterior_compra_confirmada: "Snapshot anterior à compra confirmada",
@@ -3398,36 +3407,46 @@ function renderAuditedExpansionPlanner(audited, hubs) {
     ? audited.a3_ranking.alternatives : [];
   const usingA4 = a4Rows.length > 0;
   const rows = usingA4 ? a4Rows : a3Rows;
+  const blockers = Array.isArray(portfolio.blocking_reasons) ? portfolio.blocking_reasons : [];
   const decision = portfolio.decision === "sugestao_para_analise" &&
-    portfolio.status === "comparacao_concluida";
+    portfolio.status === "comparacao_concluida" && blockers.length === 0;
   status.textContent = tr("Perfil") + " " + String(audited.profile_id || tr("Sem dados")) +
     " · " + tr("Avaliações A3") + ": " + nf.format(audited.evaluation_count || 0) +
     " · " + tr("Alternativas A4") + ": " + nf.format(a4Rows.length) +
     " · " + (decision ? tr("Somente análise") : tr("Compra bloqueada"));
 
-  const blockers = Array.isArray(portfolio.blocking_reasons) ? portfolio.blocking_reasons : [];
   for (const reason of blockers) {
     const item = document.createElement("li"); item.textContent = hubResearchBlocker(reason);
     blockersList.append(item);
   }
   if (usingA4) {
     const why = portfolio.why_best || {};
-    const top = portfolio.best?.identity || {};
-    explanation.textContent = tr("Melhor opção global") + " · " +
+    const top = (decision ? portfolio.best : a4Rows[0])?.identity || {};
+    explanation.textContent = tr(decision ? "Melhor opção global" : "Primeira alternativa para diagnóstico") + " · " +
       String(top.hub_id || tr("Sem dados")) + " / " +
       String(top.model_id || tr("Sem dados")) + " / " +
       String(top.engine_id || tr("Sem dados")) +
       (Number.isFinite(why.score_difference)
         ? " · " + tr("Diferença de score para a segunda opção") + ": " +
-          nf.format(why.score_difference) : "") +
-      (Number.isFinite(portfolio.budget_after_reservations_and_limits)
-        ? " · " + tr("Caixa para investimentos após compromissos") + ": " +
-          hubMoney(portfolio.budget_after_reservations_and_limits) : "");
+          nf.format(why.score_difference) : "");
   } else {
     explanation.textContent = a3Rows.length
       ? tr("Cálculos A3 comprovados. Planejamento global A4 pendente de validação.")
       : tr("Aguardando provas completas de rota, motor, demanda e custos.");
   }
+  const cashLimits = portfolio.cash_limits;
+  const cashText = value => Number.isFinite(value) && value >= 0
+    ? hubMoney(value) : tr("Não confirmado");
+  if (cashLimits && typeof cashLimits === "object") {
+    for (const [key, label] of Object.entries({
+      audited_available: "Saldo auditado A3", captured_available: "Saldo capturado",
+      live_available: "Saldo vivo", gross_ceiling: "Teto financeiro bruto",
+    })) {
+      explanation.textContent += " · " + tr(label) + ": " + cashText(cashLimits[key]);
+    }
+  }
+  explanation.textContent += " · " + tr("Caixa para investimentos após compromissos") +
+    ": " + cashText(portfolio.budget_after_reservations_and_limits);
   const observed = audited.game_observation_snapshot;
   if (Number.isFinite(portfolio.remaining_cycle_spend)) {
     explanation.textContent += " · " + tr("Limite restante do ciclo auditado") +
