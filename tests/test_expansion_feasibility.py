@@ -178,6 +178,7 @@ def _timestamps(data):
     ]
     for candidate in external["candidates"]:
         timestamps.extend((
+            candidate,
             (candidate, "hub_price_observed_at"),
             (candidate, "hub_points_observed_at"),
             candidate["scenario"],
@@ -209,10 +210,14 @@ def test_production_requires_independent_scope_on_owned_and_external_proofs():
         proof.update(scope)
     for row in external["candidates"]:
         scenario = row["scenario"]
+        scenario["financial"]["excluded_costs"] = []
         for proof in (scenario, scenario["costs"], scenario["financial"]):
             proof.update(scope)
     assert len(evaluate(data, **scope, require_snapshot_scope=True)["top_three"]) == 3
     assert evaluate(data, **scope, require_snapshot_scope=True)["external_pending_count"] == 0
+    external["candidates"][1]["scenario"]["financial"].pop("excluded_costs")
+    assert [row["id"] for row in evaluate(data, **scope, require_snapshot_scope=True)["top_three"]] == ["777", "789", "666"]
+    external["candidates"][1]["scenario"]["financial"]["excluded_costs"] = []
     external["candidates"][1]["scenario"]["costs"].pop("snapshot_id")
     result = evaluate(data, **scope, require_snapshot_scope=True)
     assert [row["id"] for row in result["top_three"]] == ["777", "789", "666"]
@@ -226,11 +231,11 @@ def test_production_requires_independent_scope_on_owned_and_external_proofs():
     float("inf"), -float("inf"), 10 ** 500,
     NOW + 0.01, NOW - 259201,
 ])
-@pytest.mark.parametrize("proof_index", range(2 + 2 + 1 + 5))
+@pytest.mark.parametrize("proof_index", range(2 + 2 + 1 + 6))
 def test_invalid_stale_or_future_timestamp_never_qualifies_external(proof_index, invalid):
     data = inputs()
     # Inventory, scan, its two hubs, external catalog, and the first
-    # candidate's two price proofs, scenario, costs and financial research.
+    # candidate's observation, two price proofs, scenario, costs and financial research.
     selected = _timestamps(data)
     part, key = selected[proof_index]
     part[key] = invalid
@@ -255,6 +260,82 @@ def test_default_clock_accepts_current_fractional_proof():
     result = assess_expansion(*data[:4], coverage=data[4])
     assert result["status"] == "avaliacao_expansao"
     assert len(result["top_three"]) == 3
+
+
+@pytest.mark.parametrize("duplicate_id", ["789", 789])
+def test_duplicate_external_ids_are_quarantined(duplicate_id):
+    data = inputs()
+    duplicate = deepcopy(data[3]["candidates"][0])
+    duplicate["id"] = duplicate_id
+    data[3]["candidates"].append(duplicate)
+    result = evaluate(data)
+    assert "789" not in [row["id"] for row in result["top_three"]]
+    assert result["external_pending_count"] == 2
+
+
+def test_owned_hub_cannot_appear_in_external_ranking():
+    data = inputs()
+    row = data[3]["candidates"][0]
+    row["id"] = "123"
+    for proof in (row["scenario"], row["scenario"]["costs"], row["scenario"]["financial"]):
+        proof["origin_id"] = "123"
+    result = evaluate(data)
+    assert "123" not in [item["id"] for item in result["top_three"]]
+    assert result["external_pending_count"] == 1
+
+
+@pytest.mark.parametrize("change", ["price_conflict", "points_conflict", "points_mismatch",
+                                   "zero_investment", "fractional_investment", "extreme",
+                                   "inconsistent_total", "inconsistent_profit", "inconsistent_payback"])
+def test_invalid_economics_and_conflicts_are_excluded(change):
+    data = inputs()
+    row = data[3]["candidates"][0]
+    if change == "price_conflict":
+        row["hub_price_conflict_at"] = NOW
+    elif change == "points_conflict":
+        row["hub_points_conflict_at"] = NOW
+    elif change == "points_mismatch":
+        row["cost_breakdown"]["hub_points"] = 1
+    elif change == "zero_investment":
+        row["investment"] = 0
+    elif change == "fractional_investment":
+        row["investment"] = 0.001
+    elif change == "extreme":
+        row["scenario"]["costs"]["aircraft_price"] = 10 ** 16
+    elif change == "inconsistent_total":
+        row["cost_breakdown"]["total"] += 0.01
+    elif change == "inconsistent_profit":
+        row["profit_per_day"] += 0.01
+    else:
+        row["payback_days"] += 0.01
+    assert "789" not in [item["id"] for item in evaluate(data)["top_three"]]
+
+
+def test_conditional_projection_is_ranked_after_conclusive_and_vetoed_without_mutation():
+    data = inputs()
+    row = data[3]["candidates"][1]
+    row["scenario"]["financial"]["excluded_costs"] = ["A-check"]
+    original = deepcopy(data)
+    result = evaluate(data, policy=InvestmentPolicy(max_hub_investment=5000, max_hub_points=0))
+    assert [item["id"] for item in result["top_three"]] == ["777", "789", "666"]
+    assert "888" not in result["hub_limit_selection"]["eligible_hub_ids"]
+    assert {"hub_id": "888", "reasons": ["custos_recorrentes_excluidos"]} in result["hub_limit_selection"]["excluded"]
+    data[3]["candidates"] = [row]
+    conditional = evaluate(data)["top_three"][0]
+    assert conditional["status"] == "projecao_condicional"
+    assert conditional["ranking_conclusive"] is conditional["purchase_evidence"] is False
+    assert row == original[3]["candidates"][1]
+
+
+def test_available_cash_must_match_independent_gross_and_reserve():
+    data = inputs()
+    external = data[3]
+    external.update(cash=100000, reserve=5000)
+    assert evaluate(data)["top_three"] == []
+    external["available_cash"] = 95000
+    for row in external["candidates"]:
+        row["cost_breakdown"].update(reserve=5000, cash_required=row["investment"] + 5000)
+    assert len(evaluate(data)["top_three"]) == 3
 
 
 def test_inconclusive_owned_sweep_never_promotes_external_investment():

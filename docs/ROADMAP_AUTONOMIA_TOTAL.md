@@ -159,6 +159,8 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 
 - Progresso em 25/11/2026: identidade nativa de modelo/motor/itinerário, integridade das provas econômicas, deduplicação e comparação do investimento com caixa líquido da reserva implementadas e testadas. O painel e o Telegram exigem perfil e snapshot produtivo correspondentes em todas as fontes independentes usadas pelo gate, e preservam timestamps fracionários. Cenários com identidade incompleta, escala não comprovada ou provas contraditórias continuam bloqueados. Os produtores de pesquisa externa e da cobertura vinculada à captura, a coleta real e a homologação seguem pendentes em G0.
 
+- Progresso adicional em 25/11/2026 (A6–A8): o ranking exclui IDs duplicados e hubs próprios, valida montantes, preços, pontos e frescor. Despesas recorrentes excluídas geram projeções condicionais, sem elegibilidade para A8; o painel e o Telegram preservam as ressalvas. O gate produtivo exige declaração explícita das exclusões. Testes simulados aprovados, homologação autenticada pendente.
+
 - Só entrar nesta fase com varredura dos hubs próprios conclusiva e sem proposta elegível (ou com política explícita de comparar expansão externa mesmo havendo oportunidades).
 - Pesquisar novos hubs por regiões e mercados, não apenas selecionar o mais barato. Comparar **hub candidato + modelo/motor + rota(s)**, considerando custo do hub, pontos, aeronave, rota, hangar e reserva.
 - Identificar se a pesquisa pré-compra permite calcular demanda confiável. Sem ela, **sugerir com ressalva**, nunca compra automática.

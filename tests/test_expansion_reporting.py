@@ -344,6 +344,34 @@ def test_included_engine_and_excluded_costs_are_explicit():
     assert "A-check não comprovado" in report["html"]
 
 
+def test_nested_exclusions_are_material_and_never_authorize_purchase(tmp_path):
+    row = hub()
+    row["scenario"]["costs"]["excluded_costs"] = ["Reparos"]
+    row["scenario"]["financial"]["excluded_costs"] = ["A-check", "Reparos"]
+    report = build(external_data=external(row))
+    assert report["status"] == "recomendacoes_condicionais"
+    assert report["candidates"][0]["excluded"] == ["A-check", "Reparos"]
+    assert report["purchase_allowed"] is False
+    assert report["expansion_decision"]["top_three"][0]["purchase_evidence"] is False
+    store = ExpansionAlertDeduplicator(tmp_path / "alerts.sqlite3")
+    first = store.claim(report, now=NOW)
+    assert first and store.acknowledge(first, delivered=True, now=NOW)
+    row["scenario"]["financial"]["excluded_costs"] = ["Reparos", "Manutenção"]
+    update = store.claim(build(external_data=external(row)), now=NOW + 60)
+    assert update and update["reason"] == "mudanca_material"
+    assert "Manutenção" in update["html"]
+    row["scenario"]["financial"]["excluded_costs"] = "inválido"
+    invalid = build(external_data=external(row))
+    assert not invalid["candidates"] and not invalid["alertable"]
+
+
+def test_zero_rounded_payback_is_preserved():
+    row = hub(profit=1000000)
+    assert row["payback_days"] == 0
+    report = build(external_data=external(row))
+    assert report["candidates"][0]["payback"] == 0
+
+
 def test_html_escapes_untrusted_values_without_truncating_tags():
     rows = [hub(str(hub_id)) for hub_id in (789, 888, 777)]
     for row in rows:

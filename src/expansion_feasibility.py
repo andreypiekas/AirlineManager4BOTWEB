@@ -8,9 +8,11 @@ from __future__ import annotations
 import math
 import re
 import time
+from collections import Counter
 from collections.abc import Mapping
 
-from hub_expansion import MAX_AGE_SECONDS, native_scenario_identity, scenario_scope_consistent
+from hub_expansion import (MAX_AGE_SECONDS, MAX_FINANCIAL_VALUE, excluded_research_costs,
+                           native_scenario_identity, scenario_scope_consistent)
 from investment_policy import InvestmentPolicy
 
 
@@ -36,7 +38,7 @@ def _fresh(when: object, now: float, max_age_seconds: int) -> bool:
 
 
 def _nonnegative(value: object) -> bool:
-    if type(value) not in (int, float) or value < 0:
+    if type(value) not in (int, float) or not 0 <= value <= MAX_FINANCIAL_VALUE:
         return False
     try:
         return math.isfinite(value)
@@ -50,6 +52,14 @@ def _bound_to_capture(proof: Mapping, profile_id: str | None,
             and isinstance(snapshot_id, str) and _SNAPSHOT_ID.fullmatch(snapshot_id) is not None
             and proof.get("profile_id") == profile_id
             and proof.get("snapshot_id") == snapshot_id)
+
+
+def _candidate_id(value: object) -> str | None:
+    """Identify duplicate legacy integer IDs without approving malformed IDs."""
+    if type(value) not in (int, str):
+        return None
+    value = str(value)
+    return value if _GAME_ID.fullmatch(value) else None
 
 
 def _valid_external(row: Mapping, external: Mapping, now: float, *,
@@ -80,10 +90,18 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
     model = scenario.get("model")
     engine = scenario.get("engine_id")
     route = scenario.get("route")
-    if not (row.get("status") == "viavel"
-            and row.get("ranking_conclusive") is True
-            and row.get("purchase_evidence") is True
-            and row.get("pending") == []
+    excluded = excluded_research_costs(scenario)
+    if excluded is None or (require_snapshot_scope and not any(
+            "excluded_costs" in proof for proof in (scenario, financial))):
+        return False
+    verified = (row.get("status") == "viavel" and row.get("ranking_conclusive") is True
+                and row.get("purchase_evidence") is True and row.get("pending") == [])
+    conditional = (bool(excluded) and row.get("status") == "projecao_condicional"
+                   and row.get("ranking_conclusive") is False and row.get("purchase_evidence") is False
+                   and row.get("pending") == ["custos_recorrentes_excluidos"])
+    if not ((verified or conditional)
+            and row.get("hub_price_conflict_at") is None
+            and row.get("hub_points_conflict_at") is None
             and isinstance(row.get("id"), str) and _GAME_ID.fullmatch(row["id"])
             and isinstance(model, str) and model.strip()
             and isinstance(engine, str) and _ENGINE_ID.fullmatch(engine)
@@ -97,8 +115,9 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
             and scenario.get("external_demand_verified") is True
             and scenario.get("route_feasible") is True
             and type(row.get("hub_points")) is int and row["hub_points"] == 0
+            and type(breakdown.get("hub_points")) is int and breakdown["hub_points"] == row["hub_points"]
             and all(_fresh(item, now, max_age_seconds) for item in (
-                row.get("hub_price_observed_at"), row.get("hub_points_observed_at"),
+                row.get("observed_at"), row.get("hub_price_observed_at"), row.get("hub_points_observed_at"),
                 scenario.get("observed_at"), costs.get("observed_at"),
                 financial.get("observed_at")))
             and costs.get("source") in ("game_market", "game_research")
@@ -118,13 +137,15 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
             or not _nonnegative(breakdown.get("total"))
             or not _nonnegative(breakdown.get("cash_required"))
             or not _nonnegative(external.get("available_cash"))
-            or not _nonnegative(row.get("investment"))
+            or not _nonnegative(row.get("investment")) or row["investment"] < 0.01
             or not _nonnegative(row.get("profit_per_day"))
             or not _nonnegative(row.get("payback_days"))):
         return False
-    investment = sum(breakdown[key] for key in cost_names)
+    investment = round(sum(breakdown[key] for key in cost_names), 2)
     profit = financial.get("profit_per_day")
-    if not _nonnegative(profit) or profit <= 0 or not _nonnegative(investment) or investment <= 0:
+    if (not _nonnegative(profit) or profit < 0.01 or not _nonnegative(investment)
+            or investment < 0.01 or not _nonnegative(investment + breakdown["reserve"])
+            or not _nonnegative(investment / profit)):
         return False
     includes_engine = costs["aircraft_price_includes_engine"]
     engine_delta = costs.get("engine_delta_cost")
@@ -141,13 +162,19 @@ def _valid_external(row: Mapping, external: Mapping, now: float, *,
             and breakdown["engine_extra_charged"] != 0
             or costs.get("aircraft_price_includes_engine") is False
             and costs.get("engine_delta_cost") != breakdown["engine_extra_charged"]
-            or abs(investment - row["investment"]) > 0.02
-            or abs(investment - breakdown.get("total", float("inf"))) > 0.02
-            or abs(investment + breakdown["reserve"] - breakdown["cash_required"]) > 0.02
+            or investment != row["investment"]
+            or investment != breakdown["total"]
+            or round(investment + breakdown["reserve"], 2) != breakdown["cash_required"]
             or investment > external["available_cash"]
-            or abs(profit - row["profit_per_day"]) > 0.02
-            or abs(investment / profit - row["payback_days"]) > 0.06):
+            or profit != row["profit_per_day"]
+            or round(investment / profit, 1) != row["payback_days"]):
         return False
+    if "cash" in external or "reserve" in external:
+        cash, reserve = external.get("cash"), external.get("reserve")
+        if (not _nonnegative(cash) or not _nonnegative(reserve)
+                or reserve != breakdown["reserve"]
+                or round(max(0, cash - reserve), 2) != external["available_cash"]):
+            return False
     return True
 
 
@@ -262,21 +289,34 @@ def assess_expansion(
 
     all_external = external.get("candidates")
     all_external = all_external if isinstance(all_external, list) else []
+    external_ids = Counter(_candidate_id(row.get("id")) for row in all_external
+                           if isinstance(row, Mapping))
+
     def valid(row: object) -> bool:
-        return isinstance(row, Mapping) and _valid_external(
+        return (isinstance(row, Mapping) and isinstance(row.get("id"), str)
+                and row["id"] not in owned_ids and external_ids[row["id"]] == 1 and _valid_external(
             row, external, now, max_age_seconds=max_age_seconds,
             profile_id=profile_id, snapshot_id=snapshot_id,
             require_snapshot_scope=require_snapshot_scope,
-        )
+        ))
 
-    rankable = [dict(row) for row in all_external if valid(row)]
+    rankable = []
+    for row in all_external:
+        if not valid(row):
+            continue
+        candidate = dict(row)
+        if excluded_research_costs(row["scenario"]):
+            candidate.update(status="projecao_condicional", ranking_conclusive=False,
+                             purchase_evidence=False, pending=["custos_recorrentes_excluidos"])
+        rankable.append(candidate)
+    pending_count = len(all_external) - len(rankable)
     rankable.sort(key=lambda row: (
+        bool(excluded_research_costs(row["scenario"])),
         -row["profit_per_day"] / row["investment"],
         -row["profit_per_day"], row["investment"], row["id"],
     ))
     if status != "avaliacao_expansao":
         rankable = []
-    pending_count = sum(not valid(row) for row in all_external)
 
     # A6 remains useful in analysis mode. A8 filters the full evidence-backed
     # ranking before selecting a hub, including candidates below the top three.
@@ -284,6 +324,8 @@ def assess_expansion(
     excluded = []
     for row in rankable:
         vetoes = []
+        if excluded_research_costs(row["scenario"]):
+            vetoes.append("custos_recorrentes_excluidos")
         if policy is None or not policy.valid:
             vetoes.append("politica_invalida_ou_ausente")
         else:

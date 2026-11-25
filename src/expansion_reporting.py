@@ -27,7 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from expansion_feasibility import assess_expansion
-from hub_expansion import MAX_AGE_SECONDS, native_scenario_identity
+from hub_expansion import (MAX_AGE_SECONDS, MAX_FINANCIAL_VALUE, excluded_research_costs,
+                           native_scenario_identity)
 from investment_policy import InvestmentPolicy
 
 
@@ -62,7 +63,7 @@ def _number(value: object, *, positive: bool = False) -> float | None:
         number = float(value)
     except (OverflowError, ValueError):
         return None
-    if not math.isfinite(number) or abs(number) > 1e15 or (positive and number <= 0):
+    if not math.isfinite(number) or abs(number) > MAX_FINANCIAL_VALUE or (positive and number <= 0):
         return None
     return number
 
@@ -338,11 +339,11 @@ def _verified_candidate(raw: Mapping[str, Any], external: Mapping[str, Any],
            for proof in (scenario, costs, financial, breakdown)):
         return None
     hub_id = str(raw.get("id") or "")
-    if (not _HUB_ID.fullmatch(hub_id) or raw.get("ranking_conclusive") is not True
-            or raw.get("purchase_evidence") is not True or raw.get("pending") != []):
+    if not _HUB_ID.fullmatch(hub_id):
         return None
-    excluded = scenario.get("excluded_costs", [])
-    excluded = excluded if isinstance(excluded, list) and all(isinstance(item, str) for item in excluded) else []
+    excluded = excluded_research_costs(scenario)
+    if excluded is None:
+        return None
     engine_id = scenario.get("engine_id")
     includes_engine = costs.get("aircraft_price_includes_engine") is True
     pending = ["despesas recorrentes não quantificadas"] if excluded else []
@@ -368,7 +369,7 @@ def _verified_candidate(raw: Mapping[str, Any], external: Mapping[str, Any],
         "investment": _amount(raw.get("investment")),
         "cash_required": _amount(breakdown.get("cash_required")),
         "profit": _number(financial.get("profit_per_day"), positive=True),
-        "payback": _number(raw.get("payback_days"), positive=True),
+        "payback": _amount(raw.get("payback_days")),
         "pending": pending,
         "excluded": sorted(set(excluded)),
         "status": "análise consistente" if not pending else "projeção com ressalvas",

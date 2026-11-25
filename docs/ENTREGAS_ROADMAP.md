@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A6/A7/A8, integridade financeira e projeções condicionais (G0)
+
+- O ranking externo rejeita hubs próprios, IDs duplicados (inclusive colisões de tipos legados), preços/pontos conflitantes, observações vencidas ou futuras e valores financeiros inválidos. A revalidação confere investimento, composição, lucro, payback e caixa líquido da reserva com arredondamento monetário consistente. O limite técnico para valores financeiros é 10^15 em moeda do jogo.
+- Custos recorrentes excluídos são preservados no cenário e nas provas de custo e lucro. Exclusões inválidas impedem conclusão; despesas não quantificadas produzem projeções condicionais, abaixo das alternativas conclusivas e inelegíveis para A8. O gate produtivo exige declaração explícita de exclusões no cenário ou na prova financeira. O Telegram e o painel mostram as ressalvas, e mudanças de exclusões participam da deduplicação.
+- O registro rejeita novas observações futuras e permite recuperar registros temporais inválidos da mesma identidade econômica, preservando alternativas independentes, conflitos legítimos e observações mais recentes.
+- Validação: 375 testes direcionados aprovados; suíte Windows consolidada com 2.192 aprovados e 1 ignorado (134,67 s; instalação Linux excluída). Ruff, compileall e git diff --check aprovados. Rollback por reversão deste commit. Coleta autenticada, produtores de evidência completa, homologação POSIX e executor real seguem pendentes. G0 vigente; nenhuma compra ou implantação.
+
 ## 2026-11-25 — Autonomia Total A6/A7, escopo obrigatório da captura produtiva (G0)
 
 - `src/expansion_feasibility.py` permite consultar a análise histórica, mas o gate produtivo exige a identidade explícita de perfil e snapshot no inventário, pesquisa, portfólio, cobertura geral e por hub, catálogo externo e provas econômicas do cenário. Metadados ausentes ou divergentes impedem a recomendação; a mera presença de uma captura não certifica outras observações.

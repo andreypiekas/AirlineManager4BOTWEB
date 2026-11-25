@@ -1155,7 +1155,7 @@ run().catch(error => { console.error(error); process.exitCode = 1; });
 def test_external_expansion_ranking_requires_owned_coverage_and_displays_engine_costs(tmp_path):
     script = "\n".join(_page().scripts)
     helpers = script[script.index("const hubDate ="):script.index("function renderHubs(")]
-    renderer = script[script.index("function renderHubExpansion(report)"):
+    renderer = script[script.index("function hubExcludedCosts(scenario)"):
                       script.index("function renderHubRecommendations(report)")]
     assertions = r"""
 const assert = require('node:assert/strict');
@@ -1263,6 +1263,20 @@ assert.equal(rankedCosts['Despesas excluídas'], 'A-check <script>');
 assert.equal($('hubExpansionGrid').children.length, 1);
 const details = $('hubExpansionGrid').children[0].children[3];
 assert.equal(labels(details.children[1])['Engine included in price'], 'No');
+candidate.status = 'projecao_condicional';
+candidate.ranking_conclusive = false;
+candidate.scenario.financial = {excluded_costs:['Reparos']};
+renderHubExpansion(report);
+assert.equal($('hubExpansionGrid').children[0].children[1].dataset.state, 'projecao_condicional');
+assert.match($('hubExpansionRanking').children[0].children[2].textContent,
+  /Despesas recorrentes não quantificadas/);
+assert.equal(labels($('hubExpansionRanking').children[0].children[1])['Despesas excluídas'],
+  'A-check <script>, Reparos');
+candidate.scenario.financial.excluded_costs = 'malformed';
+renderHubExpansion(report);
+assert.equal(labels($('hubExpansionRanking').children[0].children[1])['Despesas excluídas'],
+  'Despesas excluídas a confirmar');
+candidate.scenario.financial.excluded_costs = ['Reparos'];
 candidate.scenario.costs.aircraft_price_includes_engine = true;
 renderHubExpansion(report);
 assert.equal(labels($('hubExpansionGrid').children[0].children[3].children[1])

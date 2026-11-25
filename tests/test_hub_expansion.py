@@ -677,6 +677,88 @@ def test_equal_time_external_research_conflict_is_durable_and_requires_new_read(
     assert "pesquisa_externa_conflitante" not in resolved["pending"]
 
 
+def test_future_research_recovers_after_reopening_and_preserves_other_engine(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    valid = _research()
+    assert registry.record_research("123", valid)
+    assert registry.record_research("123", _research(engine_id="other-engine"))
+    assert not registry.record_research("123", _research(observed_at=time.time() + 1000))
+    for block in ("costs", "financial"):
+        future = deepcopy(valid)
+        future[block]["observed_at"] = time.time() + 1000
+        assert not registry.record_research("123", future)
+    saved = json.loads(registry.path.read_text(encoding="utf-8"))
+    candidate = saved["candidates"][0]
+    poisoned = deepcopy(candidate["scenarios"][0])
+    poisoned["observed_at"] += 1000
+    candidate["scenarios"].append(poisoned)
+    candidate["scenario"] = poisoned
+    registry.path.write_text(json.dumps(saved), encoding="utf-8")
+    reopened = HubExpansionRegistry(registry.path)
+    assert reopened.record_research("123", valid)
+    row = reopened.snapshot(cash=50000)["candidates"][0]
+    assert {option["engine_id"] for option in row["alternatives"]} == {
+        "engine-fixture-1", "other-engine"}
+    assert all(option["purchase_evidence"] for option in row["alternatives"])
+    assert len(row["alternatives"]) == 2
+
+
+def test_future_nested_proof_recovery_preserves_valid_conflicts(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    valid = _research()
+    conflict = deepcopy(valid)
+    conflict["financial"]["profit_per_day"] = 3000
+    assert registry.record_research("123", valid)
+    assert registry.record_research("123", conflict)
+    saved = json.loads(registry.path.read_text(encoding="utf-8"))
+    candidate = saved["candidates"][0]
+    poisoned = deepcopy(candidate["scenarios"][0])
+    poisoned["costs"]["observed_at"] += 1000
+    candidate["scenarios"].append(poisoned)
+    candidate["scenario"] = poisoned
+    registry.path.write_text(json.dumps(saved), encoding="utf-8")
+    reopened = HubExpansionRegistry(registry.path)
+    assert reopened.record_research("123", valid)
+    row = reopened.snapshot(cash=50000)["candidates"][0]
+    assert len(row["alternatives"]) == 2
+    assert all("pesquisa_externa_conflitante" in item["pending"]
+               for item in row["alternatives"])
+
+
+def test_excluded_costs_survive_reopening_and_block_purchase(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    research = _research(excluded_costs=["A-check"])
+    research["costs"]["excluded_costs"] = ["Reparos"]
+    research["financial"]["excluded_costs"] = ["A-check", "Manutenção"]
+    assert registry.record_research("123", research)
+    row = HubExpansionRegistry(registry.path).snapshot(cash=50000)["candidates"][0]
+    assert row["status"] == "projecao_condicional"
+    assert row["purchase_evidence"] is row["ranking_conclusive"] is False
+    assert row["payback_days"] == 8
+    assert row["scenario"]["costs"]["excluded_costs"] == ["Reparos"]
+    assert row["scenario"]["financial"]["excluded_costs"] == ["A-check", "Manutenção"]
+    research["financial"]["excluded_costs"] = "inválido"
+    research["observed_at"] -= 10
+    # A delayed malformed reading cannot replace newer evidence.
+    assert registry.record_research("123", research)
+    assert registry.snapshot(cash=50000)["candidates"][0]["status"] == "projecao_condicional"
+
+
+def test_malformed_excluded_costs_are_not_silently_discarded(tmp_path):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate()])
+    research = _research()
+    research["financial"]["excluded_costs"] = "inválido"
+    assert registry.record_research("123", research)
+    row = HubExpansionRegistry(registry.path).snapshot(cash=50000)["candidates"][0]
+    assert row["status"] == "dados_a_confirmar"
+    assert "custos_excluidos_invalidos" in row["pending"]
+    assert row["scenario"]["financial"]["excluded_costs"] is None
+
+
 def test_external_research_conflict_is_local_to_the_engine_route(tmp_path):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     assert registry.record_catalog([_candidate()])

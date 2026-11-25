@@ -447,6 +447,7 @@ footer strong { font-weight: 600; color: var(--aqua); }
   font:700 11px/1.5 "Cascadia Mono", Consolas, monospace; }
 .hub-state[data-state="viavel"] { color:var(--signal); border-color:#547b40; }
 .hub-state[data-state="saldo_insuficiente"] { color:var(--warn); border-color:#876541; }
+.hub-state[data-state="projecao_condicional"] { color:var(--warn); border-color:#876541; }
 .hub-state[data-state="sem_lucro"] { color:var(--bad); border-color:#834e49; }
 .hub-empty { padding:14px; border:1px dashed var(--border-strong); color:var(--muted); font-size:12px; }
 .hub-probe > summary { margin:-6px -4px 0; padding:10px 4px; font-size:14px; }
@@ -816,6 +817,7 @@ footer strong { font-weight: 600; color: var(--aqua); }
             <select id="hubExpansionFilter" aria-controls="hubExpansionGrid">
               <option value="" data-t="Todas as situações">Todas as situações</option>
               <option value="viavel" data-t="Viável">Viável</option>
+              <option value="projecao_condicional" data-t="Projeção condicional">Projeção condicional</option>
               <option value="saldo_insuficiente" data-t="Saldo insuficiente">Saldo insuficiente</option>
               <option value="sem_lucro" data-t="Sem lucro">Sem lucro</option>
               <option value="dados_a_confirmar" data-t="Dados a confirmar">Dados a confirmar</option>
@@ -1501,6 +1503,10 @@ const EN = {
   "Somente análise. Nenhuma compra autorizada.": "Read-only analysis. No purchase authorized.",
   "Candidatos com status calculado": "Candidates with a calculated status",
   "Viável na pesquisa": "Viable in research",
+  "Projeção condicional": "Conditional projection",
+  "Despesas recorrentes não quantificadas": "Unquantified recurring expenses",
+  "Despesas excluídas a confirmar": "Excluded expenses to be verified",
+  "custos recorrentes excluidos": "Recurring costs excluded",
   "Motor pesquisado": "Researched engine", "Motor incluído no preço": "Engine included in price",
   "Custo adicional do motor": "Additional engine cost",
   "Outras taxas": "Other fees", "Total com reserva": "Total including reserve",
@@ -2728,6 +2734,23 @@ function renderHubs(report) {
     pending.textContent = tr("Nenhuma aeronave corresponde à busca.");
   }
 }
+function hubExcludedCosts(scenario) {
+  const values = new Set();
+  let declared = false;
+  for (const proof of [scenario, scenario.costs, scenario.financial]) {
+    if (!proof || !Object.hasOwn(proof, "excluded_costs")) continue;
+    declared = true;
+    if (!Array.isArray(proof.excluded_costs) || proof.excluded_costs.some(
+      item => typeof item !== "string" || !item.trim() || item.length > 200)) return null;
+    proof.excluded_costs.forEach(item => values.add(item.trim()));
+  }
+  return declared ? [...values].sort() : null;
+}
+function hubExcludedCostsText(scenario) {
+  const excluded = hubExcludedCosts(scenario);
+  return excluded === null ? tr("Despesas excluídas a confirmar") :
+    excluded.length ? excluded.join(", ") : tr("Sem despesas declaradas");
+}
 function renderHubExpansion(report) {
   const grid = $("hubExpansionGrid"); grid.replaceChildren();
   const allCandidates = Array.isArray(report.candidates) ? report.candidates : [];
@@ -2783,11 +2806,16 @@ function renderHubExpansion(report) {
     addHubMetric(metrics, "Custo do hangar", hubMoney(breakdown.hangar_price));
     addHubMetric(metrics, "Outras taxas", hubMoney(breakdown.other_fees));
     addHubMetric(metrics, "Total com reserva", hubMoney(breakdown.cash_required));
-    const excluded = Array.isArray(scenario.excluded_costs) ? scenario.excluded_costs : [];
-    addHubMetric(metrics, "Despesas excluídas", excluded.length
-      ? excluded.join(", ") : tr("Sem despesas declaradas"));
+    addHubMetric(metrics, "Despesas excluídas", hubExcludedCostsText(scenario));
     const note = document.createElement("p"); note.className = "hub-context";
     note.textContent = tr("Somente análise. Nenhuma compra autorizada.");
+    if (hub.status === "projecao_condicional") {
+      const state = document.createElement("span"); state.className = "hub-state";
+      state.dataset.state = "projecao_condicional";
+      state.textContent = tr("Projeção condicional");
+      heading.append(" ", state);
+      note.textContent += " · " + tr("Despesas recorrentes não quantificadas");
+    }
     const exclusion = Array.isArray(selection.excluded) && selection.excluded.find(item => item.hub_id === hub.id);
     if (exclusion && Array.isArray(exclusion.reasons)) {
       note.textContent += " · " + exclusion.reasons.map(reason => tr(String(reason).replaceAll("_", " "))).join(", ");
@@ -2870,7 +2898,7 @@ function renderHubExpansion(report) {
     progressList.append(row);
   }
   const verified = allCandidates.filter(hub =>
-    ["viavel", "saldo_insuficiente", "sem_lucro"].includes(hub.status)).length;
+    hub.ranking_conclusive === true && ["viavel", "saldo_insuficiente", "sem_lucro"].includes(hub.status)).length;
   $("hubExpansionCoverage").textContent = tr("Candidatos com status calculado") + ": " + verified + " / " +
     allCandidates.length + " " + tr("candidatos analisados.");
   const search = hubSearchText($("hubExpansionSearch").value.trim());
@@ -2880,7 +2908,7 @@ function renderHubExpansion(report) {
     [hub.id, hub.code, hub.name].some(value => hubSearchText(value).includes(search))),
     $("hubExpansionSort").value);
   $("hubExpansionCount").textContent = tr("Candidatos exibidos") + ": " + candidates.length + " / " + allCandidates.length;
-  const labels = {viavel: "Viável na pesquisa", saldo_insuficiente: "Saldo insuficiente",
+  const labels = {viavel: "Viável na pesquisa", projecao_condicional: "Projeção condicional", saldo_insuficiente: "Saldo insuficiente",
                   sem_lucro: "Sem lucro", dados_a_confirmar: "Dados a confirmar"};
   for (const hub of candidates) {
     const card = document.createElement("article"); card.className = "hub-card";
@@ -2921,14 +2949,14 @@ function renderHubExpansion(report) {
     }
     addHubMetric(evidence, "Observação do cenário", hubDate(scenario.observed_at));
     const note = document.createElement("p"); note.className = "hub-context";
-    const excluded = Array.isArray(scenario.excluded_costs) ? scenario.excluded_costs : [];
-    note.textContent = excluded.length ? tr("Despesas excluídas") + ": " + excluded.join(", ") :
-      tr("Pesquisa de rota pendente.");
+    note.textContent = tr("Despesas excluídas") + ": " + hubExcludedCostsText(scenario);
     details.append(title, evidence, note);
     card.append(heading, state, metrics, details);
-    if (hub.status === "dados_a_confirmar") {
+    if (hub.status === "dados_a_confirmar" || hub.status === "projecao_condicional") {
       const pending = document.createElement("p"); pending.className = "hub-context";
-      pending.textContent = tr("Custos e demanda ainda não confirmados no jogo.");
+      pending.textContent = hub.status === "projecao_condicional"
+        ? tr("Despesas recorrentes não quantificadas")
+        : tr("Custos e demanda ainda não confirmados no jogo.");
       card.append(pending);
     }
     grid.append(card);

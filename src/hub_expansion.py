@@ -22,6 +22,7 @@ _LOCK = threading.RLock()
 _ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _ENGINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_AGE_SECONDS = 3 * 86400
+MAX_FINANCIAL_VALUE = 10**15
 _UNSET = object()
 
 
@@ -33,7 +34,7 @@ def _amount(value: object) -> Optional[float]:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
         return None
-    return round(number, 2) if math.isfinite(number) and number >= 0 else None
+    return round(number, 2) if math.isfinite(number) and 0 <= number <= MAX_FINANCIAL_VALUE else None
 
 
 def _profit(value: object) -> Optional[float]:
@@ -44,7 +45,7 @@ def _profit(value: object) -> Optional[float]:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
         return None
-    return round(number, 2) if math.isfinite(number) else None
+    return round(number, 2) if math.isfinite(number) and abs(number) <= MAX_FINANCIAL_VALUE else None
 
 
 def _airport_id(value: object) -> Optional[str]:
@@ -71,8 +72,14 @@ def _engine_id(value: object) -> Optional[str]:
 
 
 def _fresh(stamp: object, now: int) -> bool:
-    return (type(stamp) in (int, float) and 0 < stamp <= now
-            and now - stamp <= MAX_AGE_SECONDS)
+    if type(stamp) not in (int, float) or type(now) not in (int, float):
+        return False
+    try:
+        observed, current = float(stamp), float(now)
+    except (OverflowError, ValueError):
+        return False
+    return (math.isfinite(observed) and math.isfinite(current) and observed > 0
+            and 0 <= current - observed <= MAX_AGE_SECONDS)
 
 
 def native_scenario_identity(scenario: Mapping) -> tuple | None:
@@ -156,11 +163,16 @@ def _research_stamp(scenario: dict) -> float:
     return stamp if math.isfinite(stamp) and stamp > 0 else float("-inf")
 
 
+def _future_research(scenario: dict, now: float) -> bool:
+    return any(_research_stamp(proof) > now for proof in (
+        scenario, scenario.get("costs"), scenario.get("financial")) if isinstance(proof, dict))
+
+
 _RESEARCH_PROOF_FIELDS = (
     "source", "observed_at", "profile_id", "snapshot_id", "route_feasible", "demand_verified",
     "external_demand_verified", "event_demand_boosted", "engine_verified", "costs", "financial",
     "aircraft_price", "route_fee", "hangar_price", "other_fees",
-    "aircraft_price_includes_engine", "engine_delta_cost", "profit_per_day",
+    "aircraft_price_includes_engine", "engine_delta_cost", "profit_per_day", "excluded_costs",
 )
 
 
@@ -190,6 +202,25 @@ def _latest_research(candidate: dict) -> list[tuple[dict, bool]]:
             current[1].append(scenario)
     return [(scenario, len(group) > 1) for _, group in groups.values()
             for scenario in group]
+
+
+def _excluded_costs(value: object) -> list[str] | None:
+    if not isinstance(value, list) or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 200 for item in value):
+        return None
+    return sorted({item.strip() for item in value})
+
+
+def excluded_research_costs(scenario: Mapping) -> list[str] | None:
+    """Preserve declared exclusions at every evidence level; malformed data is unknown."""
+    exclusions = set()
+    for proof in (scenario, scenario.get("costs"), scenario.get("financial")):
+        if isinstance(proof, Mapping) and "excluded_costs" in proof:
+            values = _excluded_costs(proof["excluded_costs"])
+            if values is None:
+                return None
+            exclusions.update(values)
+    return sorted(exclusions)
 
 
 def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
@@ -227,7 +258,7 @@ def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
         components.extend((engine_extra, other_fees))
     valid_costs = [_amount(value) for value in components]
     total_cost = sum(valid_costs) if all(value is not None for value in valid_costs) else None
-    investment = round(total_cost, 2) if total_cost is not None and math.isfinite(total_cost) else None
+    investment = _amount(total_cost)
     profit = _profit(financial.get("profit_per_day") if explicit_engine
                      else scenario.get("profit_per_day"))
 
@@ -286,16 +317,29 @@ def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
         pending.append("lucro_motor_rota_a_confirmar")
     if available is None:
         pending.append("saldo_ou_reserva_a_confirmar")
-
+    if investment is not None and investment <= 0:
+        pending.append("investimento_invalido")
+    cash_required = _amount(investment + reserve) if investment is not None and reserve is not None else None
+    if investment is not None and reserve is not None and cash_required is None:
+        pending.append("investimento_invalido")
+    payback = _amount(investment / profit) if investment is not None and profit is not None and profit > 0 else None
+    if investment is not None and profit is not None and profit > 0 and payback is None:
+        pending.append("retorno_invalido")
+    excluded = excluded_research_costs(scenario)
+    if excluded is None:
+        pending.append("custos_excluidos_invalidos")
+    conditional = (not pending and bool(excluded) and profit > 0 and investment <= available)
+    if excluded:
+        pending.append("custos_recorrentes_excluidos")
     ready = not pending
-    status = ("dados_a_confirmar" if not ready else "sem_lucro" if profit <= 0
-              else "saldo_insuficiente" if investment > available else "viavel")
+    status = ("projecao_condicional" if conditional else "dados_a_confirmar" if not ready
+              else "sem_lucro" if profit <= 0 else "saldo_insuficiente" if investment > available else "viavel")
     return {
         **scenario,
         "engine_id": engine_id,
         "investment": investment,
         "profit_per_day": profit,
-        "payback_days": round(investment / profit, 1) if ready and profit > 0 else None,
+        "payback_days": round(investment / profit, 1) if (ready or conditional) and profit > 0 else None,
         "status": status,
         "pending": pending,
         "ranking_conclusive": ready,
@@ -311,8 +355,7 @@ def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
             "hangar_price": hangar_price,
             "other_fees": other_fees,
             "reserve": reserve,
-            "cash_required": round(investment + reserve, 2)
-            if investment is not None and reserve is not None else None,
+            "cash_required": cash_required,
             "total": investment,
         },
     }
@@ -787,6 +830,8 @@ class HubExpansionRegistry:
                 })
             else:
                 evidence["profit_per_day"] = _profit(block.get("profit_per_day"))
+            if "excluded_costs" in block:
+                evidence["excluded_costs"] = _excluded_costs(block["excluded_costs"])
             return evidence
 
         scenario = {
@@ -812,6 +857,8 @@ class HubExpansionRegistry:
             "engine_delta_cost": _amount(costs.get("engine_delta_cost")),
             "profit_per_day": _profit(research.get("profit_per_day", financial.get("profit_per_day"))),
         }
+        if "excluded_costs" in research:
+            scenario["excluded_costs"] = _excluded_costs(research["excluded_costs"])
         if explicit_engine:
             scenario.update({"engine_id": engine_id,
                              "engine_label": str(research.get("engine_label") or "").strip()[:100],
@@ -826,9 +873,15 @@ class HubExpansionRegistry:
                 return False
             identity = _scenario_identity(scenario)
             existing = _scenarios(row)
-            matching = [entry for entry in existing
-                        if _scenario_identity(entry) == identity]
+            now = time.time()
             incoming_stamp = _research_stamp(scenario)
+            if _future_research(scenario, now):
+                return False
+            # Discard poisoned future observations only for the identity being
+            # refreshed, preserving independent routes and existing conflicts.
+            valid_existing = [entry for entry in existing
+                              if _scenario_identity(entry) != identity or not _future_research(entry, now)]
+            matching = [entry for entry in valid_existing if _scenario_identity(entry) == identity]
             latest_stamp = max((_research_stamp(entry) for entry in matching),
                                default=float("-inf"))
             if incoming_stamp < latest_stamp:
@@ -836,16 +889,18 @@ class HubExpansionRegistry:
             if matching and incoming_stamp == latest_stamp and incoming_stamp > 0:
                 latest = [entry for entry in matching
                           if _research_stamp(entry) == latest_stamp]
-                if any(_same_research_proof(entry, scenario) for entry in latest):
-                    return True
-                if len(latest) >= 2:
-                    return True
-                # Both readings remain durable so the evaluator can quarantine
-                # their identity until a genuinely later research observation.
-                alternatives = [entry for entry in existing
-                                if _scenario_identity(entry) != identity
-                                or _research_stamp(entry) == latest_stamp]
-                alternatives.append(scenario)
+                if any(_same_research_proof(entry, scenario) for entry in latest) or len(latest) >= 2:
+                    if len(valid_existing) == len(existing):
+                        return True
+                    alternatives = valid_existing
+                    scenario = latest[0]
+                else:
+                    # Both readings remain durable so the evaluator can quarantine
+                    # their identity until a genuinely later research observation.
+                    alternatives = [entry for entry in valid_existing
+                                    if _scenario_identity(entry) != identity
+                                    or _research_stamp(entry) == latest_stamp]
+                    alternatives.append(scenario)
             else:
                 alternatives = [entry for entry in existing
                                 if _scenario_identity(entry) != identity]
@@ -1108,7 +1163,7 @@ class HubExpansionRegistry:
         now = time.time() if now is None else now
         cash_value = _amount(cash)
         reserve_value = _amount(reserve)
-        available = max(0, cash_value - reserve_value) if cash_value is not None and reserve_value is not None else None
+        available = round(max(0, cash_value - reserve_value), 2) if cash_value is not None and reserve_value is not None else None
         catalog_time = saved.get("observed_at")
         stored_candidates = _stored_candidates(saved.get("candidates"))
         demand, demand_conflicts = _trusted_demand(saved)
@@ -1176,8 +1231,10 @@ class HubExpansionRegistry:
             evaluated.sort(key=lambda option: (
                 option["status"] != "viavel",
                 option["status"] == "dados_a_confirmar",
+                not option["ranking_conclusive"],
                 option["engine_id"] is None,
-                -(option["profit_per_day"] or 0) if option["ranking_conclusive"] else 0,
+                -(option["profit_per_day"] or 0) if option["ranking_conclusive"]
+                or option["status"] == "projecao_condicional" else 0,
                 option["investment"] if option["investment"] is not None else float("inf"),
                 str(option.get("model") or "").casefold(),
                 str(option.get("model_id") or ""),
