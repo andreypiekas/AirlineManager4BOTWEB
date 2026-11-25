@@ -210,8 +210,13 @@ class SimulatedInvestmentExecutor:
             # Recheck a previously prechecked plan against a new checkout after
             # restart or retry. Its stored submission count is still zero.
             preflight_intent = {**intent, "state": "APPROVED"}
-            preflight = validate_aircraft_preflight(preflight_intent, gateway.read_checkout(),
-                                                   reserve=reserve, simulation=True)
+            try:
+                checkout = gateway.read_checkout()
+            except Exception:
+                return {"state": intent["state"], "intent_key": key,
+                        "reasons": ["checkout_indisponivel"], "simulated": True}
+            preflight = validate_aircraft_preflight(preflight_intent, checkout,
+                                                    reserve=reserve, simulation=True)
             if not preflight["ready"]:
                 return {"state": intent["state"], "intent_key": key,
                         "reasons": preflight["reasons"], "simulated": True}
@@ -240,8 +245,11 @@ class SimulatedInvestmentExecutor:
     def _resolve(self, key: str, gateway: SimulatedAircraftGateway,
                  current_state: str) -> dict:
         intent = self.journal.get(key)
-        evidence = gateway.read_order_result(intent)
-        if evidence is not None:
+        try:
+            evidence = gateway.read_order_result(intent)
+        except Exception:
+            evidence = None
+        if isinstance(evidence, Mapping):
             desired = "FAILED" if evidence.get("source") == "simulation_order_rejection" else "CONFIRMED"
             try:
                 if self.journal.transition(key, current_state, desired, confirmation=evidence):
@@ -266,7 +274,9 @@ class SimulatedInvestmentExecutor:
         if self.journal.get(key) is None:
             raise KeyError("Intenção não encontrada no perfil.")
         if stopped_owner_token is not None:
-            if not self.journal.release_executor(stopped_owner_token):
+            if not self.journal.release_stale_executor(
+                expected_owner_token=stopped_owner_token
+            ):
                 return {"state": "BLOCKED", "reasons": ["executor_anterior_nao_identificado"],
                         "simulated": True}
         else:

@@ -16,10 +16,21 @@ MAX_CHECKOUT_AGE_SECONDS = 120
 _NATIVE_ID = re.compile(r"[1-9][0-9]{0,13}")
 
 
+def _timestamp_number(value: object) -> float | None:
+    if type(value) not in (int, float):
+        return None
+    try:
+        timestamp = float(value)
+    except OverflowError:
+        return None
+    return timestamp if math.isfinite(timestamp) and timestamp >= 0 else None
+
+
 def _fresh_timestamp(value: object, now: float) -> bool:
-    return (type(now) in (int, float) and math.isfinite(now)
-            and type(value) in (int, float) and math.isfinite(value)
-            and 0 <= now - value <= MAX_CHECKOUT_AGE_SECONDS)
+    current_timestamp = _timestamp_number(now)
+    observed_timestamp = _timestamp_number(value)
+    return (current_timestamp is not None and observed_timestamp is not None
+            and 0 <= current_timestamp - observed_timestamp <= MAX_CHECKOUT_AGE_SECONDS)
 
 
 def _delivery_hub_reasons(intent: Mapping, observation: Mapping, *,

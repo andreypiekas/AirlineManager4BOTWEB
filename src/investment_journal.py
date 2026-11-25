@@ -53,6 +53,16 @@ def _choice_id(value: object) -> bool:
             and value.casefold() not in ("unknown", "default", "inferred", "null"))
 
 
+def _timestamp_number(value: object) -> float | None:
+    if type(value) not in (int, float):
+        return None
+    try:
+        timestamp = float(value)
+    except OverflowError:
+        return None
+    return timestamp if math.isfinite(timestamp) and timestamp >= 0 else None
+
+
 def _process_is_running(pid: object) -> bool:
     """Return True unless the local OS proves that a process has exited."""
     if type(pid) is not int or pid <= 0:
@@ -216,12 +226,16 @@ class InvestmentJournal:
             if "cycle_id" not in intent_columns:
                 conn.execute("ALTER TABLE intents ADD COLUMN cycle_id TEXT")
             environment = "simulation" if self.simulation else "game"
-            row = conn.execute("SELECT environment FROM journal_environment").fetchone()
-            if row is None:
-                if self.simulation and conn.execute("SELECT 1 FROM intents LIMIT 1").fetchone():
+            rows = conn.execute("SELECT environment FROM journal_environment").fetchall()
+            if not rows:
+                existing_data = any(
+                    conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+                    for table in ("intents", "events", "executor_guards", "investment_cycles")
+                )
+                if self.simulation and existing_data:
                     raise ValueError("Um diário de compras existente não pode virar simulação.")
                 conn.execute("INSERT INTO journal_environment (environment) VALUES (?)", (environment,))
-            elif row["environment"] != environment:
+            elif len(rows) != 1 or rows[0]["environment"] != environment:
                 raise ValueError("Diário de investimentos de ambiente incompatível.")
 
     def _connect(self):
@@ -348,12 +362,12 @@ class InvestmentJournal:
         return True
 
     def _matching_evidence(self, evidence: Mapping | None, plan: Mapping) -> bool:
+        observed_at = _timestamp_number(evidence.get("observed_at")) if isinstance(evidence, Mapping) else None
         if (not isinstance(evidence, Mapping)
                 or evidence.get("profile_id") != self.profile_id
                 or evidence.get("verified") is not True
-                or type(evidence.get("observed_at")) not in (int, float)
-                or not math.isfinite(evidence["observed_at"])
-                or not 0 <= time.time() - evidence["observed_at"] < 900
+                or observed_at is None
+                or not 0 <= time.time() - observed_at < 900
                 or evidence.get("hub_id") != plan["hub_id"]):
             return False
         if plan["kind"] == "aircraft":
@@ -400,9 +414,29 @@ class InvestmentJournal:
             raise ValueError("Identidade do executor inválida.")
         with self._connect() as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
-            return conn.execute(
-                "DELETE FROM executor_guards WHERE profile_id=? AND owner_token=?",
+            guard = conn.execute(
+                "SELECT owner_pid, owner_host FROM executor_guards "
+                "WHERE profile_id=? AND owner_token=?",
                 (self.profile_id, owner_token),
+            ).fetchone()
+            if guard is None:
+                return False
+            owner_pid = guard["owner_pid"]
+            owner_host = guard["owner_host"]
+            legacy_owner = owner_pid is None and owner_host is None
+            current_owner = owner_pid == os.getpid() and owner_host == socket.gethostname()
+            stopped_local_owner = (
+                type(owner_pid) is int
+                and owner_host == socket.gethostname()
+                and owner_pid != os.getpid()
+                and not _process_is_running(owner_pid)
+            )
+            if not (legacy_owner or current_owner or stopped_local_owner):
+                return False
+            return conn.execute(
+                "DELETE FROM executor_guards WHERE profile_id=? AND owner_token=? "
+                "AND owner_pid IS ? AND owner_host IS ?",
+                (self.profile_id, owner_token, owner_pid, owner_host),
             ).rowcount == 1
 
     def executor_busy(self) -> bool:
@@ -412,13 +446,19 @@ class InvestmentJournal:
                 (self.profile_id,),
             ).fetchone() is not None
 
-    def release_stale_executor(self) -> bool:
+    def release_stale_executor(self, *, expected_owner_token: str | None = None) -> bool:
         """Release a guard only when its same-host owner process is proven gone.
 
         Older guards without process metadata and guards owned by another host
         remain locked for explicit recovery. An inaccessible or ambiguous PID
-        is treated as alive.
+        is treated as alive. When supplied, the expected token must also match
+        the guard being recovered.
         """
+        if expected_owner_token is not None and (
+            not isinstance(expected_owner_token, str)
+            or _PLAN_ID.fullmatch(expected_owner_token) is None
+        ):
+            raise ValueError("Identidade do executor inválida.")
         with self._connect() as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             guard = conn.execute(
@@ -427,6 +467,9 @@ class InvestmentJournal:
                 (self.profile_id,),
             ).fetchone()
             if guard is None:
+                return False
+            if (expected_owner_token is not None
+                    and guard["owner_token"] != expected_owner_token):
                 return False
             if (guard["owner_host"] != socket.gethostname()
                     or type(guard["owner_pid"]) is not int
@@ -553,7 +596,8 @@ class InvestmentJournal:
 
     def budget_exposure_since(self, since: float, *, exclude_intent_key: str | None = None) -> int:
         """Conservatively count current commitments plus confirmed spend in a window."""
-        if type(since) not in (int, float) or not math.isfinite(since):
+        since = self._validate_since(since)
+        if since is None:
             raise ValueError("Início de janela inválido.")
         with self._connect() as conn:
             rows = conn.execute(
@@ -567,7 +611,8 @@ class InvestmentJournal:
 
     def acquisition_count_since(self, since: float, *, exclude_intent_key: str | None = None) -> int:
         """Count current reservations and confirmed orders within the window, per profile."""
-        if type(since) not in (int, float) or not math.isfinite(since):
+        since = self._validate_since(since)
+        if since is None:
             raise ValueError("Início de janela inválido.")
         with self._connect() as conn:
             row = conn.execute(
@@ -616,7 +661,7 @@ class InvestmentJournal:
 
     def unresolved(self, *, since: float | None = None) -> dict:
         """Return reservations and optionally the local period usage in one read."""
-        self._validate_since(since)
+        since = self._validate_since(since)
         with self._connect() as conn:
             conn.execute("BEGIN")
             return self._read_unresolved(conn, self.profile_id, since)
@@ -624,7 +669,7 @@ class InvestmentJournal:
     @classmethod
     def read_existing(cls, *, since: float | None = None) -> dict:
         """Read the active game's ledger without creating or migrating it."""
-        cls._validate_since(since)
+        since = cls._validate_since(since)
         profile = paths.current()
         path = profile.data / "investment_journal.sqlite3"
         try:
@@ -683,9 +728,13 @@ class InvestmentJournal:
         }
 
     @staticmethod
-    def _validate_since(since: float | None) -> None:
-        if since is not None and (type(since) not in (int, float) or not math.isfinite(since) or since < 0):
+    def _validate_since(since: float | None) -> float | None:
+        if since is None:
+            return None
+        timestamp = _timestamp_number(since)
+        if timestamp is None:
             raise ValueError("Início de janela inválido.")
+        return timestamp
 
     @classmethod
     def _summarize_unresolved(cls, rows, profile_id: str, since: float | None) -> dict:
@@ -779,7 +828,8 @@ class InvestmentJournal:
         Local detection and recovery durations use observed journal transitions.
         A sample belongs to the window when its ending transition occurs.
         """
-        if type(since) not in (int, float) or not math.isfinite(since) or since < 0:
+        since = self._validate_since(since)
+        if since is None:
             raise ValueError("Início de janela inválido.")
         with self._connect() as conn:
             conn.execute("BEGIN")

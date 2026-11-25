@@ -119,6 +119,72 @@ def test_timeout_blocks_new_purchase_until_reconciliation_without_resubmit(tmp_p
     assert receipts == {"987654321", "987654322"}
 
 
+def test_checkout_timeout_keeps_approved_intent_without_submission(tmp_path):
+    class UnavailableCheckout(SimulatedAircraftGateway):
+        def read_checkout(self):
+            raise TimeoutError("checkout reader timed out")
+
+    worker = executor(tmp_path)
+    gateway = UnavailableCheckout(checkout())
+    result = worker.run(plan(), gateway)
+
+    assert result["state"] == "APPROVED"
+    assert result["reasons"] == ["checkout_indisponivel"]
+    assert gateway.submit_calls == 0
+    assert worker.journal.get(result["intent_key"])["submit_attempts"] == 0
+    assert not worker.journal.executor_busy()
+
+
+def test_submit_and_order_reader_timeouts_reconcile_without_resubmission(tmp_path):
+    class SubmitTimeout(SimulatedAircraftGateway):
+        def submit_order(self, intent):
+            super().submit_order(intent)
+            raise TimeoutError("submit response timed out")
+
+    class ReaderTimeout(SimulatedAircraftGateway):
+        def read_order_result(self, intent):
+            raise TimeoutError("order list timed out")
+
+    order_store = tmp_path / "timeout_order_book.sqlite3"
+    worker = executor(tmp_path)
+    gateway = SubmitTimeout(checkout(), order_store=order_store)
+    result = worker.run(plan(), gateway)
+
+    assert result["state"] == "UNKNOWN"
+    assert gateway.submit_calls == 1
+    assert worker.journal.get(result["intent_key"])["submit_attempts"] == 1
+    assert not worker.journal.executor_busy()
+
+    reader = ReaderTimeout(checkout(), order_store=order_store)
+    still_unknown = executor(tmp_path).reconcile(result["intent_key"], reader)
+    assert still_unknown["state"] == "UNKNOWN"
+    assert reader.submit_calls == 0
+
+    independent_reader = SimulatedAircraftGateway(checkout(), order_store=order_store)
+    reconciled = executor(tmp_path).reconcile(result["intent_key"], independent_reader)
+    assert reconciled["state"] == "CONFIRMED"
+    assert independent_reader.submit_calls == 0
+    assert gateway.submit_calls == 1
+    assert worker.journal.get(result["intent_key"])["submit_attempts"] == 1
+
+
+def test_malformed_order_reader_result_remains_unknown_without_resubmission(tmp_path):
+    class MalformedReader(SimulatedAircraftGateway):
+        def read_order_result(self, intent):
+            return ["not", "evidence"]
+
+    worker = executor(tmp_path)
+    gateway = MalformedReader(checkout())
+
+    result = worker.run(plan(), gateway)
+    repeated = worker.run(plan(), gateway)
+
+    assert result["state"] == "UNKNOWN"
+    assert repeated["state"] == "UNKNOWN"
+    assert gateway.submit_calls == 1
+    assert worker.journal.get(result["intent_key"])["submit_attempts"] == 1
+
+
 def test_timeout_can_be_reconciled_as_verified_refusal(tmp_path):
     worker = executor(tmp_path)
     gateway = SimulatedAircraftGateway(checkout(), outcome="timeout_rejected",
@@ -142,7 +208,7 @@ def test_approved_checkout_can_be_revalidated_after_data_is_fixed(tmp_path):
     assert worker.journal.get(pending["intent_key"])["submit_attempts"] == 1
 
 
-def test_crash_requires_explicit_guard_recovery_and_preserves_one_shot(tmp_path):
+def test_crash_requires_explicit_guard_recovery_and_preserves_one_shot(tmp_path, monkeypatch):
     worker = executor(tmp_path)
     order_store = tmp_path / "fake_order_book.sqlite3"
     gateway = SimulatedAircraftGateway(checkout(), outcome="crash",
@@ -156,9 +222,13 @@ def test_crash_requires_explicit_guard_recovery_and_preserves_one_shot(tmp_path)
     assert restarted.run(plan(), gateway)["reasons"] == ["executor_ocupado"]
     assert restarted.reconcile(result["intent_key"], gateway,
                              stopped_owner_token="wrong-token")["state"] == "BLOCKED"
+    assert restarted.reconcile(result["intent_key"], gateway,
+                             stopped_owner_token=result["stopped_owner_token"])["state"] == "BLOCKED"
+    assert restarted.journal.executor_busy()
 
     independent_reader = SimulatedAircraftGateway(checkout(), outcome="confirmed",
                                                    order_store=order_store)
+    monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: False)
     assert restarted.reconcile(result["intent_key"], independent_reader,
                              stopped_owner_token=result["stopped_owner_token"])["state"] == "CONFIRMED"
     assert gateway.submit_calls == 1
@@ -413,12 +483,15 @@ def test_losing_confirmation_compare_and_set_reports_actual_terminal_state(tmp_p
     assert restarted.journal.get(pending["intent_key"])["submit_attempts"] == 1
 
 
-def test_crash_restart_unknown_stays_blocked_through_multiple_reentries(tmp_path):
+def test_crash_restart_unknown_stays_blocked_through_multiple_reentries(tmp_path, monkeypatch):
     store = tmp_path / "orders.sqlite3"
     crashed = executor(tmp_path).run(
         plan(), SimulatedAircraftGateway(checkout(), outcome="crash", order_store=store),
     )
     restarted = executor(tmp_path)
+    # The simulated crash leaves this pytest process alive. Model the OS
+    # proving that the previous executor process has exited before recovery.
+    monkeypatch.setattr(investment_journal, "_process_is_running", lambda _pid: False)
     missing_proof = SimulatedAircraftGateway(checkout(), outcome="timeout", order_store=store)
     assert restarted.reconcile(
         crashed["intent_key"], missing_proof,
