@@ -75,6 +75,7 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
 
     monkeypatch.setattr(bot_module, "manage_fleet", fleet)
     monkeypatch.setattr("demand_events.collect_demand_events", demand_events)
+    monkeypatch.setattr("game_observations.collect_owned_route_search_universe", read("route_search_universe"))
     monkeypatch.setattr("game_observations.collect_owned_hub_demand", demand)
     monkeypatch.setattr("hub_operations.collect_hub_operations", read("hub_operations"))
     monkeypatch.setattr("game_observations.collect_owned_route_details", read("route_details"))
@@ -100,11 +101,13 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
         assert capture.call_args.kwargs["operational_evidence"] == {
             "pending": {"observation_id": "fleet"}, "hubs": None,
             "country_search_windows": [{"origin_id": "11"}],
+            "route_search_universe": None,
             "delivery_hubs": {"model_id": "2"},
             "demand_events": [{"source": "game_route_events", "observed_at": events_observed_at,
                                "reported_count": 0, "events": []}],
         }
-    assert calls == ["session", "company", "mode", ("market", True), ("fleet", True), "demand_events", "demand",
+    assert calls == ["session", "company", "mode", ("market", True), ("fleet", True), "demand_events",
+                     "route_search_universe", "demand",
                      "hub_operations", "route_details", "hub_catalog", "external_demand", "external_route_details",
                      "aircraft_catalog", "delivery_hubs", "finance", "staff", "header",
                      "session", "company"]

@@ -770,7 +770,8 @@ class Bot:
         from finance_observations import collect_finance_observations
         from game_observations import (collect_aircraft_engine_catalog, collect_external_hub_demand,
                                        collect_external_route_details, collect_hub_market_prices,
-                                       collect_owned_hub_demand, collect_owned_route_details)
+                                       collect_owned_hub_demand, collect_owned_route_details,
+                                       collect_owned_route_search_universe)
         from hub_operations import collect_hub_operations
         from owned_delivery_coverage import collect_owned_delivery_coverage
         from staff_observations import collect_staff_observations
@@ -788,6 +789,8 @@ class Bot:
              "conferir frota e prévia de rota"),
             (lambda: operational_evidence.update(demand_events=collect_demand_events(self)),
              "consultar eventos de demanda"),
+            (lambda: operational_evidence.update(route_search_universe=collect_owned_route_search_universe(self)),
+             "enumerar países pesquisáveis por hub próprio"),
             (lambda: collect_owned_hub_demand(self, country_windows=country_windows), "coletar demanda dos hubs"),
             (lambda: operational_evidence.update(hubs=collect_hub_operations(self)),
              "conferir operações dos hubs"),

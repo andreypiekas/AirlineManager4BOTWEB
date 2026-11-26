@@ -135,6 +135,43 @@ def test_snapshot_compares_country_windows_only_in_confirmed_company_cycle(
 
 
 @pytest.mark.parametrize("within_cycle", [True, False])
+def test_owned_search_universe_counts_confirmed_pairs_per_filter(tmp_path, within_cycle):
+    raw = {"started_at": NOW - 32, "observed_at": NOW - 25, "origin_ids": ["11"],
+           "country_values_by_origin": {"11": ["Brazil", "Tunisia"]}}
+    wide = {"origin_id": "11", "country": "Brazil", "country_value": "Brazil",
+            "started_at": NOW - 23, "observed_at": NOW - 20, "min_runway_ft": 1000,
+            "selector_airport_ids": ["11", "21"], "native_destination_ids": ["21"],
+            "native_max_distance_km": 20_000}
+    narrow = {**wide, "country": "Tunisia", "country_value": "Tunisia", "min_runway_ft": 5000,
+              "selector_airport_ids": ["22"], "native_destination_ids": ["22"],
+              "native_max_distance_km": 6000}
+    conflicting_roster = {**raw, "origin_ids": ["12"], "country_values_by_origin": {"12": ["Brazil"]}}
+    window = (NOW - (35 if within_cycle else 30), NOW - 1)
+    baseline = compose_snapshot(**observations(), read_only_window=window,
+                                operational_evidence={"route_search_universe": conflicting_roster})
+    assert "route_search_universe" not in baseline["observations"]
+
+    snapshot = compose_snapshot(**observations(), read_only_window=window, operational_evidence={
+        "route_search_universe": raw, "country_search_windows": [wide, narrow],
+    })
+    assert snapshot["coverage"]["scopes"]["routes"] is False
+    path = tmp_path / FILENAME
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    result = snapshot_summary(now=NOW, path=path)
+    if not within_cycle:
+        assert "route_search_universe" not in result
+        return
+    assert result["route_search_universe"] == {
+        "source": "game_owned_route_search_menus", "observed_at": NOW - 25,
+        "origin_count": 1, "partition_count": 2,
+        "audit_scopes": [{"min_runway_ft": runway, "requested_max_distance_km": distance,
+                          "attempted_partitions": 1, "reconciled_partitions": 1, "remaining_partitions": 1}
+                         for runway, distance in [(1000, 20000), (5000, 6000)]],
+    }
+    assert "route_search_universe" not in snapshot_summary(now=NOW + 875, path=path)
+
+
+@pytest.mark.parametrize("within_cycle", [True, False])
 def test_capture_reconciles_direct_airports_and_feeds_only_confirmed_filtered_candidates(
         tmp_path, monkeypatch, within_cycle):
     from hub_expansion import HubExpansionRegistry

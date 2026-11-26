@@ -252,6 +252,26 @@ return rows.map(el => {
 });
 """.replace("EVENT_WARNING", ROUTE_EVENT_WARNING_JS)
 
+_OWNED_ROUTE_SEARCH_MENU_JS = r"""
+const panel = document.querySelector('#routeAction');
+const hub = panel?.querySelector('select#hubSelect');
+const country = panel?.querySelector('select#arrSelector');
+if (!hub?.getClientRects().length || !country?.getClientRects().length ||
+    hub.disabled || country.disabled || country.value !== '0' || window.jQuery?.active) return null;
+const values = select => Array.from(select.options)
+  .filter(option => !option.disabled && option.value && option.value !== '0').map(option => option.value).sort();
+const origins = values(hub);
+const target = arguments[0];
+if (target && hub.value !== target) {
+  if (origins.includes(target)) {
+    hub.value = target;
+    hub.dispatchEvent(new Event('change', {bubbles: true}));
+  }
+  return null;
+}
+return {origin: hub.value, origins, countries: values(country)};
+"""
+
 _PREPARE_COUNTRY_SEARCH_JS = """
 const [origin, distance, runway, country] = arguments;
 const panel = document.querySelector('#routeAction');
@@ -548,6 +568,40 @@ def collect_hub_market_prices(bot: object, *, per_cycle: int = 3) -> int:
         if collected:
             log.info("Catálogo de hubs: %d/%d preços confirmados e persistidos.", collected, attempts)
         return collected
+    finally:
+        bot.close_popup(quiet=True)
+
+
+def collect_owned_route_search_universe(bot: object) -> dict | None:
+    """Read the country menu for every owned origin without submitting a route search."""
+    if bot.stopping:
+        return None
+    started_at = time.time()
+    deadline = time.monotonic() + 45
+
+    def read(target):
+        return _poll_country_audit(bot, min(deadline, time.monotonic() + 4),
+                                   _stable_read, bot, _OWNED_ROUTE_SEARCH_MENU_JS, target)
+
+    bot.open_popup("routes_main.php", "Routes", "nav_routes")
+    try:
+        bot.ajax("research_main.php", "routeAction")
+        first = read(None)
+        if not first or not first["origins"] or first["origin"] not in first["origins"]:
+            return None
+        origins = first["origins"]
+        countries = {first["origin"]: first["countries"]}
+        for origin in origins:
+            if origin in countries:
+                continue
+            row = read(origin)
+            if not row or row["origin"] != origin or row["origins"] != origins:
+                return None
+            countries[origin] = row["countries"]
+        if read(first["origin"]) != first:
+            return None
+        return {"started_at": started_at, "observed_at": time.time(),
+                "origin_ids": origins, "country_values_by_origin": countries}
     finally:
         bot.close_popup(quiet=True)
 

@@ -189,6 +189,44 @@ def _country_search_partitions(windows, owned_ids, cycle):
     return reports
 
 
+def _route_search_universe(raw, owned_ids, cycle, partitions, now):
+    """Measure coverage of the native owned-origin menus, scoped to each search envelope."""
+    if not isinstance(raw, dict) or cycle is None or not owned_ids:
+        return None
+    started, observed = raw.get("started_at"), raw.get("observed_at")
+    if not (_fresh(started, now) and _fresh(observed, now) and cycle[0] <= started <= observed <= cycle[1]):
+        return None
+    origins = raw.get("origin_ids")
+    menus = raw.get("country_values_by_origin")
+    if (not isinstance(origins, list) or len(origins) != len(owned_ids) or not all(map(_game_id, origins))
+            or set(origins) != owned_ids or not isinstance(menus, dict) or menus.keys() != owned_ids):
+        return None
+    for countries in menus.values():
+        if (not isinstance(countries, list) or not countries
+                or any(not isinstance(value, str) or not value.strip() or value == "0" for value in countries)
+                or len(set(countries)) != len(countries)):
+            return None
+
+    universe = {(origin, country) for origin, countries in menus.items() for country in countries}
+    audits = {}
+    for part in partitions:
+        pair = (part["origin_id"], part["country_value"])
+        if pair not in universe:
+            continue
+        scope = (part["min_runway_ft"], part["requested_max_distance_km"])
+        audits.setdefault(scope, {}).setdefault(pair, set()).add(part["partition_status"])
+
+    scopes = []
+    for (runway, distance), audited in sorted(audits.items()):
+        reconciled = sum(states == {"reconciled"} for states in audited.values())
+        scopes.append({"min_runway_ft": runway, "requested_max_distance_km": distance,
+                       "attempted_partitions": len(audited), "reconciled_partitions": reconciled,
+                       "remaining_partitions": len(universe) - reconciled})
+    return {"source": "game_owned_route_search_menus", "started_at": started, "observed_at": observed,
+            "origin_count": len(owned_ids), "partition_count": len(universe),
+            "country_values_by_origin": deepcopy(menus), "audit_scopes": scopes}
+
+
 def _record_direct_country_demand(expansion, partitions):
     for partition in partitions:
         if partition["unexpected_destination_ids"]:
@@ -327,6 +365,11 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
         if "country_search_windows" in operational_evidence:
             snapshot["observations"]["route_search_partitions"] = _country_search_partitions(
                 operational_evidence["country_search_windows"], owned_ids, read_only_window)
+        route_search_universe = _route_search_universe(
+            operational_evidence.get("route_search_universe"), owned_ids, read_only_window,
+            snapshot["observations"].get("route_search_partitions", []), now)
+        if route_search_universe is not None:
+            snapshot["observations"]["route_search_universe"] = route_search_universe
         if "demand_events" in operational_evidence:
             snapshot["observations"]["demand_events"] = [
                 deepcopy(panel)
@@ -646,6 +689,12 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                 "fresh_sample_count": len(external["samples"]),
                 "read_only": True, "purchase_eligible": False,
             }
+        route_universe = observations.get("route_search_universe")
+        search_summary = {}
+        if scopes["hubs"] and route_universe and _fresh(route_universe["started_at"], now):
+            search_summary["route_search_universe"] = {
+                key: route_universe[key] for key in ("source", "observed_at", "origin_count",
+                                                    "partition_count", "audit_scopes")}
         return {"status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": observations["captured_at"],
                 **({"read_only_window": observations["read_only_window"]} if "read_only_window" in observations else {}),
@@ -659,6 +708,7 @@ def snapshot_summary(*, now=None, path: Path | None = None):
                 "historical_investment_spending": historical_spending,
                 **({"policy_controls": policy_controls} if "investment_policy" in observations else {}),
                 "route_samples": len(observations["route_research"]["samples"]),
+                **search_summary,
                 **external_summary,
                 "native_route_quote_count": sum(_fresh(row.get("observed_at"), now)
                                                 for row in observations.get("native_route_quotes", [])),
