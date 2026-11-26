@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Revisão para liberação da compra planejada (G0)
+
+- A leitura de referência da frota agora exige os mesmos IDs e os mesmos contadores de Routes, Parked e Pending antes e depois de abrir `Pending`. Continua exigindo que os IDs pendentes pertençam à frota e que a companhia esteja autenticada nas duas pontas. Os testes rejeitam tanto a substituição de uma aeronave com total igual quanto a mudança entre Routes e Parked com o mesmo conjunto de IDs.
+- A tentativa em modo somente leitura no Chrome dedicado chegou à tela de login. O Chrome pessoal continuava autenticado em outro perfil. A integração da nova conferência com a cotação ao vivo continua pendente. A última cotação autenticada de **US$ 216.079.503** para o A380-800 com Trent 972 em Los Angeles confirma a prévia da cabine **443/42/24**. A cobrança e o custo da rota exigem comprovantes próprios.
+- Passaram **2.535 testes no Windows**, com um teste pulado, e **16 testes do instalador no Linux/WSL**. Ruff, compilação Python, sintaxe do instalador e `instalar.sh --ajuda` passaram.
+- A execução planejada permanece em **G0** com `execution_available=false`. O executor disponível no journal é simulado. O fluxo legado `autobuy_aircraft` pode fazer compras sem o plano por hub, rota e cabine. A implantação no Raspberry exige a chave SSH `am4bot_pi`, ausente no ambiente de validação. Nenhum pedido ou deploy foi executado.
+- Antes de G3, confirmar no worker uma rota admissível e seu custo completo, reconciliar o caixa líquido e integrar um único envio assistido ao journal com prova independente de pedido e débito. A ativação autônoma G4 depende do piloto bem-sucedido e dos limites de operação configurados.
+
 ## 2026-11-26 — Piloto A5 com o A380-800 (G0)
 
 - Entre **17h49 e 17h59 BRT**, o Chrome autenticado confirmou a cotação nativa de **US$ 216.079.503** para uma unidade do A380-800 (`2`), motor RR Trent 972 (`7`), Los Angeles (`24323457`) e cabine **443/42/24** Y/J/F. A cabine acrescentou **US$ 450.000** sobre os **US$ 215.629.503** exibidos para 600/0/0. A tela exibiu `Order` e o retorno foi feito por `Back`. A sessão dedicada do worker falhou na autenticação e o baseline integrado permanece pendente.

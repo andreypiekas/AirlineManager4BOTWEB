@@ -186,7 +186,7 @@ def _pilot_roster(bot):
     if not isinstance(counts, dict) or any(not _count(counts.get(key)) for key in keys):
         return None
     roster = RouteRegistry._parse_game_roster(value.get("rows"), sum(counts[key] for key in keys))
-    return (set(roster), counts["pending"]) if roster is not None else None
+    return (set(roster), counts) if roster is not None else None
 
 
 def read_pilot_pending(bot, *, baseline: bool = False) -> dict | None:
@@ -210,9 +210,13 @@ def read_pilot_pending(bot, *, baseline: bool = False) -> dict | None:
                 return None
             bot.ajax("fleet_pending.php", "routesContainer")
             pending = _stable_read(bot, PENDING_FLEET_JS)
+            if _fleet_list(pending) is None or bot.stopping:
+                return None
+            if roster is not None and _pilot_roster(bot) != roster:
+                return None
         finally:
             bot.close_popup(quiet=True)
-        if _fleet_list(pending) is None or bot.stopping:
+        if bot.stopping:
             return None
         bot._require_observation_session()
         bot._verify_observation_company()
@@ -225,8 +229,8 @@ def read_pilot_pending(bot, *, baseline: bool = False) -> dict | None:
     result = {"profile_id": profile_id, "company_id": company_id, "observed_at": started,
               "observed_until": finished, "pending": pending}
     if roster is not None:
-        roster_ids, pending_count = roster
-        if pending_count != pending["total"] or not {row["id"] for row in pending["rows"]} <= roster_ids:
+        roster_ids, counts = roster
+        if counts["pending"] != pending["total"] or not {row["id"] for row in pending["rows"]} <= roster_ids:
             return None
         result.update(fleet_ids=sorted(roster_ids), fleet_total=len(roster_ids))
     return result

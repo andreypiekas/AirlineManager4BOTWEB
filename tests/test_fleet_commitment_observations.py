@@ -60,7 +60,9 @@ class Bot:
         self.calls.append("close")
 
 
-@pytest.mark.parametrize("case", ["complete", "company_changed", "count_changed", "roster_missing_pending"])
+@pytest.mark.parametrize("case", [
+    "complete", "company_changed", "count_changed", "roster_missing_pending", "roster_changed", "distribution_changed",
+])
 def test_pilot_read_checks_company_and_correlates_baseline_roster(monkeypatch, case):
     class PilotBot(Bot):
         def _require_observation_session(self):
@@ -77,8 +79,12 @@ def test_pilot_read_checks_company_and_correlates_baseline_roster(monkeypatch, c
             return {"total": 1, "rows": [{"id": identity, "status": "maintenance"}]}
         assert "window.statusData" in script and "#hPending" in script
         bot.calls.append("roster")
-        return {"counts": {"routes": 1, "parked": 0, "pending": 2 if case == "count_changed" else 1},
-                "rows": [{"aircraft_id": "101", "route_id": 9}, {"aircraft_id": "102", "route_id": 0}]}
+        after_pending = "fleet_pending.php" in bot.calls
+        parked = int(after_pending and case == "distribution_changed")
+        aircraft_id = "103" if after_pending and case == "roster_changed" else "101"
+        return {"counts": {"routes": 1 - parked, "parked": parked, "pending": 2 if case == "count_changed" else 1},
+                "rows": [{"aircraft_id": aircraft_id, "route_id": 0 if parked else 9},
+                         {"aircraft_id": "102", "route_id": 0}]}
 
     monkeypatch.setattr(game_observations, "_stable_read", stable_read)
     bot = PilotBot()
@@ -87,8 +93,12 @@ def test_pilot_read_checks_company_and_correlates_baseline_roster(monkeypatch, c
         assert baseline is None
         assert bot.calls == ["session", "company", "routes_main.php", "roster", "close"]
         return
-    assert bot.calls == ["session", "company", "routes_main.php", "roster", "fleet_pending.php", "close",
-                         "session", "company"]
+    pending_calls = ["session", "company", "routes_main.php", "roster", "fleet_pending.php", "roster", "close"]
+    if case in {"roster_changed", "distribution_changed"}:
+        assert baseline is None
+        assert bot.calls == pending_calls
+        return
+    assert bot.calls == [*pending_calls, "session", "company"]
     if case != "complete":
         assert baseline is None
         return
