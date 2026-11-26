@@ -49,6 +49,13 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
 
         return action
 
+    def read_external(label):
+        def action(owner, *, observation_only):
+            assert observation_only is True
+            read(label)(owner)
+
+        return action
+
     events_observed_at = None
 
     def demand_events(owner):
@@ -71,6 +78,9 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
     monkeypatch.setattr("game_observations.collect_owned_hub_demand", demand)
     monkeypatch.setattr("hub_operations.collect_hub_operations", read("hub_operations"))
     monkeypatch.setattr("game_observations.collect_owned_route_details", read("route_details"))
+    monkeypatch.setattr("game_observations.collect_hub_market_prices", read("hub_catalog"))
+    monkeypatch.setattr("game_observations.collect_external_hub_demand", read_external("external_demand"))
+    monkeypatch.setattr("game_observations.collect_external_route_details", read_external("external_route_details"))
     monkeypatch.setattr("game_observations.collect_aircraft_engine_catalog", read("aircraft_catalog"))
     monkeypatch.setattr("owned_delivery_coverage.collect_owned_delivery_coverage", delivery_hubs)
     monkeypatch.setattr("finance_observations.collect_finance_observations", read("finance"))
@@ -95,7 +105,8 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
                                "reported_count": 0, "events": []}],
         }
     assert calls == ["session", "company", "mode", ("market", True), ("fleet", True), "demand_events", "demand",
-                     "hub_operations", "route_details", "aircraft_catalog", "delivery_hubs", "finance", "staff", "header",
+                     "hub_operations", "route_details", "hub_catalog", "external_demand", "external_route_details",
+                     "aircraft_catalog", "delivery_hubs", "finance", "staff", "header",
                      "session", "company"]
     assert worker.notify("test", category="status") is False
     assert not worker.telegram.mock_calls

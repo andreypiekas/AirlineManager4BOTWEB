@@ -768,8 +768,9 @@ class Bot:
         from audited_game_snapshot import capture_game_snapshot
         from demand_events import collect_demand_events
         from finance_observations import collect_finance_observations
-        from game_observations import (collect_aircraft_engine_catalog, collect_owned_hub_demand,
-                                       collect_owned_route_details)
+        from game_observations import (collect_aircraft_engine_catalog, collect_external_hub_demand,
+                                       collect_external_route_details, collect_hub_market_prices,
+                                       collect_owned_hub_demand, collect_owned_route_details)
         from hub_operations import collect_hub_operations
         from owned_delivery_coverage import collect_owned_delivery_coverage
         from staff_observations import collect_staff_observations
@@ -791,6 +792,9 @@ class Bot:
             (lambda: operational_evidence.update(hubs=collect_hub_operations(self)),
              "conferir operações dos hubs"),
             (lambda: collect_owned_route_details(self), "coletar detalhes das rotas"),
+            (lambda: collect_hub_market_prices(self), "consultar preços de novos hubs"),
+            (lambda: collect_external_hub_demand(self, observation_only=True), "pesquisar demanda externa"),
+            (lambda: collect_external_route_details(self, observation_only=True), "conferir detalhe de rota externa"),
             (lambda: collect_aircraft_engine_catalog(self), "pesquisar catálogo de aeronaves e motores"),
             (lambda: collect_owned_delivery_coverage(self, observation=delivery_hubs),
              "conferir cobertura dos hubs de entrega"),

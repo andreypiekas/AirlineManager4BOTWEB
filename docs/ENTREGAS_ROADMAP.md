@@ -1,5 +1,34 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2/A3/A6, demanda residual, custos de rota e hubs externos (G0)
+
+- Entre 12h56 e 12h57 BRT, o Chrome dedicado leu os detalhes nativos com a companhia confirmada antes e depois. Os quatro itinerários em operação exibiram `Today` no detalhe. As rotas sem operação exibiram `Daily`. As amostras preservam o aviso nativo de evento.
+
+| Rota | `Today` Y/J/F | `Daily` Y/J/F | Aeronaves na rota |
+| --- | --- | --- | ---: |
+| LAX–TUN e TUN–LAX | 965/479/91 | 1.341/514/112 | 1 |
+| DAC–FNJ | 824/98/51 | 1.081/510/272 | 1 |
+| ORD–CCS | 566/146/55 | 831/481/185 | 1 |
+| DFW–CCS | 986/51/208 | 1.743/320/273 | 1 |
+| BCN–SHA | Ausente | 1.991/376/176 | 0 |
+| AQA–EZE | Ausente | 693/416/109 | 0 |
+| LIS–JFK | Ausente | 1.012/521/255 | 0 |
+
+- As duas consultas de LAX–TUN exibiram os mesmos números nos sentidos opostos. O residual equivale ao diário menos os 376/35/21 passageiros do primeiro trecho do PP-254. O histórico da aeronave confirmou novamente 227.063 lb, 814.085 quotas de CO₂ e receita de US$ 2.451.390. Os três valores por classe da prévia (US$ 4.377/8.973/13.820) continuam como referência do formulário. A receita do voo, isoladamente, não identifica as tarifas efetivamente cobradas por classe.
+- `Flight history` mostrou as quantidades abaixo para os últimos trechos. Após um limite de espera na consulta direta, o worker leu US$ 1.940 por 1.000 lb e US$ 162 por 1.000 quotas de CO₂ às 12h57 BRT, com validade até cerca de 13h00min28s BRT. A tabela estima a reposição dos dois insumos à cotação desse ciclo. O valor de US$ 294.253,84 para o PP-254 na rodada anterior usava os preços das 11h25 BRT, de US$ 690 e US$ 169 por mil, respectivamente.
+
+| Trecho registrado | Aeronave | Combustível (lb) | CO₂ (quotas) | Reposição (US$) |
+| --- | --- | ---: | ---: | ---: |
+| LAX–TUN | PP-254 | 227.063 | 814.085 | 572.383,99 |
+| CCS–ORD | PP-118-3 | 76.691 | 111.269 | 166.806,12 |
+| CCS–DFW | PP-118 | 74.906 | 99.726 | 161.473,25 |
+
+- Nenhum dos detalhes apresentou aeronave apta na nova leitura. A taxa de abertura de US$ 1.063.229 para LAX–TUN e a de US$ 996.630 para BCN–SHA permanecem cotações de prévias elegíveis anteriores. Às 12h59 BRT, `Finances` mostrou `Route fees` agregado de US$ 0 nas últimas 24 horas, sem identificação por rota. A conciliação do débito da rota, as tarifas efetivas por classe e os custos incrementais completos por candidato continuam pendentes.
+- O seletor de `New Hub` mostrou 232 opções de país ou região. Pela seleção de aeroporto, oito candidatos brasileiros (AQA, AJU, AFL, ARU, BGX, ATM, MEU e AUX) mostraram US$ 12.336.000 e 20 pontos cada. O catálogo também confirmou LIS e FRA por US$ 60.909.000 e JFK por US$ 54.818.100, todos com 20 pontos e fora dos 30 aeroportos próprios do seletor nativo. A pesquisa de saída personalizada reuniu 50 destinos de cada uma das origens AQA, AJU e AFL. A consulta AQA–TUD confirmou `Daily` de 111/70/53, sem `Today` e com zero aeronaves aptas. A cobertura externa segue parcial.
+- O worker em `--observe-game` passou a coletar preços de novos hubs, demanda externa e detalhes correlacionados no ciclo autenticado. A leitura externa usa a lista nativa de hubs próprios para excluir suas origens, tem orçamento limitado e também pode ocorrer com o planejamento de investimentos desabilitado. O ciclo das 12h57–12h59 BRT registrou três preços, 50 destinos a partir de Frankfurt e um detalhe externo adicional. O snapshot privado passou na validação local de esquema, perfil e fingerprint. A auditoria conciliou 222 aeronaves em Routes (12 páginas), zero em Parked e três em Pending. Os 30 painéis de operações foram enumerados, com conciliação incompleta neste ciclo. Os compromissos financeiros e as opções de entrega ficaram sem confirmação no mesmo snapshot.
+- O replay A6 do snapshot trouxe 40 combinações na primeira página. Todas ficaram em `pesquisa_pendente`, com `purchase_eligible=false` e cobertura parcial. Entre as lacunas estão preço de motor, demanda residual, taxa de rota, custos, compromissos de caixa e cenário externo completo. O fluxo normal mantém sua política de planejamento. A coleta foi somente leitura. A compra planejada permanece bloqueada em G0, com `price_verified=false` para o preço de compra efetivamente cobrado. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+- A regressão do worker exige as três novas leituras na ordem esperada e confirma a captura somente quando a companhia coincide nas duas pontas do ciclo. A suíte em diretório isolado passou com 2.432 testes e um pulado por permissões POSIX. `tests/test_instalacao_linux.py` ficou fora da suíte Windows. Ruff e `git diff --check` passaram.
+
 ## 2026-11-26 — Autonomia Total A2/A5, prévia autenticada LAX–TUN e hubs de entrega (G0)
 
 - Às 11h03 BRT, o worker autenticado no Chrome dedicado executou `fleet.order_aircraft` em `dry_run` com um plano de homologação para LAX–TUN (`1440`–`432`). O formulário confirmou **1 A380-800** (`2`), **RR Trent 972** (`7`), entrega em **Los Angeles** (`24323457`), **443/42/24 assentos Y/J/F** e **US$ 216.079.503** exibidos. A taxa de abertura de US$ 1.063.229 pertence à rota e ficou fora da cotação de compra. A prévia releu cabine e total e voltou à tela inicial pelo botão `Back`. A sessão confirmou a mesma companhia depois da consulta. Nenhum pedido foi enviado.

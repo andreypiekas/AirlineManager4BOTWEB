@@ -543,9 +543,9 @@ def collect_owned_hub_demand(bot: object, *, origin_id: str | None = None,
     return _collect_hub_demand(bot, external=False, origin_id=origin_id, country_windows=country_windows)
 
 
-def collect_external_hub_demand(bot: object) -> int:
+def collect_external_hub_demand(bot: object, *, observation_only: bool = False) -> int:
     """Search one fresh purchase-catalog airport outside the owned inventory."""
-    if not bot.config.get_bool("investment", "planning_enabled"):
+    if not observation_only and not bot.config.get_bool("investment", "planning_enabled"):
         return 0
     return _collect_hub_demand(bot, external=True)
 
@@ -781,9 +781,9 @@ def collect_owned_route_details(bot: object) -> int:
     return _collect_hub_route_details(bot, external=False)
 
 
-def collect_external_route_details(bot: object) -> int:
+def collect_external_route_details(bot: object, *, observation_only: bool = False) -> int:
     """Research one independent external route detail per planning cycle."""
-    if not bot.config.get_bool("investment", "planning_enabled"):
+    if not observation_only and not bot.config.get_bool("investment", "planning_enabled"):
         return 0
     return _collect_hub_route_details(bot, external=True)
 
