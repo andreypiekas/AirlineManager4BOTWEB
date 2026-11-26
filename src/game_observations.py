@@ -7,6 +7,8 @@ import re
 import threading
 import time
 
+from selenium.common.exceptions import WebDriverException
+
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
 from route_stopover import ROUTE_EVENT_WARNING_JS
@@ -19,6 +21,8 @@ from engine_selection import (
 )
 
 log = logging.getLogger("am4bot.observations")
+
+_ROUTE_SEARCH_SAMPLE_LIMIT = 50  # Observed in authenticated owned and custom departures.
 
 # The engine groups and model identity must come from the same synchronous DOM
 # snapshot. Separate stable reads can straddle an AJAX panel replacement and
@@ -457,8 +461,24 @@ def collect_external_hub_demand(bot: object) -> int:
     return _collect_hub_demand(bot, external=True)
 
 
+def _read_hub_demand_window(bot: object, origin: str, distance: int,
+                            runway: int) -> tuple[list[dict], float | None]:
+    from fleet import search_routes
+
+    candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
+    read = _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS, with_timestamp=True)
+    if read is None:
+        return [], None
+    rows, read_at = read
+    samples = _verified_demand(candidates, rows, origin)
+    if any(sample["distance"] > distance + 0.001
+           or sample.get("destination_runway_ft", runway) < runway for sample in samples):
+        return [], None
+    return samples, read_at
+
+
 def _collect_hub_demand(bot: object, *, external: bool) -> int:
-    from fleet import _HUB_OPTIONS_JS, search_routes
+    from fleet import _HUB_OPTIONS_JS
     from hub_registry import _hub_id
 
     if getattr(bot, "stopping", False):
@@ -498,10 +518,20 @@ def _collect_hub_demand(bot: object, *, external: bool) -> int:
                                            max_distance=distance, min_runway=runway)
         else:
             registry.record_demand_attempt(origin)
-        candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
-        read = _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS, with_timestamp=True)
-        rows, read_at = read if isinstance(read, tuple) and len(read) == 2 else (None, None)
-        samples = _verified_demand(candidates, rows, origin)
+        samples, read_at = _read_hub_demand_window(bot, origin, distance, runway)
+        if not samples:
+            log.debug("Pesquisa de demanda do hub %s incompleta ou sem resultados confirmados.", origin)
+            return 0
+        extra, extra_at = [], None
+        if scope is not None and len(samples) >= _ROUTE_SEARCH_SAMPLE_LIMIT:
+            # Overlap the shortest result at the integer-kilometre boundary.
+            # A second bounded sample can expose omissions without proving coverage.
+            cutoff = math.ceil(min(sample["distance"] for sample in samples))
+            if 300 <= cutoff < distance and not getattr(bot, "stopping", False):
+                try:
+                    extra, extra_at = _read_hub_demand_window(bot, origin, cutoff, runway)
+                except WebDriverException:
+                    log.debug("A segunda janela de demanda do hub %s foi interrompida.", origin)
         if external:
             # A changed or missing ownership selector invalidates the external
             # classification. Keep the attempt, but discard its observations.
@@ -509,12 +539,16 @@ def _collect_hub_demand(bot: object, *, external: bool) -> int:
             if (confirmed_options != options
                     or origin not in expansion.external_research_origins(set(ids))):
                 return 0
-        if not samples or any(sample["distance"] > distance + 0.001
-                              or sample.get("destination_runway_ft", runway) < runway
-                              for sample in samples):
-            log.debug("Pesquisa de demanda do hub %s incompleta ou sem resultados confirmados.", origin)
-            return 0
+        boosted = {sample["arr_id"] for sample in extra if sample.get("event_demand_boosted")}
+        for sample in samples:
+            if sample["arr_id"] in boosted:
+                sample["event_demand_boosted"] = True
         count = registry.record_demand(origin, samples, observed_at=read_at, search_scope=scope)
+        if extra:
+            seen = {sample["arr_id"] for sample in samples}
+            unseen = [sample for sample in extra if sample["arr_id"] not in seen]
+            if unseen:
+                count += registry.record_demand(origin, unseen, observed_at=extra_at)
         if external:
             log.info("Pesquisa externa de demanda: hub %s, %d destinos observados.", origin, count)
         else:

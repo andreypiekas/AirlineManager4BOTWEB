@@ -137,10 +137,11 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 
 - Finalizar inventário real de hubs próprios e status de base por aeronave com fonte explícita. Quando desconhecido, manter "Base a confirmar" sem impedir ranking das bases com dados independentes verificados.
 - Auditar paginação dinâmica: 20 posições típicas por página, páginas variáveis, aeronaves chegando durante a auditoria, IDs únicos, totais coerentes, cobertura integral no mesmo snapshot ou marcação **parcial**.
-- Completar coleta de preço, pontos, pista, país, disponibilidade e demanda dos hubs candidatos; descobrir se pesquisa de rota pode partir de **hub ainda não comprado**.
+- Completar coleta de preço, pontos, pista, país, disponibilidade e demanda dos hubs candidatos. Em 25/11/2026, `Custom departure` permitiu pesquisar a partir de Lisboa, ausente dos hubs próprios naquele momento.
 - Montar feed de cenários para HubAircraftResearchRegistry.record() e HubExpansionRegistry.record_research(), com fonte e data comprovadas.
 - Armazenar mapas de cobertura por hub, rota, modelo e ciclo; expirados não habilitam compra.
 - Em 25/11/2026, uma consulta retornou 50 linhas com aviso de demanda de evento e sem controle de continuação identificado. Na varredura autenticada posterior, Routes exibiu paginação e a união das listas de modelos e pendências reconciliou a frota no intervalo observado. O detalhe do hub exibiu operações de ida e volta. A cobertura integral de rotas por hub em um snapshot, o esgotamento interno e o vínculo permanente aeronave–hub seguem pendentes.
+- A pesquisa de candidatos em DAC e LIS mostrou destinos que satisfaziam o filtro mais amplo somente quando o limite de distância baixou. O coletor de planejamento passou a fazer uma segunda leitura delimitada quando a primeira tem pelo menos 50 linhas verificadas. A cobertura continua parcial.
 - **Aceite:** painel mostra evidência e cobertura; ausência de pesquisa de hub externo aparece como impeditivo, não como candidato viável.
 
 ### Fase A3 — Otimizador de rotas e rentabilidade por motor (P0)

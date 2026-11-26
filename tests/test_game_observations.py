@@ -902,6 +902,76 @@ def test_search_keeps_event_warning_when_followup_dom_read_loses_it(tmp_path, mo
     assert samples[0]["event_demand_boosted"] is True
 
 
+@pytest.mark.parametrize("bad_origin", [False, True])
+def test_saturated_planning_search_reads_shorter_window_and_keeps_coverage_partial(
+        tmp_path, monkeypatch, bad_origin):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
+    monkeypatch.setattr(game_observations, "HubRegistry", lambda: HubRegistry(tmp_path / "hubs.json"))
+    first_at = 1_900_000_010.25
+    second_at = first_at + 3
+    now = second_at + 5
+    monkeypatch.setattr(hub_expansion.time, "time", lambda: now)
+    requests = []
+    results = [RouteCandidate(str(3100 + i), "DEST", 1900.5 + i, 100, 20, 5, 6000)
+               for i in range(50)]
+    shorter = RouteCandidate("3200", "SHORT", 1750, 90, 10, 0, 6600, event_demand_boosted=True)
+    rows = []
+
+    def search(_bot, origin, distance, runway, *, persist_demand):
+        requests.append((origin, distance, runway, persist_demand))
+        window = results if distance == 6000 else [shorter, results[0]]
+        dep_id = "2950" if len(requests) == 2 and bad_origin else origin
+        rows[:] = [{"dep_id": dep_id, "arr_id": item.arr_id, "distance": str(item.distance),
+                    "y": str(item.y), "j": str(item.j), "f": str(item.f),
+                    "runway": str(item.runway),
+                    "event_demand_boosted": distance == 1901 and item.arr_id == "3100"}
+                   for item in window]
+        return window
+
+    monkeypatch.setattr(fleet, "search_routes", search)
+    monkeypatch.setattr(game_observations, "_stable_read", lambda *_args, **_kwargs: (
+        rows, first_at if len(requests) == 1 else second_at))
+
+    class Bot:
+        stopping = False
+
+        class config:
+            @staticmethod
+            def get_int(_section, _key, default):
+                return default
+
+            @staticmethod
+            def get_bool(section, key):
+                return (section, key) == ("investment", "planning_enabled")
+
+        def open_popup(self, *_args):
+            pass
+
+        def close_popup(self, **_kwargs):
+            pass
+
+        def ajax(self, *_args):
+            pass
+
+        def js(self, script):
+            assert script == _HUB_OPTIONS_JS
+            return [{"id": "2926", "text": "XAP - Chapecó", "code": "XAP"}]
+
+    assert game_observations.collect_owned_hub_demand(Bot()) == (50 if bad_origin else 51)
+    assert requests == [("2926", 6000, 5000, False), ("2926", 1901, 5000, False)]
+    snapshot = registry.demand_research_snapshot({"2926"}, now=now)
+    assert snapshot["coverage"] == "partial"
+    stored = {row["destination_id"]: row for row in snapshot["samples"]}
+    assert stored["3100"]["observed_at"] == first_at
+    assert stored["3100"].get("event_demand_boosted", False) is (not bad_origin)
+    if bad_origin:
+        assert "3200" not in stored
+    else:
+        assert stored["3200"]["observed_at"] == second_at
+        assert stored["3200"]["event_demand_boosted"] is True
+
+
 def test_demand_collector_persists_dom_read_time_even_when_processing_is_late(
         tmp_path, monkeypatch):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
