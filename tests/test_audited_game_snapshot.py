@@ -121,6 +121,9 @@ def test_snapshot_compares_country_windows_only_in_confirmed_company_cycle(
     report, = snapshot["observations"]["route_search_partitions"]
     assert report["windows"] == [wide, narrow]
     assert report["selector_status"] == status
+    assert report["partition_status"] == {
+        "matched": "reconciled", "different": "incomplete", "unverified": "unverified",
+    }[status]
     assert report["origin_in_selector"] == (None if status == "unverified" else True)
     assert report["observed_destination_ids"] == ["21", "22"]
     assert report["absent_selector_ids"] == absent
@@ -129,6 +132,60 @@ def test_snapshot_compares_country_windows_only_in_confirmed_company_cycle(
     assert report["unresolved_selector_ids"] == (None if status == "unverified" else [])
     assert snapshot["coverage"]["scopes"]["routes"] is False
     assert snapshot["snapshot_id"] == fingerprint_snapshot(snapshot)
+
+
+@pytest.mark.parametrize("within_cycle", [True, False])
+def test_capture_reconciles_direct_airports_and_feeds_only_confirmed_filtered_candidates(
+        tmp_path, monkeypatch, within_cycle):
+    from hub_expansion import HubExpansionRegistry
+    from hub_registry import HubRegistry
+
+    monkeypatch.setattr(paths, "current", lambda: paths.Profile("isolated"))
+    monkeypatch.setattr(paths.Profile, "data", property(lambda self: tmp_path))
+    now = time.time()
+    monkeypatch.setattr(HubRegistry, "snapshot", lambda self, routes: {
+        **observations()["inventory"], "observed_at": now - 1})
+    bot = SimpleNamespace(stats=lambda: SimpleNamespace(money=2500, money_read_at=now - 1))
+    cycle = (now - 30, now - 1)
+    scope = {"origin_id": "11", "country": "Brazil", "country_value": "Brazil", "min_runway_ft": 5000,
+             "selector_airport_ids": ["11", "21", "22", "23", "24"]}
+    wide = {**scope, "started_at": now - 25, "observed_at": now - 24, "native_destination_ids": ["21"],
+            "requested_max_distance_km": 6000, "native_max_distance_km": 6000}
+    narrow = {**wide, "started_at": now - 20, "observed_at": now - 19,
+              "requested_max_distance_km": 500, "native_max_distance_km": 500}
+
+    def direct(destination, distance, runway, observed_at):
+        return {**scope, "started_at": observed_at - 0.5, "observed_at": observed_at,
+                "native_max_distance_km": 500,
+                "direct_destination": {"arr_id": destination, "distance": distance, "destination_runway_ft": runway,
+                                       "y": 100, "j": 20, "f": 5, "event_demand_boosted": True}}
+
+    eligible_at = now - 13 if within_cycle else now
+    eligible = direct("22", 2500, 6000, eligible_at)
+    evidence = {"country_search_windows": [
+        wide, narrow, {**eligible, "observed_at": now - 13, "started_at": now - 14, "native_max_distance_km": 700},
+        eligible, direct("23", 2500, 2000, now - 10), direct("24", 6500, 6000, now - 7),
+    ]}
+
+    unconfirmed = capture_game_snapshot(bot, operational_evidence=evidence)
+    assert unconfirmed["observations"]["route_search_partitions"] == []
+    assert HubExpansionRegistry().demand_observations({"11"}) == []
+    captured = capture_game_snapshot(bot, read_only_window=cycle, operational_evidence=evidence)
+    report, = captured["observations"]["route_search_partitions"]
+    assert report["selector_status"] == "different"
+    assert report["partition_status"] == ("reconciled" if within_cycle else "incomplete")
+    assert report["unresolved_selector_ids"] == ([] if within_cycle else ["22"])
+    assert report["requested_max_distance_km"] == 6000
+    samples = captured["observations"]["route_research"]["samples"]
+    if within_cycle:
+        sample, = samples
+        assert sample["destination_id"] == "22"
+        assert sample["observed_at"] == eligible_at
+        assert sample["event_demand_boosted"] is True
+    else:
+        assert samples == []
+    assert captured["coverage"] == unconfirmed["coverage"]
+    assert captured["coverage"]["scopes"]["routes"] is False
 
 
 @pytest.mark.parametrize(("case", "status"), [

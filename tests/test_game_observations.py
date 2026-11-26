@@ -3,6 +3,7 @@ import json
 import shutil
 import subprocess
 import time
+from types import SimpleNamespace
 
 import pytest
 from selenium.common.exceptions import TimeoutException
@@ -434,7 +435,10 @@ const country = prepare(...args);
 const busy = start(...args);
 window.jQuery.active = 0;
 const noAirportSelector = start(...args);
-controls['select#citySelectArr'] = {value: '2850', dispatchEvent: event => selected.push(['airport', event.type]), options: [
+controls['select#citySelectArr'] = {value: '2850', dispatchEvent: event => {
+  selected.push(['airport', event.type]);
+  window.jQuery.active = 1;
+}, options: [
   {value: '0'}, {value: '2851'}, {value: '2850'}, {value: '2852', disabled: true}
 ]};
 const specificAirport = start(...args);
@@ -448,11 +452,14 @@ const overlapArgs = ['2947', 1723, 1000, 'Argentina'];
 const overlapCountry = prepare(...overlapArgs);
 const overlapReady = start(...overlapArgs);
 const changedSelector = start(...overlapArgs, '2850', ['2850', '2852']);
+const airportLoading = start(...overlapArgs, '2850', overlapReady.airport_ids);
+const ajaxBusy = start(...overlapArgs, '2850', overlapReady.airport_ids);
+window.jQuery.active = 0;
 const direct = start(...overlapArgs, '2850', overlapReady.airport_ids);
 const directIds = observe(...overlapArgs, '2850').airport_ids;
 console.log(JSON.stringify({country, selected, busy, noAirportSelector, specificAirport,
                             ready, resultIds, changedAirport, overlapCountry, overlapReady,
-                            changedSelector, direct, directIds, actions}));
+                            changedSelector, airportLoading, ajaxBusy, direct, directIds, actions}));
 """
     result = subprocess.run(["node", "-e", js, game_observations._PREPARE_COUNTRY_SEARCH_JS,
                              game_observations._START_COUNTRY_SEARCH_JS, game_observations._VERIFIED_COUNTRY_DEMAND_JS],
@@ -462,9 +469,72 @@ console.log(JSON.stringify({country, selected, busy, noAirportSelector, specific
         "busy": False, "noAirportSelector": False, "specificAirport": False,
         "ready": {"airport_ids": ["2850", "2851"]}, "resultIds": ["2850", "2851"], "changedAirport": None,
         "overlapCountry": "Argentina", "overlapReady": {"airport_ids": ["2850", "2851"]},
-        "changedSelector": False, "direct": {"airport_ids": ["2850", "2851"]}, "directIds": ["2850", "2851"],
+        "changedSelector": False, "airportLoading": False, "ajaxBusy": False,
+        "direct": {"airport_ids": ["2850", "2851"]}, "directIds": ["2850", "2851"],
         "actions": ["clear", "search", "clear", "search", "clear", "search"],
     }
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="Node.js indisponível")
+def test_country_search_accepts_explicit_empty_bulk_result_only():
+    js = r"""
+const args = ['2149', 20000, 1000, 'Jamaica'];
+const notice = {textContent: 'There were no results to your search', getClientRects: () => [1]};
+const list = {querySelector: () => notice};
+const result = {querySelector: () => null, querySelectorAll: name => name === ':scope > #list' ? [list] : []};
+const controls = {
+  'select#hubSelect': {value: '2149'}, 'input#maxDist': {value: '20000'},
+  'input#rwyLength': {value: '1000'}, 'select#arrSelector': {value: 'Jamaica'},
+  'select#citySelectArr': {value: '0', options: [{value: '0'}, {value: '2150'}]}
+};
+globalThis.document = {querySelector: name => name === '#resResult' ? result :
+    {querySelector: selector => controls[selector]}};
+globalThis.window = {jQuery: {active: 0}};
+const read = new Function(process.argv[1]);
+const empty = read(...args);
+controls['select#citySelectArr'].value = '2150';
+const direct = read(...args, '2150');
+controls['select#citySelectArr'].value = '0';
+window.jQuery.active = 1;
+const busy = read(...args);
+window.jQuery.active = 0;
+notice.textContent = 'Internal error';
+const error = read(...args);
+console.log(JSON.stringify({empty, direct, busy, error}));
+"""
+    response = subprocess.run(["node", "-e", js, game_observations._VERIFIED_COUNTRY_DEMAND_JS],
+                              capture_output=True, text=True, check=True, timeout=8)
+    assert json.loads(response.stdout) == {
+        "empty": {"rows": [], "airport_ids": ["2150"]},
+        "direct": None, "busy": None, "error": None,
+    }
+
+
+def test_empty_country_window_preserves_selector_for_direct_audit(monkeypatch):
+    options = ["2149", "2150"]
+    observed_at = 1_900_000_000.0
+    readings = iter([None, ({"rows": [], "airport_ids": options}, observed_at)])
+    monkeypatch.setattr(game_observations, "_stable_read", lambda *_args, **_kwargs: next(readings))
+    monkeypatch.setattr(fleet, "read_route_candidates", lambda _bot: [])
+
+    class Bot:
+        stopping = False
+        driver = object()
+
+        def js(self, script, *_args):
+            return ("Jamaica" if script == game_observations._PREPARE_COUNTRY_SEARCH_JS
+                    else {"airport_ids": options})
+
+        def wait_loaded(self, _target, *, timeout):
+            return True
+
+    windows = []
+    assert game_observations._read_hub_demand_window(
+        Bot(), "2149", 20000, 1000, country="Jamaica", country_windows=windows) == ([], observed_at)
+    window, = windows
+    assert window["selector_airport_ids"] == options
+    assert window["native_destination_ids"] == []
+    assert window["native_limit_reached"] is False
 
 
 def test_price_collection_requires_identical_correlated_reads(tmp_path, monkeypatch):
@@ -1017,47 +1087,137 @@ def test_native_country_window_keeps_requested_distance_below_form_minimum(
         assert windows == []
 
 
-def test_direct_search_records_omissions_only_with_correlated_identity(monkeypatch):
+@pytest.mark.parametrize("budget", [8, 20])
+def test_direct_search_recovers_pending_ajax_without_submitting_twice(monkeypatch, budget):
     options = ["2944", "2947", "2959", "2992", "3020"]
     window = {"origin_id": "2947", "country": "Brazil", "country_value": "Brazil",
               "native_max_distance_km": 500, "min_runway_ft": 15000,
               "selector_airport_ids": options, "native_destination_ids": ["3020"]}
     selections = []
+    attempts = []
+    reads = []
+    elapsed = [0.0]
+
+    def wait(seconds):
+        elapsed[0] += seconds
+        return False
+
+    clock = SimpleNamespace(monotonic=lambda: elapsed[0], time=lambda: 1_900_000_000.0 + elapsed[0])
+    monkeypatch.setattr(game_observations, "time", clock)
 
     class Bot:
         stopping = False
+        _stop = SimpleNamespace(wait=wait)
 
         def js(self, script, *args):
             assert script == game_observations._START_COUNTRY_SEARCH_JS
             assert args[:4] == ("2947", 500, 15000, "Brazil")
             assert args[-1] == options
+            attempts.append(args[4])
+            if len(attempts) == 1:
+                return False  # AJAX still pending before the search can start.
             selections.append(args[4])
             return {"airport_ids": options}
-
-        def wait_loaded(self, target, *, timeout):
-            assert target == "resResult" and 0 < timeout <= 8
-            return True
 
     def read(_bot, script, *controls, with_timestamp):
         assert script == game_observations._VERIFIED_COUNTRY_DEMAND_JS and with_timestamp
         assert controls[-1] == selections[-1]
+        reads.append(controls[-1])
+        if len(reads) == 1:
+            return None
+        if len(reads) == 2:
+            return {"airport_ids": None, "rows": []}, clock.time()
+        if controls[-1] == "2959":
+            elapsed[0] += 8  # A response coming in past the airport deadline stays unresolved.
         return {"airport_ids": options if len(selections) <= 2 else options[:-1], "rows": [
-            {"dep_id": "2947", "arr_id": "2944", "distance": "337", "runway": "13123",
+            {"dep_id": "2947", "arr_id": selections[-1], "distance": "337", "runway": "13123",
              "y": "100", "j": "20", "f": "5", "destination_country": "Brazil",
              "event_demand_boosted": True}
-        ]}, 1_900_000_000.0
+        ]}, clock.time()
 
     monkeypatch.setattr(fleet, "read_route_candidates", lambda _bot: [
-        RouteCandidate("2944", "GIG", 337, 100, 20, 5, 13123)])
+        RouteCandidate(selections[-1], "TEST", 337, 100, 20, 5, 13123)])
     monkeypatch.setattr(game_observations, "_stable_read", read)
-    evidence, = game_observations._audit_omitted_country_airports(Bot(), [window])
-    assert selections == ["2944", "2959", "2992"]
+    evidence, = game_observations._audit_omitted_country_airports(Bot(), [window], budget_seconds=budget)
+    destinations = ["2944", "2959"] if budget == 8 else ["2944", "2959", "2992"]
+    assert selections == destinations
+    assert attempts == ["2944", *destinations]
+    assert reads == ["2944", "2944", *destinations]
     assert "native_destination_ids" not in evidence
     assert evidence["direct_destination"] == {
         "arr_id": "2944", "distance": 337, "destination_runway_ft": 13123,
         "y": 100, "j": 20, "f": 5, "destination_country": "Brazil", "event_demand_boosted": True,
     }
-    assert evidence["observed_at"] == 1_900_000_000.0
+    assert evidence["started_at"] == 1_900_000_000.25
+    assert evidence["observed_at"] == 1_900_000_000.75
+
+
+@pytest.mark.parametrize("owned_target", [True, False])
+def test_directed_country_search_respects_ownership_and_caps_large_selector(tmp_path, monkeypatch, owned_target):
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
+    monkeypatch.setattr(game_observations, "HubRegistry", lambda: HubRegistry(tmp_path / "hubs.json"))
+    options = [{"id": "2947", "text": "GRU - Guarulhos", "code": "GRU"}]
+    selector = [str(value) for value in range(3100, 3131)]
+    submissions = []
+    target = "2947" if owned_target else "2944"
+
+    class Bot:
+        stopping = False
+        driver = object()
+        config = SimpleNamespace(
+            get=lambda _section, key: {"route_audit_origin_id": target, "route_audit_country": "Brazil"}[key],
+            get_int=lambda _section, key, default: 2 if key == "route_audit_max_airports" else default,
+        )
+
+        def open_popup(self, page, label, selector):
+            assert (page, label, selector) == ("routes_main.php", "Routes", "nav_routes")
+
+        def close_popup(self, *, quiet):
+            assert quiet
+
+        def ajax(self, page, target):
+            assert (page, target) == ("research_main.php", "routeAction")
+
+        def js(self, script, *args):
+            if script == _HUB_OPTIONS_JS:
+                return options
+            assert args[:4] == (target, 6000, 5000, "Brazil")
+            if script == game_observations._PREPARE_COUNTRY_SEARCH_JS:
+                return "Brazil"
+            assert script == game_observations._START_COUNTRY_SEARCH_JS
+            if len(args) > 4:
+                assert args[-1] == selector
+            submissions.append(args[4] if len(args) > 4 else "0")
+            return {"airport_ids": selector}
+
+        def wait_loaded(self, target, *, timeout):
+            assert (target, timeout) == ("resResult", 8)
+            return True
+
+    def candidates(_bot):
+        destination = selector[0] if submissions[-1] == "0" else submissions[-1]
+        return [RouteCandidate(destination, "TEST", 2000, 100, 20, 5, 6000)]
+
+    def read(bot, script, *_args, with_timestamp):
+        assert script == game_observations._VERIFIED_COUNTRY_DEMAND_JS and with_timestamp
+        item, = candidates(bot)
+        rows = [{"dep_id": target, "arr_id": item.arr_id, "distance": "2000", "runway": "6000",
+                 "destination_country": "Brazil", "y": "100", "j": "20", "f": "5"}]
+        return {"airport_ids": selector, "rows": rows}, time.time()
+
+    monkeypatch.setattr(fleet, "read_route_candidates", candidates)
+    monkeypatch.setattr(game_observations, "_stable_read", read)
+    evidence = []
+    assert game_observations.collect_owned_hub_demand(Bot(), country_windows=evidence) == int(owned_target)
+    if not owned_target:
+        assert evidence == submissions == []
+        return
+    assert submissions == ["0", "3101", "3102"]
+    assert evidence[0]["selector_airport_ids"] == selector
+    assert evidence[0]["native_destination_ids"] == ["3100"]
+    assert [row["direct_destination"]["arr_id"] for row in evidence[1:]] == ["3101", "3102"]
+    assert [row["destination_id"] for row in registry.demand_observations({target})] == ["3100"]
 
 
 @pytest.mark.parametrize(("window_type", "bad_result"), [
@@ -1277,10 +1437,19 @@ def test_demand_collection_discards_unstable_reads_and_invalid_hub_selector(tmp_
     assert persisted["route_demand_attempts"]["2926"]["status"] == "inconclusive"
 
 
+@pytest.mark.parametrize("observation_only", [False, True])
 @pytest.mark.parametrize("failure", [None, "wrong_origin", "changed_ownership", "missing_ownership"])
-def test_external_demand_requires_current_ownership_and_matching_results(tmp_path, monkeypatch, failure):
+def test_external_demand_requires_current_ownership_and_matching_results(
+        tmp_path, monkeypatch, failure, observation_only):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    if observation_only:
+        # The historical rotation would select this unattempted origin first.
+        assert registry.record_catalog([{"id": "3140", "purchasable": True, "hub_price": 5000}],
+                                       observed_at=time.time() - game_observations.DEFAULT_MAX_AGE_SECONDS - 1)
     assert registry.record_catalog([{"id": "3139", "purchasable": True, "hub_price": 5000}])
+    if observation_only and failure != "missing_ownership":
+        assert registry.external_demand_registry().record_demand_attempt(
+            "3139", search_scope="configured", max_distance=6000, min_runway=5000)
     monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
     monkeypatch.setattr(game_observations, "HubRegistry", lambda: HubRegistry(tmp_path / "hubs.json"))
     options = [{"id": "0", "text": "Select hub"},
@@ -1308,7 +1477,7 @@ def test_external_demand_requires_current_ownership_and_matching_results(tmp_pat
 
     class Config:
         def get_bool(self, _section, _key):
-            return True
+            return not observation_only
 
         def get_int(self, _section, _key, default):
             return default
@@ -1327,9 +1496,11 @@ def test_external_demand_requires_current_ownership_and_matching_results(tmp_pat
             pass
 
     bot = Bot()
-    assert game_observations.collect_external_hub_demand(bot) == (1 if failure is None else 0)
+    assert game_observations.collect_external_hub_demand(
+        bot, observation_only=observation_only) == (1 if failure is None else 0)
     assert bot.closed
-    assert searched == ([] if failure == "missing_ownership" else [("3139", 6000, 5000, False)])
+    distance, runway = (20000, 0) if observation_only else (6000, 5000)
+    assert searched == ([] if failure == "missing_ownership" else [("3139", distance, runway, False)])
     assert registry.demand_observations({"3139"}) == []
     external = registry.external_demand_snapshot({"2926"})
     assert len(external["samples"]) == (1 if failure is None else 0)

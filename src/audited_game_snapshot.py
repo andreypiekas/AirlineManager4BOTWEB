@@ -164,16 +164,21 @@ def _country_search_partitions(windows, owned_ids, cycle):
         unresolved = None
         if stable:
             unresolved = set(absent)
-            after_windows = max(window["observed_at"] for window in group)
+            last_window = max(group, key=lambda window: window["observed_at"])
             for reading in readings:
                 destination = reading.get("direct_destination", {}).get("arr_id")
                 if (destination in unresolved and reading["selector_airport_ids"] == options
-                        and reading["started_at"] >= after_windows):
+                        and reading["native_max_distance_km"] == last_window["native_max_distance_km"]
+                        and reading["started_at"] >= last_window["observed_at"]):
                     direct_searches.append(reading)
                     unresolved.remove(destination)
+        partition_status = ("incomplete" if unexpected or unresolved else "reconciled") if stable else "unverified"
         reports.append({
             "source": "game_country_route_search", "origin_id": origin,
             "country": country, "country_value": country_value, "min_runway_ft": runway,
+            "requested_max_distance_km": max(window.get("requested_max_distance_km", window["native_max_distance_km"])
+                                             for window in group),
+            "partition_status": partition_status,
             "selector_status": status, "selector_airport_ids": options if stable else None,
             "origin_in_selector": origin in options if stable else None,
             "observed_destination_ids": sorted(observed), "absent_selector_ids": absent,
@@ -182,6 +187,19 @@ def _country_search_partitions(windows, owned_ids, cycle):
             "unresolved_selector_ids": sorted(unresolved) if unresolved is not None else None,
         })
     return reports
+
+
+def _record_direct_country_demand(expansion, partitions):
+    for partition in partitions:
+        if partition["unexpected_destination_ids"]:
+            continue
+        for reading in partition["direct_airport_searches"]:
+            sample = reading["direct_destination"]
+            # In direct mode the game ignores both filters. Use the widest
+            # requested ceiling, even when the last native window was narrower.
+            if (sample["distance"] <= partition["requested_max_distance_km"] + 0.001
+                    and sample["destination_runway_ft"] >= partition["min_runway_ft"]):
+                expansion.record_demand(partition["origin_id"], [sample], observed_at=reading["observed_at"])
 
 
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
@@ -346,6 +364,12 @@ def capture_game_snapshot(bot, *, read_only_window=None, operational_evidence=No
     now = time.time()
     expansion = HubExpansionRegistry()
     owned_ids = _verified_owned_hubs(inventory, now)
+    if read_only_window is not None and not 0 < read_only_window[0] <= read_only_window[1] <= now:
+        raise ValueError("Janela de observação fora da captura")
+    if read_only_window is not None and operational_evidence is not None:
+        partitions = _country_search_partitions(
+            operational_evidence.get("country_search_windows", []), owned_ids, read_only_window)
+        _record_direct_country_demand(expansion, partitions)
     demand = expansion.demand_research_snapshot(owned_ids, now=now)
     external = expansion.external_demand_snapshot(owned_ids, now=now)
     cash, cash_at = recent_verified_money(bot, now=now)

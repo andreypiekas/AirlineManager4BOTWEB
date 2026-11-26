@@ -754,6 +754,8 @@ def test_a4_missing_financial_evidence_and_coverage_are_no_buy():
     assert partial["status"] == "inconclusivo"
     assert partial["decision"] == "nao_comprar"
     assert partial["best"] is not None  # informational ranking only
+    assert partial["cash_limits"]["gross_ceiling"] == 25000
+    assert partial["budget_after_reservations_and_limits"] is None
     assert "compromissos_a_conciliar" in partial["blocking_reasons"]
 
 

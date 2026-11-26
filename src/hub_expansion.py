@@ -71,7 +71,7 @@ def _engine_id(value: object) -> Optional[str]:
     return identifier if _ENGINE_ID.fullmatch(identifier) else None
 
 
-def _fresh(stamp: object, now: int) -> bool:
+def _fresh(stamp: object, now: float, max_age_seconds: int = MAX_AGE_SECONDS) -> bool:
     if type(stamp) not in (int, float) or type(now) not in (int, float):
         return False
     try:
@@ -79,7 +79,7 @@ def _fresh(stamp: object, now: int) -> bool:
     except (OverflowError, ValueError):
         return False
     return (math.isfinite(observed) and math.isfinite(current) and observed > 0
-            and 0 <= current - observed <= MAX_AGE_SECONDS)
+            and 0 <= current - observed <= max_age_seconds)
 
 
 def native_scenario_identity(scenario: Mapping) -> tuple | None:
@@ -1055,7 +1055,8 @@ class HubExpansionRegistry:
         return min(hubs, key=lambda hub: (last_seen[hub], sequences[hub], int(hub)))
 
     def demand_research_snapshot(self, owned_hub_ids: set[str], *,
-                                 now: Optional[float] = None) -> dict:
+                                 now: Optional[float] = None,
+                                 max_age_seconds: int = MAX_AGE_SECONDS) -> dict:
         """Read demand, unresolved conflicts and research attempts atomically.
 
         Search attempts only prove that research was tried. They never certify
@@ -1069,7 +1070,7 @@ class HubExpansionRegistry:
             attempts = _stored_demand_attempts(saved.get("route_demand_attempts"))
         rows = [deepcopy(row) for row in samples.values()
                 if row["origin_id"] in owned
-                and 0 <= now - row["observed_at"] <= MAX_AGE_SECONDS]
+                and 0 <= now - row["observed_at"] <= max_age_seconds]
         rows.sort(key=lambda row: (int(row["origin_id"]), int(row["destination_id"])))
         progress = []
         for hub in sorted(owned, key=int):
@@ -1087,7 +1088,7 @@ class HubExpansionRegistry:
                 "last_requested_min_runway_ft": attempt.get("min_runway") if attempted_at is not None else None,
                 "conflicted_routes": sum(
                     key.startswith(hub + ":")
-                    and 0 <= now - conflict["observed_at"] <= MAX_AGE_SECONDS
+                    and 0 <= now - conflict["observed_at"] <= max_age_seconds
                     for key, conflict in conflicts.items()),
                 "coverage": "partial",
             })
@@ -1110,7 +1111,8 @@ class HubExpansionRegistry:
         return HubExpansionRegistry(self.path.with_name(self.path.stem + "_external_demand.json"))
 
     def external_research_candidates(self, owned_ids: set[str], *,
-                                     now: Optional[float] = None) -> list[dict]:
+                                     now: Optional[float] = None,
+                                     max_age_seconds: int = MAX_AGE_SECONDS) -> list[dict]:
         """Return fresh catalog evidence outside a verified ownership inventory."""
         owned = {_airport_id(value) for value in owned_ids}
         if not owned or None in owned:
@@ -1122,7 +1124,7 @@ class HubExpansionRegistry:
             return []
         candidates = []
         for row in _stored_candidates(saved.get("candidates")):
-            if row["id"] in owned or not _fresh(row.get("observed_at"), now):
+            if row["id"] in owned or not _fresh(row.get("observed_at"), now, max_age_seconds):
                 continue
             candidate = {"id": row["id"], "code": row.get("code"),
                          "observed_at": row["observed_at"]}
@@ -1131,21 +1133,25 @@ class HubExpansionRegistry:
             for field in ("hub_price", "hub_points"):
                 stamp = row.get(f"{field}_observed_at")
                 if (row.get(f"{field}_conflict_at") is None
-                        and row.get(field) is not None and _fresh(stamp, now)):
+                        and row.get(field) is not None and _fresh(stamp, now, max_age_seconds)):
                     candidate[field] = row[field]
                     candidate[f"{field}_observed_at"] = stamp
             candidates.append(candidate)
         return sorted(candidates, key=lambda row: int(row["id"]))
 
     def external_research_origins(self, owned_ids: set[str], *,
-                                  now: Optional[float] = None) -> list[str]:
-        return [row["id"] for row in self.external_research_candidates(owned_ids, now=now)]
+                                  now: Optional[float] = None,
+                                  max_age_seconds: int = MAX_AGE_SECONDS) -> list[str]:
+        return [row["id"] for row in self.external_research_candidates(
+            owned_ids, now=now, max_age_seconds=max_age_seconds)]
 
     def external_demand_snapshot(self, owned_ids: set[str], *,
-                                 now: Optional[float] = None) -> dict:
-        candidates = self.external_research_candidates(owned_ids, now=now)
+                                 now: Optional[float] = None,
+                                 max_age_seconds: int = MAX_AGE_SECONDS) -> dict:
+        now = time.time() if now is None else now
+        candidates = self.external_research_candidates(owned_ids, now=now, max_age_seconds=max_age_seconds)
         snapshot = self.external_demand_registry().demand_research_snapshot(
-            {row["id"] for row in candidates}, now=now)
+            {row["id"] for row in candidates}, now=now, max_age_seconds=max_age_seconds)
         return {**snapshot, "origin_scope": "external_catalog", "candidate_hubs": len(candidates),
                 "candidate_inventory": candidates, "candidate_source": "game_purchase_catalog"}
 

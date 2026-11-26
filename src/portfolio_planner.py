@@ -956,7 +956,7 @@ def compare_audited_portfolio(
         "evaluated_count": len(raw_rows),
         "eligible_count": len(candidates),
         "excluded": dict(sorted(excluded.items())),
-        "budget_after_reservations_and_limits": budget,
+        "budget_after_reservations_and_limits": budget if commitments_verified is True else None,
         "cash_limits": {
             "required": require_independent_cash,
             "audited_available": baseline[0] if baseline is not None else None,

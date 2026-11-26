@@ -57,6 +57,29 @@ def test_external_catalog_costs_keep_independent_observation_times(tmp_path, mon
     assert registry.external_research_candidates({"123", "456"}, now=clock[0]) == []
 
 
+def test_external_snapshot_uses_requested_age_for_catalog_costs_and_demand(tmp_path, monkeypatch):
+    clock = [1800000000]
+    monkeypatch.setattr("hub_expansion.time.time", lambda: clock[0])
+    registry = HubExpansionRegistry(tmp_path / "expansion.json")
+    assert registry.record_catalog([_candidate("456"), _candidate("789")])
+    external = registry.external_demand_registry()
+    demand = {"arr_id": "123", "distance": 2000, "y": 100, "j": 20, "f": 5}
+    assert external.record_demand("456", [demand]) == 1
+
+    clock[0] += 901
+    price_only = _candidate("456", price=1000)
+    del price_only["hub_points"]
+    assert registry.record_catalog([price_only])
+    assert external.record_demand("456", [{**demand, "arr_id": "789"}]) == 1
+
+    report = registry.external_demand_snapshot({"123"}, now=clock[0], max_age_seconds=900)
+    [candidate] = report["candidate_inventory"]
+    assert candidate["id"] == "456" and candidate["hub_price"] == 1000
+    assert "hub_points" not in candidate
+    assert [row["destination_id"] for row in report["samples"]] == ["789"]
+    assert registry.external_research_origins({"123"}, now=clock[0]) == ["456", "789"]
+
+
 def _research(*, airport_id="123", **overrides):
     observed_at = int(time.time())
     model = overrides.get("model", "model-fixture")
