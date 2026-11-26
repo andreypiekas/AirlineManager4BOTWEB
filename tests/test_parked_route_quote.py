@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 import native_route_quotes
 import parked_route_quote as collector
 import paths
+from market import MarketQuote
 from reroute import _FORM
 from route_stopover import _FARES, _READ, parked_seat_layout
 
@@ -35,6 +36,10 @@ class Bot:
         self.arrival = 17
         self.form_reads = iter([FORM, FORM])
         self.preview_aircraft = iter([AIRCRAFT])
+        self.fuel_quote = None
+
+    def stats(self):
+        return SimpleNamespace(fuel_quote=self.fuel_quote)
 
     def ajax(self, url, target, *, timeout):
         self.preview_id = next(self.preview_aircraft)
@@ -155,6 +160,33 @@ def test_observation_discards_preview_if_native_origin_changes(setup, monkeypatc
     assert not setup(bot, DETAIL, DETAIL, refresh_demand=True)
     assert bot.events[-2:] == ["close", "detail"]
     assert native_route_quotes.native_route_quotes(bot) == []
+
+
+@pytest.mark.parametrize(("price", "market_at", "expires_at", "observation", "cost_cents"), [
+    (2450, NOW - 5, NOW + 1, True, 52006885),
+    (2455, NOW - 3, NOW + 1, True, 52113022),
+    (2450, NOW - 5, NOW, True, None),
+    (2450, NOW - 2, NOW + 1, True, None),
+    (0, NOW - 5, NOW + 1, True, None),
+    (2450, NOW - 5, NOW + 1, False, None),
+])
+def test_fuel_price_must_cover_the_entire_observed_preview(
+    setup, monkeypatch, price, market_at, expires_at, observation, cost_cents,
+):
+    bot = Bot()
+    bot.fuel_quote = MarketQuote(price, market_at, expires_at)
+    monkeypatch.setattr(collector, "time", SimpleNamespace(time=lambda: NOW - 3))
+    assert setup(bot, DETAIL, DETAIL, refresh_demand=observation)
+    row, = native_route_quotes.native_route_quotes(bot)
+    assert row["fuel_lbs_per_leg"] == 212273
+    assert row["purchase_eligible"] is False
+    assert row.get("fuel_replacement_cost_per_leg_cents") == cost_cents
+    if cost_cents is None:
+        assert "preview_started_at" not in row and "fuel_market_quote" not in row
+    else:
+        assert row["preview_started_at"] == NOW - 3
+        assert row["fuel_market_quote"] == {"source": "game_market", "unit": "USD/1000",
+                                           "price": price, "observed_at": market_at, "expires_at": expires_at}
 
 
 @pytest.mark.parametrize(("raw", "expected"), [

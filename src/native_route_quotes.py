@@ -13,6 +13,7 @@ import time
 from copy import deepcopy
 
 import paths
+from market import MarketQuote
 from opportunity_models import DEFAULT_MAX_AGE_SECONDS
 
 _MAX_QUOTES = 256
@@ -113,7 +114,7 @@ def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
                              distance, fee, occupied, fares, stopover_id=None,
                              total_demand=None, today_demand=None, event_demand_boosted=None,
                              research_distance_km=None, fuel_lbs_per_leg=None, co2_kg_per_pax_km=None,
-                             seat_layout=None, now=None):
+                             seat_layout=None, fuel_quote=None, preview_started_at=None, now=None):
     """Called only after matching reads of the bound native form and fares."""
     if (not all(_identity(value) for value in (aircraft_id, origin_id, destination_id))
             or origin_id == destination_id
@@ -148,6 +149,14 @@ def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
         row["research_distance_km"] = research_distance_km
     if fuel_lbs_per_leg is not None:
         row["fuel_lbs_per_leg"] = fuel_lbs_per_leg
+        if (isinstance(fuel_quote, MarketQuote) and type(fuel_quote.price) is int and fuel_quote.price > 0
+                and type(preview_started_at) in (int, float)
+                and 0 < fuel_quote.observed_at <= preview_started_at <= now < fuel_quote.expires_at
+                and math.isfinite(fuel_quote.expires_at)):
+            row["preview_started_at"] = preview_started_at
+            row["fuel_market_quote"] = fuel_quote.evidence(now)
+            # USD per thousand pounds yields tenths of a cent for integer inputs.
+            row["fuel_replacement_cost_per_leg_cents"] = (fuel_lbs_per_leg * fuel_quote.price + 5) // 10
     if co2_kg_per_pax_km is not None:
         row["co2_kg_per_pax_km"] = co2_kg_per_pax_km
     if seat_layout is not None:

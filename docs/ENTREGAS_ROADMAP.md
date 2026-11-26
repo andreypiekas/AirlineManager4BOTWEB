@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3, combustível cotado para a mesma prévia (G0)
+
+- Em `--observe-game`, a linha privada da prévia registra o custo de reposição do combustível por trecho, em centavos de dólar, se a cotação nativa por 1.000 lb já tiver sido observada na abertura da prévia e continuar vigente até o fim da conferência. Preserva o início da prévia, o preço, sua fonte e sua vigência. A captura conserva essa referência histórica se o preço vencer depois da conferência. O consumo, o custo e o layout pertencem à aeronave existente. O coeficiente de CO₂ segue como referência e o custo de quotas do mesmo trecho exige uma quantidade verificada.
+- Por volta de 02h48 BRT, a consulta somente leitura no Chrome confirmou Black Friday Cargo Rush ativo, com fim previsto para 29/11 às 20h BRT. Routes mostrou 222 rotas, 224 aeronaves, `Parked (0)` e `Pending (2)`. As duas pendências eram manutenções. BCN–SHA continua como amostra manual durante o evento, com 212.273 lb por trecho a US$ 2.450 por 1.000 lb, equivalentes a US$ 520.068,85. A primeira captura do worker depende do login em seu Chrome dedicado. Replicar a prévia fora do evento exige uma aeronave elegível. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+- Os 100 testes focados cobriram a mesma janela de preço, o arredondamento de meio centavo, o vencimento durante a prévia, a leitura tardia do preço, a permanência da evidência após o vencimento e a preservação da coleta legada. Passaram 2.385 testes no Windows, com um pulado, e 16 testes de instalação no Ubuntu via WSL. Ruff e `git diff --check` passaram.
+
 ## 2026-11-26 — Autonomia Total A3, layout da mesma aeronave na cotação privada (G0)
 
 - Às 02h36 BRT, Routes mostrou 221 rotas, `Parked (0)` e `Pending (3)`. O detalhe nativo do PP-125-4, MC-21-400 em operação, mostrou 92/39/20 assentos Y/J/F. Os ícones de classe e os campos correspondentes de tarifa confirmaram a ordem das contagens. O link do avião e o controle nativo de matrícula no detalhe apontavam para o mesmo ID. A consulta foi somente leitura.

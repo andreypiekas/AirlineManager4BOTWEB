@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
@@ -127,6 +128,8 @@ def _collect_aircraft_quote(bot, aircraft_id, hubs, refreshed_origins):
         layout = parked_seat_layout(bot, aircraft_id) if refreshed_origins is not None else None
         if bot.stopping:
             return False
+        fuel_quote = bot.stats().fuel_quote if refreshed_origins is not None else None
+        preview_started_at = time.time() if fuel_quote is not None else None
         quote = _read_preview(bot, aircraft_id, sample)
         if not quote or bot.stopping:
             return False
@@ -151,7 +154,7 @@ def _collect_aircraft_quote(bot, aircraft_id, hubs, refreshed_origins):
             bot, aircraft_id=aircraft_id, origin_id=origin, destination_id=sample["destination_id"],
             distance=distance, fee=fee, occupied=occupied, fares=fares, total_demand=daily_counts,
             today_demand=today_counts, fuel_lbs_per_leg=fuel, co2_kg_per_pax_km=co2_rate,
-            seat_layout=layout,
+            seat_layout=layout, fuel_quote=fuel_quote, preview_started_at=preview_started_at,
             research_distance_km=sample["distance_km"],
             event_demand_boosted=any(row.get("event_demand_boosted") is True for row in (detail, again, sample)),
         )
