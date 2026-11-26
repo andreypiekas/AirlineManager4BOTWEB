@@ -42,6 +42,11 @@ def test_running_bot_is_read_once_and_untrusted_fields_are_removed():
                         "linked_aircraft_ids": ["24133209", secret],
                         "linked_aircraft_id_count": 1,
                     },
+                    "aircraft_route_demand": {
+                        "count": 3,
+                        "numeric_ids": ["98765"],
+                        "pair_comparisons": ["first_lower", secret, "equal"],
+                    },
                     "custom_source": {"token": secret},
                 },
                 "status_data": {"present": True, "count": 4, "numeric_ids": ["999", secret],
@@ -64,12 +69,75 @@ def test_running_bot_is_read_once_and_untrusted_fields_are_removed():
     assert report["sources"]["owned_hub_options"]["attribute_presence"]["title"] is False
     assert report["sources"]["owned_hub_options"]["attribute_presence"]["value"] is True
     assert report["sources"]["fleet_routes"]["linked_aircraft_ids"] == ["24133209"]
+    assert report["sources"]["aircraft_route_demand"]["numeric_ids"] == []
+    assert "pair_comparisons" not in report["sources"]["aircraft_route_demand"]
     assert report["aircraft_order_hub_selection"]["selected_hub_id"] is None
     assert report["aircraft_order_hub_selection"]["status"] == "unverified"
     assert report["status_data"]["numeric_ids"] == ["999"]
     assert report["sources"]["owned_hub_options"]["id_parseable_nodes"] is None
     assert "custom_source" not in report["sources"]
     assert secret not in json.dumps(report)
+
+
+def test_aircraft_demand_probe_compares_only_unambiguous_pairs(tmp_path):
+    if not shutil.which("node"):
+        pytest.skip("Node.js is required to run the embedded DOM probe")
+
+    mock = r"""
+const detail = {};
+const demand = {};
+const cells = [
+  {textContent: '8,219 / 12,773'},
+  {innerText: '75\u00a0\n75', textContent: '7575'},
+  {textContent: '31 / 0'},
+];
+let drawn = true;
+for (const cell of cells) cell.getClientRects = () => drawn ? [{}] : [];
+const elements = {
+  '#detailsAction': [detail],
+  '#detailsAction #list-demand': [demand],
+  '#detailsAction #list-demand .col-4': cells,
+  '#detailsAction #seat-layout .col-4': [{}, {}, {}],
+  '#newRouteInfo #newRouteContainer table.s-text': [{}],
+};
+globalThis.document = {querySelectorAll: selector => elements[selector] || []};
+globalThis.window = {statusData: null, getComputedStyle: () => ({visibility: 'visible'})};
+const reports = [probe()];
+drawn = false;
+reports.push(probe());
+drawn = true;
+cells[0].textContent = 'PRIVATE_LABEL 12/34';
+cells[1].innerText = '-5 / 25';
+cells[2].textContent = '123,45 / 40';
+reports.push(probe());
+elements['#detailsAction #list-demand'].push({});
+reports.push(probe());
+elements['#detailsAction #list-demand'].pop();
+cells.pop();
+reports.push(probe());
+console.log(JSON.stringify(reports));
+"""
+    path = tmp_path / "demand_pairs.js"
+    path.write_text("const probe = new Function(" + json.dumps(PROBE_JS) + ");\n" + mock,
+                    encoding="utf-8")
+    response = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+    assert response.returncode == 0, response.stderr
+    assert "PRIVATE_LABEL" not in response.stdout
+    assert "12,773" not in response.stdout
+    assert "7575" not in response.stdout
+    raw_reports = json.loads(response.stdout)
+    reports = [probe_game_sources(type("Driver", (), {"execute_script": lambda self, _, raw=raw: raw})())
+               for raw in raw_reports]
+    raw_reports[0]["sources"]["aircraft_route_demand"]["pair_comparisons"][0] = "PRIVATE_MUTATION"
+    available, hidden, malformed, duplicate, incomplete = (report["sources"] for report in reports)
+    assert available["aircraft_route_demand"]["pair_comparisons"] == ["first_lower", "equal", "first_higher"]
+    assert available["aircraft_seat_layout"]["count"] == 3
+    assert available["route_form_demand_table"]["count"] == 1
+    assert "pair_comparisons" not in hidden["aircraft_route_demand"]
+    assert malformed["aircraft_route_demand"]["pair_comparisons"] == ["unreadable"] * 3
+    assert "pair_comparisons" not in duplicate["aircraft_route_demand"]
+    assert incomplete["aircraft_route_demand"]["count"] == 2
+    assert "pair_comparisons" not in incomplete["aircraft_route_demand"]
 
 
 def test_existing_selenium_driver_and_wrapped_driver_are_supported():

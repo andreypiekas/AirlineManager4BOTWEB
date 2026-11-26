@@ -9,8 +9,9 @@ navigate, send requests, persist state, or invoke game controls.
 
 The result contains only fixed selector names, element counts, numeric game IDs,
 bounded page numbers, and booleans indicating whether allowlisted DOM
-attributes exist. IDs are sampled up to 40 per source, with separate total
-counts and truncation flags. ID-bearing sources additionally report the number
+attributes exist, plus fixed labels for comparisons of demand cells. IDs are
+sampled up to 40 per source, with separate total counts and truncation flags.
+ID-bearing sources additionally report the number
 of nodes with an explicit, parseable ID. ``pagination`` records only page
 numbers supported by DOM evidence, flags conflicting observations, and reports
 which known selectors and attributes supplied numeric evidence. A loading
@@ -23,6 +24,9 @@ price fields and engine controls inside ``#acModel``. Candidate counts are
 diagnostic only: they never verify the final price for a selected motor.
 ``model_hub_correlated`` requires a single, idle aircraft detail panel that
 actually contains the selected hub control. It only describes one DOM snapshot.
+``pair_comparisons`` describes the order of two numbers in each of three
+aircraft demand cells. It does not identify the cabins, establish which number
+is residual demand, or qualify a route for economic evaluation.
 ``probe_flight_history_structure(session, aircraft_id)`` is a separate, explicit
 read-only GET of one aircraft's details through the session owner. It returns
 only structural counts and availability hints for A9 calibration research.
@@ -57,6 +61,7 @@ from engine_detail import MODEL_DETAIL_IDENTITY_JS
 SAMPLE_LIMIT = 40
 _NUMERIC_ID = re.compile(r"^[1-9][0-9]{0,13}$")
 _MAX_COUNT = 10_000_000
+_DEMAND_PAIR_COMPARISONS = ("first_lower", "equal", "first_higher", "unreadable")
 _PAGINATION_EVIDENCE = (
     "popup_present",
     "pagination_present",
@@ -161,6 +166,23 @@ _SOURCES = (
      "attrs": ["class"], "id_source": "none"},
     {"key": "route_details", "selector": "#rDetails",
      "attrs": ["id", "data-dep", "data-arr"], "id_source": "none"},
+    {"key": "route_capable_aircraft", "selector": "#rDetails #capAc option",
+     "attrs": ["value", "disabled"], "id_source": "none"},
+    {"key": "aircraft_seat_layout", "selector": "#detailsAction #seat-layout .col-4",
+     "attrs": ["class"], "id_source": "none"},
+    {"key": "aircraft_route_demand", "selector": "#detailsAction #list-demand .col-4",
+     "attrs": ["class"], "id_source": "none"},
+    {"key": "aircraft_ticket_fields",
+     "selector": "#detailsAction #eTicket, #detailsAction #bTicket, #detailsAction #fTicket",
+     "attrs": ["id", "disabled"], "id_source": "none"},
+    {"key": "route_form_demand_table", "selector": "#newRouteInfo #newRouteContainer table.s-text",
+     "attrs": ["class"], "id_source": "none"},
+    {"key": "route_form_fee_candidates",
+     "selector": "#newRouteInfo #newRouteContainer .text-danger.font-weight-bold",
+     "attrs": ["class"], "id_source": "none"},
+    {"key": "route_form_fare_fields",
+     "selector": "#newRouteInfo #eSeat, #newRouteInfo #bSeat, #newRouteInfo #fSeat",
+     "attrs": ["id", "disabled"], "id_source": "none"},
 )
 
 # This script is intentionally self-contained and uses only synchronous DOM reads.
@@ -221,6 +243,17 @@ function summarizeIds(ids) {
           ids_truncated: ids.size > numericIds.length};
 }
 
+function compareDemandPair(node) {
+  // Accept two whole numbers only, separated by a slash or rendered line break.
+  const text = String(node.innerText ?? node.textContent ?? '').trim();
+  const pair = text.split(/\s*\/\s*|\r?\n\s*/).map(value => value.trim());
+  const wholeNumber = /^(?:[0-9]{1,12}|[0-9]{1,3}(?:,[0-9]{3}){1,3})$/;
+  if (pair.length !== 2 || !pair.every(value => wholeNumber.test(value))) return 'unreadable';
+  const [first, second] = pair.map(value => Number(value.replace(/,/g, '')));
+  if (first === second) return 'equal';
+  return first < second ? 'first_lower' : 'first_higher';
+}
+
 const result = {schema_version: 1, sources: {}, status_data: {}, pagination: {}};
 for (const spec of specs) {
   const nodes = Array.from(document.querySelectorAll(spec.selector));
@@ -254,6 +287,13 @@ for (const spec of specs) {
     result.sources[spec.key].linked_aircraft_id_count = linked.size;
     result.sources[spec.key].linked_aircraft_ids_truncated =
       linked.size > result.sources[spec.key].linked_aircraft_ids.length;
+  }
+  if (spec.key === 'aircraft_route_demand' && nodes.length === 3 &&
+      document.querySelectorAll('#detailsAction').length === 1 &&
+      document.querySelectorAll('#detailsAction #list-demand').length === 1 &&
+      nodes.every(node => node.getClientRects().length > 0 &&
+                          window.getComputedStyle(node).visibility === 'visible')) {
+    result.sources[spec.key].pair_comparisons = nodes.map(compareDemandPair);
   }
 }
 
@@ -566,7 +606,7 @@ def _sanitize(raw: Any) -> dict:
             "selector": spec["selector"],
             "count": _count(entry.get("count")),
             "attribute_presence": {name: attrs.get(name) is True for name in spec["attrs"]},
-            **_id_fields(entry),
+            **_id_fields(entry if spec["id_source"] != "none" else {}),
         }
         if spec["id_source"] != "none":
             matched = entry.get("id_parseable_nodes")
@@ -581,6 +621,13 @@ def _sanitize(raw: Any) -> dict:
                 _count(entry.get("linked_aircraft_id_count")), len(linked))
             cleaned_entry["linked_aircraft_ids_truncated"] = (
                 cleaned_entry["linked_aircraft_id_count"] > len(linked))
+        if spec["key"] == "aircraft_route_demand":
+            relations = entry.get("pair_comparisons")
+            if (cleaned_entry["count"] == 3 and type(relations) is list
+                    and len(relations) == 3
+                    and all(type(relation) is str and relation in _DEMAND_PAIR_COMPARISONS
+                            for relation in relations)):
+                cleaned_entry["pair_comparisons"] = relations.copy()
         cleaned[spec["key"]] = cleaned_entry
 
     status = raw.get("status_data")

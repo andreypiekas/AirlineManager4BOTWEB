@@ -944,7 +944,7 @@ const EN = {
   "Tempo esgotado. Verifique se o jogo está carregado.": "Timed out. Check that the game has loaded.",
   "Sessão do jogo indisponível. Verifique o bot.": "Game session unavailable. Check the bot.",
   "Não foi possível verificar as fontes do jogo.": "Could not check the game sources.",
-  "Fontes visíveis": "Visible sources", "Elementos": "Elements", "IDs distintos": "Unique IDs",
+  "Fontes detectadas no DOM": "Sources detected in the DOM", "Elementos": "Elements", "IDs distintos": "Unique IDs",
   "Com ID": "With ID", "Estado do jogo": "Game state", "Página": "Page", "de": "of",
   "Página atual não identificada": "Current page unknown", "Total de páginas não identificado": "Total pages unknown",
   "Evidência contraditória de paginação": "Conflicting pagination evidence",
@@ -958,6 +958,14 @@ const EN = {
   "Rotas da frota": "Fleet routes", "Aeronaves estacionadas": "Parked aircraft",
   "Atributos de hub da frota": "Fleet hub attributes", "Atributos de aeronaves da frota": "Fleet aircraft attributes",
   "Resultados de pesquisa": "Research results",
+  "Aeronaves listadas para a rota": "Aircraft listed for route",
+  "Layout da aeronave": "Aircraft seat layout",
+  "Colunas de demanda da aeronave": "Aircraft demand columns",
+  "Campos de tarifa da aeronave": "Aircraft fare fields",
+  "Possível tabela de demanda do formulário": "Possible route form demand table",
+  "Possíveis campos de taxa de rota": "Possible route fee fields",
+  "Campos de tarifa do formulário": "Route form fare fields",
+  "Primeiro valor em relação ao segundo por coluna": "First value compared with second by column",
   "Bases identificadas pelo seletor do jogo. Vínculos de aeronaves aguardam confirmação individual.": "Hubs identified by the game selector. Aircraft assignments require individual confirmation.",
   "Última leitura": "Last read", "Aguardando leitura de bases no jogo.": "Waiting for hub data from the game.",
   "Aeronaves confirmadas": "Confirmed aircraft", "Rotas com estimativa": "Routes with estimates",
@@ -4226,7 +4234,17 @@ const gameSourceProbeItems = [
   ["fleet_home_hub_attributes", "Atributos de hub da frota"],
   ["fleet_aircraft_attributes", "Atributos de aeronaves da frota"],
   ["research_results", "Resultados de pesquisa"],
+  ["route_capable_aircraft", "Aeronaves listadas para a rota", false],
+  ["aircraft_seat_layout", "Layout da aeronave", false],
+  ["aircraft_route_demand", "Colunas de demanda da aeronave", false],
+  ["aircraft_ticket_fields", "Campos de tarifa da aeronave", false],
+  ["route_form_demand_table", "Possível tabela de demanda do formulário", false],
+  ["route_form_fee_candidates", "Possíveis campos de taxa de rota", false],
+  ["route_form_fare_fields", "Campos de tarifa do formulário", false],
 ];
+const gameSourceDemandComparisons = new Map([
+  ["first_lower", "<"], ["equal", "="], ["first_higher", ">"], ["unreadable", "?"],
+]);
 const gameSourcePageEvidence = [
   ["popup_present", "Janela da frota"],
   ["pagination_present", "Paginação visível"],
@@ -4257,19 +4275,31 @@ function renderGameSourceProbe(report) {
   }
   const sources = $("gameSourceProbeSources");
   sources.replaceChildren();
-  let visible = 0;
-  for (const [key, label] of gameSourceProbeItems) {
-    const source = report.sources[key] || {};
+  let detected = 0;
+  let reported = 0;
+  for (const [key, label, hasIds = true] of gameSourceProbeItems) {
+    const source = report.sources[key];
+    if (!source || typeof source !== "object") continue;
+    reported++;
     const count = gameSourceSafeCount(source.count);
     const distinct = gameSourceSafeCount(source.numeric_id_count);
     const identified = source.id_parseable_nodes == null ? null :
       Math.min(count, gameSourceSafeCount(source.id_parseable_nodes));
-    if (count > 0) { visible++; }
+    if (count > 0) detected++;
     const item = document.createElement("div");
     const name = document.createElement("dt"); name.textContent = tr(label);
     const value = document.createElement("dd");
-    value.textContent = tr("Elementos") + ": " + count + " · " + tr("IDs distintos") + ": " + distinct +
-      (identified === null ? "" : " · " + tr("Com ID") + ": " + identified + " / " + count);
+    value.textContent = tr("Elementos") + ": " + count;
+    if (hasIds) {
+      value.textContent += " · " + tr("IDs distintos") + ": " + distinct +
+        (identified === null ? "" : " · " + tr("Com ID") + ": " + identified + " / " + count);
+    }
+    const pairs = source.pair_comparisons;
+    if (key === "aircraft_route_demand" && count === 3 && Array.isArray(pairs) &&
+        pairs.length === 3 && pairs.every(pair => gameSourceDemandComparisons.has(pair))) {
+      value.textContent += " · " + tr("Primeiro valor em relação ao segundo por coluna") + ": " +
+        pairs.map(pair => gameSourceDemandComparisons.get(pair)).join(" / ");
+    }
     item.append(name, value);
     sources.append(item);
   }
@@ -4281,7 +4311,7 @@ function renderGameSourceProbe(report) {
     tr("IDs distintos") + ": " + gameSourceSafeCount(status.numeric_id_count);
   stateItem.append(stateName, stateValue);
   sources.append(stateItem);
-  $("gameSourceProbeSummary").textContent = tr("Fontes visíveis") + ": " + visible + " / " + gameSourceProbeItems.length;
+  $("gameSourceProbeSummary").textContent = tr("Fontes detectadas no DOM") + ": " + detected + " / " + reported;
 
   const pagination = report.pagination;
   const page = gameSourcePageNumber(pagination.current_page);

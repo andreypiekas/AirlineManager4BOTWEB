@@ -135,11 +135,12 @@ const $ = id => {
 };
 const document = {createElement: () => new Element()};
 const translations = {
-  'Fontes visíveis': 'Visible sources', 'Elementos': 'Elements',
+  'Fontes detectadas no DOM': 'Sources detected in the DOM', 'Elementos': 'Elements',
   'IDs distintos': 'Unique IDs', 'Com ID': 'With ID',
   'Página': 'Page', 'de': 'of', 'Estado do jogo': 'Game state',
   'Verificação concluída.': 'Check completed.',
   'Bases adquiridas no seletor': 'Owned hubs in selector',
+  'Primeiro valor em relação ao segundo por coluna': 'First value compared with second by column',
   'Linhas encontradas': 'Rows found', 'ID da aeronave': 'Aircraft ID',
   'Controles de paginação': 'Pagination controls'
 };
@@ -174,9 +175,12 @@ const allText = element => [element.textContent,
   const privateValue = '<img src=x onerror=steal_token()> PASSWORD_TOKEN';
   const report = {
     sources: {
+      ...Object.fromEntries(gameSourceProbeItems.map(([key]) => [key, {count: 0}])),
       owned_hub_options: {count: 4, numeric_id_count: 2, id_parseable_nodes: 3,
         numeric_ids: ['1', privateValue], selector: privateValue},
       fleet_routes: {count: 1, numeric_id_count: 1, id_parseable_nodes: 1},
+      aircraft_route_demand: {count: 3, pair_comparisons: ['first_lower', 'equal', 'unreadable']},
+      aircraft_seat_layout: {count: 3, pair_comparisons: ['equal', 'equal', 'equal']},
       arbitrary_secret: {count: 200, numeric_id_count: privateValue}
     },
     status_data: {count: 3, numeric_id_count: 1, token: privateValue},
@@ -189,21 +193,32 @@ const allText = element => [element.textContent,
   assert.equal($('gameSourceProbeResults').hidden, false);
   assert.equal($('gameSourceProbeStatus').dataset.state, 'success');
   assert.equal($('gameSourceProbePanel').attributes['aria-busy'], undefined);
-  assert.equal($('gameSourceProbeSummary').textContent, 'Fontes visíveis: 2 / 13');
+  assert.equal($('gameSourceProbeSummary').textContent, 'Fontes detectadas no DOM: 4 / 20');
   assert.equal($('gameSourceProbePagination').textContent,
     'Página 2 de 5 · Paginação sem conflito identificado');
   assert.match(allText($('gameSourceProbeSources')), /Com ID: 3 \/ 4/);
+  assert.match(allText($('gameSourceProbeSources')), /Primeiro valor em relação ao segundo por coluna: < \/ = \/ \?/);
+  assert.doesNotMatch(allText($('gameSourceProbeSources')), /= \/ = \/ =/);
   assert.match($('gameSourceProbeEvidence').textContent, /Janela da frota/);
   assert.doesNotMatch(allText($('gameSourceProbeSources')), /PASSWORD_TOKEN|<img/);
   assert.doesNotMatch($('gameSourceProbeEvidence').textContent, /PASSWORD_TOKEN/);
 
   lang = 'en';
   renderGameSourceProbe(report);
-  assert.equal($('gameSourceProbeSummary').textContent, 'Visible sources: 2 / 13');
+  assert.equal($('gameSourceProbeSummary').textContent, 'Sources detected in the DOM: 4 / 20');
   assert.equal($('gameSourceProbePagination').textContent,
     'Page 2 of 5 · Paginação sem conflito identificado');
   assert.match(allText($('gameSourceProbeSources')), /Owned hubs in selector/);
+  assert.match(allText($('gameSourceProbeSources')), /First value compared with second by column: < \/ = \/ \?/);
+  report.sources.aircraft_route_demand.pair_comparisons[0] = privateValue;
+  renderGameSourceProbe(report);
+  assert.doesNotMatch(allText($('gameSourceProbeSources')), /First value compared with second by column|PASSWORD_TOKEN/);
   lang = 'pt_BR';
+  const legacySources = Object.fromEntries(gameSourceProbeItems.slice(0, 13)
+    .map(([key]) => [key, report.sources[key]]));
+  renderGameSourceProbe({...report, sources: legacySources});
+  assert.equal($('gameSourceProbeSummary').textContent, 'Fontes detectadas no DOM: 2 / 13');
+  assert.doesNotMatch(allText($('gameSourceProbeSources')), /Colunas de demanda da aeronave/);
 
   const errors = [
     [403, 'Acesso negado. Verifique a autorização no painel.'],
