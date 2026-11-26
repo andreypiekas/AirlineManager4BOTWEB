@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2, conciliação do seletor por país (G0)
+
+- A consulta somente leitura por volta de 03h10 BRT verificou 116 IDs únicos no seletor de GRU para Brasil antes e depois da busca de 500 km com pista mínima de 1.000 ft. A resposta de `Any airport` trouxe 12 linhas com distância mínima de 400,808 km e omitiu GIG e SDU. A seleção direta de SDU (2992) mostrou GRU–SDU a 344 km, pista de 4.341 ft, `Daily` Y/J/F de 394/507/181, sem `Today`, com aviso de evento e com zero aeronaves na rota ou aptas. A elegibilidade operacional dessas rotas curtas continua pendente.
+- Em `--observe-game`, a captura privada compara as opções de `Any airport` antes da pesquisa e depois da materialização da resposta estável. No ciclo de companhia confirmado, `observations.route_search_partitions` agrupa as janelas por origem, país e pista mínima. Registra IDs nativos observados, tetos solicitado e enviado, saturação da resposta e diferenças com o seletor, excluindo a própria origem da lista de ausências. Se as opções divergirem, a comparação fica sem verificação. A ausência de um ID exige avaliação própria de distância, pista e elegibilidade. A cobertura de rotas do planejamento permanece parcial.
+- Black Friday Cargo Rush seguia ativo até 29/11 às 20h BRT. Routes mostrou 223 rotas, `Parked (0)` e `Pending (1)`. Faltam uma prévia elegível fora do evento, o consumo exato de quotas para o candidato e a primeira captura autenticada no perfil dedicado do worker. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+- Passaram 107 testes focados, 2.393 testes no Windows com um pulado e 16 testes de instalação no Ubuntu via WSL. Ruff e `git diff --check` passaram.
+
 ## 2026-11-26 — Autonomia Total A2, limites da busca por país em GRU (G0)
 
 - Por volta de 03h BRT, `Fleet → Research`, origem GRU (2947), Brasil, `Any airport` e pista mínima de 1.000 ft mostrou 50 linhas em 20.000 km e 44 em 1.261 km. A união retornou 93 dos 116 IDs de aeroportos do seletor, com um destino em comum. Entre os 23 IDs ausentes estava o próprio GRU. A menor distância nativa da união foi 400,808 km.

@@ -52,6 +52,39 @@ def test_snapshot_binds_verified_fleet_and_hubs_without_inventing_complete_cover
     assert snapshot["observations"]["cash"]["committed"] is None
 
 
+@pytest.mark.parametrize(("other_selector", "status", "absent", "unexpected"), [
+    (["11", "21", "22"], "matched", [], []),
+    (["11", "21", "23"], "different", ["23"], ["22"]),
+    (["11", "21"], "unverified", None, None),
+    (None, "unverified", None, None),
+])
+def test_snapshot_compares_country_windows_only_in_confirmed_company_cycle(
+        other_selector, status, absent, unexpected):
+    selector = ["11", "21", "22"] if status != "different" else ["11", "21", "23"]
+    wide = {"origin_id": "11", "country": "Brazil", "country_value": "Brazil",
+            "started_at": NOW - 23, "observed_at": NOW - 20, "min_runway_ft": 1000,
+            "selector_airport_ids": selector, "native_destination_ids": ["21"],
+            "native_max_distance_km": 20_000, "native_limit_reached": True}
+    narrow = {**wide, "started_at": NOW - 18, "observed_at": NOW - 15,
+              "selector_airport_ids": other_selector, "native_destination_ids": ["21", "22"],
+              "native_max_distance_km": 1250, "native_limit_reached": False}
+    evidence = {"country_search_windows": [wide, narrow,
+                {**narrow, "started_at": NOW - 40, "native_destination_ids": ["23"]},
+                {**narrow, "observed_at": NOW, "native_destination_ids": ["24"]},
+                {**narrow, "origin_id": "12"}]}
+    snapshot = compose_snapshot(**observations(), read_only_window=(NOW - 30, NOW - 1),
+                                operational_evidence=evidence)
+    report, = snapshot["observations"]["route_search_partitions"]
+    assert report["windows"] == [wide, narrow]
+    assert report["selector_status"] == status
+    assert report["origin_in_selector"] == (None if status == "unverified" else True)
+    assert report["observed_destination_ids"] == ["21", "22"]
+    assert report["absent_selector_ids"] == absent
+    assert report["unexpected_destination_ids"] == unexpected
+    assert snapshot["coverage"]["scopes"]["routes"] is False
+    assert snapshot["snapshot_id"] == fingerprint_snapshot(snapshot)
+
+
 @pytest.mark.parametrize(("case", "status"), [
     ("matching", "matched"), ("substituted_aircraft", "different"), ("delivery", "different"),
     ("unclassified", "incomplete"), ("old_roster", "incomplete"),

@@ -48,7 +48,11 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
         return action
 
     monkeypatch.setattr(bot_module, "manage_fleet", fleet)
-    monkeypatch.setattr("game_observations.collect_owned_hub_demand", read("demand"))
+    def demand(owner, *, country_windows):
+        read("demand")(owner)
+        country_windows.append({"origin_id": "11"})
+
+    monkeypatch.setattr("game_observations.collect_owned_hub_demand", demand)
     monkeypatch.setattr("hub_operations.collect_hub_operations", read("hub_operations"))
     monkeypatch.setattr("game_observations.collect_owned_route_details", read("route_details"))
     monkeypatch.setattr("game_observations.collect_aircraft_engine_catalog", read("aircraft_catalog"))
@@ -69,6 +73,7 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
         assert 0 < started_at <= confirmed_at
         assert capture.call_args.kwargs["operational_evidence"] == {
             "pending": {"observation_id": "fleet"}, "hubs": None,
+            "country_search_windows": [{"origin_id": "11"}],
         }
     assert calls == ["session", "company", "mode", "demand", ("market", True), ("fleet", True),
                      "hub_operations", "route_details", "aircraft_catalog", "delivery_hubs", "finance", "staff", "header",

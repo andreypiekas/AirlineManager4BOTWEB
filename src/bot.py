@@ -775,11 +775,12 @@ class Bot:
 
         log.info("Consultando a companhia aérea [SOMENTE LEITURA].")
         started_at = time.time()
-        operational_evidence = {}
+        country_windows = []
+        operational_evidence = {"country_search_windows": country_windows}
         self._next_event = None
         for action, label in (
             (self._read_mode, "ler o modo de jogo"),
-            (lambda: collect_owned_hub_demand(self), "coletar demanda dos hubs"),
+            (lambda: collect_owned_hub_demand(self, country_windows=country_windows), "coletar demanda dos hubs"),
             (lambda: self._check_market(observation_only=True), "consultar combustível / CO₂"),
             (lambda: operational_evidence.update(pending=manage_fleet(self, observation_only=True)),
              "conferir frota e prévia de rota"),

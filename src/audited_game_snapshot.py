@@ -134,6 +134,39 @@ def _catalog_scopes(coverage, now):
     return {"models": models, "engines": engines}
 
 
+def _country_search_partitions(windows, owned_ids, cycle):
+    """Compare native search results to airport options in the confirmed company cycle."""
+    if cycle is None:
+        return []
+    started_at, confirmed_at = cycle
+    partitions = {}
+    for window in windows:
+        origin = window["origin_id"]
+        if (origin in owned_ids
+                and started_at <= window["started_at"] <= window["observed_at"] <= confirmed_at):
+            key = (origin, window["country"], window["country_value"], window["min_runway_ft"])
+            partitions.setdefault(key, []).append(window)
+
+    reports = []
+    for (origin, country, country_value, runway), group in partitions.items():
+        options = group[0]["selector_airport_ids"]
+        observed = {identity for window in group for identity in window["native_destination_ids"]}
+        stable = options is not None and all(window["selector_airport_ids"] == options for window in group)
+        expected = set(options) - {origin} if stable else None
+        absent = sorted(expected - observed) if stable else None
+        unexpected = sorted(observed - expected) if stable else None
+        status = ("different" if absent or unexpected else "matched") if stable else "unverified"
+        reports.append({
+            "source": "game_country_route_search", "origin_id": origin,
+            "country": country, "country_value": country_value, "min_runway_ft": runway,
+            "selector_status": status, "selector_airport_ids": options if stable else None,
+            "origin_in_selector": origin in options if stable else None,
+            "observed_destination_ids": sorted(observed), "absent_selector_ids": absent,
+            "unexpected_destination_ids": unexpected, "windows": group,
+        })
+    return reports
+
+
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                      quotes, cash, cash_at, now, mode=None, mode_at=None,
                      preview_margin=0.10, native_quotes=(), configured_prices=None, policy_values=None,
@@ -253,6 +286,9 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
         snapshot["observations"]["hub_operations"] = reconcile_hub_operations(
             operational_evidence, owned_hubs=hubs, hub_at=hub_at, routes=routes,
             fleet_verified=fleet_verified, window=read_only_window)
+        if "country_search_windows" in operational_evidence:
+            snapshot["observations"]["route_search_partitions"] = _country_search_partitions(
+                operational_evidence["country_search_windows"], owned_ids, read_only_window)
     if policy_values is not None:
         snapshot["observations"]["investment_policy"] = policy_values
     if external_demand is not None:

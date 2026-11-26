@@ -420,34 +420,44 @@ const controls = {
     value: '0', options: [{textContent: 'Argentina', value: 'Argentina'}],
     dispatchEvent: event => selected.push(['country', event.type])
   },
-  '#resResult': {replaceChildren: () => actions.push('clear')},
+  '#resResult': {replaceChildren: () => actions.push('clear'), querySelector: () => null,
+                 querySelectorAll: () => [{getAttribute: () => null, querySelector: () => null}]},
   'button#resSearch': {form: null, click: () => actions.push('search')}
 };
-globalThis.document = {querySelector: () => ({querySelector: selector => controls[selector]})};
+globalThis.document = {querySelector: selector => selector === '#resResult' ? controls[selector] :
+    {querySelector: name => controls[name]}};
 globalThis.window = {jQuery: {active: 1}};
 const prepare = new Function(process.argv[1]);
 const start = new Function(process.argv[2]);
+const observe = new Function(process.argv[3]);
 const country = prepare(...args);
 const busy = start(...args);
 window.jQuery.active = 0;
 const noAirportSelector = start(...args);
-controls['select#citySelectArr'] = {value: '2850'};
+controls['select#citySelectArr'] = {value: '2850', options: [
+  {value: '0'}, {value: '2851'}, {value: '2850'}, {value: '2852', disabled: true}
+]};
 const specificAirport = start(...args);
 controls['select#citySelectArr'].value = '0';
 const ready = start(...args);
+const resultIds = observe(...args).airport_ids;
+controls['select#citySelectArr'].value = '2850';
+const changedAirport = observe(...args).airport_ids;
+controls['select#citySelectArr'].value = '0';
 const overlapArgs = ['2947', 1723, 1000, 'Argentina'];
 const overlapCountry = prepare(...overlapArgs);
 const overlapReady = start(...overlapArgs);
 console.log(JSON.stringify({country, selected, busy, noAirportSelector, specificAirport,
-                            ready, overlapCountry, overlapReady, actions}));
+                            ready, resultIds, changedAirport, overlapCountry, overlapReady, actions}));
 """
     result = subprocess.run(["node", "-e", js, game_observations._PREPARE_COUNTRY_SEARCH_JS,
-                             game_observations._START_COUNTRY_SEARCH_JS],
+                             game_observations._START_COUNTRY_SEARCH_JS, game_observations._VERIFIED_COUNTRY_DEMAND_JS],
                             capture_output=True, text=True, check=True, timeout=8)
     assert json.loads(result.stdout) == {
         "country": "Argentina", "selected": [["hub", "change"], ["country", "change"]],
-        "busy": False, "noAirportSelector": False, "specificAirport": False, "ready": True,
-        "overlapCountry": "Argentina", "overlapReady": True,
+        "busy": False, "noAirportSelector": False, "specificAirport": False,
+        "ready": {"airport_ids": ["2850", "2851"]}, "resultIds": ["2850", "2851"], "changedAirport": None,
+        "overlapCountry": "Argentina", "overlapReady": {"airport_ids": ["2850", "2851"]},
         "actions": ["clear", "search", "clear", "search"],
     }
 
@@ -955,7 +965,9 @@ def test_search_keeps_event_warning_when_followup_dom_read_loses_it(tmp_path, mo
 
 
 @pytest.mark.parametrize(("extra_distance", "expected"), [(497.225, ["3020"]), (501, [])])
-def test_native_country_window_keeps_requested_distance_below_form_minimum(monkeypatch, extra_distance, expected):
+@pytest.mark.parametrize("selector_changed", [False, True])
+def test_native_country_window_keeps_requested_distance_below_form_minimum(
+        monkeypatch, extra_distance, expected, selector_changed):
     cutoff = 401
     candidates = [RouteCandidate("3020", "IZA", 400.808, 100, 20, 5, 8284),
                   RouteCandidate("2967", "MEA", extra_distance, 100, 20, 5, 3937)]
@@ -963,8 +975,10 @@ def test_native_country_window_keeps_requested_distance_below_form_minimum(monke
              "runway": str(item.runway), "destination_country": "Brazil", "y": "100", "j": "20", "f": "5",
              "event_demand_boosted": True} for item in candidates]
     observed_at = 1_900_000_000.0
+    selector = ["2944", "2947", "2967", "3020"]
     monkeypatch.setattr(fleet, "read_route_candidates", lambda _bot: candidates)
-    monkeypatch.setattr(game_observations, "_stable_read", lambda *_args, **_kwargs: (rows, observed_at))
+    monkeypatch.setattr(game_observations, "_stable_read", lambda *_args, **_kwargs: (
+        {"rows": rows, "airport_ids": selector[:-1] if selector_changed else selector}, observed_at))
 
     class Bot:
         stopping = False
@@ -975,16 +989,27 @@ def test_native_country_window_keeps_requested_distance_below_form_minimum(monke
             if script == game_observations._PREPARE_COUNTRY_SEARCH_JS:
                 return "Brazil"
             assert script == game_observations._START_COUNTRY_SEARCH_JS
-            return True
+            return {"airport_ids": selector}
 
         def wait_loaded(self, target, *, timeout):
             assert (target, timeout) == ("resResult", 8)
             return True
 
-    samples, timestamp = game_observations._read_hub_demand_window(Bot(), "2947", cutoff, 1000, country="Brazil")
+    windows = []
+    samples, timestamp = game_observations._read_hub_demand_window(
+        Bot(), "2947", cutoff, 1000, country="Brazil", country_windows=windows)
     assert [sample["arr_id"] for sample in samples] == expected
     assert all(sample["event_demand_boosted"] for sample in samples)
     assert timestamp == (observed_at if expected else None)
+    if expected:
+        window, = windows
+        assert window["selector_airport_ids"] == (None if selector_changed else selector)
+        assert window["native_destination_ids"] == ["2967", "3020"]
+        assert window["accepted_destination_count"] == 1
+        assert (window["requested_max_distance_km"], window["native_max_distance_km"]) == (401, 500)
+        assert window["native_limit_reached"] is False
+    else:
+        assert windows == []
 
 
 @pytest.mark.parametrize(("window_type", "bad_result"), [

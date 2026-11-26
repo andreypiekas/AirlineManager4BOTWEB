@@ -274,20 +274,44 @@ if (arrival.value !== countries[0].value || panel.querySelector('select#citySele
 return arrival.value;
 """
 
-_START_COUNTRY_SEARCH_JS = """
+_COUNTRY_SEARCH_SELECTOR_JS = r"""
 const [origin, distance, runway, country] = arguments;
 const panel = document.querySelector('#routeAction');
-if (!panel || (window.jQuery && window.jQuery.active > 0)) return false;
-const value = id => panel.querySelector(id)?.value;
+if (!panel || (window.jQuery && window.jQuery.active > 0)) return null;
+const airport = panel.querySelector('select#citySelectArr');
+if (!airport || airport.disabled || airport.value !== '0' ||
+    panel.querySelector('select#hubSelect')?.value !== origin ||
+    panel.querySelector('input#maxDist')?.value !== String(distance) ||
+    panel.querySelector('input#rwyLength')?.value !== String(runway) ||
+    panel.querySelector('select#arrSelector')?.value !== country) return null;
+return Array.from(airport.options).filter(el => !el.disabled && el.value !== '0')
+  .map(el => el.value).sort();
+"""
+
+_START_COUNTRY_SEARCH_JS = r"""
+const airportIds = (() => {
+""" + _COUNTRY_SEARCH_SELECTOR_JS + r"""
+})();
+if (!airportIds) return false;
+const panel = document.querySelector('#routeAction');
 const result = panel.querySelector('#resResult');
 const button = panel.querySelector('button#resSearch');
-if (!result || !button || button.disabled || button.form || value('select#hubSelect') !== origin ||
-    value('input#maxDist') !== String(distance) || value('input#rwyLength') !== String(runway) ||
-    value('select#arrSelector') !== country || value('select#citySelectArr') !== '0') return false;
+if (!result || !button || button.disabled || button.form) return false;
 // Discard the previous world result before starting the native read-only search.
 result.replaceChildren();
 button.click();
-return true;
+return {airport_ids: airportIds};
+"""
+
+_VERIFIED_COUNTRY_DEMAND_JS = r"""
+const rows = (() => {
+""" + _VERIFIED_ROUTE_DEMAND_JS + r"""
+})();
+if (!rows) return null;
+const airportIds = (() => {
+""" + _COUNTRY_SEARCH_SELECTOR_JS + r"""
+})();
+return {rows, airport_ids: airportIds};
 """
 
 _AIRPORT_ID = re.compile(r"^[1-9][0-9]{0,11}$")
@@ -295,17 +319,17 @@ _COUNT = re.compile(r"^[0-9]{1,9}$")
 _DISTANCE = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
 
 
-def _stable_read(bot: object, script: str, *, with_timestamp: bool = False) -> object:
+def _stable_read(bot: object, script: str, *args, with_timestamp: bool = False) -> object:
     """Return an identical DOM pair, optionally with its second-read timestamp."""
     try:
-        first = bot.js(script)
+        first = bot.js(script, *args)
         if first is None or getattr(bot, "stopping", False):
             return None
         stop = getattr(bot, "_stop", None)
         interrupted = stop.wait(0.3) if stop is not None else threading.Event().wait(0.3)
         if interrupted or getattr(bot, "stopping", False):
             return None
-        second = bot.js(script)
+        second = bot.js(script, *args)
         read_at = time.time() if with_timestamp else None
         if first != second:
             return None
@@ -501,9 +525,10 @@ def collect_hub_market_prices(bot: object, *, per_cycle: int = 3) -> int:
         bot.close_popup(quiet=True)
 
 
-def collect_owned_hub_demand(bot: object, *, origin_id: str | None = None) -> int:
+def collect_owned_hub_demand(bot: object, *, origin_id: str | None = None,
+                             country_windows: list[dict] | None = None) -> int:
     """Search a native owned hub, optionally the origin of a parked aircraft."""
-    return _collect_hub_demand(bot, external=False, origin_id=origin_id)
+    return _collect_hub_demand(bot, external=False, origin_id=origin_id, country_windows=country_windows)
 
 
 def collect_external_hub_demand(bot: object) -> int:
@@ -514,10 +539,12 @@ def collect_external_hub_demand(bot: object) -> int:
 
 
 def _read_hub_demand_window(bot: object, origin: str, distance: int,
-                            runway: int, *, country: str | None = None) -> tuple[list[dict], float | None]:
+                            runway: int, *, country: str | None = None,
+                            country_windows: list[dict] | None = None) -> tuple[list[dict], float | None]:
     from fleet import read_route_candidates, search_routes
 
     search_distance = distance
+    audit_selector = country is not None and country_windows is not None
     if country is None:
         candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
     else:
@@ -526,31 +553,53 @@ def _read_hub_demand_window(bot: object, origin: str, distance: int,
         if not isinstance(selected, str) or selected in ("", "0"):
             return [], None
 
-        def start_search(_driver):
-            return bot.stopping or bot.js(_START_COUNTRY_SEARCH_JS, origin, search_distance, runway, selected)
+        controls = (origin, search_distance, runway, selected)
 
-        WebDriverWait(bot.driver, 8).until(start_search)
+        def start_search(_driver):
+            return bot.stopping or bot.js(_START_COUNTRY_SEARCH_JS, *controls)
+
+        started_at = time.time()
+        started = WebDriverWait(bot.driver, 8).until(start_search)
         if bot.stopping or not bot.wait_loaded("resResult", timeout=8):
             return [], None
         candidates = read_route_candidates(bot)
-    read = _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS, with_timestamp=True)
+    read = (_stable_read(bot, _VERIFIED_COUNTRY_DEMAND_JS, *controls, with_timestamp=True)
+            if audit_selector else _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS, with_timestamp=True))
     if read is None:
         return [], None
-    rows, read_at = read
+    result, read_at = read
+    rows = result["rows"] if audit_selector else result
     samples = _verified_demand(candidates, rows, origin)
-    if country is not None and any(sample.get("destination_country") != country
-                                   or sample.get("destination_runway_ft", 0) < runway
-                                   for sample in samples):
+    if not samples or (country is not None and any(
+            sample.get("destination_country") != country or sample.get("destination_runway_ft", 0) < runway
+            for sample in samples)):
         return [], None
     if any(sample["distance"] > search_distance + 0.001
            or sample.get("destination_runway_ft", runway) < runway for sample in samples):
         return [], None
+    native_ids = [sample["arr_id"] for sample in samples] if audit_selector else None
     if search_distance > distance:
         samples = [sample for sample in samples if sample["distance"] <= distance + 0.001]
+    if audit_selector:
+        options = result["airport_ids"]
+        selector_verified = (isinstance(started, dict) and options == started.get("airport_ids")
+                             and isinstance(options, list) and bool(options)
+                             and all(isinstance(value, str) and _AIRPORT_ID.fullmatch(value) for value in options)
+                             and len(options) == len(set(options)))
+        country_windows.append({
+            "origin_id": origin, "country": country, "country_value": selected,
+            "started_at": started_at, "observed_at": read_at, "min_runway_ft": runway,
+            "requested_max_distance_km": distance, "native_max_distance_km": search_distance,
+            "selector_airport_ids": options if selector_verified else None,
+            "native_destination_ids": sorted(native_ids),
+            "accepted_destination_count": len(samples),
+            "native_limit_reached": len(native_ids) >= _ROUTE_SEARCH_SAMPLE_LIMIT,
+        })
     return samples, read_at
 
 
-def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = None) -> int:
+def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = None,
+                        country_windows: list[dict] | None = None) -> int:
     from fleet import _HUB_OPTIONS_JS
     from hub_registry import _hub_id
 
@@ -584,7 +633,7 @@ def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = 
         # sampled without starving the normal search. Neither proves coverage.
         planning = getattr(bot.config, "get_bool", None)
         scope = None
-        if callable(planning) and planning("investment", "planning_enabled"):
+        if country_windows is not None or (callable(planning) and planning("investment", "planning_enabled")):
             distance, runway = min(distance, 25000), min(runway, 30000)
             scope = registry.next_demand_scope(origin)
             if scope == "broad":
@@ -607,7 +656,8 @@ def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = 
             country = nearest.get("destination_country") if not external and scope == "configured" else None
             try:
                 if country:
-                    extra, extra_at = _read_hub_demand_window(bot, origin, distance, runway, country=country)
+                    extra, extra_at = _read_hub_demand_window(
+                        bot, origin, distance, runway, country=country, country_windows=country_windows)
                     if extra:
                         windows.append((extra, extra_at))
                     if (len(extra) >= _ROUTE_SEARCH_SAMPLE_LIMIT
@@ -617,7 +667,7 @@ def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = 
                         country_cutoff = math.ceil(min(sample["distance"] for sample in extra))
                         if 300 <= country_cutoff < distance:
                             overlap, overlap_at = _read_hub_demand_window(
-                                bot, origin, country_cutoff, runway, country=country)
+                                bot, origin, country_cutoff, runway, country=country, country_windows=country_windows)
                             if overlap:
                                 windows.append((overlap, overlap_at))
                 elif 300 <= cutoff < distance:
