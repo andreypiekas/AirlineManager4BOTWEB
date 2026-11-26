@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2, escopo do campo Base no inventário (G0)
+
+- Entre 02h55 e 02h57 BRT, `Company` exibiu `Base` na ficha da companhia, com São Paulo Guarulhos, e listou 30 hubs. A lista `Fleet → A380-800` tinha 70 links para detalhes individuais e nenhum atributo `data-home-hub-id`, `data-base-id` ou `data-hub-id` no painel da lista.
+- O detalhe do A380-800 cuja entrega em Guarulhos havia sido observada mostrou `Delivered` com o tempo decorrido desde a entrega e GRU–FUK via HOR como rota em operação. O detalhe não exibiu aeroporto de entrega nem base permanente. O painel segue com `Base a confirmar` para aeronaves sem vínculo individual comprovado. Passaram os 44 testes existentes de `hub_registry` e `route_registry`.
+- A consulta somente leitura retornou 222 rotas, 224 aeronaves, `Parked (0)` e `Pending (2)`. O evento Black Friday Cargo Rush seguia ativo, com fim previsto para 29/11 às 20h BRT. Faltam a prévia elegível fora do evento e a captura autenticada no perfil dedicado do worker. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A1, preço exibido na configuração de cabine (G0)
 
 - Por volta de 02h53 BRT, `Fleet → Order → Configuration` mostrou US$ 215.629.503 para uma unidade do A380-800 com motor GP7270, entrega em Chapecó e layout inicial de 600/0/0 assentos Y/J/F. Ao mover os seletores da prévia, `#acCost` mostrou US$ 215.634.503 com 598/1/0 e US$ 215.639.503 com 594/0/1.

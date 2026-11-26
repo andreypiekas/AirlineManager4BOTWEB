@@ -137,6 +137,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 ### Fase A2 — Hubs, cobertura e dados de rota completos (P0)
 
 - Finalizar inventário real de hubs próprios e status de base por aeronave com fonte explícita. Quando desconhecido, manter "Base a confirmar" sem impedir ranking das bases com dados independentes verificados.
+- Na consulta de 26/11/2026, `Company → Base` identificou a base da companhia. A lista dos 70 A380-800 e o detalhe do avião recém-entregue não expuseram base individual. No detalhe, `Delivered` mostrou somente o tempo desde a entrega. A confirmação da base continua exigindo evidência vinculada ao ID da aeronave.
 - Auditar paginação dinâmica: 20 posições típicas por página, páginas variáveis, aeronaves chegando durante a auditoria, IDs únicos, totais coerentes, cobertura integral no mesmo snapshot ou marcação **parcial**.
 - Na auditoria integral do worker, duas varreduras aceitam variação da ordem, da distribuição nas páginas e do sentido exibido quando todos os pares nativos aeronave–rota e seus aeroportos coincidem. Testes locais exercitaram a conciliação com o inventário. A homologação com o snapshot do worker segue pendente.
 - Completar coleta de preço, pontos, pista, país, disponibilidade e demanda dos hubs candidatos. Em 25/11/2026, `Custom departure` permitiu pesquisar a partir de Lisboa, ausente dos hubs próprios naquele momento.
