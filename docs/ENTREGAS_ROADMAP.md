@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2–A4, login manual no worker de observação (G0)
+
+- O Chrome autenticado mostrou Black Friday Cargo Rush ativo, com +50% de demanda mundial de carga e fim previsto para 29/11 às 20h BRT. Routes mostrou 221 rotas, 224 aeronaves, `Parked (0)` e `Pending (3)`. A melhor referência disponível continua sendo a prévia de BCN–SHA com o A380-800 então apto. Foram observadas tarifas de US$ 4.103/8.425/12.998, taxa de US$ 996.630 e 212.273 lb por trecho. `Daily` era 1.991/376/176 com aviso de evento. A mesma prévia ainda precisa de `Today` e da validação dos custos incrementais fora do evento.
+- `--observe-game --wait-for-login` abre o Chrome persistente do worker em modo visível e aguarda login manual por até cinco minutos. A espera pode ser interrompida, confere a origem antes de ler a sessão e mantém as travas de dados e perfil. A observação conserva as verificações de sessão e companhia no ciclo. A flag só funciona em modo de observação.
+- O processo local iniciou com o painel na interface de loopback e chegou à espera por login manual na janela dedicada às 02h09 BRT. Às 02h14, a espera expirou, o Chrome dedicado encerrou e a captura auditada ainda estava ausente. O painel local foi fechado em seguida. A sessão existente da auditoria manual está em outro perfil Chrome. A validação no Chrome foi somente leitura.
+- O teste de identidade exclui `config/session/`, diretório privado ignorado no Git. A primeira execução da suíte com o worker ativo identificou a trava do perfil como arquivo local inacessível no Windows. A execução direcionada com o worker ativo passou após a correção.
+- A suíte Windows passou com 2.362 testes e um pulado. Os 17 testes direcionados e os 16 testes de instalação no Ubuntu via WSL passaram. Ruff e `git diff --check` passaram.
+
 ## 2026-11-26 — Autonomia Total A2, conciliação das operações dos hubs (G0)
 
 - Por volta de 00h25 BRT, o Chrome autenticado confirmou que o Black Friday Cargo Rush continuava ativo, com fim previsto para 29/11 às 20h BRT. Routes mostrou 221 rotas, `Parked (0)` e `Pending (3)`. Os três registros pendentes estavam em manutenção. O ID do PP-217 em Pending apareceu também em `Operations to/from hub` de STG para STG–PRY. A consulta foi somente leitura. A prévia de BCN–SHA continua como a amostra correlacionada de tarifa, taxa e consumo registrada durante o evento.

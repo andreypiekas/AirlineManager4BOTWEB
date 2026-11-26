@@ -101,6 +101,82 @@ def test_observation_rejects_redirect_and_expired_session_before_collecting():
     worker._observation_cycle.assert_not_called()
 
 
+@pytest.mark.parametrize("wait_for_login", [False, True])
+def test_observation_worker_startup_keeps_login_manual(tmp_path, monkeypatch, wait_for_login):
+    worker = Bot.__new__(Bot)
+    worker._observation_only = True
+    worker._wait_for_login = wait_for_login
+    worker._stop = Event()
+    worker.config = Mock()
+    worker.config.get.return_value = "https://www.airlinemanager.com/"
+    worker.config.get_bool.return_value = True
+    worker._login = Mock()
+    worker._wait_for_observation_login = Mock(return_value=True)
+    worker._require_observation_session = Mock()
+    worker._cycle = Mock(side_effect=worker._stop.set)
+    worker._quit_driver = Mock()
+    create_driver = Mock()
+    monkeypatch.setattr(bot_module, "current", lambda: SimpleNamespace(data=tmp_path / "data"))
+    monkeypatch.setattr(bot_module, "chrome_session_path", lambda: tmp_path / "session")
+    monkeypatch.setattr(bot_module, "create_driver", create_driver)
+
+    worker._run()
+
+    create_driver.assert_called_once_with(
+        url="https://www.airlinemanager.com/", keep_session=True, headless=not wait_for_login,
+    )
+    assert worker._wait_for_observation_login.call_count == int(wait_for_login)
+    worker._require_observation_session.assert_called_once_with()
+    worker._cycle.assert_called_once_with()
+    worker._quit_driver.assert_called_once_with()
+    worker._login.assert_not_called()
+    worker.config.reload_secrets.assert_not_called()
+
+
+@pytest.mark.parametrize("outcome", ["authenticated", "redirect", "stop", "timeout"])
+def test_observation_login_wait_checks_origin_and_is_bounded(monkeypatch, outcome):
+    worker = Bot.__new__(Bot)
+    url = "https://www.airlinemanager.com.example/" if outcome == "redirect" else "https://www.airlinemanager.com/"
+    worker.driver = SimpleNamespace(current_url=url)
+    worker._stop = Mock(wraps=Event())
+    worker._stop.is_set.side_effect = [False, True] if outcome == "stop" else None
+    worker._stop.wait.return_value = False
+    worker._is_logged_in = Mock(side_effect=[False, outcome == "authenticated"])
+    worker.update_stats = Mock()
+    clock = Mock(side_effect=[0, 300 if outcome == "timeout" else 1])
+    with monkeypatch.context() as patch:
+        patch.setattr(bot_module, "time", SimpleNamespace(monotonic=clock))
+        if outcome in {"redirect", "timeout"}:
+            with pytest.raises(RuntimeError, match="Origem" if outcome == "redirect" else "Tempo limite"):
+                worker._wait_for_observation_login()
+        else:
+            assert worker._wait_for_observation_login() is (outcome == "authenticated")
+
+    if outcome in {"authenticated", "stop"}:
+        worker._stop.wait.assert_called_once_with(1)
+    else:
+        worker._stop.wait.assert_not_called()
+    if outcome == "redirect":
+        worker._is_logged_in.assert_not_called()
+    if outcome == "timeout":
+        worker.update_stats.assert_called_once_with(money_read_at=None)
+    else:
+        worker.update_stats.assert_not_called()
+
+
+def test_cli_rejects_manual_login_without_observation_before_profile_selection(monkeypatch):
+    select = Mock()
+    monkeypatch.setattr(main, "select_profile", select)
+    monkeypatch.setattr(main.os, "chdir", Mock())
+    monkeypatch.setattr(main.sys, "path", list(main.sys.path))
+    monkeypatch.setattr(main.sys, "argv", ["src/main.py", "--web", "--wait-for-login"])
+
+    with pytest.raises(SystemExit, match="requer --observe-game"):
+        main.main()
+
+    select.assert_not_called()
+
+
 def test_observation_rejects_changed_native_company_id():
     worker = Bot.__new__(Bot)
     worker._observation_company_id = None
@@ -148,4 +224,4 @@ def test_observation_cannot_open_chrome_if_profile_dashboard_is_busy(
     if owner:
         worker.assert_not_called()
     else:
-        worker.assert_called_once_with(cfg, observation_only=True)
+        worker.assert_called_once_with(cfg, observation_only=True, wait_for_login=False)

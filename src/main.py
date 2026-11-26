@@ -4,6 +4,7 @@
 a machine that stays on all day: open the address it prints in a browser.
 
 ``--observe-game`` starts the web worker in observation-only mode.
+Add ``--wait-for-login`` to allow manual sign-in in the worker's visible Chrome window.
 
 ``--profile <name>`` runs another airline (game account) with its own settings, credentials, Chrome session,
 data and web port in profiles/<name>/ (created from the main settings the first time). See paths.py.
@@ -27,7 +28,7 @@ def run_desktop() -> None:
         app.on_close()
 
 
-def run_web_only(*, observation_only: bool = False) -> None:
+def run_web_only(*, observation_only: bool = False, wait_for_login: bool = False) -> None:
     import logging
     import threading
 
@@ -52,7 +53,7 @@ def run_web_only(*, observation_only: bool = False) -> None:
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(logging.Formatter("[%(asctime)s] [%(tag)s] %(message)s", "%H:%M:%S"))
     setup_logging(cfg, buffer, console)
-    bot = Bot(cfg, observation_only=observation_only)
+    bot = Bot(cfg, observation_only=observation_only, wait_for_login=wait_for_login)
     restart = AutoRestart()
     quit_requested = threading.Event()
     web = WebDashboard(bot, cfg, buffer, lambda: restart.restart_in, on_quit=quit_requested.set)
@@ -99,10 +100,13 @@ def main() -> None:
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT / "src"))
     args = sys.argv[1:]
-    select_profile(args)
     observation_only = "--observe-game" in args
+    wait_for_login = "--wait-for-login" in args
+    if wait_for_login and not observation_only:
+        sys.exit("--wait-for-login requer --observe-game.")
+    select_profile(args)
     if observation_only or "--web" in args:
-        run_web_only(observation_only=observation_only)
+        run_web_only(observation_only=observation_only, wait_for_login=wait_for_login)
     else:
         run_desktop()
 

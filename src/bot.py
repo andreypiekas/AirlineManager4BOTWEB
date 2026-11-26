@@ -137,10 +137,14 @@ class Stats:
 
 class Bot:
     _observation_only = False
+    _wait_for_login = False
 
-    def __init__(self, config: AppConfig, *, observation_only: bool = False):
+    def __init__(self, config: AppConfig, *, observation_only: bool = False, wait_for_login: bool = False):
+        if wait_for_login and not observation_only:
+            raise ValueError("A espera pelo login manual exige o modo de observação.")
         self.config = config
         self._observation_only = observation_only
+        self._wait_for_login = wait_for_login
         self._observation_company_id: Optional[str] = None
         self.driver: Optional[WebDriver] = None
         self.state = BotState.IDLE
@@ -606,10 +610,12 @@ class Bot:
             self.driver = create_driver(
                 url=url,
                 keep_session=keep_session,
-                headless=self.config.get_bool("options", "headless"),
+                headless=not self._wait_for_login and self.config.get_bool("options", "headless"),
             )
             self.state = BotState.LOGGING_IN
             if self._observation_only:
+                if self._wait_for_login and not self._wait_for_observation_login():
+                    return
                 self._require_observation_session()
             elif not self._login():
                 raise RuntimeError("O login falhou ou excedeu o tempo limite")
@@ -953,6 +959,21 @@ class Bot:
         if not self._is_logged_in(timeout=5):
             self.update_stats(money_read_at=None)
             raise RuntimeError("Sessão do worker indisponível. Autentique o perfil Chrome antes da observação.")
+
+    def _wait_for_observation_login(self) -> bool:
+        timeout_seconds = 300
+        deadline = time.monotonic() + timeout_seconds
+        log_login.info("Aguardando login manual no Chrome do worker por até %d s.", timeout_seconds)
+        while not self._stop.is_set():
+            self._require_game_origin(self.driver.current_url)
+            if self._is_logged_in(timeout=0):
+                return not self._stop.is_set()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.update_stats(money_read_at=None)
+                raise RuntimeError("Tempo limite para login manual no Chrome do worker.")
+            self._stop.wait(min(1, remaining))
+        return False
 
     def _verify_observation_company(self) -> None:
         self._click("//*[@id='smallMainMenu']//*[@id='mapAcList']")

@@ -20,7 +20,10 @@ def test_referencias_antigas_nao_aparecem_fora_da_licenca():
         "jjavier" + "olmedo23",
     )
     for arquivo in ROOT.rglob("*"):
-        if not arquivo.is_file() or any(parte in IGNORAR for parte in arquivo.relative_to(ROOT).parts):
+        relativo = arquivo.relative_to(ROOT)
+        if relativo.parts[:2] == ("config", "session") or any(parte in IGNORAR for parte in relativo.parts):
+            continue
+        if not arquivo.is_file():
             continue
         if arquivo.name == "LICENSE" or arquivo.suffix.lower() in {".png", ".ico", ".jpg", ".jpeg", ".webp", ".pyc"}:
             continue
@@ -29,7 +32,7 @@ def test_referencias_antigas_nao_aparecem_fora_da_licenca():
         except UnicodeDecodeError:
             continue
         for referencia in referencias:
-            assert referencia.casefold() not in texto.casefold(), f"Referência antiga em {arquivo.relative_to(ROOT)}"
+            assert referencia.casefold() not in texto.casefold(), f"Referência antiga em {relativo}"
 
 
 def test_nao_ha_patrocinio_de_terceiros():
