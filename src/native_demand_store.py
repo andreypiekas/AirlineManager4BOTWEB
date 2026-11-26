@@ -8,6 +8,7 @@ from contextlib import closing
 from pathlib import Path
 
 import paths
+from opportunity_models import DEFAULT_MAX_AGE_SECONDS
 
 _ID = re.compile(r"[1-9][0-9]{0,11}")
 _COMPANY_ID = re.compile(r"[1-9][0-9]{0,13}")
@@ -79,7 +80,7 @@ class DemandStore:
     def status(self):
         status = {
             "state": "pending", "processed_partitions": 0, "total_partitions": 0,
-            "observed_pairs": 0, "searched_pairs": 0, "expected_pairs": 0,
+            "observed_pairs": 0, "recent_observed_pairs": 0, "searched_pairs": 0, "expected_pairs": 0,
             "updated_at": None, "error": None,
         }
         if not self.path.is_file():
@@ -94,6 +95,11 @@ class DemandStore:
             status["state"], status["updated_at"], status["error"] = scan
             partitions = dict(db.execute("SELECT state, count(*) FROM partitions GROUP BY state"))
             targets = dict(db.execute("SELECT state, count(*) FROM targets GROUP BY state"))
+            now = time.time()
+            status["recent_observed_pairs"] = db.execute("""
+                SELECT count(*) FROM demand JOIN targets USING (origin_id, destination_id)
+                WHERE targets.state = 'observed' AND demand.observed_at BETWEEN ? AND ?
+                """, (now - DEFAULT_MAX_AGE_SECONDS, now)).fetchone()[0]
         status["processed_partitions"] = sum(partitions.values()) - partitions.get("open", 0)
         status["total_partitions"] = sum(partitions.values())
         status["observed_pairs"] = targets.get("observed", 0)

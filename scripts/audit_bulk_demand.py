@@ -1,7 +1,7 @@
 """Screen the native airport catalog against a pinned historical AM4 matrix.
 
-Requires DuckDB when run as a standalone audit. The output is independent of
-the worker and is never used as verified route demand or a purchase input.
+Requires DuckDB for the import. The matrix is never used as verified route
+demand or a purchase input.
 """
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import argparse
 import csv
 import hashlib
 import json
+import sqlite3
+import sys
 import time
 from pathlib import Path
 
@@ -39,9 +41,11 @@ def native_scope(snapshot):
 
 def dataset_file(directory, name):
     path = directory / name
+    digest = hashlib.sha256()
     with path.open("rb") as file:
-        digest = hashlib.file_digest(file, "sha256").hexdigest()
-    if digest != DATASET_FILES[name]:
+        for block in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest() != DATASET_FILES[name]:
         raise ValueError(f"{name} diverge da revisão auditada.")
     return str(path)
 
@@ -89,11 +93,33 @@ def scan_matrix(directory, origins, destinations):
     return rows, full_native_matrix
 
 
+def install_for_profile(directory, profile_name, snapshot, rows, expected):
+    import duckdb
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    import paths
+    from historical_routes import HistoricalRoutes
+
+    if profile_name != paths.MAIN_LABEL and not paths.valid_name(profile_name):
+        raise ValueError("Nome de perfil inválido.")
+    profile = paths.activate(profile_name)
+    if not profile.exists():
+        raise ValueError("Perfil inexistente.")
+    if snapshot["profile_id"] != profile.label or snapshot["schema_version"] != 1:
+        raise ValueError("Perfil ou versão incompatível no snapshot auditado.")
+    with duckdb.connect() as conn:
+        airports = conn.execute("""
+            SELECT id, iata, icao, COALESCE(fullname, name), rwy FROM read_parquet(?)
+        """, [dataset_file(directory, "airports.parquet")]).fetchall()
+    HistoricalRoutes(profile.data / "am4_historical_routes.sqlite3").install(airports, rows, expected)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("snapshot", type=Path, help="Snapshot auditado do worker")
     parser.add_argument("dataset", type=Path, help="Diretório com os dois arquivos Parquet da revisão auditada")
     parser.add_argument("--export", type=Path, help="Gravar candidatos históricos em um novo CSV")
+    parser.add_argument("--install-profile", metavar="PERFIL", help="Instalar a matriz para a pesquisa em Hubs")
     args = parser.parse_args()
     try:
         import duckdb
@@ -104,15 +130,17 @@ def main():
         snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
         origins, destinations = native_scope(snapshot)
         rows, full_native_matrix = scan_matrix(args.dataset, origins, destinations)
+        expected = len(origins) * (len(destinations) - 1)
+        if args.install_profile is not None:
+            install_for_profile(args.dataset, args.install_profile, snapshot, rows, expected)
         if args.export is not None:
             with args.export.open("x", encoding="utf-8", newline="") as file:
                 writer = csv.writer(file)
                 writer.writerow(("origin_id", "destination_id", "historical_daily_y",
                                  "historical_daily_j", "historical_daily_f", "historical_distance_km"))
                 writer.writerows(rows)
-    except (OSError, TypeError, ValueError, KeyError, duckdb.Error) as error:
+    except (OSError, TypeError, ValueError, KeyError, duckdb.Error, sqlite3.Error) as error:
         parser.exit(2, f"Falha na triagem histórica: {error}\n")
-    expected = len(origins) * (len(destinations) - 1)
     print(json.dumps({
         "source": SOURCE,
         "verified": False,
@@ -122,6 +150,7 @@ def main():
         "historical_pairs_found": len(rows),
         "expected_pairs": expected,
         "unmatched_pairs": expected - len(rows),
+        "installed_profile": args.install_profile,
         "external_origin_count": len(destinations) - len(origins),
         "historical_external_origin_pairs": (
             (len(destinations) - len(origins)) * (len(destinations) - 1) if full_native_matrix else None

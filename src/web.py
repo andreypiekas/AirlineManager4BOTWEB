@@ -13,6 +13,7 @@ assets/web/index.html and a JSON API:
 * POST /api/admin/flight-history-probe  authorized, read-only structural history for one aircraft
 * GET  /api/research/demand          scan progress or one observation by origin_id/destination_id
 * POST /api/research/demand/request {"confirm": true} queues a read-only scan
+* GET  /api/research/historical     historical origins and candidates filtered by distance, runway and cabin
 
 Safety: by default it only listens on 127.0.0.1. To open it to the local network ([web] host = 0.0.0.0)
 a token is required ([web] token in config/secrets.ini); without one the server stays on 127.0.0.1.
@@ -57,6 +58,7 @@ from hub_recommendations import rank_next_aircraft
 from investment_policy import AUDITED_POLICY_LIMITS, InvestmentPolicy, MODES, audited_policy_values
 from investment_journal import InvestmentJournal
 from native_demand_store import DemandStore
+from historical_routes import HistoricalRoutes
 from route_creation import has_pending_creation
 from reroute import has_pending_reroute
 from investment_plan_bridge import build_aircraft_intent_plan
@@ -837,6 +839,24 @@ class WebDashboard:
                                       HTTPStatus.SERVICE_UNAVAILABLE)
                 return self._json(report)
 
+            def _historical_routes(self, query: str) -> None:
+                params = parse_qs(query, keep_blank_values=True)
+                fields = {"origin_id", "max_km", "min_runway_ft", "min_y", "min_j", "min_f"}
+                try:
+                    if (params.keys() - fields
+                            or any(len(values) != 1 or not re.fullmatch(r"[0-9]{1,5}", values[0])
+                                   for values in params.values())):
+                        raise ValueError("Informe filtros numéricos válidos.")
+                    filters = {key: int(values[0]) for key, values in params.items()}
+                    if filters.get("origin_id", 1) == 0 or filters.get("max_km", 1) == 0:
+                        raise ValueError("Informe um hub e um alcance válidos.")
+                    return self._json(HistoricalRoutes().report(**filters))
+                except ValueError as error:
+                    return self._json({"ok": False, "message": str(error)}, HTTPStatus.BAD_REQUEST)
+                except (OSError, sqlite3.Error):
+                    return self._json({"ok": False, "message": "Pesquisa histórica indisponível."},
+                                      HTTPStatus.SERVICE_UNAVAILABLE)
+
             def do_GET(self) -> None:  # noqa: N802 - http.server API
                 if not self._allowed():
                     return self._deny()
@@ -860,6 +880,8 @@ class WebDashboard:
                     return self._json(dashboard.settings())
                 if url.path == "/api/investment/policy":
                     return self._json(dashboard.investment_settings())
+                if url.path == "/api/research/historical":
+                    return self._historical_routes(url.query)
                 if url.path == "/api/research/demand":
                     params = parse_qs(url.query, keep_blank_values=True)
                     origin = params.get("origin_id", [])

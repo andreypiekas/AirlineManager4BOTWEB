@@ -673,6 +673,30 @@ footer strong { font-weight: 600; color: var(--aqua); }
         </label>
         <button id="nativeDemandRequest" type="button" class="primary" disabled>Solicitar varredura</button>
       </section>
+      <details id="historicalRoutes" class="hub-card hub-subsection hub-probe">
+        <summary data-t="Pesquisa histórica de rotas">Pesquisa histórica de rotas</summary>
+        <p class="hub-section-note" data-t="Demanda diária do início de 2020 para triagem. Confira a demanda atual no jogo antes de planejar uma compra.">Demanda diária do início de 2020 para triagem. Confira a demanda atual no jogo antes de planejar uma compra.</p>
+        <p class="hub-section-note"><a href="https://abc8747.github.io/am4/guides/demand/" target="_blank" rel="noopener noreferrer">abc8747/am4</a></p>
+        <form id="historicalRoutesForm" hidden>
+          <div class="hubs-controls">
+            <label class="hubs-field"><span data-t="Hub de origem">Hub de origem</span>
+              <select name="origin_id" required></select></label>
+            <label class="hubs-field"><span data-t="Alcance máximo (km)">Alcance máximo (km)</span>
+              <input name="max_km" type="number" min="1" max="99999" value="20000" required></label>
+            <label class="hubs-field"><span data-t="Pista mínima (ft)">Pista mínima (ft)</span>
+              <input name="min_runway_ft" type="number" min="0" max="99999" value="0" required></label>
+            <label class="hubs-field"><span data-t="Demanda mínima Y">Demanda mínima Y</span>
+              <input name="min_y" type="number" min="0" max="99999" value="0" required></label>
+            <label class="hubs-field"><span data-t="Demanda mínima J">Demanda mínima J</span>
+              <input name="min_j" type="number" min="0" max="99999" value="0" required></label>
+            <label class="hubs-field"><span data-t="Demanda mínima F">Demanda mínima F</span>
+              <input name="min_f" type="number" min="0" max="99999" value="0" required></label>
+          </div>
+          <button type="submit" class="primary" data-t="Pesquisar rotas">Pesquisar rotas</button>
+        </form>
+        <p id="historicalRoutesStatus" class="hub-section-note" role="status"></p>
+        <ul id="historicalRoutesList" class="hub-aircraft-list"></ul>
+      </details>
       <div class="hub-card hub-subsection hub-policy">
         <h2 data-t="Controle de autonomia">Controle de autonomia</h2>
         <p id="investmentPolicyGate" class="hub-section-note hub-coverage" role="status" aria-live="polite"></p>
@@ -1631,6 +1655,21 @@ const EN = {
   "Varredura concluída.": "Scan completed.",
   "Não foi possível consultar a varredura de demanda.": "Could not retrieve demand scan status.",
   "Não foi possível confirmar a solicitação.": "Could not confirm the request.",
+  "Pesquisa histórica de rotas": "Historical route search",
+  "Demanda diária do início de 2020 para triagem. Confira a demanda atual no jogo antes de planejar uma compra.": "Screen routes using early 2020 daily demand. Check current in-game demand before planning a purchase.",
+  "Hub de origem": "Origin hub",
+  "Alcance máximo (km)": "Maximum range (km)",
+  "Pista mínima (ft)": "Minimum runway (ft)",
+  "Demanda mínima Y": "Minimum Y demand",
+  "Demanda mínima J": "Minimum J demand",
+  "Demanda mínima F": "Minimum F demand",
+  "Pesquisar rotas": "Search routes",
+  "Consultando a matriz histórica…": "Loading the historical matrix…",
+  "Pesquisa histórica indisponível.": "Historical route search is unavailable.",
+  "Matriz histórica ainda não importada neste perfil.": "The historical matrix has yet to be imported for this profile.",
+  "Selecione um hub e pesquise por alcance, pista e demanda.": "Select a hub and filter by range, runway and demand.",
+  "Nenhuma rota atende aos filtros.": "No routes match the filters.",
+  "Rotas exibidas por maior demanda histórica: {x}": "Routes shown by highest historical demand: {x}",
   "Solicitar varredura": "Request scan",
   "Retomar varredura": "Resume scan",
   "Solicitar nova varredura": "Request a new scan",
@@ -1638,6 +1677,7 @@ const EN = {
   "{x} partições processadas": "{x} partitions processed",
   "{x} pares pesquisados": "{x} pairs searched",
   "{x} com demanda observada": "{x} with observed demand",
+  "{x} com demanda observada nos últimos 15 min": "{x} with demand observed in the last 15 min",
   "Última atualização em {x}": "Last updated at {x}",
   "Autoriza a varredura ampla de demanda no jogo? A coleta é somente leitura e pode levar vários ciclos do worker.":
     "Queue a broad in-game demand scan? The read-only scan may take several worker cycles.",
@@ -3756,6 +3796,10 @@ function renderNativeDemand() {
     lines.push(tr("{x} partições processadas", counts(report.processed_partitions, report.total_partitions)),
       tr("{x} pares pesquisados", counts(report.searched_pairs, report.expected_pairs)),
       tr("{x} com demanda observada", nf.format(report.observed_pairs)));
+    if (report.expected_pairs > 0 && Number.isInteger(report.recent_observed_pairs)) {
+      lines.push(tr("{x} com demanda observada nos últimos 15 min",
+        counts(report.recent_observed_pairs, report.expected_pairs)));
+    }
   }
   const bar = $("nativeDemandBar");
   if (report?.total_partitions > 0) {
@@ -3811,6 +3855,64 @@ async function loadInvestmentPolicy() {
     $("investmentPolicyStatus").textContent = tr("Falha ao consultar a política de investimento.");
   }
 }
+async function loadHistoricalRoutes(form, filters) {
+  const status = $("historicalRoutesStatus");
+  const list = $("historicalRoutesList");
+  const origin = form.elements.namedItem("origin_id");
+  const button = form.querySelector("button");
+  button.disabled = true;
+  status.textContent = tr("Consultando a matriz histórica…");
+  list.replaceChildren();
+  try {
+    const path = "/api/research/historical";
+    const report = await api(filters ? path + "?" + filters : path);
+    if (report.ok === false) { throw new Error("Historical search failed"); }
+    if (!report.available) {
+      form.hidden = true;
+      status.textContent = tr("Matriz histórica ainda não importada neste perfil.");
+      return;
+    }
+    if (!filters) {
+      origin.replaceChildren(...report.origins.map(airport => {
+        const name = [airport.iata || airport.icao, airport.name].filter(Boolean).join(" · ");
+        return new Option(name, airport.id);
+      }));
+      form.hidden = false;
+      status.textContent = tr("Selecione um hub e pesquise por alcance, pista e demanda.");
+      return;
+    }
+    const locale = LANG === "en" ? "en-US" : "pt-BR";
+    const number = new Intl.NumberFormat(locale, {maximumFractionDigits: 0});
+    const distance = new Intl.NumberFormat(locale, {maximumFractionDigits: 3});
+    list.replaceChildren(...report.candidates.map(route => {
+      const row = document.createElement("li");
+      const airport = [route.iata || route.icao, route.name].filter(Boolean).join(" · ");
+      const cabins = [route.y, route.j, route.f].map((n, i) => "YJF"[i] + " " + number.format(n)).join(" / ");
+      row.textContent = [airport, distance.format(route.distance_km) + " km",
+                         number.format(route.runway_ft) + " ft", cabins].join(" · ");
+      return row;
+    }));
+    status.textContent = report.candidates.length
+      ? tr("Rotas exibidas por maior demanda histórica: {x}", report.candidates.length)
+      : tr("Nenhuma rota atende aos filtros.");
+  } catch (_) {
+    status.textContent = tr("Pesquisa histórica indisponível.");
+  } finally {
+    button.disabled = false;
+  }
+}
+$("historicalRoutes").addEventListener("toggle", e => {
+  const form = $("historicalRoutesForm");
+  if (e.currentTarget.open && form.hidden) { return loadHistoricalRoutes(form); }
+});
+$("historicalRoutesForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const filters = new URLSearchParams();
+  for (const [key, value] of new FormData(form)) { filters.set(key, String(Number(value))); }
+  return loadHistoricalRoutes(form, filters);
+});
+
 async function loadInvestmentMetrics() {
   const status = $("investmentMetricsStatus");
   const body = $("investmentMetricsBody");

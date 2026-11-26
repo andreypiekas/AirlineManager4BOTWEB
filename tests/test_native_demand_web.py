@@ -16,6 +16,7 @@ import pytest
 
 from config import AppConfig
 from conftest import ROOT
+from historical_routes import HistoricalRoutes, REVISION
 from web import WebDashboard
 
 
@@ -29,7 +30,8 @@ ACTION_AUTH = {**TOKEN_HEADER, **ACTION_HEADER}
 CONFIRMED = {"confirm": True}
 PENDING = {
     "state": "pending", "processed_partitions": 0, "total_partitions": 0,
-    "observed_pairs": 0, "searched_pairs": 0, "expected_pairs": 0, "updated_at": None, "error": None,
+    "observed_pairs": 0, "recent_observed_pairs": 0, "searched_pairs": 0, "expected_pairs": 0,
+    "updated_at": None, "error": None,
 }
 
 
@@ -79,11 +81,62 @@ def request(port, method, path, *, payload=None, headers=None):
         connection.close()
 
 
+def test_historical_routes_load_and_filter_without_enabling_execution(tmp_path, monkeypatch):
+    store = HistoricalRoutes(tmp_path / "routes.sqlite3")
+    monkeypatch.setattr("web.HistoricalRoutes", lambda: store)
+    path = "/api/research/historical"
+    with served(tmp_path) as port:
+        assert request(port, "GET", path)[0] == 403
+        status, missing = request(port, "GET", path, headers=TOKEN_HEADER)
+        assert status == 200 and not missing["available"]
+        assert not store.path.exists()
+
+        airports = [
+            (1, "LAX", "KLAX", "Los Angeles", 12091),
+            (2, "TUN", "DTTA", "Tunis", 10499),
+            (3, "FRA", "EDDF", "Frankfurt", 13123),
+            (4, "ISL", "LTBA", "Istanbul", 9843),
+        ]
+        routes = [
+            (1, 2, 1341, 514, 112, 10515.0),
+            (1, 3, 1000, 800, 50, 9300.0),
+            (1, 4, 2000, 972, 200, 11000.0),
+        ]
+        store.install(airports, routes, expected_pairs=3)
+        status, origins = request(port, "GET", path, headers=TOKEN_HEADER)
+        assert status == 200 and origins["revision"] == REVISION
+        assert origins["data_year"] == 2020 and origins["pair_count"] == 3
+        assert not origins["verified"] and not origins["execution_available"]
+        assert [origin["iata"] for origin in origins["origins"]] == ["LAX"]
+        assert origins["candidates"] == []
+
+        status, result = request(port, "GET", path + "?origin_id=1", headers=TOKEN_HEADER)
+        assert status == 200
+        assert [route["id"] for route in result["candidates"]] == [4, 2, 3]
+        filters = "?origin_id=1&max_km=11000&min_runway_ft=10000&min_y=1300&min_j=500&min_f=100"
+        status, report = request(port, "GET", path + filters, headers=TOKEN_HEADER)
+        assert status == 200
+        assert report["candidates"] == [{
+            "id": 2, "iata": "TUN", "icao": "DTTA", "name": "Tunis", "runway_ft": 10499,
+            "y": 1341, "j": 514, "f": 112, "distance_km": 10515.0,
+        }]
+        assert not report["verified"] and not report["execution_available"]
+        for invalid in ("origin_id=2", "origin_id=", "origin_id=1&origin_id=1", "max_km=0", "today=true"):
+            assert request(port, "GET", path + "?" + invalid, headers=TOKEN_HEADER)[0] == 400
+
+        with pytest.raises(ValueError, match="incompleto"):
+            store.install(airports, [], expected_pairs=3)
+        with pytest.raises(sqlite3.IntegrityError):
+            store.install(airports, routes + [routes[0]], expected_pairs=4)
+        assert request(port, "GET", path + filters, headers=TOKEN_HEADER) == (200, report)
+
+
 def test_demand_status_returns_raw_store_data_without_queuing(tmp_path, store_factory):
     store = store_factory.return_value
     report = {
         "state": "partial", "processed_partitions": 3, "total_partitions": 10,
-        "observed_pairs": 60, "searched_pairs": 75, "expected_pairs": 200, "updated_at": 1795709093.0,
+        "observed_pairs": 60, "recent_observed_pairs": 25, "searched_pairs": 75, "expected_pairs": 200,
+        "updated_at": 1795709093.0,
         "error": "Partição indisponível.",
     }
     store.status.return_value = report
@@ -268,13 +321,15 @@ async function fetch(path, options) {
   assert.match(status.textContent, /Na fila/);
   assert.equal(button.hidden, true);
 
-  report = {...report, state: "running", processed_partitions: 3, searched_pairs: 30, observed_pairs: 25, updated_at: 42};
+  report = {...report, state: "running", processed_partitions: 3, searched_pairs: 30,
+    observed_pairs: 25, recent_observed_pairs: 12, updated_at: 42};
   await loadNativeDemand();
   assert.equal(progress.hidden, false);
   assert.equal($("nativeDemandBar").value, 3);
   assert.equal($("nativeDemandBar").max, 10);
   assert.match(status.textContent, /30 \/ 100 pares pesquisados/);
   assert.match(status.textContent, /25 com demanda observada/);
+  assert.match(status.textContent, /12 \/ 100 com demanda observada nos últimos 15 min/);
   assert.match(status.textContent, /data da coleta/);
 
   report = {...report, state: "partial", error: "Partição indisponível."};

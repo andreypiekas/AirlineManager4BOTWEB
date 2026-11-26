@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 from native_demand_scan import prepare_requested_scan, run_demand_slice
 from native_demand_store import DemandStore, demand_catalog
+from opportunity_models import DEFAULT_MAX_AGE_SECONDS
 
 
 UNIVERSE = {
@@ -70,6 +71,31 @@ def test_invalid_batch_is_resumable_and_cannot_mix_companies(tmp_path):
     assert store.status()["state"] == "partial"
     assert store.request() and store.begin("123", None)
     assert store.jobs(10) == jobs
+
+
+def test_demand_status_counts_only_recent_pairs_in_the_current_scan(tmp_path, monkeypatch):
+    store = DemandStore(tmp_path / "demand.db")
+    now = Mock(return_value=10_000)
+    monkeypatch.setattr("native_demand_store.time.time", now)
+    assert store.request() and store.begin("123", demand_catalog(UNIVERSE))
+    brazil, tunisia = jobs = store.jobs(10)
+    store.save(jobs, [result(brazil, [row("22")]), result(tunisia, [row("33"), row("44")])])
+    assert store.status()["state"] == "completed"
+    assert store.status()["recent_observed_pairs"] == 3
+
+    now.return_value += DEFAULT_MAX_AGE_SECONDS
+    assert store.status()["recent_observed_pairs"] == 3
+    now.return_value += 1
+    assert store.status()["recent_observed_pairs"] == 0
+    assert store.status()["observed_pairs"] == 3
+
+    now.return_value = 10_000
+    assert store.request() and store.begin("123", demand_catalog(UNIVERSE))
+    assert store.lookup("11", "22") is not None
+    assert store.status()["recent_observed_pairs"] == 0
+    store.save([brazil], [result(brazil, [row("22")])])
+    now.return_value -= 1
+    assert store.status()["recent_observed_pairs"] == 0
 
 
 def test_catalog_needs_exact_origins_and_destination_union():
