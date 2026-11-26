@@ -171,6 +171,41 @@ def test_owned_search_universe_counts_confirmed_pairs_per_filter(tmp_path, withi
     assert "route_search_universe" not in snapshot_summary(now=NOW + 875, path=path)
 
 
+@pytest.mark.parametrize("issue", [None, "duplicate", "map_mismatch", "late", "partition_mismatch"])
+def test_destination_catalog_is_separate_from_route_coverage(tmp_path, issue):
+    catalog = {"started_at": NOW - 28, "observed_at": NOW - 25, "map_airport_ids": ["11", "21", "22"],
+               "airport_ids_by_country": {"Brazil": ["11", "21"], "Tunisia": ["22"]}}
+    if issue == "duplicate":
+        catalog["airport_ids_by_country"]["Tunisia"].append("21")
+    if issue == "map_mismatch":
+        catalog["map_airport_ids"].append("23")
+    if issue == "late":
+        catalog["observed_at"] = NOW - 24
+    universe = {"started_at": NOW - 32, "observed_at": NOW - 25, "origin_ids": ["11"],
+                "country_values_by_origin": {"11": ["Brazil", "Tunisia"]}, "destination_catalog": catalog}
+    brazil = {"origin_id": "11", "country": "Brazil", "country_value": "Brazil", "min_runway_ft": 1000,
+              "started_at": NOW - 23, "observed_at": NOW - 21, "native_max_distance_km": 20_000,
+              "selector_airport_ids": ["11", "21" if issue != "partition_mismatch" else "22"],
+              "native_destination_ids": ["21"]}
+    snapshot = compose_snapshot(**observations(), read_only_window=(NOW - 35, NOW - 1), operational_evidence={
+        "route_search_universe": universe, "country_search_windows": [brazil],
+    })
+    assert snapshot["coverage"]["scopes"]["routes"] is False
+    path = tmp_path / FILENAME
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    summary = snapshot_summary(now=NOW, path=path)["route_search_universe"]
+    assert summary["partition_count"] == 2
+    if issue is None:
+        assert summary["destination_catalog"] == {
+            "source": "game_route_arrival_selectors_and_map", "observed_at": NOW - 25,
+            "country_count": 2, "airport_count": 3, "owned_origin_destination_pairs": 2,
+            "external_airport_count": 2,
+        }
+        assert summary["audit_scopes"][0]["remaining_partitions"] == 1
+    else:
+        assert "destination_catalog" not in summary
+
+
 @pytest.mark.parametrize("within_cycle", [True, False])
 def test_capture_reconciles_direct_airports_and_feeds_only_confirmed_filtered_candidates(
         tmp_path, monkeypatch, within_cycle):

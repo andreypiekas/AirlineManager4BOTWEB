@@ -18,6 +18,42 @@ from hub_registry import HubRegistry
 from route_registry import HOME_HUB_EVIDENCE, RouteRegistry
 
 
+@pytest.mark.parametrize("menu_changed", [False, True])
+def test_owned_route_catalog_reads_each_country_once_and_rechecks_menu(monkeypatch, menu_changed):
+    countries = [f"Country {index}" for index in range(10)]
+    airports = {country: str(10 + index) for index, country in enumerate(countries)}
+    origins = ["10", "11"]
+    batches = []
+    monkeypatch.setattr(game_observations, "_poll_country_audit", lambda bot, deadline, read, *args: read(*args))
+
+    def stable_read(bot, script, origin=None):
+        if script == game_observations._ROUTE_MAP_AIRPORT_IDS_JS:
+            return sorted(airports.values())
+        assert script == game_observations._OWNED_ROUTE_SEARCH_MENU_JS
+        current_countries = countries[:-1] if origin is None and batches and menu_changed else countries
+        return {"origin": origin or origins[0], "origins": origins, "countries": current_countries}
+
+    def read_batch(script, values, timeout_ms):
+        assert script == game_observations._ROUTE_DESTINATION_BATCH_JS
+        assert 0 < timeout_ms <= 3000
+        batches.append(values)
+        return [[country, [airports[country]]] for country in values]
+
+    monkeypatch.setattr(game_observations, "_stable_read", stable_read)
+    bot = SimpleNamespace(stopping=False, open_popup=lambda *args: None, ajax=lambda *args: None,
+                          close_popup=lambda **kwargs: None, driver=SimpleNamespace(execute_async_script=read_batch))
+    result = game_observations.collect_owned_route_search_universe(bot)
+
+    assert batches == [countries[:8], countries[8:]]
+    assert result["country_values_by_origin"] == {origin: countries for origin in origins}
+    if menu_changed:
+        assert "destination_catalog" not in result
+    else:
+        assert result["destination_catalog"]["airport_ids_by_country"] == {
+            country: [airport] for country, airport in airports.items()
+        }
+
+
 def test_demand_is_persistent_per_origin_destination_and_survives_partial_queries(tmp_path):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     assert registry.record_demand("2926", [

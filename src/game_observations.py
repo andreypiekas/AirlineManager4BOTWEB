@@ -29,6 +29,8 @@ _COUNTRY_SEARCH_MIN_CEILING_KM = 500  # The native form normalizes smaller ceili
 _COUNTRY_DIRECT_AUDIT_LIMIT = 24
 _COUNTRY_DIRECT_AUDIT_SECONDS = 20
 _COUNTRY_DIRECT_AIRPORT_SECONDS = 8
+_ROUTE_DESTINATION_BATCH_SIZE = 8
+_ROUTE_DESTINATION_BUDGET_SECONDS = 180
 
 # The engine groups and model identity must come from the same synchronous DOM
 # snapshot. Separate stable reads can straddle an AJAX panel replacement and
@@ -270,6 +272,48 @@ if (target && hub.value !== target) {
   return null;
 }
 return {origin: hub.value, origins, countries: values(country)};
+"""
+
+_ROUTE_MAP_AIRPORT_IDS_JS = r"""
+const airports = window.airportIconData;
+return Array.isArray(airports) ? airports.map(airport => String(airport.Id || '')).sort() : null;
+"""
+
+# The Research country selector calls this same read-only fragment without an
+# origin parameter. Parse it without running its scripts or changing the form.
+_ROUTE_DESTINATION_BATCH_JS = r"""
+const [countries, requestTimeout, done] = arguments;
+const menu = document.querySelector('#routeAction select#arrSelector');
+if (!menu?.getClientRects().length || menu.disabled || menu.value !== '0') {
+  done(null);
+  return;
+}
+const values = new Set([...menu.options].filter(option => !option.disabled).map(option => option.value));
+if (countries.some(country => country === '0' || !values.has(country))) {
+  done(null);
+  return;
+}
+(async () => {
+  const results = [];
+  for (const country of countries) {
+    const url = new URL('research_main.php', location.href);
+    url.search = new URLSearchParams({mode: 'cityList', t: 'arr', c: country});
+    if (typeof fbSig !== 'undefined') url.searchParams.set('fbSig', fbSig);
+    const response = await fetch(url, {
+      cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(requestTimeout)
+    });
+    if (!response.ok) return null;
+    const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+    const selectors = page.querySelectorAll('select#citySelectArr');
+    if (selectors.length !== 1 || selectors[0].disabled) return null;
+    const [any, ...options] = selectors[0].options;
+    if (!any || any.value !== '0' || any.disabled || options.length === 0 || options.some(option => option.disabled)) {
+      return null;
+    }
+    results.push([country, options.map(option => option.value).sort()]);
+  }
+  return results;
+})().then(done, () => done(null));
 """
 
 _PREPARE_COUNTRY_SEARCH_JS = """
@@ -572,8 +616,45 @@ def collect_hub_market_prices(bot: object, *, per_cycle: int = 3) -> int:
         bot.close_popup(quiet=True)
 
 
+def _collect_route_destination_catalog(bot: object, countries: list[str]) -> dict | None:
+    """Reconcile one shared arrival catalog with the map before and after the scan."""
+    started_at = time.time()
+    deadline = time.monotonic() + _ROUTE_DESTINATION_BUDGET_SECONDS
+    map_ids = _stable_read(bot, _ROUTE_MAP_AIRPORT_IDS_JS)
+    if (not isinstance(map_ids, list) or not map_ids
+            or any(not isinstance(airport, str) or not _AIRPORT_ID.fullmatch(airport) for airport in map_ids)
+            or len(set(map_ids)) != len(map_ids)):
+        return None
+
+    airports_by_country = {}
+    for offset in range(0, len(countries), _ROUTE_DESTINATION_BATCH_SIZE):
+        remaining = deadline - time.monotonic()
+        if bot.stopping or remaining < 1:
+            return None
+        batch = countries[offset:offset + _ROUTE_DESTINATION_BATCH_SIZE]
+        # One request at a time. Keep each browser call short and within the cycle budget.
+        timeout_ms = min(3000, int(remaining * 1000 / len(batch)))
+        rows = bot.driver.execute_async_script(_ROUTE_DESTINATION_BATCH_JS, batch, timeout_ms)
+        if not isinstance(rows, list) or len(rows) != len(batch):
+            log.debug("Catálogo de chegadas: lote indisponível após %d países.", offset)
+            return None
+        for country, row in zip(batch, rows, strict=True):
+            if (not isinstance(row, list) or len(row) != 2 or row[0] != country
+                    or not isinstance(row[1], list) or not row[1]
+                    or any(not isinstance(airport, str) or not _AIRPORT_ID.fullmatch(airport) for airport in row[1])):
+                return None
+            airports_by_country[country] = row[1]
+
+    airports = [airport for ids in airports_by_country.values() for airport in ids]
+    if (bot.stopping or time.monotonic() >= deadline or sorted(airports) != map_ids
+            or _stable_read(bot, _ROUTE_MAP_AIRPORT_IDS_JS) != map_ids):
+        return None
+    return {"started_at": started_at, "observed_at": time.time(), "map_airport_ids": map_ids,
+            "airport_ids_by_country": airports_by_country}
+
+
 def collect_owned_route_search_universe(bot: object) -> dict | None:
-    """Read the country menu for every owned origin without submitting a route search."""
+    """Read native country menus and the shared arrival catalog in one observation."""
     if bot.stopping:
         return None
     started_at = time.time()
@@ -600,8 +681,22 @@ def collect_owned_route_search_universe(bot: object) -> dict | None:
             countries[origin] = row["countries"]
         if read(first["origin"]) != first:
             return None
-        return {"started_at": started_at, "observed_at": time.time(),
-                "origin_ids": origins, "country_values_by_origin": countries}
+        result = {"started_at": started_at, "observed_at": time.time(),
+                  "origin_ids": origins, "country_values_by_origin": countries}
+        if all(menu == first["countries"] for menu in countries.values()):
+            try:
+                catalog = _collect_route_destination_catalog(bot, first["countries"])
+            except WebDriverException:
+                log.debug("A coleta do seletor de aeroportos foi interrompida.")
+            else:
+                # The detached requests need no jQuery idle period, but the same
+                # form and roster must still be visible after the scan.
+                if catalog is not None and _poll_country_audit(
+                    bot, time.monotonic() + 4, _stable_read, bot, _OWNED_ROUTE_SEARCH_MENU_JS, None,
+                ) == first:
+                    result["destination_catalog"] = catalog
+                    result["observed_at"] = time.time()
+        return result
     finally:
         bot.close_popup(quiet=True)
 

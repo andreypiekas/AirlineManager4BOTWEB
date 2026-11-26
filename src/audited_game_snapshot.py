@@ -189,6 +189,35 @@ def _country_search_partitions(windows, owned_ids, cycle):
     return reports
 
 
+def _route_destination_catalog(raw, owned_ids, menus, window, partitions, now):
+    if not isinstance(raw, dict):
+        return None
+    started, observed = raw.get("started_at"), raw.get("observed_at")
+    if not (_fresh(started, now) and _fresh(observed, now) and window[0] <= started <= observed <= window[1]):
+        return None
+    airports = raw.get("airport_ids_by_country")
+    map_ids = raw.get("map_airport_ids")
+    if (not isinstance(airports, dict) or any(set(menu) != airports.keys() for menu in menus.values())
+            or not isinstance(map_ids, list) or not map_ids or not all(map(_game_id, map_ids))
+            or len(set(map_ids)) != len(map_ids) or not owned_ids <= set(map_ids)):
+        return None
+    if any(not isinstance(ids, list) or not ids or not all(map(_game_id, ids)) for ids in airports.values()):
+        return None
+    selector_ids = [airport for ids in airports.values() for airport in ids]
+    if sorted(selector_ids) != sorted(map_ids):
+        return None
+    for partition in partitions:
+        ids = partition["selector_airport_ids"]
+        country = partition["country_value"]
+        if country in airports and ids is not None and set(ids) != set(airports[country]):
+            return None
+    return {"source": "game_route_arrival_selectors_and_map", "started_at": started, "observed_at": observed,
+            "country_count": len(airports), "airport_count": len(map_ids),
+            "owned_origin_destination_pairs": len(owned_ids) * (len(map_ids) - 1),
+            "external_airport_count": len(map_ids) - len(owned_ids),
+            "airport_ids_by_country": deepcopy(airports)}
+
+
 def _route_search_universe(raw, owned_ids, cycle, partitions, now):
     """Measure coverage of the native owned-origin menus, scoped to each search envelope."""
     if not isinstance(raw, dict) or cycle is None or not owned_ids:
@@ -222,9 +251,14 @@ def _route_search_universe(raw, owned_ids, cycle, partitions, now):
         scopes.append({"min_runway_ft": runway, "requested_max_distance_km": distance,
                        "attempted_partitions": len(audited), "reconciled_partitions": reconciled,
                        "remaining_partitions": len(universe) - reconciled})
-    return {"source": "game_owned_route_search_menus", "started_at": started, "observed_at": observed,
-            "origin_count": len(owned_ids), "partition_count": len(universe),
-            "country_values_by_origin": deepcopy(menus), "audit_scopes": scopes}
+    result = {"source": "game_owned_route_search_menus", "started_at": started, "observed_at": observed,
+              "origin_count": len(owned_ids), "partition_count": len(universe),
+              "country_values_by_origin": deepcopy(menus), "audit_scopes": scopes}
+    catalog = _route_destination_catalog(raw.get("destination_catalog"), owned_ids, menus,
+                                         (started, observed), partitions, now)
+    if catalog is not None:
+        result["destination_catalog"] = catalog
+    return result
 
 
 def _record_direct_country_demand(expansion, partitions):
@@ -692,9 +726,14 @@ def snapshot_summary(*, now=None, path: Path | None = None):
         route_universe = observations.get("route_search_universe")
         search_summary = {}
         if scopes["hubs"] and route_universe and _fresh(route_universe["started_at"], now):
-            search_summary["route_search_universe"] = {
+            universe_summary = search_summary["route_search_universe"] = {
                 key: route_universe[key] for key in ("source", "observed_at", "origin_count",
                                                     "partition_count", "audit_scopes")}
+            catalog = route_universe.get("destination_catalog")
+            if catalog:
+                universe_summary["destination_catalog"] = {
+                    key: catalog[key] for key in ("source", "observed_at", "country_count", "airport_count",
+                                                  "owned_origin_destination_pairs", "external_airport_count")}
         return {"status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": observations["captured_at"],
                 **({"read_only_window": observations["read_only_window"]} if "read_only_window" in observations else {}),
