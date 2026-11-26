@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3/A4, primeira captura autenticada do worker (G0)
+
+- Com a sessão dedicada autenticada, o clique por ponteiro deixava o painel `Company` vazio. O verificador agora aciona o controle nativo diretamente e aguarda exatamente um campo de identificação novo e visível em `#companyAction`. Aceita maiúsculas e espaços Unicode nos rótulos em inglês e português. A confirmação final continua exigindo o mesmo ID da primeira leitura. Após falhas ao gravar as preferências do Chrome no perfil anterior, a execução usou `%LOCALAPPDATA%\AirlineManager4BOTWEB\observation` via `AM4_CHROME_PROFILE_DIR` e login manual.
+- O worker confirmou a companhia às 08h44min39s e reconfirmou o mesmo ID às 08h46min41s BRT. O ciclo somente leitura gravou `data/audited_game_snapshot.json`. O carregador conferiu o fingerprint, o esquema, o perfil e a janela da captura. A lista de 30 hubs foi validada e a cobertura geral ficou parcial. A captura permanece privada no diretório de dados local.
+- O jogo mostrou 223 aeronaves com rota, `Parked (0)` e `Pending (2)`, totalizando 225. A varredura descartou o lote com IDs de aeronave repetidos entre páginas e terminou com uma de 12 páginas cobertas. `observations.hub_operations` ficou incompleto, sem painéis validados, e a conferência dos hubs de entrega atingiu o limite de espera. `observations.demand_events` ficou sem painéis validados. O ciclo não gerou nova prévia de rota, e a taxa de abertura e os custos incrementais de um candidato elegível seguem pendentes.
+- Na pesquisa de Kinshasa (465) para Congo (Kinshasa), o seletor mostrou 21 destinos e a lista geral retornou oito. As 13 consultas diretas registradas resolveram os IDs omitidos dentro do mesmo ciclo confirmado, com o filtro de pista mínima de 5.000 ft. O resultado cobre essa partição. Rota, frota, modelos, motores e preços seguem sem cobertura certificada.
+- Passaram 50 testes focados e, na suíte Windows, 2.402 testes com um pulado. A suíte Windows excluiu `tests/test_instalacao_linux.py`, cujas verificações dependem de APIs e caminhos Linux. Ruff e `git diff --check` passaram. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A3, custos observados de dois MC-21-400 pousados (G0)
 
 - Entre 08h30 e 08h33 BRT, o Chrome mostrou 223 rotas, 225 aeronaves, `Parked (0)` e `Pending (2)`. A lista `Landed` mostrou PP-118-3 e PP-118 prontas para decolar em suas rotas existentes. Foram conferidos o detalhe nativo de cada aeronave, a cabine, `Todays demand` e o histórico de voos. A consulta foi somente leitura.

@@ -980,16 +980,36 @@ class Bot:
         return False
 
     def _verify_observation_company(self) -> None:
-        self._click("//*[@id='smallMainMenu']//*[@id='mapAcList']")
+        selector = (By.CSS_SELECTOR, "#popup #companyAction .font-weight-bold")
+        previous_fields = self.driver.find_elements(*selector)
+
+        def read_company_id(driver):
+            matches = []
+            for field in driver.find_elements(*selector):
+                if field not in previous_fields and field.is_displayed():
+                    match = re.fullmatch(
+                        r"(?:User\s+ID|ID\s+do\s+usuário)\s*:\s*([1-9][0-9]{0,13})",
+                        field.text.strip(),
+                        re.IGNORECASE,
+                    )
+                    if match:
+                        matches.append(match[1])
+            return matches[0] if len(matches) == 1 else None
+
+        wait = WebDriverWait(self.driver, 15, ignored_exceptions=(StaleElementReferenceException,))
         try:
-            selector = ("//*[@id='popup']//*[@id='companyAction']"
-                        "//*[contains(concat(' ', normalize-space(@class), ' '), ' font-weight-bold ')]"
-                        "[starts-with(normalize-space(.), 'User ID:') or starts-with(normalize-space(.), 'ID do usuário:')]")
-            label = self._text(selector)
-            match = re.fullmatch(r"(?:User ID|ID do usuário):\s*([1-9][0-9]{0,13})", label or "", re.IGNORECASE)
-            if match is None or self._observation_company_id not in (None, match[1]):
-                raise RuntimeError("Identidade da companhia sem confirmação no modo de observação.")
-            self._observation_company_id = match[1]
+            try:
+                button = wait.until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "#smallMainMenu #mapAcList"))
+                )
+                # Dispatch on the menu control itself, independent of pointer hit-testing.
+                self.js("arguments[0].click();", button)
+                company_id = wait.until(read_company_id)
+            except TimeoutException as exc:
+                raise RuntimeError("Identidade da companhia sem confirmação no modo de observação.") from exc
+            if self._observation_company_id not in (None, company_id):
+                raise RuntimeError("Identidade da companhia mudou durante o ciclo de observação.")
+            self._observation_company_id = company_id
         finally:
             self.close_popup(quiet=True)
 

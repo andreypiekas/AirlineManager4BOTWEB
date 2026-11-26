@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from selenium.webdriver.common.by import By
 
 import bot as bot_module
 import config
@@ -195,13 +196,18 @@ def test_cli_rejects_manual_login_without_observation_before_profile_selection(m
     select.assert_not_called()
 
 
-@pytest.mark.parametrize("label", ["User ID", "USER ID", "ID DO USUÁRIO"])
+@pytest.mark.parametrize("label", ["User ID", "USER ID", "ID\xa0DO USUÁRIO"])
 def test_observation_rejects_changed_native_company_id(label):
     worker = Bot.__new__(Bot)
     worker._observation_company_id = None
-    worker._click = Mock()
     worker.close_popup = Mock()
-    worker._text = Mock(side_effect=[f"{label}: 123", f"{label}: 123", f"{label}: 456"])
+    worker.driver = Mock()
+    worker.driver.find_element.return_value.is_displayed.return_value = True
+    worker.driver.find_element.return_value.is_enabled.return_value = True
+    first = Mock(text=f"{label}: 123")
+    again = Mock(text=f"{label}: 123")
+    changed = Mock(text=f"{label}: 456")
+    worker.driver.find_elements.side_effect = [[], [first], [first], [again], [again], [changed]]
 
     worker._verify_observation_company()
     worker._verify_observation_company()
@@ -210,6 +216,30 @@ def test_observation_rejects_changed_native_company_id(label):
 
     assert worker._observation_company_id == "123"
     assert worker.close_popup.call_count == 3
+
+
+def test_observation_waits_for_one_visible_company_id():
+    worker = Bot.__new__(Bot)
+    worker._observation_company_id = None
+    worker.close_popup = Mock()
+    worker.driver = Mock()
+    worker.driver.find_element.return_value.is_displayed.return_value = True
+    worker.driver.find_element.return_value.is_enabled.return_value = True
+    hidden = Mock(text="User ID: 456")
+    hidden.is_displayed.return_value = False
+    old = Mock(text="User ID: 789")
+    title = Mock(text="Company")
+    field = Mock(text="USER ID: 123")
+    worker.driver.find_elements.side_effect = [[old], [old, hidden, title], [field, field], [old, field]]
+
+    worker._verify_observation_company()
+
+    assert worker._observation_company_id == "123"
+    assert worker.driver.find_elements.call_count == 4
+    worker.driver.find_element.assert_called_once_with(By.CSS_SELECTOR, "#smallMainMenu #mapAcList")
+    worker.driver.execute_script.assert_called_once_with("arguments[0].click();", worker.driver.find_element.return_value)
+    worker.driver.find_elements.assert_called_with(By.CSS_SELECTOR, "#popup #companyAction .font-weight-bold")
+    worker.close_popup.assert_called_once_with(quiet=True)
 
 
 def test_worker_directory_lock_remains_exclusive_until_release(tmp_path):
