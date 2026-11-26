@@ -64,6 +64,8 @@ def test_collector_and_profile_snapshot(tmp_path, monkeypatch):
     evidence = {}
     assert collect_fleet_commitment_observations(bot, path=path, identity_evidence=evidence)
     assert evidence["pending_ids"] == frozenset({"12345678", "23456789"})
+    assert evidence["maintenance_ids"] == frozenset({"12345678"})
+    assert evidence["unclassified_pending_ids"] == frozenset()
     assert evidence["parked_ids"] == frozenset()
     assert json.loads(path.read_text(encoding="utf-8"))["observation_id"] == evidence["observation_id"]
     assert bot.calls == ["maintenance_main.php", "hangars.php?type=pax", "close", "routes_main.php",

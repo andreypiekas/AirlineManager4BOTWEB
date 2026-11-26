@@ -137,7 +137,8 @@ def _catalog_scopes(coverage, now):
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                      quotes, cash, cash_at, now, mode=None, mode_at=None,
                      preview_margin=0.10, native_quotes=(), configured_prices=None, policy_values=None,
-                     external_demand=None, operational_reserve=None, read_only_window=None):
+                     external_demand=None, operational_reserve=None, read_only_window=None,
+                     operational_evidence=None):
     """Translate independently collected observations without upgrading their provenance."""
     hub_at = inventory.get("observed_at")
     raw_hubs = inventory.get("hubs", [])
@@ -246,6 +247,12 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
         snapshot["observations"]["read_only_window"] = {
             "started_at": started_at, "company_confirmed_at": company_confirmed_at,
         }
+    if operational_evidence is not None:
+        from hub_operations import reconcile_hub_operations
+
+        snapshot["observations"]["hub_operations"] = reconcile_hub_operations(
+            operational_evidence, owned_hubs=hubs, hub_at=hub_at, routes=routes,
+            fleet_verified=fleet_verified, window=read_only_window)
     if policy_values is not None:
         snapshot["observations"]["investment_policy"] = policy_values
     if external_demand is not None:
@@ -257,7 +264,7 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
     return snapshot
 
 
-def capture_game_snapshot(bot, *, read_only_window=None):
+def capture_game_snapshot(bot, *, read_only_window=None, operational_evidence=None):
     """Called on the browser-owning worker after the cycle's market/finance reads."""
     from dashboard import recent_verified_money
     from economy import load_market_evidence
@@ -294,6 +301,7 @@ def capture_game_snapshot(bot, *, read_only_window=None):
                                 native_quotes=native_route_quotes(bot, now=now),
                                 configured_prices=configured_price_assumptions(config), external_demand=external,
                                 read_only_window=read_only_window,
+                                operational_evidence=operational_evidence,
                                 operational_reserve=config.get_int("settings", "cash_reserve", -1) if config else None,
                                 policy_values=audited_policy_values(
                                     InvestmentPolicy.from_config(config),

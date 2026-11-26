@@ -38,6 +38,7 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
     def fleet(owner, *, observation_only):
         assert owner is worker
         calls.append(("fleet", observation_only))
+        return {"observation_id": "fleet"}
 
     def read(label):
         def action(owner):
@@ -48,6 +49,7 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
 
     monkeypatch.setattr(bot_module, "manage_fleet", fleet)
     monkeypatch.setattr("game_observations.collect_owned_hub_demand", read("demand"))
+    monkeypatch.setattr("hub_operations.collect_hub_operations", read("hub_operations"))
     monkeypatch.setattr("game_observations.collect_owned_route_details", read("route_details"))
     monkeypatch.setattr("game_observations.collect_aircraft_engine_catalog", read("aircraft_catalog"))
     monkeypatch.setattr("owned_delivery_coverage.collect_owned_delivery_coverage", read("delivery_hubs"))
@@ -65,8 +67,11 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
         assert capture.call_count == 1 and capture.call_args.args == (worker,)
         started_at, confirmed_at = capture.call_args.kwargs["read_only_window"]
         assert 0 < started_at <= confirmed_at
+        assert capture.call_args.kwargs["operational_evidence"] == {
+            "pending": {"observation_id": "fleet"}, "hubs": None,
+        }
     assert calls == ["session", "company", "mode", "demand", ("market", True), ("fleet", True),
-                     "route_details", "aircraft_catalog", "delivery_hubs", "finance", "staff", "header",
+                     "hub_operations", "route_details", "aircraft_catalog", "delivery_hubs", "finance", "staff", "header",
                      "session", "company"]
     assert worker.notify("test", category="status") is False
     assert not worker.telegram.mock_calls

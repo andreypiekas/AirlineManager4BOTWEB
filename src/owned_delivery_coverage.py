@@ -41,7 +41,7 @@ return {model_id: identity.model_id ?? identity.script_model_id, state};
 """
 
 
-def _ids(values):
+def native_ids(values):
     if (not isinstance(values, list) or not values or len(values) > 10000
             or any(type(value) is not str or not _ID.fullmatch(value) for value in values)
             or len(set(values)) != len(values)):
@@ -51,7 +51,7 @@ def _ids(values):
 
 def compare_coverage(before, order, after, model_id):
     """Compare exact native sets with the management inventory bracketing the form."""
-    owned, confirmed = _ids(before), _ids(after)
+    owned, confirmed = native_ids(before), native_ids(after)
     if not owned or owned != confirmed or not isinstance(order, dict) or order.get("model_id") != model_id:
         return None
     state = order.get("state")
@@ -62,8 +62,8 @@ def compare_coverage(before, order, after, model_id):
     if not isinstance(options, list) or any(not isinstance(row, dict) or type(row.get("disabled")) is not bool
                                            for row in options):
         return None
-    offered = _ids([row.get("id") for row in options])
-    selected = _ids(state.get("selected_values"))
+    offered = native_ids([row.get("id") for row in options])
+    selected = native_ids(state.get("selected_values"))
     value = state.get("value")
     if (not offered or not selected or len(selected) != 1 or type(value) is not str or value not in selected
             or not selected <= {row["id"] for row in options if not row["disabled"]}):
@@ -116,7 +116,7 @@ def collect_owned_delivery_coverage(bot, *, path=None):
             bot.close_popup(quiet=True)
 
     before = managed()
-    if not _ids(before) or getattr(bot, "stopping", False):
+    if not native_ids(before) or getattr(bot, "stopping", False):
         return False
     try:
         bot.open_popup("routes_main.php", "Routes", "nav_routes")
@@ -125,7 +125,7 @@ def collect_owned_delivery_coverage(bot, *, path=None):
         if not isinstance(models, list) or any(not isinstance(row, dict) for row in models):
             return False
         model_ids = [row.get("id") for row in models]
-        model_ids = _ids(model_ids)
+        model_ids = native_ids(model_ids)
         if not model_ids or getattr(bot, "stopping", False):
             return False
         model_id = min(model_ids, key=int)

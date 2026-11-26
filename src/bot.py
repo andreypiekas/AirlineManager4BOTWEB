@@ -763,17 +763,22 @@ class Bot:
         from finance_observations import collect_finance_observations
         from game_observations import (collect_aircraft_engine_catalog, collect_owned_hub_demand,
                                        collect_owned_route_details)
+        from hub_operations import collect_hub_operations
         from owned_delivery_coverage import collect_owned_delivery_coverage
         from staff_observations import collect_staff_observations
 
         log.info("Consultando a companhia aérea [SOMENTE LEITURA].")
         started_at = time.time()
+        operational_evidence = {}
         self._next_event = None
         for action, label in (
             (self._read_mode, "ler o modo de jogo"),
             (lambda: collect_owned_hub_demand(self), "coletar demanda dos hubs"),
             (lambda: self._check_market(observation_only=True), "consultar combustível / CO₂"),
-            (lambda: manage_fleet(self, observation_only=True), "conferir frota e prévia de rota"),
+            (lambda: operational_evidence.update(pending=manage_fleet(self, observation_only=True)),
+             "conferir frota e prévia de rota"),
+            (lambda: operational_evidence.update(hubs=collect_hub_operations(self)),
+             "conferir operações dos hubs"),
             (lambda: collect_owned_route_details(self), "coletar detalhes das rotas"),
             (lambda: collect_aircraft_engine_catalog(self), "pesquisar catálogo de aeronaves e motores"),
             (lambda: collect_owned_delivery_coverage(self), "conferir cobertura dos hubs de entrega"),
@@ -790,7 +795,8 @@ class Bot:
         self._verify_observation_company()
         confirmed_at = time.time()
         if not self.stopping:
-            self._guard(lambda: capture_game_snapshot(self, read_only_window=(started_at, confirmed_at)),
+            self._guard(lambda: capture_game_snapshot(self, read_only_window=(started_at, confirmed_at),
+                                                      operational_evidence=operational_evidence),
                         "gravar captura auditada")
 
     def _guard(self, action: Callable[[], None], what: str) -> None:

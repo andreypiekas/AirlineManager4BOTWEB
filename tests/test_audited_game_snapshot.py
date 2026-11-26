@@ -2,6 +2,8 @@ import json
 import time
 from types import SimpleNamespace
 
+import pytest
+
 import paths
 from native_route_quotes import native_route_quotes, record_native_route_quote
 from audited_game_snapshot import (
@@ -21,6 +23,7 @@ def observations():
         "routes": {"current_fleet_coverage_verified": True,
                    "fleet_coverage": {"source": "game_roster_and_route_audit",
                                       "observed_at": NOW - 10, "roster_observed_at": NOW - 30,
+                                      "roster_observation_id": "test-roster",
                                       "audit_run_id": "test-run", "total": 2, "routes": 1,
                                       "parked": 0, "pending": 1,
                                       "native_identity_status": "matched", "native_observation_id": "test-native"},
@@ -46,6 +49,57 @@ def test_snapshot_binds_verified_fleet_and_hubs_without_inventing_complete_cover
         "models": False, "engines": False, "prices": False,
     }
     assert snapshot["observations"]["cash"]["committed"] is None
+
+
+@pytest.mark.parametrize(("case", "status"), [
+    ("matching", "matched"), ("substituted_aircraft", "different"), ("delivery", "different"),
+    ("unclassified", "incomplete"), ("old_roster", "incomplete"),
+    ("wrong_itinerary", "different"), ("wrong_pending_observation", "incomplete"),
+])
+def test_snapshot_reconciles_native_hub_operations_by_aircraft_and_route(case, status):
+    inputs = observations()
+    inputs["inventory"]["hubs"] = [{"id": "2947", "code": "GRU"}, {"id": "455", "code": "EDDF"}]
+    routed, pending = inputs["routes"]["current_relations"]
+    # Route cards can have ICAO codes only. The native hub table shows IATA
+    # and both hubs must report the same aircraft even when direction flips.
+    routed.update(game_route_id=41, origin={"code": "SBGR"}, destination={"code": "EDDF"})
+    pending["game_route_id"] = 0
+    gru = {"management_id": "76500", "iata": "GRU", "icao": "SBGR", "rows": [
+        {"aircraft_id": "101", "airports": ["GRU", "FRA"]},
+        {"aircraft_id": "102", "airports": ["GRU", "PRY"]},
+    ]}
+    fra = {"management_id": "76501", "iata": "FRA", "icao": "EDDF", "rows": [
+        {"aircraft_id": "101", "airports": ["FRA", "GRU"]},
+    ]}
+    hubs = {"started_at": NOW - 8, "observed_at": NOW - 4, "panels": [gru, fra],
+            "enumerated": True, "managed_count": 2}
+    pending_read = {"observation_id": "test-native", "observed_at": NOW - 14, "observed_until": NOW - 11,
+                    "pending_ids": frozenset({"102"}), "maintenance_ids": frozenset({"102"}),
+                    "unclassified_pending_ids": frozenset()}
+    if case == "substituted_aircraft":
+        fra["rows"][0]["aircraft_id"] = "103"
+    if case in ("delivery", "unclassified"):
+        pending_read["maintenance_ids"] = frozenset()
+    if case == "unclassified":
+        pending_read["unclassified_pending_ids"] = frozenset({"102"})
+    if case == "wrong_itinerary":
+        fra["rows"][0]["airports"] = ["FRA", "PRY"]
+    if case == "wrong_pending_observation":
+        pending_read["observation_id"] = "earlier-cycle"
+    cycle_start = NOW - 25 if case == "old_roster" else NOW - 35
+
+    result = compose_snapshot(**inputs, read_only_window=(cycle_start, NOW - 1),
+                              operational_evidence={"hubs": hubs, "pending": pending_read})
+    report = result["observations"]["hub_operations"]
+    assert report["status"] == status
+    assert result["snapshot_id"] == fingerprint_snapshot(result)
+    json.dumps(result)
+    assert result["coverage"]["scopes"]["routes"] is False
+    if case == "matching":
+        assert report["associated_maintenance_aircraft"] == ["102"]
+        assert report["observed_links"] == 3
+    if case == "substituted_aircraft":
+        assert {row["kind"] for row in report["differences"]} == {"unexpected_aircraft", "missing_aircraft"}
 
 
 def external_observations():

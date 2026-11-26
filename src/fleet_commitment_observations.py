@@ -335,5 +335,9 @@ def collect_fleet_commitment_observations(bot, *, path=None, identity_evidence=N
                                         "pending_fleet": pending, "parked_count": parked["total"] if parked else None}))
     if identity_evidence is not None and pending is not None and parked is not None:
         identity_evidence.update(observation, pending_ids=frozenset(row["id"] for row in pending_rows["rows"]),
-                                 parked_ids=frozenset(row["id"] for row in parked_rows["rows"]))
+                                 parked_ids=frozenset(row["id"] for row in parked_rows["rows"]),
+                                 maintenance_ids=frozenset(row["id"] for row in pending_rows["rows"]
+                                                           if row["status"] == "maintenance"),
+                                 unclassified_pending_ids=frozenset(row["id"] for row in pending_rows["rows"]
+                                                                    if row["status"] == "unclassified"))
     return all(value is not None for value in (hangar, pending, parked))

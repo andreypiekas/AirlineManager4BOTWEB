@@ -863,7 +863,7 @@ return {routes: Number(routeLabel[1]), parked, pending};
 """
 
 
-def manage_fleet(bot: "Bot", *, observation_only: bool = False) -> None:
+def manage_fleet(bot: "Bot", *, observation_only: bool = False) -> dict | None:
     cfg = bot.config
     registry = RouteRegistry()
     planning_enabled = observation_only or cfg.get_bool("investment", "planning_enabled", False)
@@ -946,6 +946,7 @@ def manage_fleet(bot: "Bot", *, observation_only: bool = False) -> None:
         except Exception as exc:  # noqa: BLE001 - read-only financial enrichment must not halt operations
             log_fleet.warning("Histórico financeiro indisponível neste ciclo (%s).", type(exc).__name__)
     bot.close_popup()
+    return native_identity_evidence if observation_only else None
 
 
 def _manage_fleet_actions(bot: "Bot", registry: RouteRegistry, parked: int, *,

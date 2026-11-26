@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2, conciliação das operações dos hubs (G0)
+
+- Por volta de 00h25 BRT, o Chrome autenticado confirmou que o Black Friday Cargo Rush continuava ativo, com fim previsto para 29/11 às 20h BRT. Routes mostrou 221 rotas, `Parked (0)` e `Pending (3)`. Os três registros pendentes estavam em manutenção. O ID do PP-217 em Pending apareceu também em `Operations to/from hub` de STG para STG–PRY. A consulta foi somente leitura. A prévia de BCN–SHA continua como a amostra correlacionada de tarifa, taxa e consumo registrada durante o evento.
+- O worker de observação lê os detalhes nativos de cada hub entre duas leituras da lista gerenciada. A captura privada registra os painéis coletados e o resultado da conciliação no campo `observations.hub_operations`, vinculado à janela da companhia confirmada. A comparação usa os IDs de aeronave e os aeroportos da operação nos dois sentidos. Quando os dois aeroportos são hubs da companhia, verifica o vínculo em ambos. Uma ocorrência adicional pode ser corroborada pelo mesmo ID classificado em Pending como manutenção. Uma entrega encontrada na lista de operações causa divergência.
+- O relatório registra diferenças por aeronave e hub e sinaliza leituras incompletas, incluindo painel ausente, códigos ambíguos e pendência sem classificação entre as ocorrências adicionais. A verificação cobre associações observadas no ciclo. Base permanente, cobertura da pesquisa de candidatos, demanda residual fora do evento e custo incremental completo seguem pendentes. A primeira execução autenticada depende da sessão persistente do perfil do worker, separada do Chrome usado na consulta manual.
+- A suíte Windows passou com 2.355 testes e um pulado. Os 78 testes focados e os 16 testes do instalador no Ubuntu via WSL passaram. Ruff e `git diff --check` passaram.
+
 ## 2026-11-26 — Autonomia Total A1–A3, catálogo nativo no worker de observação (G0)
 
 - `--observe-game` passou a consultar detalhes independentes de rota, o catálogo de aeronaves e motores e a cobertura do seletor de hubs de entrega. A coleta ocorre depois da prévia de Parked e antes da confirmação final de sessão. A consulta de variantes continua limitada a dois modelos por ciclo.
