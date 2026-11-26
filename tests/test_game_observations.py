@@ -5,6 +5,7 @@ import subprocess
 import time
 
 import pytest
+from selenium.common.exceptions import TimeoutException
 
 import fleet
 import game_observations
@@ -434,7 +435,11 @@ controls['select#citySelectArr'] = {value: '2850'};
 const specificAirport = start(...args);
 controls['select#citySelectArr'].value = '0';
 const ready = start(...args);
-console.log(JSON.stringify({country, selected, busy, noAirportSelector, specificAirport, ready, actions}));
+const overlapArgs = ['2947', 1723, 1000, 'Argentina'];
+const overlapCountry = prepare(...overlapArgs);
+const overlapReady = start(...overlapArgs);
+console.log(JSON.stringify({country, selected, busy, noAirportSelector, specificAirport,
+                            ready, overlapCountry, overlapReady, actions}));
 """
     result = subprocess.run(["node", "-e", js, game_observations._PREPARE_COUNTRY_SEARCH_JS,
                              game_observations._START_COUNTRY_SEARCH_JS],
@@ -442,7 +447,8 @@ console.log(JSON.stringify({country, selected, busy, noAirportSelector, specific
     assert json.loads(result.stdout) == {
         "country": "Argentina", "selected": [["hub", "change"], ["country", "change"]],
         "busy": False, "noAirportSelector": False, "specificAirport": False, "ready": True,
-        "actions": ["clear", "search"],
+        "overlapCountry": "Argentina", "overlapReady": True,
+        "actions": ["clear", "search", "clear", "search"],
     }
 
 
@@ -950,21 +956,28 @@ def test_search_keeps_event_warning_when_followup_dom_read_loses_it(tmp_path, mo
 
 @pytest.mark.parametrize(("window_type", "bad_result"), [
     ("distance", None), ("distance", "origin"), ("country", None), ("country", "country"),
+    ("saturated_country", None), ("saturated_country", "timeout"),
 ])
-def test_saturated_planning_search_reads_second_window_and_keeps_coverage_partial(
+def test_saturated_planning_search_reads_overlapping_windows_and_keeps_coverage_partial(
         tmp_path, monkeypatch, window_type, bad_result):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
     monkeypatch.setattr(game_observations, "HubRegistry", lambda: HubRegistry(tmp_path / "hubs.json"))
     first_at = 1_900_000_010.25
     second_at = first_at + 3
-    now = second_at + 5
+    overlap_at = second_at + 3
+    now = overlap_at + 5
     monkeypatch.setattr(hub_expansion.time, "time", lambda: now)
     requests = []
     results = [RouteCandidate(str(3100 + i), "DEST", 1900.5 + i, 100, 20, 5, 6000)
                for i in range(50)]
-    shorter = RouteCandidate("3200", "SHORT", 1750, 90, 10, 0, 6600, event_demand_boosted=True)
+    saturated_country = window_type == "saturated_country"
+    shorter = RouteCandidate("3200", "SHORT", 1750, 90, 10, 0, 6600,
+                             event_demand_boosted=not saturated_country)
+    nearest = RouteCandidate("3201", "NEAR", 1600, 80, 5, 0, 5500)
+    country_rows = [shorter, *results[:49]] if saturated_country else [shorter, results[0]]
     rows = []
+    visible = []
 
     def prepare_rows(window, *, extra=False):
         dep_id = "2950" if extra and bad_result == "origin" else "2926"
@@ -972,9 +985,11 @@ def test_saturated_planning_search_reads_second_window_and_keeps_coverage_partia
         rows[:] = [{"dep_id": dep_id, "arr_id": item.arr_id, "distance": str(item.distance),
                     "y": str(item.y), "j": str(item.j), "f": str(item.f),
                     "runway": str(item.runway),
-                    "destination_country": country if window_type == "country" else None,
-                    "event_demand_boosted": extra and item.arr_id == "3100"}
+                    "destination_country": country if window_type != "distance" else None,
+                    "event_demand_boosted": ((extra and item.arr_id == "3100")
+                                             or (len(requests) == 3 and item.arr_id == "3200"))}
                    for item in window]
+        visible[:] = window
         return window
 
     def search(_bot, origin, distance, runway, *, persist_demand):
@@ -983,9 +998,9 @@ def test_saturated_planning_search_reads_second_window_and_keeps_coverage_partia
         return prepare_rows([shorter, results[0]] if extra else results, extra=extra)
 
     monkeypatch.setattr(fleet, "search_routes", search)
-    monkeypatch.setattr(fleet, "read_route_candidates", lambda _bot: [shorter, results[0]])
+    monkeypatch.setattr(fleet, "read_route_candidates", lambda _bot: visible)
     monkeypatch.setattr(game_observations, "_stable_read", lambda *_args, **_kwargs: (
-        rows, first_at if len(requests) == 1 else second_at))
+        rows, [first_at, second_at, overlap_at][len(requests) - 1]))
 
     class Bot:
         stopping = False
@@ -1012,34 +1027,47 @@ def test_saturated_planning_search_reads_second_window_and_keeps_coverage_partia
         def js(self, script, *args):
             if script == _HUB_OPTIONS_JS:
                 return [{"id": "2926", "text": "XAP - Chapecó", "code": "XAP"}]
-            assert window_type == "country"
+            assert window_type != "distance"
+            limits = ("2926", 6000 if len(requests) == 1 else 1750, 5000, "Argentina")
+            assert args == limits
             if script == game_observations._PREPARE_COUNTRY_SEARCH_JS:
-                assert args == ("2926", 6000, 5000, "Argentina")
                 return "Argentina"
             assert script == game_observations._START_COUNTRY_SEARCH_JS
-            assert args == ("2926", 6000, 5000, "Argentina")
             requests.append(args)
-            prepare_rows([shorter, results[0]], extra=True)
+            if len(requests) == 3 and bad_result == "timeout":
+                raise TimeoutException
+            prepare_rows(country_rows if len(requests) == 2 else [shorter, nearest], extra=True)
             return True
 
         def wait_loaded(self, target, *, timeout):
             assert (target, timeout) == ("resResult", 8)
             return "New route search result"
 
-    assert game_observations.collect_owned_hub_demand(Bot()) == (50 if bad_result else 51)
-    second = (("2926", 6000, 5000, "Argentina") if window_type == "country"
-              else ("2926", 1901, 5000, False))
-    assert requests == [("2926", 6000, 5000, False), second]
+    accepted = game_observations.collect_owned_hub_demand(Bot())
+    second = (("2926", 1901, 5000, False) if window_type == "distance"
+              else ("2926", 6000, 5000, "Argentina"))
+    expected = [("2926", 6000, 5000, False), second]
+    if saturated_country:
+        expected.append(("2926", 1750, 5000, "Argentina"))
+    assert requests == expected
     snapshot = registry.demand_research_snapshot({"2926"}, now=now)
     assert snapshot["coverage"] == "partial"
     stored = {row["destination_id"]: row for row in snapshot["samples"]}
     assert stored["3100"]["observed_at"] == first_at
-    assert stored["3100"].get("event_demand_boosted", False) is (not bad_result)
-    if bad_result:
+    if bad_result in {"origin", "country"}:
+        assert accepted == 50
+        assert not stored["3100"].get("event_demand_boosted")
         assert "3200" not in stored
     else:
+        assert stored["3100"]["event_demand_boosted"] is True
         assert stored["3200"]["observed_at"] == second_at
-        assert stored["3200"]["event_demand_boosted"] is True
+        assert stored["3200"].get("event_demand_boosted", False) is (bad_result != "timeout")
+        if saturated_country and not bad_result:
+            assert accepted == 52
+            assert stored["3201"]["observed_at"] == overlap_at
+        else:
+            assert accepted == 51
+            assert "3201" not in stored
 
 
 def test_demand_collector_persists_dom_read_time_even_when_processing_is_late(
