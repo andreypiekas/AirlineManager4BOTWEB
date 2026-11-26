@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2, auditoria de destinos omitidos e comparação com rotas em serviço (G0)
+
+- Entre 03h20 e 03h25 BRT, a auditoria somente leitura identificou os aeroportos de partida e destino das 223 rotas de `Routes`. Todos os pares foram encontrados no catálogo comunitário de coordenadas. A menor distância entre os aeroportos foi de aproximadamente 2.554 km, em DEL–DIA, pela fórmula de haversine. A comparação dos aeroportos terminais deixou em aberto a distância dos trechos com escala e a admissibilidade de rotas abaixo de 400 km. [Catálogo de aeroportos](https://github.com/eaingaran/airline-manager4/blob/master/airports.json).
+- `Fleet → Research` voltou a mostrar GRU–GIG na consulta direta, a 337 km, com pista de 13.123 ft e aviso de evento. `Events` confirmou o Black Friday Cargo Rush com +50% na demanda global de carga e fim previsto para 29/11 às 20h BRT. `Routes` mostrou `Parked (0)` e `Pending (1)`. BCN–SHA segue como referência de uma prévia elegível durante o evento. Faltam uma nova prévia elegível fora do evento, as quotas exatas de CO₂ do candidato e a primeira captura autenticada do worker.
+- Em `--observe-game`, a auditoria de pesquisa por país passou a consultar diretamente os destinos omitidos nos resultados de `Any airport` quando faltarem até 24 IDs. A etapa complementar tem um orçamento de 20 segundos. A captura exige filtros e seletor estáveis, uma única linha com o par solicitado e o mesmo ciclo de companhia confirmado. A seção privada `observations.route_search_partitions` registra `direct_airport_searches` e `unresolved_selector_ids`. As consultas diretas servem para diagnosticar a partição e a cobertura de rotas continua parcial. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+- Passaram 94 testes focados, 2.394 testes no Windows com um pulado e 16 testes de instalação no Ubuntu via WSL. Ruff e `git diff --check` passaram.
+
 ## 2026-11-26 — Autonomia Total A2, conferência direta de GRU para Brasil (G0)
 
 - Em Chrome somente leitura, entre 03h14 e 03h17 BRT, as janelas de 20.000 km e 1.261 km em `Fleet → Research`, com origem GRU (2947), `Brazil`, `Any airport` e pista mínima de 1.000 ft, devolveram 50 e 44 linhas respectivamente. O seletor conservou os mesmos 116 IDs. A união retornou 93 destinos, com um destino em comum e a própria origem fora da lista.

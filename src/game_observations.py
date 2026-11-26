@@ -25,6 +25,8 @@ log = logging.getLogger("am4bot.observations")
 
 _ROUTE_SEARCH_SAMPLE_LIMIT = 50  # Observed in authenticated owned and custom departures.
 _COUNTRY_SEARCH_MIN_CEILING_KM = 500  # The native form normalizes smaller ceilings.
+_COUNTRY_DIRECT_AUDIT_LIMIT = 24
+_COUNTRY_DIRECT_AUDIT_SECONDS = 20
 
 # The engine groups and model identity must come from the same synchronous DOM
 # snapshot. Separate stable reads can straddle an AJAX panel replacement and
@@ -275,11 +277,11 @@ return arrival.value;
 """
 
 _COUNTRY_SEARCH_SELECTOR_JS = r"""
-const [origin, distance, runway, country] = arguments;
+const [origin, distance, runway, country, destination = '0'] = arguments;
 const panel = document.querySelector('#routeAction');
 if (!panel || (window.jQuery && window.jQuery.active > 0)) return null;
 const airport = panel.querySelector('select#citySelectArr');
-if (!airport || airport.disabled || airport.value !== '0' ||
+if (!airport || airport.disabled || airport.value !== destination ||
     panel.querySelector('select#hubSelect')?.value !== origin ||
     panel.querySelector('input#maxDist')?.value !== String(distance) ||
     panel.querySelector('input#rwyLength')?.value !== String(runway) ||
@@ -289,15 +291,25 @@ return Array.from(airport.options).filter(el => !el.disabled && el.value !== '0'
 """
 
 _START_COUNTRY_SEARCH_JS = r"""
-const airportIds = (() => {
+const [origin, distance, runway, country, destination, expectedIds] = arguments;
+const readSelector = function () {
 """ + _COUNTRY_SEARCH_SELECTOR_JS + r"""
-})();
-if (!airportIds) return false;
+};
 const panel = document.querySelector('#routeAction');
-const result = panel.querySelector('#resResult');
-const button = panel.querySelector('button#resSearch');
+const result = panel?.querySelector('#resResult');
+const button = panel?.querySelector('button#resSearch');
 if (!result || !button || button.disabled || button.form) return false;
-// Discard the previous world result before starting the native read-only search.
+const airport = panel.querySelector('select#citySelectArr');
+const controls = [origin, distance, runway, country];
+const airportIds = readSelector(...controls, destination ? airport?.value : '0');
+if (!airportIds) return false;
+if (destination) {
+  if (!airportIds.includes(destination) || JSON.stringify(airportIds) !== JSON.stringify(expectedIds)) return false;
+  airport.value = destination;
+  airport.dispatchEvent(new Event('change', {bubbles: true}));
+  if (JSON.stringify(readSelector(...controls, destination)) !== JSON.stringify(expectedIds)) return false;
+}
+// Discard the previous result before starting the native read-only search.
 result.replaceChildren();
 button.click();
 return {airport_ids: airportIds};
@@ -598,6 +610,57 @@ def _read_hub_demand_window(bot: object, origin: str, distance: int,
     return samples, read_at
 
 
+def _audit_omitted_country_airports(bot: object, windows: list[dict]) -> list[dict]:
+    """Correlate missing IDs in a small native partition without promoting candidates."""
+    from fleet import read_route_candidates
+
+    if not windows:
+        return []
+    last = windows[-1]
+    options = last["selector_airport_ids"]
+    if options is None or any(window["selector_airport_ids"] != options for window in windows):
+        return []
+    origin = last["origin_id"]
+    observed = {value for window in windows for value in window["native_destination_ids"]}
+    expected = set(options) - {origin}
+    missing = sorted(expected - observed)
+    if observed - expected or len(missing) > _COUNTRY_DIRECT_AUDIT_LIMIT:
+        return []
+
+    country, country_value = last["country"], last["country_value"]
+    distance, runway = last["native_max_distance_km"], last["min_runway_ft"]
+    readings = []
+    deadline = time.monotonic() + _COUNTRY_DIRECT_AUDIT_SECONDS
+    for destination in missing:
+        remaining = deadline - time.monotonic()
+        if bot.stopping or remaining <= 0:
+            break
+        controls = (origin, distance, runway, country_value, destination)
+        started_at = time.time()
+        try:
+            started = bot.js(_START_COUNTRY_SEARCH_JS, *controls, options)
+            if started != {"airport_ids": options} or not bot.wait_loaded("resResult", timeout=min(8, remaining)):
+                break
+            candidates = read_route_candidates(bot)
+            read = _stable_read(bot, _VERIFIED_COUNTRY_DEMAND_JS, *controls, with_timestamp=True)
+        except WebDriverException:
+            break
+        if read is None or read[0]["airport_ids"] != options:
+            break
+        result, read_at = read
+        samples = _verified_demand(candidates, result["rows"], origin)
+        if (len(samples) == 1 and samples[0]["arr_id"] == destination
+                and samples[0].get("destination_country") == country
+                and "destination_runway_ft" in samples[0]):
+            readings.append({
+                "origin_id": origin, "country": country, "country_value": country_value,
+                "native_max_distance_km": distance, "min_runway_ft": runway,
+                "started_at": started_at, "observed_at": read_at,
+                "selector_airport_ids": options, "direct_destination": samples[0],
+            })
+    return readings
+
+
 def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = None,
                         country_windows: list[dict] | None = None) -> int:
     from fleet import _HUB_OPTIONS_JS
@@ -656,6 +719,7 @@ def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = 
             country = nearest.get("destination_country") if not external and scope == "configured" else None
             try:
                 if country:
+                    first_country_window = len(country_windows) if country_windows is not None else 0
                     extra, extra_at = _read_hub_demand_window(
                         bot, origin, distance, runway, country=country, country_windows=country_windows)
                     if extra:
@@ -670,6 +734,9 @@ def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = 
                                 bot, origin, country_cutoff, runway, country=country, country_windows=country_windows)
                             if overlap:
                                 windows.append((overlap, overlap_at))
+                    if country_windows is not None:
+                        country_windows.extend(_audit_omitted_country_airports(
+                            bot, country_windows[first_country_window:]))
                 elif 300 <= cutoff < distance:
                     extra, extra_at = _read_hub_demand_window(bot, origin, cutoff, runway)
                     if extra:

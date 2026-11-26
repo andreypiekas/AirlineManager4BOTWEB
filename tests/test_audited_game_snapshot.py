@@ -68,10 +68,16 @@ def test_snapshot_compares_country_windows_only_in_confirmed_company_cycle(
     narrow = {**wide, "started_at": NOW - 18, "observed_at": NOW - 15,
               "selector_airport_ids": other_selector, "native_destination_ids": ["21", "22"],
               "native_max_distance_km": 1250, "native_limit_reached": False}
+    direct = {"origin_id": "11", "country": "Brazil", "country_value": "Brazil",
+              "started_at": NOW - 13, "observed_at": NOW - 11, "min_runway_ft": 1000,
+              "selector_airport_ids": selector, "native_max_distance_km": 1250,
+              "direct_destination": {"arr_id": "23", "distance": 337, "destination_runway_ft": 13123}}
     evidence = {"country_search_windows": [wide, narrow,
                 {**narrow, "started_at": NOW - 40, "native_destination_ids": ["23"]},
                 {**narrow, "observed_at": NOW, "native_destination_ids": ["24"]},
-                {**narrow, "origin_id": "12"}]}
+                {**narrow, "origin_id": "12"},
+                {**direct, "started_at": NOW - 19}, {**direct, "observed_at": NOW},
+                {**direct, "selector_airport_ids": ["11", "23"]}, direct]}
     snapshot = compose_snapshot(**observations(), read_only_window=(NOW - 30, NOW - 1),
                                 operational_evidence=evidence)
     report, = snapshot["observations"]["route_search_partitions"]
@@ -81,6 +87,8 @@ def test_snapshot_compares_country_windows_only_in_confirmed_company_cycle(
     assert report["observed_destination_ids"] == ["21", "22"]
     assert report["absent_selector_ids"] == absent
     assert report["unexpected_destination_ids"] == unexpected
+    assert report["direct_airport_searches"] == ([direct] if status == "different" else [])
+    assert report["unresolved_selector_ids"] == (None if status == "unverified" else [])
     assert snapshot["coverage"]["scopes"]["routes"] is False
     assert snapshot["snapshot_id"] == fingerprint_snapshot(snapshot)
 

@@ -434,7 +434,7 @@ const country = prepare(...args);
 const busy = start(...args);
 window.jQuery.active = 0;
 const noAirportSelector = start(...args);
-controls['select#citySelectArr'] = {value: '2850', options: [
+controls['select#citySelectArr'] = {value: '2850', dispatchEvent: event => selected.push(['airport', event.type]), options: [
   {value: '0'}, {value: '2851'}, {value: '2850'}, {value: '2852', disabled: true}
 ]};
 const specificAirport = start(...args);
@@ -447,18 +447,23 @@ controls['select#citySelectArr'].value = '0';
 const overlapArgs = ['2947', 1723, 1000, 'Argentina'];
 const overlapCountry = prepare(...overlapArgs);
 const overlapReady = start(...overlapArgs);
+const changedSelector = start(...overlapArgs, '2850', ['2850', '2852']);
+const direct = start(...overlapArgs, '2850', overlapReady.airport_ids);
+const directIds = observe(...overlapArgs, '2850').airport_ids;
 console.log(JSON.stringify({country, selected, busy, noAirportSelector, specificAirport,
-                            ready, resultIds, changedAirport, overlapCountry, overlapReady, actions}));
+                            ready, resultIds, changedAirport, overlapCountry, overlapReady,
+                            changedSelector, direct, directIds, actions}));
 """
     result = subprocess.run(["node", "-e", js, game_observations._PREPARE_COUNTRY_SEARCH_JS,
                              game_observations._START_COUNTRY_SEARCH_JS, game_observations._VERIFIED_COUNTRY_DEMAND_JS],
                             capture_output=True, text=True, check=True, timeout=8)
     assert json.loads(result.stdout) == {
-        "country": "Argentina", "selected": [["hub", "change"], ["country", "change"]],
+        "country": "Argentina", "selected": [["hub", "change"], ["country", "change"], ["airport", "change"]],
         "busy": False, "noAirportSelector": False, "specificAirport": False,
         "ready": {"airport_ids": ["2850", "2851"]}, "resultIds": ["2850", "2851"], "changedAirport": None,
         "overlapCountry": "Argentina", "overlapReady": {"airport_ids": ["2850", "2851"]},
-        "actions": ["clear", "search", "clear", "search"],
+        "changedSelector": False, "direct": {"airport_ids": ["2850", "2851"]}, "directIds": ["2850", "2851"],
+        "actions": ["clear", "search", "clear", "search", "clear", "search"],
     }
 
 
@@ -1010,6 +1015,49 @@ def test_native_country_window_keeps_requested_distance_below_form_minimum(
         assert window["native_limit_reached"] is False
     else:
         assert windows == []
+
+
+def test_direct_search_records_omissions_only_with_correlated_identity(monkeypatch):
+    options = ["2944", "2947", "2959", "2992", "3020"]
+    window = {"origin_id": "2947", "country": "Brazil", "country_value": "Brazil",
+              "native_max_distance_km": 500, "min_runway_ft": 15000,
+              "selector_airport_ids": options, "native_destination_ids": ["3020"]}
+    selections = []
+
+    class Bot:
+        stopping = False
+
+        def js(self, script, *args):
+            assert script == game_observations._START_COUNTRY_SEARCH_JS
+            assert args[:4] == ("2947", 500, 15000, "Brazil")
+            assert args[-1] == options
+            selections.append(args[4])
+            return {"airport_ids": options}
+
+        def wait_loaded(self, target, *, timeout):
+            assert target == "resResult" and 0 < timeout <= 8
+            return True
+
+    def read(_bot, script, *controls, with_timestamp):
+        assert script == game_observations._VERIFIED_COUNTRY_DEMAND_JS and with_timestamp
+        assert controls[-1] == selections[-1]
+        return {"airport_ids": options if len(selections) <= 2 else options[:-1], "rows": [
+            {"dep_id": "2947", "arr_id": "2944", "distance": "337", "runway": "13123",
+             "y": "100", "j": "20", "f": "5", "destination_country": "Brazil",
+             "event_demand_boosted": True}
+        ]}, 1_900_000_000.0
+
+    monkeypatch.setattr(fleet, "read_route_candidates", lambda _bot: [
+        RouteCandidate("2944", "GIG", 337, 100, 20, 5, 13123)])
+    monkeypatch.setattr(game_observations, "_stable_read", read)
+    evidence, = game_observations._audit_omitted_country_airports(Bot(), [window])
+    assert selections == ["2944", "2959", "2992"]
+    assert "native_destination_ids" not in evidence
+    assert evidence["direct_destination"] == {
+        "arr_id": "2944", "distance": 337, "destination_runway_ft": 13123,
+        "y": 100, "j": 20, "f": 5, "destination_country": "Brazil", "event_demand_boosted": True,
+    }
+    assert evidence["observed_at"] == 1_900_000_000.0
 
 
 @pytest.mark.parametrize(("window_type", "bad_result"), [

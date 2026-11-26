@@ -148,7 +148,10 @@ def _country_search_partitions(windows, owned_ids, cycle):
             partitions.setdefault(key, []).append(window)
 
     reports = []
-    for (origin, country, country_value, runway), group in partitions.items():
+    for (origin, country, country_value, runway), readings in partitions.items():
+        group = [window for window in readings if "direct_destination" not in window]
+        if not group:
+            continue
         options = group[0]["selector_airport_ids"]
         observed = {identity for window in group for identity in window["native_destination_ids"]}
         stable = options is not None and all(window["selector_airport_ids"] == options for window in group)
@@ -156,6 +159,17 @@ def _country_search_partitions(windows, owned_ids, cycle):
         absent = sorted(expected - observed) if stable else None
         unexpected = sorted(observed - expected) if stable else None
         status = ("different" if absent or unexpected else "matched") if stable else "unverified"
+        direct_searches = []
+        unresolved = None
+        if stable:
+            unresolved = set(absent)
+            after_windows = max(window["observed_at"] for window in group)
+            for reading in readings:
+                destination = reading.get("direct_destination", {}).get("arr_id")
+                if (destination in unresolved and reading["selector_airport_ids"] == options
+                        and reading["started_at"] >= after_windows):
+                    direct_searches.append(reading)
+                    unresolved.remove(destination)
         reports.append({
             "source": "game_country_route_search", "origin_id": origin,
             "country": country, "country_value": country_value, "min_runway_ft": runway,
@@ -163,6 +177,8 @@ def _country_search_partitions(windows, owned_ids, cycle):
             "origin_in_selector": origin in options if stable else None,
             "observed_destination_ids": sorted(observed), "absent_selector_ids": absent,
             "unexpected_destination_ids": unexpected, "windows": group,
+            "direct_airport_searches": direct_searches,
+            "unresolved_selector_ids": sorted(unresolved) if unresolved is not None else None,
         })
     return reports
 
