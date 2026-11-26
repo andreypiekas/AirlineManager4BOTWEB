@@ -1,5 +1,39 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2, conferência direta de GRU para Brasil (G0)
+
+- Em Chrome somente leitura, entre 03h14 e 03h17 BRT, as janelas de 20.000 km e 1.261 km em `Fleet → Research`, com origem GRU (2947), `Brazil`, `Any airport` e pista mínima de 1.000 ft, devolveram 50 e 44 linhas respectivamente. O seletor conservou os mesmos 116 IDs. A união retornou 93 destinos, com um destino em comum e a própria origem fora da lista.
+- Cada um dos outros 22 IDs omitidos retornou uma única linha com origem e destino correspondentes, mantendo 1.261 km e 1.000 ft nos campos da consulta direta. Todas as linhas exibiram aviso de evento. A menor distância exibida foi 29 km e a maior, 389 km. As pistas foram de 4.341 a 13.123 ft. O quadro abaixo guarda os valores nativos exibidos pela pesquisa direta.
+
+| Destino | ID | Distância (km) | Pista (ft) |
+| --- | ---: | ---: | ---: |
+| AQA | 2909 | 249 | 5.907 |
+| BAT | 2918 | 386 | 5.906 |
+| BAU | 2919 | 291 | 4.925 |
+| JTC | 3075 | 300 | 6.890 |
+| VCP | 2959 | 83 | 10.630 |
+| CWB | 2932 | 360 | 7.267 |
+| BFH | 2916 | 355 | 4.560 |
+| GUJ | 2948 | 149 | 5.089 |
+| SSZ | 3001 | 58 | 4.560 |
+| JOI | 2957 | 389 | 5.381 |
+| JDF | 2955 | 366 | 5.036 |
+| LIP | 2961 | 389 | 5.577 |
+| MII | 2970 | 380 | 4.921 |
+| QPS | 3019 | 184 | 6.923 |
+| POO | 2980 | 178 | 4.970 |
+| RAO | 2993 | 289 | 6.890 |
+| GIG | 2944 | 337 | 13.123 |
+| SDU | 2992 | 344 | 4.341 |
+| SJK | 2995 | 67 | 8.780 |
+| CGH | 2999 | 29 | 6.365 |
+| QHP | 3003 | 108 | 6.170 |
+| VAG | 3016 | 230 | 4.921 |
+
+- A busca de controle voltou a `Any airport` com teto de 500 km e retornou 12 linhas. A menor foi GRU–IZA, com 400,808 km no atributo nativo. Assim, as consultas por país e individuais juntas conciliam os 115 destinos distintos da origem nesse seletor. A menor distância observada na busca por país delimita a amostra. A regra operacional para as rotas curtas e a cobertura integral do planejamento continuam sem comprovação.
+- Black Friday Cargo Rush seguia ativo com fim previsto para 29/11 às 20h BRT. Às 03h14 BRT, Routes mostrou 223 rotas, `Parked (0)` e `Pending (1)`. BCN–SHA permanece como referência durante o evento. O guia da Trophy Games descreve a estimativa de CO₂ por classe e diz que o cálculo exato tem um fator aleatório. A quantidade exata por trecho exige uma observação do voo correspondente. Faltam uma prévia elegível fora do evento e a primeira captura autenticada do worker. [Guia da Trophy Games](https://trophy-games.com/guide-airline-manager-beginner). [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+- Entrega documental conferida com os IDs e os valores exibidos pelo jogo. `git diff --check` passou.
+
 ## 2026-11-26 — Autonomia Total A2, conciliação do seletor por país (G0)
 
 - A consulta somente leitura por volta de 03h10 BRT verificou 116 IDs únicos no seletor de GRU para Brasil antes e depois da busca de 500 km com pista mínima de 1.000 ft. A resposta de `Any airport` trouxe 12 linhas com distância mínima de 400,808 km e omitiu GIG e SDU. A seleção direta de SDU (2992) mostrou GRU–SDU a 344 km, pista de 4.341 ft, `Daily` Y/J/F de 394/507/181, sem `Today`, com aviso de evento e com zero aeronaves na rota ou aptas. A elegibilidade operacional dessas rotas curtas continua pendente.
