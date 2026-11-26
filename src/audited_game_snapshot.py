@@ -14,6 +14,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import paths
+from demand_events import EVENT_SOURCES
 from fleet_commitment_observations import SOURCE as HANGAR_SOURCE, _hangar
 from finance_observations import SOURCE as FINANCE_SOURCE, validate_summary
 from investment_policy import AUDITED_POLICY_LIMITS, InvestmentPolicy, audited_policy_values
@@ -305,6 +306,13 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
         if "country_search_windows" in operational_evidence:
             snapshot["observations"]["route_search_partitions"] = _country_search_partitions(
                 operational_evidence["country_search_windows"], owned_ids, read_only_window)
+        if "demand_events" in operational_evidence:
+            snapshot["observations"]["demand_events"] = [
+                deepcopy(panel)
+                for panel in operational_evidence["demand_events"]
+                if (read_only_window and panel["source"] in EVENT_SOURCES.values()
+                    and read_only_window[0] <= panel["observed_at"] <= read_only_window[1])
+            ]
     if policy_values is not None:
         snapshot["observations"]["investment_policy"] = policy_values
     if external_demand is not None:

@@ -1,4 +1,5 @@
 from threading import Event
+from time import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -47,11 +48,21 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
 
         return action
 
-    monkeypatch.setattr(bot_module, "manage_fleet", fleet)
+    events_observed_at = None
+
+    def demand_events(owner):
+        nonlocal events_observed_at
+        read("demand_events")(owner)
+        events_observed_at = time()
+        return [{"source": "game_route_events", "observed_at": events_observed_at,
+                 "reported_count": 0, "events": []}]
+
     def demand(owner, *, country_windows):
         read("demand")(owner)
         country_windows.append({"origin_id": "11"})
 
+    monkeypatch.setattr(bot_module, "manage_fleet", fleet)
+    monkeypatch.setattr("demand_events.collect_demand_events", demand_events)
     monkeypatch.setattr("game_observations.collect_owned_hub_demand", demand)
     monkeypatch.setattr("hub_operations.collect_hub_operations", read("hub_operations"))
     monkeypatch.setattr("game_observations.collect_owned_route_details", read("route_details"))
@@ -74,8 +85,10 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
         assert capture.call_args.kwargs["operational_evidence"] == {
             "pending": {"observation_id": "fleet"}, "hubs": None,
             "country_search_windows": [{"origin_id": "11"}],
+            "demand_events": [{"source": "game_route_events", "observed_at": events_observed_at,
+                               "reported_count": 0, "events": []}],
         }
-    assert calls == ["session", "company", "mode", "demand", ("market", True), ("fleet", True),
+    assert calls == ["session", "company", "mode", "demand_events", "demand", ("market", True), ("fleet", True),
                      "hub_operations", "route_details", "aircraft_catalog", "delivery_hubs", "finance", "staff", "header",
                      "session", "company"]
     assert worker.notify("test", category="status") is False

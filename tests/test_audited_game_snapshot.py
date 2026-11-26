@@ -52,6 +52,44 @@ def test_snapshot_binds_verified_fleet_and_hubs_without_inventing_complete_cover
     assert snapshot["observations"]["cash"]["committed"] is None
 
 
+@pytest.mark.parametrize("window", [(NOW - 30, NOW - 1.5), None], ids=["confirmed", "unconfirmed"])
+def test_snapshot_filters_demand_events_by_source_and_confirmed_window(window):
+    special = {"source": "game_special_events", "observed_at": NOW - 30,
+               "reported_count": 1, "events": [{"title": "Test cargo event",
+                                                "description": "Increased cargo demand",
+                                                "seconds_remaining": 300}]}
+    route = {"source": "game_route_events", "observed_at": NOW - 1.5,
+             "reported_count": 0, "events": []}
+    panels = [
+        {**special, "observed_at": NOW - 31},
+        special,
+        {**route, "source": "other_events"},
+        route,
+        {**route, "observed_at": NOW - 0.5},
+    ]
+    baseline = compose_snapshot(**observations(), read_only_window=window, operational_evidence={})
+    assert "demand_events" not in baseline["observations"]
+
+    snapshot = compose_snapshot(**observations(), read_only_window=window,
+                                operational_evidence={"demand_events": panels})
+    included = snapshot["observations"]["demand_events"]
+    if window is None:
+        assert included == []
+    else:
+        assert isinstance(included, list)
+        assert len(included) == 2
+        assert special in included
+        assert route in included
+    assert snapshot["coverage"] == baseline["coverage"]
+
+
+def test_snapshot_keeps_explicit_empty_demand_events():
+    snapshot = compose_snapshot(**observations(), read_only_window=(NOW - 30, NOW - 1),
+                                operational_evidence={"demand_events": []})
+
+    assert snapshot["observations"]["demand_events"] == []
+
+
 @pytest.mark.parametrize(("other_selector", "status", "absent", "unexpected"), [
     (["11", "21", "22"], "matched", [], []),
     (["11", "21", "23"], "different", ["23"], ["22"]),

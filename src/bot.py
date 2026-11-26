@@ -766,6 +766,7 @@ class Bot:
     def _observation_cycle(self) -> None:
         """Read the native evidence on the browser-owning thread, independent of automation settings."""
         from audited_game_snapshot import capture_game_snapshot
+        from demand_events import collect_demand_events
         from finance_observations import collect_finance_observations
         from game_observations import (collect_aircraft_engine_catalog, collect_owned_hub_demand,
                                        collect_owned_route_details)
@@ -780,6 +781,8 @@ class Bot:
         self._next_event = None
         for action, label in (
             (self._read_mode, "ler o modo de jogo"),
+            (lambda: operational_evidence.update(demand_events=collect_demand_events(self)),
+             "consultar eventos de demanda"),
             (lambda: collect_owned_hub_demand(self, country_windows=country_windows), "coletar demanda dos hubs"),
             (lambda: self._check_market(observation_only=True), "consultar combustível / CO₂"),
             (lambda: operational_evidence.update(pending=manage_fleet(self, observation_only=True)),

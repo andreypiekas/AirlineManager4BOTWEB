@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3, registro dos eventos de demanda (G0)
+
+- Entre 03h34 e 03h36 BRT, uma consulta somente leitura no Chrome encontrou dois eventos ativos. `Special Events` mostrou Black Friday Cargo Rush com +50% na demanda mundial de carga e fim previsto para 29/11 às 20h BRT. `Events` mostrou +863 passageiros de classe executiva em YYZ–VAG, a 8.051 km, com fim previsto para 30/11 por volta de 01h36 BRT. As estimativas de fim vêm dos contadores regressivos do jogo.
+- O detalhe de YYZ–VAG mostrou o aviso de demanda de evento e `Daily` Y/J/F de 558/1.222/96, sem `Today`, com zero aeronaves na rota e zero aptas. `Routes` mostrou `Parked (0)` e `Pending (1)`. A prévia de BCN–SHA continua como referência de aeronave elegível durante evento. Quotas de CO₂ do candidato e uma nova amostra elegível sem aviso continuam pendentes.
+- `--observe-game` passou a guardar os dois painéis em `observations.demand_events` da captura privada, com fonte, horário, contagem nativa e tempo restante de cada cartão. O painel de rotas preserva o par de aeroportos, a classe e a variação de demanda. Contagens discordantes, dados ausentes e leituras fora do ciclo confirmado ficam sem evidência. Uma contagem nativa igual a zero é registrada. O aviso da rota continua sendo conferido em cada leitura correlacionada, com compras bloqueadas em G0. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+- A execução às 03h39 BRT confirmou que o perfil dedicado do worker existe e está sem sessão autenticada. A coleta encerrou antes de publicar a primeira captura. A aba autenticada da consulta manual usa outro perfil do Chrome.
+- Passaram 131 testes focados, 2.399 testes no Windows com um pulado e 16 testes de instalação no Ubuntu via WSL. Ruff e `git diff --check` passaram.
+
 ## 2026-11-26 — Autonomia Total A2, auditoria de destinos omitidos e comparação com rotas em serviço (G0)
 
 - Entre 03h20 e 03h25 BRT, a auditoria somente leitura identificou os aeroportos de partida e destino das 223 rotas de `Routes`. Todos os pares foram encontrados no catálogo comunitário de coordenadas. A menor distância entre os aeroportos foi de aproximadamente 2.554 km, em DEL–DIA, pela fórmula de haversine. A comparação dos aeroportos terminais deixou em aberto a distância dos trechos com escala e a admissibilidade de rotas abaixo de 400 km. [Catálogo de aeroportos](https://github.com/eaingaran/airline-manager4/blob/master/airports.json).
