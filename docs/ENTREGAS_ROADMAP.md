@@ -1,5 +1,32 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2–A4/A6, conciliação do PP-254 e cobertura de candidatos (G0)
+
+- O Chrome dedicado confirmou a companhia nas pontas do ciclo somente leitura das 13h04–13h06 BRT. `Flight history` voltou a mostrar XP-224 de LAX para TUN, com embarque de 376/35/21 em Y/J/F, receita de **US$ 2.451.390**, **227.063 lb** e **814.085 quotas de CO₂**. A duração programada foi de 6h41min, com chegada prevista às 16h29min22s BRT. As leituras de LAX–TUN e TUN–LAX repetiram `Today` de 965/479/91 sobre `Daily` de 1.341/514/112, com aviso de evento. A diferença corresponde exatamente ao embarque observado. O trecho de volta ainda não constava no histórico.
+- **Compra do PP-254.** O lançamento histórico `A/C Purchased` de **US$ 216.079.503** coincide com a prévia de Los Angeles e cabine 443/42/24, composta de US$ 215.629.503 de base e US$ 450.000 de assentos. A entrega em LAX consta de `Pending` e `Parked`. O RR Trent 972 é a única das três variantes que reproduz o combustível e a duração do primeiro voo com diferenças de 1 lb e 1 segundo no índice 200. O lançamento é genérico e a identificação do motor permanece inferida. `price_verified=false` segue para a combinação de compra.
+- **Abertura de LAX–TUN.** A revisão recuperou no registro histórico de `Finances → History` a despesa de **US$ 1.063.229** na categoria de abertura de rota, que coincide exatamente com a prévia elegível do PP-254 às 09h42. A interface do extrato não expôs o ID da rota no lançamento. Os dois lançamentos associados somam **US$ 217.142.732** antes de qualquer custo atribuível ao hangar. Às 13h09, `Expenses` exibiu 11 lançamentos recentes, com o mais antigo marcado como uma hora, e os dois débitos históricos estavam fora da lista. O resumo rotulado como 24 horas continuou com `A/C Orders` e `Route fees` zerados. A regra do agregado e os compromissos de caixa seguem sem comprovação.
+- **Custos do primeiro trecho.** A tabela usa o consumo registrado no voo e converte as cotações nativas de reposição. A provisão de A-check é de **US$ 96.074,92**, calculada com 401 minutos e a referência do catálogo de US$ 6.468.885 a cada 450 horas. Valores em dólares arredondados uma vez, no total.
+
+| Referência de preço por mil | Combustível e CO₂ (US$) | Com provisão de A-check (US$) | Receita menos custos da tabela (US$) |
+| --- | ---: | ---: | ---: |
+| Janela da decolagem às 09h48 (US$ 670 por 1.000 lb, US$ 181 por 1.000 quotas) | 299.481,60 | 395.556,52 | 2.055.833,48 |
+| Consulta das 13h04 (US$ 1.810 por 1.000 lb, US$ 197 por 1.000 quotas) | 571.358,78 | 667.433,70 | 1.783.956,30 |
+
+- **Tarifas em operação.** Às 13h10, o detalhe nativo e estável do PP-254 exibiu **US$ 4.800/9.690/14.640 em Y/J/F** nos campos de tarifa vigente. Aplicadas aos 376/35/21 passageiros, as três tarifas reproduzem exatamente os **US$ 2.451.390** do XP-224. O mesmo detalhe apresentou US$ 4.377/8.973/13.820 como tarifas sugeridas em `Auto`, que somariam US$ 2.250.027 nessa ocupação.
+- O histórico traz quantidades consumidas e receita. O custo contábil do estoque usado, pessoal incremental, outros encargos e manutenção efetivamente debitada por trecho seguem sem vínculo. Os dois débitos iniciais ficam fora do cálculo por trecho.
+- **Cobertura pelo seletor.** Entre 13h10 e 13h11 BRT, o Chrome confirmou a mesma companhia nas duas pontas de uma leitura direcionada, com pista mínima de 1.000 ft. A coluna de destinos conta os IDs do seletor estável, excluída a própria origem. A seleção direta pode incluir trechos abaixo do limite implícito da lista. A elegibilidade operacional dos trechos curtos segue pendente.
+
+| Origem e país de destino | Teto e linhas em cada janela | IDs na lista | IDs por busca direta | Destinos do seletor conciliados |
+| --- | --- | ---: | ---: | ---: |
+| LAX → Tunísia | 20.000 km (9) | 9 | 0 | 9/9, incluindo TUN |
+| GRU → Argentina | 20.000 km (50), 1.723 km (19) | 68 | 0 | 68/68 |
+| TXL → Congo (Kinshasa) | 20.000 km (21) | 21 | 0 | 21/21 |
+| GRU → Brasil | 20.000 km (50), 1.261 km (44) | 93 | 5 | 98/115 |
+
+- A captura identifica a origem `465` como TXL. O registro anterior a chamou de Kinshasa, que é o nome no filtro de país de destino. No Brasil, as cinco buscas pontuais confirmaram destinos entre 249 e 386 km. Dezessete dos 115 IDs ficaram sem nova confirmação nesse ciclo. A rodada anterior das 03h14–03h17 havia conciliado todos os 115 com 22 consultas diretas. A consulta a KIN → Jamaica não produziu uma partição verificável.
+- **Cobertura do worker.** O snapshot privado das 13h06 passou pelas verificações de esquema, perfil e fingerprint. Foram lidas as 12 páginas de Routes. Divergências entre as varreduras impediram a certificação da frota nesse ciclo. A partição nativa de ICN para Estados Unidos, com pista mínima de 5.000 ft e teto de 6.000 km, retornou 21 destinos para as 709 opções do seletor. Os outros 688 IDs ficaram sem verificação nessa partição, cujo seletor contém aeroportos fora do filtro.
+- No replay A3/A4 da mesma captura, 30 hubs próprios, 15 com amostras, 1.051 rotas amostradas e 311 modelos produziram um índice de 334.218 combinações. As páginas nos offsets 0, 40, 167.080 e 334.200 devolveram 138 itens em `pesquisa_pendente`, todos com o gate contábil bloqueado. A6 indexou 31.800 combinações a partir de 100 amostras em dois dos nove hubs externos presentes no replay. As páginas nos offsets 0, 40 e 31.760 devolveram 120 itens em `pesquisa_pendente`. As duas filas mantiveram `purchase_eligible=false`. O índice e as páginas comprovam a navegação da fila observada. Cobertura global, esgotamento dos candidatos internos e homologação para compra seguem pendentes. A coleta ficou em modo somente leitura. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A2/A3/A6, demanda residual, custos de rota e hubs externos (G0)
 
 - Entre 12h56 e 12h57 BRT, o Chrome dedicado leu os detalhes nativos com a companhia confirmada antes e depois. Os quatro itinerários em operação exibiram `Today` no detalhe. As rotas sem operação exibiram `Daily`. As amostras preservam o aviso nativo de evento.
