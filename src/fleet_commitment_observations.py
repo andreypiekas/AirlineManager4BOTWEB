@@ -212,8 +212,12 @@ def read_pilot_pending(bot, *, baseline: bool = False) -> dict | None:
             pending = _stable_read(bot, PENDING_FLEET_JS)
             if _fleet_list(pending) is None or bot.stopping:
                 return None
-            if roster is not None and _pilot_roster(bot) != roster:
-                return None
+            if roster is not None:
+                # Pending replaces the panel that contains the total route count.
+                bot.close_popup(quiet=True)
+                bot.open_popup("routes_main.php", "Routes", "nav_routes")
+                if _pilot_roster(bot) != roster:
+                    return None
         finally:
             bot.close_popup(quiet=True)
         if bot.stopping:

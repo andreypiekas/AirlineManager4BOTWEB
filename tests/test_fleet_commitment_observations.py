@@ -62,6 +62,7 @@ class Bot:
 
 @pytest.mark.parametrize("case", [
     "complete", "company_changed", "count_changed", "roster_missing_pending", "roster_changed", "distribution_changed",
+    "routes_unreadable_after",
 ])
 def test_pilot_read_checks_company_and_correlates_baseline_roster(monkeypatch, case):
     class PilotBot(Bot):
@@ -75,11 +76,15 @@ def test_pilot_read_checks_company_and_correlates_baseline_roster(monkeypatch, c
 
     def stable_read(bot, script):
         if script == PENDING_FLEET_JS:
+            assert bot.calls[-1] == "fleet_pending.php"
             identity = "199" if case == "roster_missing_pending" else "102"
             return {"total": 1, "rows": [{"id": identity, "status": "maintenance"}]}
         assert "window.statusData" in script and "#hPending" in script
-        bot.calls.append("roster")
+        assert bot.calls[-1] == "routes_main.php"
         after_pending = "fleet_pending.php" in bot.calls
+        bot.calls.append("roster")
+        if after_pending and case == "routes_unreadable_after":
+            return {"counts": None, "rows": []}
         parked = int(after_pending and case == "distribution_changed")
         aircraft_id = "103" if after_pending and case == "roster_changed" else "101"
         return {"counts": {"routes": 1 - parked, "parked": parked, "pending": 2 if case == "count_changed" else 1},
@@ -93,8 +98,9 @@ def test_pilot_read_checks_company_and_correlates_baseline_roster(monkeypatch, c
         assert baseline is None
         assert bot.calls == ["session", "company", "routes_main.php", "roster", "close"]
         return
-    pending_calls = ["session", "company", "routes_main.php", "roster", "fleet_pending.php", "roster", "close"]
-    if case in {"roster_changed", "distribution_changed"}:
+    pending_calls = ["session", "company", "routes_main.php", "roster", "fleet_pending.php",
+                     "close", "routes_main.php", "roster", "close"]
+    if case in {"roster_changed", "distribution_changed", "routes_unreadable_after"}:
         assert baseline is None
         assert bot.calls == pending_calls
         return
