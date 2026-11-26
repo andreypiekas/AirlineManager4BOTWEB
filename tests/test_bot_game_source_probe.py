@@ -6,6 +6,7 @@ import time
 from concurrent.futures import Future
 from contextlib import contextmanager
 
+from aircraft_order_preview import AircraftPreviewRequest
 from bot import Bot, BotState
 
 
@@ -121,6 +122,53 @@ def test_flight_history_probe_uses_worker_and_returns_only_structural_data():
         assert "HIDDEN_SECRET" not in str(report)
         assert bot.next_cycle_at == scheduled
         assert bot.request_game_source_probe(timeout=2)[0] == "ok"
+
+
+def test_aircraft_preview_runs_only_on_observation_worker_and_rechecks_company(monkeypatch):
+    bot = make_bot()
+    request = AircraftPreviewRequest("12", "24323457", "23", (3, 0, 0), 51000)
+    assert bot.request_aircraft_order_preview(request) == ("unavailable", None)
+    bot._observation_only = True
+    monkeypatch.setattr("bot.requested_work", lambda _store: None)
+    calls = []
+
+    def verify(label):
+        calls.append((label, threading.get_ident()))
+
+    def quote(worker, payload):
+        assert worker is bot and payload == request
+        verify("quote")
+        return {"status": "matched", "execution_available": False}
+
+    def read_pending(worker, *, baseline):
+        assert worker is bot and baseline
+        verify("pending")
+        return {"fleet_total": 224, "pending": {"total": 0}, "observed_at": 42,
+                "company_id": "123", "fleet_ids": ["456"]}
+
+    bot._require_observation_session = lambda: verify("session")
+    bot._verify_observation_company = lambda: verify("company")
+    monkeypatch.setattr("bot.probe_aircraft_order", quote)
+    monkeypatch.setattr("bot.read_pilot_pending", read_pending)
+    with running_worker(bot):
+        wait_until_idle(bot)
+        status, report = bot.request_aircraft_order_preview(request, timeout=2)
+        assert status == "ok" and report["status"] == "matched"
+        assert report["fleet_baseline"] == {"status": "verified", "fleet_total": 224,
+                                            "pending_total": 0, "observed_at": 42}
+        assert calls == [(label, bot._thread.ident) for label in
+                         ("session", "company", "quote", "pending", "session", "company")]
+        assert bot.cash_reads == 0
+
+        def changed_company():
+            if calls[-1][0] == "session" and any(label == "quote" for label, _ in calls):
+                raise RuntimeError("sensitive session detail")
+            verify("company")
+
+        bot._verify_observation_company = changed_company
+        calls.clear()
+        assert bot.request_aircraft_order_preview(request, timeout=2) == ("unavailable", None)
+        assert any(label == "quote" for label, _ in calls)
 
 
 def test_flight_history_probe_validates_id_and_recovers_after_timeout():

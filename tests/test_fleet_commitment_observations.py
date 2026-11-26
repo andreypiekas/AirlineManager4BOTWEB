@@ -15,7 +15,7 @@ import seats
 from fleet_commitment_observations import (
     FILENAME, PARKED_FLEET_JS, PASSENGER_HANGAR_JS, PENDING_FLEET_JS, SOURCE,
     _OPEN_PARKED_JS, _fleet_list, _hangar, collect_fleet_commitment_observations, observations_snapshot,
-    reconcile_route_coverage,
+    read_pilot_pending, reconcile_route_coverage,
 )
 from hub_registry import HubRegistry
 from portfolio_planner import compare_portfolio
@@ -58,6 +58,49 @@ class Bot:
 
     def close_popup(self, quiet):
         self.calls.append("close")
+
+
+@pytest.mark.parametrize("case", ["complete", "company_changed", "count_changed", "roster_missing_pending"])
+def test_pilot_read_checks_company_and_correlates_baseline_roster(monkeypatch, case):
+    class PilotBot(Bot):
+        def _require_observation_session(self):
+            self.calls.append("session")
+
+        def _verify_observation_company(self):
+            changed = case == "company_changed" and "fleet_pending.php" in self.calls
+            self._observation_company_id = "99" if changed else "98"
+            self.calls.append("company")
+
+    def stable_read(bot, script):
+        if script == PENDING_FLEET_JS:
+            identity = "199" if case == "roster_missing_pending" else "102"
+            return {"total": 1, "rows": [{"id": identity, "status": "maintenance"}]}
+        assert "window.statusData" in script and "#hPending" in script
+        bot.calls.append("roster")
+        return {"counts": {"routes": 1, "parked": 0, "pending": 2 if case == "count_changed" else 1},
+                "rows": [{"aircraft_id": "101", "route_id": 9}, {"aircraft_id": "102", "route_id": 0}]}
+
+    monkeypatch.setattr(game_observations, "_stable_read", stable_read)
+    bot = PilotBot()
+    baseline = read_pilot_pending(bot, baseline=True)
+    if case == "count_changed":
+        assert baseline is None
+        assert bot.calls == ["session", "company", "routes_main.php", "roster", "close"]
+        return
+    assert bot.calls == ["session", "company", "routes_main.php", "roster", "fleet_pending.php", "close",
+                         "session", "company"]
+    if case != "complete":
+        assert baseline is None
+        return
+    assert baseline["company_id"] == "98"
+    assert baseline["fleet_total"] == 2
+    assert baseline["fleet_ids"] == ["101", "102"]
+    assert baseline["observed_at"] <= baseline["observed_until"]
+    bot.calls.clear()
+    pending = read_pilot_pending(bot)
+    assert pending["pending"] == baseline["pending"]
+    assert "fleet_ids" not in pending
+    assert bot.calls == ["session", "company", "routes_main.php", "fleet_pending.php", "close", "session", "company"]
 
 
 def test_collector_and_profile_snapshot(tmp_path, monkeypatch):

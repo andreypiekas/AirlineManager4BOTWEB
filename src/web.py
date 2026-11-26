@@ -11,6 +11,7 @@ assets/web/index.html and a JSON API:
                               the program; used by scripts/web_parar.ps1)
 * POST /api/admin/game-source-probe  authorized, read-only snapshot of the active game's DOM
 * POST /api/admin/flight-history-probe  authorized, read-only structural history for one aircraft
+* POST /api/admin/aircraft-order-preview  authorized, configured quote in the observation worker
 * GET  /api/research/demand          scan progress or one observation by origin_id/destination_id
 * POST /api/research/demand/request {"confirm": true} queues a read-only scan
 * GET  /api/research/historical     historical origins and candidates filtered by distance, runway and cabin
@@ -62,6 +63,7 @@ from historical_routes import HistoricalRoutes
 from route_creation import has_pending_creation
 from reroute import has_pending_reroute
 from investment_plan_bridge import build_aircraft_intent_plan
+from aircraft_order_preview import AircraftPreviewRequest
 from expansion_metrics import build_expansion_metrics
 from portfolio_planner import compare_portfolio
 from portfolio_planner import compare_audited_portfolio
@@ -586,6 +588,14 @@ class WebDashboard:
         """Inspect one aircraft's history through the existing Selenium owner."""
         return self._admin_probe_result(lambda: self.bot.request_flight_history_probe(aircraft_id))
 
+    def aircraft_order_preview(self, payload: dict) -> tuple[int, dict]:
+        """Check a one-unit quote through the authenticated observation worker."""
+        try:
+            preview = AircraftPreviewRequest.from_payload(payload)
+        except ValueError as exc:
+            return HTTPStatus.BAD_REQUEST, {"ok": False, "message": str(exc)}
+        return self._admin_probe_result(lambda: self.bot.request_aircraft_order_preview(preview))
+
     @staticmethod
     def _admin_probe_result(request: Callable[[], tuple[str, Optional[dict]]]) -> tuple[int, dict]:
         try:
@@ -936,7 +946,10 @@ class WebDashboard:
 
             def do_POST(self) -> None:  # noqa: N802 - http.server API
                 path = urlparse(self.path).path
-                admin_probe = path in ("/api/admin/game-source-probe", "/api/admin/flight-history-probe")
+                admin_probe = path in (
+                    "/api/admin/game-source-probe", "/api/admin/flight-history-probe",
+                    "/api/admin/aircraft-order-preview",
+                )
                 protected_action = path in (
                     "/api/investment/policy", "/api/investment/stop", "/api/research/demand/request",
                 )
@@ -962,12 +975,14 @@ class WebDashboard:
                         if payload:
                             return self._json({"ok": False, "message": "Envie um objeto JSON vazio."}, 400)
                         status, report = dashboard.game_source_probe()
-                    else:
+                    elif path == "/api/admin/flight-history-probe":
                         aircraft_id = payload.get("aircraft_id")
                         if (set(payload) != {"aircraft_id"} or type(aircraft_id) is not str
                                 or re.fullmatch(r"[1-9][0-9]{0,13}", aircraft_id) is None):
                             return self._json({"ok": False, "message": "Informe um ID de aeronave válido."}, 400)
                         status, report = dashboard.flight_history_probe(aircraft_id)
+                    else:
+                        status, report = dashboard.aircraft_order_preview(payload)
                     return self._json(report, status)
                 if path == "/api/settings":
                     ok, message = dashboard.update_settings(payload)

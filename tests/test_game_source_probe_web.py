@@ -17,6 +17,7 @@ from web import WebDashboard
 
 ENDPOINT = "/api/admin/game-source-probe"
 HISTORY_ENDPOINT = "/api/admin/flight-history-probe"
+QUOTE_ENDPOINT = "/api/admin/aircraft-order-preview"
 TOKEN = "web-admin-secret"
 
 
@@ -115,6 +116,33 @@ def request(port, method="POST", path=ENDPOINT, headers=None, body=b"{}"):
 
 def authorized(**extra):
     return {"X-Token": TOKEN, "X-AM4": "1", **extra}
+
+
+def test_aircraft_order_preview_requires_header_token_and_exact_quote_payload():
+    bot = FakeBot()
+    calls = []
+
+    def preview(request):
+        calls.append(request)
+        return "ok", {"status": "matched", "read_only": True, "execution_available": False}
+
+    bot.request_aircraft_order_preview = preview
+    quote = {"model_id": "12", "delivery_hub_id": "24323457", "engine_id": "23",
+             "configuration_yjf": {"y": 3, "j": 0, "f": 0}, "expected_checkout_cost": 51000}
+    body = json.dumps(quote).encode()
+    with served(bot) as (port, _):
+        assert request(port, path=QUOTE_ENDPOINT + "?token=" + TOKEN,
+                       headers={"X-AM4": "1"}, body=body)[0] == 403
+        assert request(port, path=QUOTE_ENDPOINT, headers={"X-Token": TOKEN}, body=body)[0] == 403
+        for change in ({"submit": True}, {"engine_id": "23&submit=1"}, {"expected_checkout_cost": True},
+                       {"configuration_yjf": {"y": 0, "j": 0, "f": 0}}):
+            invalid_body = json.dumps({**quote, **change}).encode()
+            assert request(port, path=QUOTE_ENDPOINT, headers=authorized(), body=invalid_body)[0] == 400
+        assert not calls
+        status, raw = request(port, path=QUOTE_ENDPOINT, headers=authorized(), body=body)
+
+    assert status == 200 and json.loads(raw)["report"]["execution_available"] is False
+    assert len(calls) == 1 and calls[0].seats == (3, 0, 0)
 
 
 def test_admin_probe_returns_only_sanitized_data_from_existing_bot():

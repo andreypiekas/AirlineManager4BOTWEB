@@ -50,9 +50,20 @@ class NativePreview:
         self.handles = [SimpleNamespace(send_keys=lambda keys, i=i: self.move(i, keys)) for i in range(2)]
 
     def ajax(self, url, target):
+        if (url, target) == ("ac_orders.php?first=true", "routeAction"):
+            self.actions.append("catalog")
+            return self
         assert (url, target) == ("ac_orders.php?mode=detail&id=2&charter=0", "acModel")
         self.actions.append("detail")
         return self
+
+    def open_popup(self, url, title, selector):
+        assert (url, title, selector) == ("routes_main.php", "Routes", "nav_routes")
+        self.actions.append("Routes")
+
+    def close_popup(self, *, quiet):
+        assert quiet
+        self.actions.append("close")
 
     def find_element(self, by, selector):
         assert (by, selector) == (By.ID, "acModel")
@@ -108,7 +119,8 @@ class NativePreview:
             left, right = self.positions
             seats = {"y": left, "j": (right - left) // 2, "f": (600 - right) // 3}
             base += 5000 * seats["j"] + 10000 * seats["f"]
-            state.update(capacity=600, positions=self.positions.copy(), seats=seats, handles=self.handles)
+            state.update(capacity=600, positions=self.positions.copy(), seats=seats, handles=self.handles,
+                         order_available=True)
         state["price"] = f"${base:,}"
         if self.opened and self.positions == [443, 528]:
             state.update(self.drift)
@@ -132,6 +144,24 @@ def test_worker_stages_route_layout_and_confirms_single_aircraft_quote():
     ]
     assert not bot.opened
     assert "443/42/24" in bot.messages[0]
+
+
+@pytest.mark.parametrize(("expected", "status"), [(PRICE, "matched"), (PRICE + 1, "mismatch")])
+def test_order_diagnostic_reports_game_price_independently_of_expected_price(expected, status):
+    bot = NativePreview()
+    request = aircraft_order_preview.AircraftPreviewRequest("2", DELIVERY_HUB, "7", (443, 42, 24), expected)
+
+    report = aircraft_order_preview.probe_aircraft_order(bot, request)
+
+    assert report["status"] == status and report["displayed_cost_usd"] == PRICE
+    assert report["read_only"] and not report["execution_available"]
+    if status == "matched":
+        assert report["order_control_available"] and not report["price_verified"]
+    else:
+        assert report["expected_checkout_cost"] == PRICE + 1
+    assert bot.actions[:3] == ["close", "Routes", "catalog"]
+    assert bot.actions[-2:] == ["Back", "close"]
+    assert not bot.opened
 
 
 @pytest.mark.parametrize(("drift", "reason"), [

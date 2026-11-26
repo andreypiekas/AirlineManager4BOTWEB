@@ -35,10 +35,12 @@ from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from aircraft_order_preview import AircraftPreviewRequest, probe_aircraft_order
 from checklist import check_checklist
 from config import AppConfig
 from driver import chrome_session_path, create_driver
 from fleet import manage_fleet
+from fleet_commitment_observations import read_pilot_pending
 from gamemode import EASY, GameMode, from_difficulty
 from helpers import clean_response, first_int, fmt, fmt_duration, game_whole_number, timer_seconds, to_int
 from economy import (add_money_sample, fmt_days, fmt_money, goal_progress, income_per_day, revenue_per_day, state_file,
@@ -67,6 +69,7 @@ log_telegram = logging.getLogger("am4bot.telegram")
 PRICE_WINDOW_SECONDS = 1800
 PROBE_MIN_IDLE_SECONDS = 5.0
 FLIGHT_HISTORY_MIN_IDLE_SECONDS = 8.0
+AIRCRAFT_PREVIEW_MIN_IDLE_SECONDS = 40.0
 
 COUNTER_KEYS = ("fuel_bought", "fuel_spent", "co2_bought", "co2_spent", "departures", "routes", "aircraft", "repairs", "checks",
                 "hangar", "campaigns", "campaign_spent", "seats", "seats_spent", "mods", "mods_spent")
@@ -160,7 +163,7 @@ class Bot:
         self._wake = threading.Event()
         self._probe_condition = threading.Condition()
         self._probe_request: Optional[Future] = None
-        self._probe_aircraft_id: Optional[str] = None
+        self._probe_target: str | AircraftPreviewRequest | None = None
         self._probe_ready = False
         self._thread: Optional[threading.Thread] = None
         self.history = PriceHistory()
@@ -222,7 +225,17 @@ class Bot:
             raise ValueError("Invalid aircraft ID")
         return self._request_diagnostic_probe(aircraft_id, timeout)
 
-    def _request_diagnostic_probe(self, aircraft_id: Optional[str], timeout: float) -> tuple[str, Optional[dict]]:
+    def request_aircraft_order_preview(
+        self, preview: AircraftPreviewRequest, timeout: float = 70.0,
+    ) -> tuple[str, Optional[dict]]:
+        """Recheck a configured quote on an idle observation-only worker."""
+        if not self._observation_only:
+            return "unavailable", None
+        return self._request_diagnostic_probe(preview, timeout)
+
+    def _request_diagnostic_probe(
+        self, target: str | AircraftPreviewRequest | None, timeout: float,
+    ) -> tuple[str, Optional[dict]]:
         if threading.current_thread() is self._thread:
             return "busy", None
         with self._probe_condition:
@@ -233,7 +246,7 @@ class Bot:
                 return "busy", None
             request = Future()
             self._probe_request = request
-            self._probe_aircraft_id = aircraft_id
+            self._probe_target = target
             self._probe_condition.notify_all()
         try:
             return request.result(timeout=timeout)
@@ -241,17 +254,34 @@ class Bot:
             request.cancel()
             return "timeout", None
 
-    def _execute_game_source_probe(self, request: Future, aircraft_id: Optional[str] = None) -> None:
+    def _execute_game_source_probe(
+        self, request: Future, target: str | AircraftPreviewRequest | None = None,
+    ) -> None:
         """Run the diagnostic on the Selenium-owning worker thread only."""
         outcome: tuple[str, Optional[dict]] = ("unavailable", None)
         try:
             if (threading.current_thread() is self._thread and not self._stop.is_set()
                     and not self._wake.is_set() and self.driver is not None
                     and self.state == BotState.RUNNING and self._is_logged_in(timeout=0)):
-                if aircraft_id is not None:
+                if isinstance(target, AircraftPreviewRequest):
+                    if not self._observation_only:
+                        return
+                    self._require_observation_session()
+                    self._verify_observation_company()
+                    report = probe_aircraft_order(self, target)
+                    if report["status"] == "matched":
+                        baseline = read_pilot_pending(self, baseline=True)
+                        report["fleet_baseline"] = ({
+                            "status": "verified", "fleet_total": baseline["fleet_total"],
+                            "pending_total": baseline["pending"]["total"],
+                            "observed_at": baseline["observed_at"],
+                        } if baseline is not None else {"status": "unverified"})
+                    self._require_observation_session()
+                    self._verify_observation_company()
+                elif isinstance(target, str):
                     from game_source_probe import probe_flight_history_structure
 
-                    report = probe_flight_history_structure(self, aircraft_id)
+                    report = probe_flight_history_structure(self, target)
                 else:
                     from game_source_probe import probe_game_sources
 
@@ -272,7 +302,8 @@ class Bot:
         except Exception:
             # Driver exceptions sometimes embed the page URL, cookie or session ID.
             outcome = ("unavailable", None)
-        request.set_result(outcome)
+        finally:
+            request.set_result(outcome)
 
     def is_alive(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
@@ -893,21 +924,11 @@ class Bot:
         log.info("Próxima verificação em %d min %02d s%s.", seconds // 60, seconds % 60, reason)
         deadline = time.monotonic() + seconds
         demand_store = DemandStore()
-        if self._observation_only:
-            while not (self.stopping or self._wake.is_set()) and time.monotonic() < deadline:
-                if deadline - time.monotonic() >= 40:
-                    work = requested_work(demand_store)
-                    if work == "catalog":
-                        self._guard(lambda: prepare_requested_scan(self), "preparar pesquisa de demanda")
-                    elif work == "batch":
-                        self._guard(lambda: run_demand_slice(self, demand_store), "coletar lote de demanda")
-                        continue
-                self._wake.wait(min(5, max(0, deadline - time.monotonic())))
-            self._wake.clear()
-            self.next_cycle_at = None
-            return
-        interval = max(30, min(600, self.config.get_int("settings", "cash_sync_seconds", 60)))
-        next_cash_check = time.monotonic() + interval
+        next_cash_check = deadline
+        if not self._observation_only:
+            interval = max(30, min(600, self.config.get_int("settings", "cash_sync_seconds", 60)))
+            next_cash_check = time.monotonic() + interval
+        next_demand_poll = 0.0
         try:
             with self._probe_condition:
                 self._probe_ready = True
@@ -915,9 +936,13 @@ class Bot:
                 if self._wake.is_set() or time.monotonic() >= deadline:
                     break
                 request = None
-                aircraft_id = None
-                demand_ready = (min(deadline, next_cash_check) - time.monotonic() >= 20
-                                and requested_work(demand_store) == "batch")
+                target = None
+                now = time.monotonic()
+                work = None
+                if (now >= next_demand_poll
+                        and min(deadline, next_cash_check) - now >= (40 if self._observation_only else 20)):
+                    work = requested_work(demand_store)
+                demand_ready = work == "batch" or (self._observation_only and work == "catalog")
                 demand_reserved = False
                 with self._probe_condition:
                     if self._probe_request is None and not self._wake.is_set() and not self._stop.is_set():
@@ -926,28 +951,36 @@ class Bot:
                             demand_reserved = True
                         else:
                             remaining = max(0.0, min(deadline, next_cash_check) - time.monotonic())
+                            if self._observation_only:
+                                remaining = min(remaining, 5.0)
                             self._probe_condition.wait(remaining)
                     if self._wake.is_set() or self._stop.is_set():
                         break
                     if self._probe_request is not None:
                         queued = self._probe_request
                         self._probe_request = None
-                        queued_aircraft_id = getattr(self, "_probe_aircraft_id", None)
-                        self._probe_aircraft_id = None
+                        queued_target = getattr(self, "_probe_target", None)
+                        self._probe_target = None
                         if queued.set_running_or_notify_cancel():
                             # Leave the scheduled cycle and cash sync their time window.
-                            minimum_idle = (FLIGHT_HISTORY_MIN_IDLE_SECONDS if queued_aircraft_id is not None
-                                            else PROBE_MIN_IDLE_SECONDS)
+                            minimum_idle = PROBE_MIN_IDLE_SECONDS
+                            if isinstance(queued_target, str):
+                                minimum_idle = FLIGHT_HISTORY_MIN_IDLE_SECONDS
+                            elif isinstance(queued_target, AircraftPreviewRequest):
+                                minimum_idle = AIRCRAFT_PREVIEW_MIN_IDLE_SECONDS
                             if min(deadline, next_cash_check) - time.monotonic() < minimum_idle:
                                 queued.set_result(("busy", None))
                             else:
                                 self._probe_ready = False
                                 request = queued
-                                aircraft_id = queued_aircraft_id
+                                target = queued_target
                 if request is not None or demand_reserved:
                     try:
                         if request is not None:
-                            self._execute_game_source_probe(request, aircraft_id)
+                            self._execute_game_source_probe(request, target)
+                        elif work == "catalog":
+                            self._guard(lambda: prepare_requested_scan(self), "preparar pesquisa de demanda")
+                            next_demand_poll = time.monotonic() + 5
                         else:
                             self._guard(lambda: run_demand_slice(self, demand_store), "coletar lote de demanda")
                     finally:
@@ -956,7 +989,7 @@ class Bot:
                     continue
                 if time.monotonic() >= deadline:
                     break
-                if time.monotonic() >= next_cash_check:
+                if not self._observation_only and time.monotonic() >= next_cash_check:
                     with self._probe_condition:
                         self._probe_ready = False
                     try:
@@ -974,7 +1007,7 @@ class Bot:
                 self._probe_ready = False
                 pending = self._probe_request
                 self._probe_request = None
-                self._probe_aircraft_id = None
+                self._probe_target = None
                 if pending is not None and pending.set_running_or_notify_cancel():
                     pending.set_result(("busy", None))
             self._wake.clear()

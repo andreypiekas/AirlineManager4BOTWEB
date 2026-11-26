@@ -7,7 +7,7 @@ import time
 import uuid
 from pathlib import Path
 
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
 
 import paths
@@ -172,6 +172,64 @@ def _fleet_list(value):
     delivery = sum(row["status"] == "delivery" for row in rows)
     return {"total": len(rows), "maintenance": maintenance, "delivery": delivery,
             "unclassified": len(rows) - maintenance - delivery}
+
+
+def _pilot_roster(bot):
+    from fleet import _GAME_FLEET_COUNTS_JS, _GAME_ROSTER_JS
+    from game_observations import _stable_read
+    from route_registry import RouteRegistry
+
+    value = _stable_read(bot, "return {counts: (() => {" + _GAME_FLEET_COUNTS_JS
+                         + "})(), rows: (() => {" + _GAME_ROSTER_JS + "})()};")
+    counts = value.get("counts") if isinstance(value, dict) else None
+    keys = ("routes", "parked", "pending")
+    if not isinstance(counts, dict) or any(not _count(counts.get(key)) for key in keys):
+        return None
+    roster = RouteRegistry._parse_game_roster(value.get("rows"), sum(counts[key] for key in keys))
+    return (set(roster), counts["pending"]) if roster is not None else None
+
+
+def read_pilot_pending(bot, *, baseline: bool = False) -> dict | None:
+    """Read Pending in the same authenticated company. Include the roster for the pre-submit baseline."""
+    from game_observations import _stable_read
+
+    if bot.stopping:
+        return None
+    started = time.time()
+    profile_id = paths.current().label
+    try:
+        bot._require_observation_session()
+        bot._verify_observation_company()
+        company_id = bot._observation_company_id
+        if not isinstance(company_id, str) or not _ROW_ID.fullmatch(company_id) or bot.stopping:
+            return None
+        try:
+            bot.open_popup("routes_main.php", "Routes", "nav_routes")
+            roster = _pilot_roster(bot) if baseline else None
+            if (baseline and roster is None) or bot.stopping:
+                return None
+            bot.ajax("fleet_pending.php", "routesContainer")
+            pending = _stable_read(bot, PENDING_FLEET_JS)
+        finally:
+            bot.close_popup(quiet=True)
+        if _fleet_list(pending) is None or bot.stopping:
+            return None
+        bot._require_observation_session()
+        bot._verify_observation_company()
+    except (RuntimeError, WebDriverException):
+        return None
+    finished = time.time()
+    if (bot.stopping or bot._observation_company_id != company_id or paths.current().label != profile_id
+            or not 0 <= finished - started <= MAX_WINDOW):
+        return None
+    result = {"profile_id": profile_id, "company_id": company_id, "observed_at": started,
+              "observed_until": finished, "pending": pending}
+    if roster is not None:
+        roster_ids, pending_count = roster
+        if pending_count != pending["total"] or not {row["id"] for row in pending["rows"]} <= roster_ids:
+            return None
+        result.update(fleet_ids=sorted(roster_ids), fleet_total=len(roster_ids))
+    return result
 
 
 def read_parked_ids(bot):
