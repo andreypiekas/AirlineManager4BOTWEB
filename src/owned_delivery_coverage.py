@@ -6,6 +6,11 @@ import re
 import time
 from pathlib import Path
 
+from selenium.common.exceptions import StaleElementReferenceException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
 import paths
 from aircraft_order_hub import _ORDER_HUB_STATE_JS
 from engine_detail import MODEL_DETAIL_IDENTITY_JS
@@ -14,12 +19,14 @@ SOURCE = "game_managed_hubs_and_order_form"
 MAX_AGE = 900
 MAX_WINDOW = 120
 _ID = re.compile(r"[1-9][0-9]{0,13}")
+_HUB_LIST = "#popup #popContent #hubList"
+_CLOSE_POPUP = (By.CSS_SELECTOR, '#popup .modal-header [onclick^="closePop()"]')
 
 MANAGED_HUB_IDS_JS = r"""
-const lists = document.querySelectorAll('#hubList');
+const lists = document.querySelectorAll('#popup #popContent #hubList');
 if (lists.length !== 1 || !window.jQuery || window.jQuery.active !== 0) return null;
 const list = lists[0];
-if (list.querySelector('img[src*="loader"], [aria-busy="true"]')) return null;
+if (!list.getClientRects().length || list.querySelector('img[src*="loader"], [aria-busy="true"]')) return null;
 const rows = Array.from(list.children);
 if (!rows.length || rows.some(row => !row.matches('.row[onclick]'))) return null;
 const pattern = /^\s*playSound\('neutral_click'\);\s*Ajax\('hub_details\.php\?id=([1-9][0-9]{0,13})','hubDetail',this,true\);\s*$/;
@@ -42,9 +49,23 @@ return {model_id: identity.model_id ?? identity.script_model_id, state};
 
 
 def open_managed_hubs(bot):
-    # The native Hubs button toggles the modal when a popup is already open.
-    bot.close_popup(quiet=True)
-    bot.open_popup("hubs.php", "Hubs", "nav_hubs")
+    """Open a fresh managed list without waiting on the hidden detail placeholder."""
+    list_selector = (By.CSS_SELECTOR, _HUB_LIST)
+    previous = bot.driver.find_elements(*list_selector)
+    wait = WebDriverWait(bot.driver, 15, ignored_exceptions=(StaleElementReferenceException,))
+    popup = (By.ID, "popup")
+    if EC.visibility_of_element_located(popup)(bot.driver):
+        bot.click_element(wait.until(EC.visibility_of_element_located(_CLOSE_POPUP)))
+        wait.until(EC.invisibility_of_element_located(popup))
+    # Opening another popup can hide the map sidebar containing this control.
+    button = wait.until(EC.presence_of_element_located((By.XPATH, bot._sel("nav_hubs"))))
+    bot.js("arguments[0].click();", button)
+
+    def fresh_visible_list(driver):
+        lists = driver.find_elements(*list_selector)
+        return len(lists) == 1 and lists[0] not in previous and lists[0].is_displayed()
+
+    wait.until(fresh_visible_list)
 
 
 def native_ids(values):

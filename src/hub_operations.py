@@ -13,7 +13,7 @@ from owned_delivery_coverage import MANAGED_HUB_IDS_JS, native_ids, open_managed
 MAX_WINDOW = 120
 
 HUB_OPERATIONS_JS = r"""
-const containers = document.querySelectorAll('#hubDetail');
+const containers = document.querySelectorAll('#popup #popContent #hubDetail');
 if (containers.length !== 2 || containers[1].parentElement !== containers[0] ||
     !window.jQuery || window.jQuery.active !== 0) return null;
 const detail = containers[1];
@@ -75,6 +75,9 @@ def collect_hub_operations(bot):
                 break
             bot.ajax(f"hub_details.php?id={management_id}", "hubDetail", timeout=min(10, remaining))
             panel = _stable_read(bot, HUB_OPERATIONS_JS)
+            if (not _valid_panel(panel, management_id) and time.time() - started_at < MAX_WINDOW - 1
+                    and not bot._stop.wait(0.4)):
+                panel = _stable_read(bot, HUB_OPERATIONS_JS)
             if _valid_panel(panel, management_id):
                 panels.append(panel)
         if managed and len(panels) == len(managed) and not bot.stopping:

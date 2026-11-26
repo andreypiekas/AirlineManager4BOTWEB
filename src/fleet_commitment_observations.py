@@ -7,6 +7,9 @@ import time
 import uuid
 from pathlib import Path
 
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.support.ui import WebDriverWait
+
 import paths
 
 SOURCE = "game_hangar_and_fleet_status"
@@ -116,6 +119,17 @@ return {total, rows: children.map(row => ({id: row.id.slice(prefix.length), stat
 
 PENDING_FLEET_JS = _fleet_list_js("pending")
 PARKED_FLEET_JS = _fleet_list_js("parked")
+_OPEN_PARKED_JS = r"""
+const panels = document.querySelectorAll('#popup #routesContainer');
+const buttons = [...document.querySelectorAll('#popup #routeAction button.listBtns[onclick]')]
+    .filter(button => (button.getAttribute('onclick') || '').includes("Ajax('fleet_parked.php','routesContainer',this)"));
+if (panels.length !== 1 || buttons.length !== 1 || !buttons[0].getClientRects().length || buttons[0].disabled) {
+    return false;
+}
+panels[0].replaceChildren();
+buttons[0].click();
+return true;
+"""
 
 
 def _count(value):
@@ -164,9 +178,20 @@ def read_parked_ids(bot):
     """Read the native Parked list from Routes without relying on Pending or Hangar."""
     from game_observations import _stable_read
 
-    bot.ajax("fleet_parked.php", "routesContainer")
-    value = _stable_read(bot, PARKED_FLEET_JS)
-    return frozenset(row["id"] for row in value["rows"]) if _fleet_list(value) else None
+    if bot.stopping or not bot.js(_OPEN_PARKED_JS):
+        return None
+
+    def read(_):
+        if bot.stopping:
+            raise TimeoutException()
+        value = _stable_read(bot, PARKED_FLEET_JS)
+        return value if _fleet_list(value) else None
+
+    try:
+        panel = WebDriverWait(bot.driver, 5).until(read)
+    except TimeoutException:
+        return None
+    return frozenset(row["id"] for row in panel["rows"])
 
 
 def _pending_counts(value):

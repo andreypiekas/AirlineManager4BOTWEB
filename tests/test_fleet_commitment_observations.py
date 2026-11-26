@@ -5,14 +5,16 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from selenium.common.exceptions import TimeoutException
 
+import fleet_commitment_observations
 import game_observations
 import maintenance
 import route_registry
 import seats
 from fleet_commitment_observations import (
     FILENAME, PARKED_FLEET_JS, PASSENGER_HANGAR_JS, PENDING_FLEET_JS, SOURCE,
-    _fleet_list, _hangar, collect_fleet_commitment_observations, observations_snapshot,
+    _OPEN_PARKED_JS, _fleet_list, _hangar, collect_fleet_commitment_observations, observations_snapshot,
     reconcile_route_coverage,
 )
 from hub_registry import HubRegistry
@@ -38,6 +40,7 @@ def test_pending_count_is_not_an_order_count():
 
 class Bot:
     stopping = False
+    driver = None
 
     def __init__(self):
         self.calls = []
@@ -47,6 +50,11 @@ class Bot:
 
     def ajax(self, url, *_):
         self.calls.append(url)
+
+    def js(self, script):
+        assert script == _OPEN_PARKED_JS
+        self.calls.append("Parked")
+        return True
 
     def close_popup(self, quiet):
         self.calls.append("close")
@@ -60,7 +68,20 @@ def test_collector_and_profile_snapshot(tmp_path, monkeypatch):
             PENDING_FLEET_JS: {"total": 2, "rows": [{"id": "12345678", "status": "maintenance"},
                                                    {"id": "23456789", "status": "delivery"}]},
             PARKED_FLEET_JS: {"total": 0, "rows": []}}
-    monkeypatch.setattr(game_observations, "_stable_read", lambda _, script: data[script])
+    parked_initial = iter([None])
+
+    def read(_, script):
+        return next(parked_initial, data[script]) if script == PARKED_FLEET_JS else data[script]
+
+    monkeypatch.setattr(game_observations, "_stable_read", read)
+
+    def poll_parked(_, condition):
+        for _ in range(2):
+            if panel := condition(None):
+                return panel
+        raise TimeoutException()
+
+    monkeypatch.setattr(fleet_commitment_observations.WebDriverWait, "until", poll_parked)
     evidence = {}
     assert collect_fleet_commitment_observations(bot, path=path, identity_evidence=evidence)
     assert evidence["pending_ids"] == frozenset({"12345678", "23456789"})
@@ -69,7 +90,7 @@ def test_collector_and_profile_snapshot(tmp_path, monkeypatch):
     assert evidence["parked_ids"] == frozenset()
     assert json.loads(path.read_text(encoding="utf-8"))["observation_id"] == evidence["observation_id"]
     assert bot.calls == ["maintenance_main.php", "hangars.php?type=pax", "close", "routes_main.php",
-                         "fleet_pending.php", "fleet_parked.php", "close"]
+                         "fleet_pending.php", "Parked", "close"]
     assert "12345678" not in path.read_text(encoding="utf-8")
     report = HubRegistry(tmp_path / "hubs.json").snapshot({"relations": []})["fleet_commitment_observations"]
     assert report["status"] == "observed"
@@ -321,6 +342,7 @@ const assert = require('node:assert/strict');
 const hangar = new Function(""" + json.dumps(PASSENGER_HANGAR_JS) + """);
 const pending = new Function(""" + json.dumps(PENDING_FLEET_JS) + """);
 const parked = new Function(""" + json.dumps(PARKED_FLEET_JS) + """);
+const openParked = new Function(""" + json.dumps(_OPEN_PARKED_JS) + """);
 const cell = textContent => ({textContent});
 const row = (...texts) => ({cells:texts.map(cell)});
 const pax = {getAttribute:()=>"playSound('neutral_click'); Ajax('hangars.php?type=pax','maintAction',this);"};
@@ -334,16 +356,20 @@ const upgrade = (amount, price, duration) => ({textContent:price, disabled:false
 const hg = {querySelector:()=>null, querySelectorAll:key=>({
   'button.active':[pax], 'button[onclick]':upgrades, '.xl-text span':[cell('223')], table:[{rows}]}[key]||[])};
 let kind = 'pending', total = 2;
+const navigation = [];
 const button = {get textContent(){return `${kind} (${total})`},
-  getAttribute:()=>`Ajax('fleet_${kind}.php','routesContainer',this);`};
+  getAttribute:()=>`Ajax('fleet_${kind}.php','routesContainer',this);`,
+  getClientRects:()=>[{}], click:()=>navigation.push('clicked')};
 const statusCell = label => ({childNodes:[{nodeType:3,textContent:label}],
   querySelectorAll:selector=>selector==='span.hasCountdown'?[{}]:[]});
 const pendingRow = (id, ...labels) => ({id:`routeMainPendingList${id}`,
   querySelectorAll:selector=>selector==='.row.p-2 > .col-6'?labels.map(statusCell):[]});
 const panel = {querySelector:()=>null, children:[cell('2 AIRCRAFT'),
-  pendingRow('101','Pending maintenance:'), pendingRow('102','Pending delivery:'), {tagName:'SCRIPT'}]};
+  pendingRow('101','Pending maintenance:'), pendingRow('102','Pending delivery:'), {tagName:'SCRIPT'}],
+  replaceChildren:()=>navigation.push('cleared')};
 global.window = {jQuery:{active:0}};
 global.document = {querySelectorAll:key=>({'#maintAction':[hg], '#routesContainer':[panel],
+  '#popup #routesContainer':[panel], '#popup #routeAction button.listBtns[onclick]':[button],
   '#routeAction .listBtns':[button]}[key]||[])};
 assert.deepEqual(hangar(), {capacity:223,occupied:223,free:0});
 const one = upgrade(1,'$190,835,956','00:18:00');
@@ -366,7 +392,10 @@ assert.equal(pending().rows[1].status,'unclassified');
 panel.children[2]=pendingRow('102','Other status');
 assert.equal(pending().rows[1].status,'unclassified');
 total=3; assert.equal(pending(),null);
+assert.equal(openParked(),false);
 kind='parked'; total=0; panel.children=[cell('0 AIRCRAFT'),cell('THERE ARE NO PARKED AIRCRAFT'),{tagName:'SCRIPT'}];
+assert.equal(openParked(),true);
+assert.deepEqual(navigation,['cleared','clicked']);
 assert.deepEqual(parked(), {total:0,rows:[]});
 panel.children=[cell('0 AIRCRAFT')]; assert.equal(parked(),null);
 window.jQuery.active=1; assert.equal(hangar(),null); assert.equal(parked(),null);

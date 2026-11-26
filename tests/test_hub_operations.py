@@ -6,11 +6,12 @@ from unittest.mock import Mock, call
 import pytest
 
 import game_observations
+import hub_operations
 from hub_operations import HUB_OPERATIONS_JS, collect_hub_operations
 
 
 @pytest.mark.parametrize(("failure", "enumerated"), [
-    (None, True), ("wrong_panel", False), ("changed_roster", False),
+    (None, True), ("unstable_panel", True), ("wrong_panel", False), ("changed_roster", False),
 ])
 def test_collection_requires_the_requested_panel_and_a_stable_managed_roster(monkeypatch, failure, enumerated):
     bot = Mock(stopping=False)
@@ -18,18 +19,20 @@ def test_collection_requires_the_requested_panel_and_a_stable_managed_roster(mon
     if failure == "wrong_panel":
         panel["management_id"] = "23678243"
     refreshed = ["23678243"] if failure == "changed_roster" else ["23678242"]
-    reader = Mock(side_effect=[["23678242"], panel, refreshed])
+    first_read = [None] if failure == "unstable_panel" else [panel] if failure == "wrong_panel" else []
+    reader = Mock(side_effect=[["23678242"], *first_read, panel, refreshed])
+    bot._stop.wait.return_value = False
     monkeypatch.setattr(game_observations, "_stable_read", reader)
+    monkeypatch.setattr(hub_operations, "open_managed_hubs", lambda bot: bot.open_native_hubs())
 
     result = collect_hub_operations(bot)
 
     assert result["enumerated"] is enumerated
     assert result["panels"] == ([] if failure == "wrong_panel" else [panel])
-    first_open = [call.close_popup(quiet=True), call.open_popup("hubs.php", "Hubs", "nav_hubs")]
-    assert bot.mock_calls == [*first_open,
-                              call.ajax("hub_details.php?id=23678242", "hubDetail", timeout=10),
-                              *(first_open if failure != "wrong_panel" else []),
-                              call.close_popup(quiet=True)]
+    open_hubs = [call.open_native_hubs()]
+    read_panel = [call.ajax("hub_details.php?id=23678242", "hubDetail", timeout=10)]
+    assert bot.mock_calls == [*open_hubs, *read_panel, *([call._stop.wait(0.4)] if first_read else []),
+                              *(open_hubs if failure != "wrong_panel" else []), call.close_popup(quiet=True)]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for DOM contract")
@@ -52,7 +55,7 @@ const detail = {parentElement: outer, querySelector: () => null, querySelectorAl
   '[onclick]': [attr("Ajax('hubs_lounge.php?id=23678242','hubDetail',this);")],
   'div.text-center.font-weight-bold': [{textContent: 'Operations to/from hub', nextElementSibling: table}],
 })[key] || []};
-global.document = {querySelectorAll: key => key === '#hubDetail' ? [outer, detail] : []};
+global.document = {querySelectorAll: key => key === '#popup #popContent #hubDetail' ? [outer, detail] : []};
 global.window = {jQuery: {active: 0}};
 assert.deepEqual(collect(), {management_id: '23678242', icao: 'PAPB', iata: 'STG',
   rows: [{aircraft_id: '25233466', airports: ['STG', 'PRY']}]});
