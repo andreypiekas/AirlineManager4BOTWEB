@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3, layout da mesma aeronave na cotação privada (G0)
+
+- Às 02h36 BRT, Routes mostrou 221 rotas, `Parked (0)` e `Pending (3)`. O detalhe nativo do PP-125-4, MC-21-400 em operação, mostrou 92/39/20 assentos Y/J/F. Os ícones de classe e os campos correspondentes de tarifa confirmaram a ordem das contagens. O link do avião e o controle nativo de matrícula no detalhe apontavam para o mesmo ID. A consulta foi somente leitura.
+- O observador consulta o detalhe associado ao ID da aeronave nas duas pontas da prévia e registra `observed_seat_layout` na linha correspondente de `observations.native_route_quotes` se as contagens coincidirem. Se o layout faltar ou divergir, guarda somente os demais dados conferidos. Descarta a prévia se o detalhe do avião deixar de confirmar a origem ou o alcance. A evidência permanece privada, no escopo da aeronave existente, com compras bloqueadas em G0.
+- Às 02h41 BRT, BCN–SHA voltou a mostrar 9.831 km, `Daily` de 1.991/376/176, aviso de demanda ampliada na pesquisa, ausência de `Today`, zero aeronaves na rota e zero aptas. A prévia anterior do A380-800 segue como a melhor amostra manual de aeronave elegível durante o Black Friday Cargo Rush, com fim previsto para 29/11 às 20h BRT. A primeira captura autenticada do worker, o formato do detalhe em Parked, a demanda `Today` e os custos incrementais completos do mesmo candidato fora do evento seguem pendentes. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+- Passaram 2.379 testes no Windows, com um pulado, e 16 testes de instalação no Ubuntu via WSL. Os 72 testes focados incluíram a persistência na captura privada, a perda da origem e o layout estável, alterado ou indisponível. Um ensaio do JavaScript com a estrutura observada rejeitou ID discordante e ícones fora da ordem. Ruff e `git diff --check` passaram.
+
 ## 2026-11-26 — Autonomia Total A3, recuperação da coleta de uma prévia em Parked (G0)
 
 - Às 02h31 BRT, o Chrome mostrou o Black Friday Cargo Rush ativo, com +50% de demanda mundial de carga e 3 dias e 17h28 restantes. O fim continuava previsto para 29/11 às 20h BRT. Routes mostrou 221 rotas, 224 aeronaves, `Parked (0)` e `Pending (3)`. A consulta foi somente leitura. A evidência de BCN–SHA obtida durante o evento segue como referência de `Daily`, tarifa, taxa e combustível.

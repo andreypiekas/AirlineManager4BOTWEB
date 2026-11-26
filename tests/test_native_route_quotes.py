@@ -36,6 +36,7 @@ def test_scope_and_freshness_are_preserved(monkeypatch):
     {"origin_id": ""}, {"origin_id": "12"}, {"stopover_id": "12"},
     {"fee": True}, {"distance": 0}, {"occupied": -1},
     {"fares": (100, 200)}, {"fares": (0, 0, 0)}, {"total_demand": (1, None, 3)},
+    {"seat_layout": (0, 0, 0)}, {"seat_layout": (92, True, 20)},
     {"fuel_lbs_per_leg": True}, {"fuel_lbs_per_leg": 0}, {"co2_kg_per_pax_km": float("nan")},
 ])
 def test_invalid_quote_is_not_retained(invalid):

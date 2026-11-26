@@ -15,7 +15,7 @@ from native_route_quotes import native_route_quotes, record_native_route_quote
 from reroute import read_direct_form
 from route_detail_evidence import validated_detail
 from route_registry import endpoint
-from route_stopover import parked_specs, read_route_fares, research_details
+from route_stopover import parked_seat_layout, parked_specs, read_route_fares, research_details
 
 log = logging.getLogger("am4bot.rutas")
 
@@ -124,12 +124,24 @@ def _collect_aircraft_quote(bot, aircraft_id, hubs, refreshed_origins):
         detail = _eligible_detail(bot, aircraft_id, sample, hubs[origin])
         if not detail:
             continue
+        layout = parked_seat_layout(bot, aircraft_id) if refreshed_origins is not None else None
+        if bot.stopping:
+            return False
         quote = _read_preview(bot, aircraft_id, sample)
         if not quote or bot.stopping:
             return False
         again = _eligible_detail(bot, aircraft_id, sample, hubs[origin])
         if not again or bot.stopping:
             return False
+        if refreshed_origins is not None:
+            if layout and parked_seat_layout(bot, aircraft_id) != layout:
+                layout = None
+            if bot.stopping:
+                return False
+            confirmed = parked_specs(bot, aircraft_id)
+            if (not confirmed or confirmed.get("id") != origin
+                    or game_whole_number(confirmed.get("range")) != limit or bot.stopping):
+                return False
         (distance, fee, occupied, fuel, co2_rate), fares = quote
         daily = detail.get("observed_daily_demand")
         daily_counts = tuple(daily[key] for key in "yjf") if daily == again.get("observed_daily_demand") and daily else None
@@ -139,6 +151,7 @@ def _collect_aircraft_quote(bot, aircraft_id, hubs, refreshed_origins):
             bot, aircraft_id=aircraft_id, origin_id=origin, destination_id=sample["destination_id"],
             distance=distance, fee=fee, occupied=occupied, fares=fares, total_demand=daily_counts,
             today_demand=today_counts, fuel_lbs_per_leg=fuel, co2_kg_per_pax_km=co2_rate,
+            seat_layout=layout,
             research_distance_km=sample["distance_km"],
             event_demand_boosted=any(row.get("event_demand_boosted") is True for row in (detail, again, sample)),
         )

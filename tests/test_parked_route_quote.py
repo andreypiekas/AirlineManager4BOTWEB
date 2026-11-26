@@ -8,7 +8,7 @@ import native_route_quotes
 import parked_route_quote as collector
 import paths
 from reroute import _FORM
-from route_stopover import _FARES
+from route_stopover import _FARES, _READ, parked_seat_layout
 
 
 NOW = 1_900_000_000
@@ -55,7 +55,7 @@ class Bot:
             assert args == (self.preview_id, DESTINATION)
             return next(self.form_reads)
         if script == _FARES:
-            assert self.events[-3:] == ["detail", "preview", "autoprice"]
+            assert self.events[-2:] == ["preview", "autoprice"]
             return [{"value": price, "disabled": False} for price in ("4103", "8425", "12998")]
         if script.startswith("const previous"):
             previous, self.arrival = self.arrival, args[0]
@@ -79,6 +79,7 @@ def setup(monkeypatch):
 
     monkeypatch.setattr(collector, "HubExpansionRegistry", lambda: SimpleNamespace(demand_research_snapshot=demand))
     monkeypatch.setattr(collector, "parked_specs", lambda bot, aircraft: {"id": ORIGIN, "range": "14,500"})
+    monkeypatch.setattr(collector, "parked_seat_layout", lambda bot, aircraft: None)
 
     def sample(bot, *reads, refresh_demand=False, parked_ids=(AIRCRAFT,)):
         replies = iter(reads)
@@ -123,6 +124,53 @@ def test_existing_aircraft_quote_with_only_read_only_actions(setup, daily_stable
     assert reference["event_demand_boosted"] is True
     assert reference["purchase_eligible"] is False
     assert native_route_quotes.reference_for_route(rows, **lookup, distance_km=9830.577) is None
+
+
+@pytest.mark.parametrize(("after", "expected"), [
+    ((465, 28, 26), {"y": 465, "j": 28, "f": 26}),
+    ((464, 28, 26), None),
+    (None, None),
+])
+def test_observation_preserves_only_a_stable_aircraft_layout(setup, monkeypatch, after, expected):
+    bot = Bot()
+    reads = iter([(465, 28, 26), after])
+
+    def layout(owner, aircraft):
+        assert owner is bot and aircraft == AIRCRAFT
+        bot.events.append("layout")
+        return next(reads)
+
+    monkeypatch.setattr(collector, "parked_seat_layout", layout)
+    assert setup(bot, DETAIL, DETAIL, refresh_demand=True)
+    assert bot.events == ["detail", "layout", "preview", "autoprice", "close", "detail", "layout"]
+    row, = native_route_quotes.native_route_quotes(bot)
+    assert row.get("observed_seat_layout") == expected
+    assert row["fuel_lbs_per_leg"] == 212273 and row["purchase_eligible"] is False
+
+
+def test_observation_discards_preview_if_native_origin_changes(setup, monkeypatch):
+    bot = Bot()
+    specs = iter([{"id": ORIGIN, "range": "14,500"}, {"id": "2947", "range": "14,500"}])
+    monkeypatch.setattr(collector, "parked_specs", lambda bot, aircraft: next(specs))
+    assert not setup(bot, DETAIL, DETAIL, refresh_demand=True)
+    assert bot.events[-2:] == ["close", "detail"]
+    assert native_route_quotes.native_route_quotes(bot) == []
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    (["1,005", "0", "26"], (1005, 0, 26)),
+    (["0", "0", "0"], None),
+    (["92", None, "20"], None),
+    (["92", "39 seats", "20"], None),
+    (["92", "39"], None),
+])
+def test_native_seat_layout_parses_all_three_unsigned_counts(raw, expected):
+    def read(script, url, aircraft):
+        assert (script, url, aircraft) == (_READ, "fleet_details.php?id=101", AIRCRAFT)
+        return raw
+
+    bot = SimpleNamespace(driver=SimpleNamespace(execute_async_script=read))
+    assert parked_seat_layout(bot, AIRCRAFT) == expected
 
 
 @pytest.mark.parametrize("unverified", [

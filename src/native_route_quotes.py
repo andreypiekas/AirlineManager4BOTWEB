@@ -112,7 +112,8 @@ def _correlated_distance(search_distance, native_distance):
 def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
                              distance, fee, occupied, fares, stopover_id=None,
                              total_demand=None, today_demand=None, event_demand_boosted=None,
-                             research_distance_km=None, fuel_lbs_per_leg=None, co2_kg_per_pax_km=None, now=None):
+                             research_distance_km=None, fuel_lbs_per_leg=None, co2_kg_per_pax_km=None,
+                             seat_layout=None, now=None):
     """Called only after matching reads of the bound native form and fares."""
     if (not all(_identity(value) for value in (aircraft_id, origin_id, destination_id))
             or origin_id == destination_id
@@ -122,6 +123,7 @@ def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
             or not _numbers(fares, 3) or not any(fares)
             or (total_demand is not None and not _numbers(total_demand, 3))
             or (today_demand is not None and not _numbers(today_demand, 3))
+            or (seat_layout is not None and (not _numbers(seat_layout, 3) or not any(seat_layout)))
             or (fuel_lbs_per_leg is not None and (type(fuel_lbs_per_leg) is not int or fuel_lbs_per_leg <= 0))
             or (co2_kg_per_pax_km is not None and not _valid_co2_rate(co2_kg_per_pax_km))
             or (research_distance_km is not None and (stopover_id is not None
@@ -148,6 +150,8 @@ def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
         row["fuel_lbs_per_leg"] = fuel_lbs_per_leg
     if co2_kg_per_pax_km is not None:
         row["co2_kg_per_pax_km"] = co2_kg_per_pax_km
+    if seat_layout is not None:
+        row["observed_seat_layout"] = dict(zip("yjf", seat_layout))
     previous = native_route_quotes(bot, now=now)
     previous = [old for old in previous if not all(old[key] == value for key, value in identity.items())]
     bot._native_route_quotes = [*previous, row][-_MAX_QUOTES:]

@@ -426,9 +426,12 @@ def test_replay_uses_captured_mode_quotes_and_paginates_same_snapshot(tmp_path, 
     ):
         assert record_native_route_quote(bot, aircraft_id=aircraft, origin_id=origin,
                                          destination_id=dest, distance=distance, fee=fee,
-                                         occupied=1, fares=fares, now=NOW - 10)
+                                         occupied=1, fares=fares, seat_layout=(92, 39, 20), now=NOW - 10)
     evidence["native_quotes"] = native_route_quotes(bot, now=NOW)
     snapshot = compose_snapshot(**evidence)
+    assert snapshot["observations"]["native_route_quotes"][0]["observed_seat_layout"] == {
+        "y": 92, "j": 39, "f": 20,
+    }
     path = tmp_path / FILENAME
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     first = replay_research_page(now=NOW, path=path)

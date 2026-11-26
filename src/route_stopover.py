@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from selenium.common.exceptions import WebDriverException
+
 from airport_catalog import game_code
 from helpers import game_whole_number, to_int
 from route_registry import endpoint, endpoint_matches
@@ -21,6 +23,26 @@ fetch(url, {cache:'no-store', signal:AbortSignal.timeout(5000), redirect:'error'
   .then(async response => {
     if (!response.ok) return null;
     const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+    if (url.pathname.endsWith('/fleet_details.php')) {
+      const reg = page.querySelectorAll('#newReg');
+      const bindings = reg.length === 1 ? reg[0].parentElement.querySelectorAll('[onclick]') : [];
+      const boundId = handler => /\bAjax\('fleet_details\.php\?id=([1-9][0-9]{0,13})&mode=reg&reg=/.exec(handler)?.[1];
+      const ids = Array.from(bindings, node => boundId(node.getAttribute('onclick'))).filter(Boolean);
+      const layout = page.querySelectorAll('#seat-layout');
+      if (ids.length !== 1 || ids[0] !== aircraft || layout.length !== 1) return null;
+      const cells = Array.from(layout[0].querySelectorAll('.col-4'));
+      if (cells.length !== 3) return null;
+      return ['economy', 'business', 'first'].map((cabin, index) => {
+        const cell = cells[index];
+        const icons = cell.querySelectorAll('img');
+        if (icons.length !== 1 ||
+            icons[0].getAttribute('src') !== 'assets/img/aircraft/configuration/' + cabin + '_seat.png') return null;
+        const counts = Array.from(cell.childNodes)
+          .filter(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())
+          .map(node => node.textContent.trim());
+        return counts.length === 1 ? counts[0] : null;
+      });
+    }
     if (aircraft) {
       const script = Array.from(page.scripts, node => node.textContent).join('\n');
       const reg = page.getElementById('ac-reg-' + aircraft);
@@ -167,6 +189,20 @@ def parked_specs(bot, aircraft_id):
     if not specs and bot.js("return Number(window.statusData?.[arguments[0]]?.routeId) === 0;", aircraft_id):
         specs = bot.driver.execute_async_script(_READ, f"{url}&mode=reroute", aircraft_id)
     return specs
+
+
+def parked_seat_layout(bot, aircraft_id):
+    """Read Y/J/F from the native details fragment, bound to this aircraft ID."""
+    if not _ID.fullmatch(aircraft_id):
+        return None
+    try:
+        raw = bot.driver.execute_async_script(_READ, f"fleet_details.php?id={aircraft_id}", aircraft_id)
+    except WebDriverException:
+        return None
+    if not isinstance(raw, list) or len(raw) != 3:
+        return None
+    counts = tuple(game_whole_number(value) for value in raw)
+    return counts if None not in counts and any(counts) else None
 
 
 def research_details(bot, origin_id, destination):
