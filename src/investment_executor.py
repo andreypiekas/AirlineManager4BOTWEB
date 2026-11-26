@@ -10,6 +10,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Mapping
+from contextlib import closing
 from pathlib import Path
 from uuid import uuid4
 
@@ -40,7 +41,7 @@ class SimulatedAircraftGateway:
         self.order_store = Path(order_store) if order_store is not None else None
         if self.order_store is not None:
             self.order_store.parent.mkdir(parents=True, exist_ok=True)
-            with sqlite3.connect(self.order_store) as conn:
+            with closing(sqlite3.connect(self.order_store)) as conn, conn:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS fake_orders (
                         profile_id TEXT NOT NULL,
@@ -70,11 +71,13 @@ class SimulatedAircraftGateway:
         configuration = canonical_configuration_yjf(self.checkout.get("configuration_yjf"))
         if configuration is not None:
             record["configuration_yjf"] = configuration
+        if "checkout_cost" in intent:
+            record["charged_checkout_cost"] = self.checkout["checkout_cost"]
         record["purchase_id"] = self.purchase_id
         if key in self._submitted or key in self._rejected:
             raise AssertionError("A mesma intenção foi enviada duas vezes na simulação.")
         if self.order_store is not None:
-            with sqlite3.connect(self.order_store) as conn:
+            with closing(sqlite3.connect(self.order_store)) as conn, conn:
                 conn.execute("BEGIN IMMEDIATE")
                 existing = conn.execute(
                     "SELECT 1 FROM fake_orders WHERE profile_id=? AND intent_key=? "
@@ -106,7 +109,7 @@ class SimulatedAircraftGateway:
         order = self._submitted.get(intent["intent_key"])
         rejection = self._rejected.get(intent["intent_key"])
         if self.order_store is not None:
-            with sqlite3.connect(self.order_store) as conn:
+            with closing(sqlite3.connect(self.order_store)) as conn:
                 row = conn.execute(
                     "SELECT details_json FROM fake_orders WHERE profile_id=? AND intent_key=?",
                     (intent["profile_id"], intent["intent_key"]),
@@ -129,6 +132,8 @@ class SimulatedAircraftGateway:
         if order is not None:
             if "configuration_yjf" in order:
                 evidence["configuration_yjf"] = order["configuration_yjf"]
+            if "charged_checkout_cost" in order:
+                evidence["charged_checkout_cost"] = order["charged_checkout_cost"]
             return {**evidence, "source": "simulation_order_list",
                     "purchase_id": order["purchase_id"]}
         return {**evidence, "source": "simulation_order_rejection",

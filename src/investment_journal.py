@@ -375,6 +375,8 @@ class InvestmentJournal:
                 and confirmation is not None else None)
             if next_state == "CONFIRMED" and "configuration_yjf" in plan:
                 public_evidence["configuration_yjf"] = plan["configuration_yjf"]
+            if next_state == "CONFIRMED" and "checkout_cost" in plan:
+                public_evidence["charged_checkout_cost"] = confirmation["charged_checkout_cost"]
             self._event(conn, intent_key, expected, next_state, stamp, public_evidence)
         return True
 
@@ -404,6 +406,10 @@ class InvestmentJournal:
                 and canonical_configuration_yjf(evidence.get("configuration_yjf"))
                 != plan["configuration_yjf"]):
             return False
+        if "checkout_cost" in plan:
+            charged = evidence.get("charged_checkout_cost")
+            if type(charged) is not int or charged != plan["checkout_cost"]:
+                return False
         source = "simulation_order_list" if self.simulation else "game_order_list"
         return evidence.get("source") == source and _game_id(evidence.get("purchase_id"))
 

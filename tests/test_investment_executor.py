@@ -398,6 +398,46 @@ def test_different_ordered_cabin_remains_unknown_after_restart(tmp_path):
     assert order_reader.submit_calls == 0
 
 
+def test_audited_order_requires_exact_charged_checkout_after_restart(tmp_path):
+    book = tmp_path / "orders.sqlite3"
+    seats = {"y": 100, "j": 10, "f": 1}
+    candidate = plan(
+        configuration_yjf=seats, estimated_cost=10500, checkout_cost=10000,
+        capital_costs={"aircraft_cost": 9750, "engine_delta_cost": 250, "hub_cost": 0,
+                       "route_fee": 500, "hangar_cost": 0, "other_fees": 0,
+                       "total_investment": 10500},
+    )
+    observation = checkout(configuration_yjf=seats, price_includes_configuration=True)
+    sender = SimulatedAircraftGateway(observation, outcome="timeout", order_store=book)
+    attempt = executor(tmp_path).run(candidate, sender)
+    key = attempt["intent_key"]
+    assert attempt["state"] == "UNKNOWN"
+    assert sender.submit_calls == 1
+
+    class ReceiptReader(SimulatedAircraftGateway):
+        override = {}
+
+        def read_order_result(self, intent):
+            receipt = super().read_order_result(intent)
+            receipt.pop("charged_checkout_cost")
+            return {**receipt, **self.override}
+
+    restarted = executor(tmp_path)
+    reader = ReceiptReader(observation, order_store=book)
+    for receipt_fields in ({}, {"charged_checkout_cost": 10500},
+                           {"charged_checkout_cost": 10000.0}):
+        reader.override = receipt_fields
+        assert restarted.reconcile(key, reader)["state"] == "UNKNOWN"
+        assert restarted.run(candidate, reader)["state"] == "UNKNOWN"
+
+    exact_reader = SimulatedAircraftGateway(observation, order_store=book)
+    assert restarted.reconcile(key, exact_reader)["state"] == "CONFIRMED"
+    assert restarted.journal.history(key)[-1]["evidence"]["charged_checkout_cost"] == 10000
+    assert restarted.journal.get(key)["submit_attempts"] == 1
+    assert reader.submit_calls == exact_reader.submit_calls == 0
+    book.unlink()
+
+
 def test_atomic_profile_guard_prevents_parallel_executors_but_isolates_profiles(tmp_path):
     journal = executor(tmp_path).journal
 
