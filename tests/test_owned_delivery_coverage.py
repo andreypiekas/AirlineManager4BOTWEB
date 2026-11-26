@@ -78,8 +78,8 @@ def test_collector_brackets_form_and_persists_only_profile_counts(tmp_path, monk
     monkeypatch.setattr(game_observations, "_stable_read", read)
     bot = _Bot()
     assert collect_owned_delivery_coverage(bot, path=path)
-    assert bot.calls == ["hubs.php", "close", "routes_main.php", "ac_orders.php?first=true",
-                         "ac_orders.php?mode=detail&id=2&charter=0", "close", "hubs.php", "close"]
+    assert bot.calls == ["close", "hubs.php", "close", "routes_main.php", "ac_orders.php?first=true",
+                         "ac_orders.php?mode=detail&id=2&charter=0", "close", "close", "hubs.php", "close"]
     assert "80000" not in path.read_text(encoding="utf-8")
     report = HubRegistry(tmp_path / "hubs.json").snapshot({"relations": []})["delivery_coverage"]
     assert report["status"] == "matched"

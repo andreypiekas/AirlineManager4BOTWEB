@@ -55,6 +55,8 @@ Leia este arquivo no início de cada tarefa e após toda compactação. Antes de
 
 ## Próxima ação
 
+Às 09h25 BRT de 26/11, o PP-254 seguia em entrega para Los Angeles, com previsão às 13h08 e `Parked (0)`. A consulta nativa leu os 30 painéis de operações, com 251 vínculos em 223 aeronaves distintas e 12 vínculos de Los Angeles. O worker passou a fechar o modal anterior e abrir Hubs pelo botão nativo para ler operações e comparar hubs de entrega. A leitura ponta a ponta após a correção está pendente. As simulações isoladas confirmaram os caminhos de campanha ecológica, reputação e checklist sem acionar o envio ao jogo.
+
 O acompanhamento de 26/11/2026 confirmou o PP-254 em entrega a Los Angeles às 09h14 BRT, com chegada prevista por volta de 13h08 BRT. LAX–TUN mostrou 10.515 km, pista de 10.499 ft, `Daily` de 1.341/514/112, aviso de evento, nenhuma aeronave apta e `Today` ausente. O Chrome dedicado permanece autenticado com o monitor somente leitura ativo. Na transição para `Parked`, conferir a origem e o ID do PP-254, ler a prévia de LAX–TUN com tarifas e taxa de abertura e calcular os custos por trecho com as cotações da mesma janela.
 
 A captura das 09h14min48s–09h16min52s BRT conciliou 221 aeronaves com rota em 12 páginas, zero estacionadas, duas em manutenção, duas entregas e 30 hubs próprios. Confirmou aquisição com hangar cheio (225/225), cotações de insumos, finanças, quadro salarial, dois eventos, pesquisa e catálogo PAX. O painel nativo de LAX exibiu 12 operações no Chrome. O worker continuou sem painéis de operações e a conferência de cobertura dos hubs de entrega atingiu o limite de espera. A suíte Windows passou com 2.406 testes e um pulado. Os detalhes e limites dos testes estão no histórico.

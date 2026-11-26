@@ -1,7 +1,7 @@
 import json
 import shutil
 import subprocess
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -25,9 +25,11 @@ def test_collection_requires_the_requested_panel_and_a_stable_managed_roster(mon
 
     assert result["enumerated"] is enumerated
     assert result["panels"] == ([] if failure == "wrong_panel" else [panel])
-    assert bot.ajax.call_args.args == ("hub_details.php?id=23678242", "hubDetail")
-    assert bot.open_popup.call_count == (1 if failure == "wrong_panel" else 2)
-    bot.close_popup.assert_called_once_with(quiet=True)
+    first_open = [call.close_popup(quiet=True), call.open_popup("hubs.php", "Hubs", "nav_hubs")]
+    assert bot.mock_calls == [*first_open,
+                              call.ajax("hub_details.php?id=23678242", "hubDetail", timeout=10),
+                              *(first_open if failure != "wrong_panel" else []),
+                              call.close_popup(quiet=True)]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for DOM contract")

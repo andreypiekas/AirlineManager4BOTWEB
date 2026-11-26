@@ -41,6 +41,12 @@ return {model_id: identity.model_id ?? identity.script_model_id, state};
 """
 
 
+def open_managed_hubs(bot):
+    # The native Hubs button toggles the modal when a popup is already open.
+    bot.close_popup(quiet=True)
+    bot.open_popup("hubs.php", "Hubs", "nav_hubs")
+
+
 def native_ids(values):
     if (not isinstance(values, list) or not values or len(values) > 10000
             or any(type(value) is not str or not _ID.fullmatch(value) for value in values)
@@ -110,7 +116,7 @@ def collect_owned_delivery_coverage(bot, *, path=None):
 
     def managed():
         try:
-            bot.open_popup("hubs.php", "Hubs", "nav_hubs")
+            open_managed_hubs(bot)
             return _stable_read(bot, MANAGED_HUB_IDS_JS)
         finally:
             bot.close_popup(quiet=True)

@@ -8,7 +8,7 @@ from collections import defaultdict
 from selenium.common.exceptions import TimeoutException
 
 from airport_catalog import by_code
-from owned_delivery_coverage import MANAGED_HUB_IDS_JS, native_ids
+from owned_delivery_coverage import MANAGED_HUB_IDS_JS, native_ids, open_managed_hubs
 
 MAX_WINDOW = 120
 
@@ -67,7 +67,7 @@ def collect_hub_operations(bot):
     panels = []
     managed = refreshed = None
     try:
-        bot.open_popup("hubs.php", "Hubs", "nav_hubs")
+        open_managed_hubs(bot)
         managed = native_ids(_stable_read(bot, MANAGED_HUB_IDS_JS))
         for management_id in sorted(managed or (), key=int):
             remaining = MAX_WINDOW - (time.time() - started_at)
@@ -78,7 +78,7 @@ def collect_hub_operations(bot):
             if _valid_panel(panel, management_id):
                 panels.append(panel)
         if managed and len(panels) == len(managed) and not bot.stopping:
-            bot.open_popup("hubs.php", "Hubs", "nav_hubs")
+            open_managed_hubs(bot)
             refreshed = native_ids(_stable_read(bot, MANAGED_HUB_IDS_JS))
     except TimeoutException:
         pass

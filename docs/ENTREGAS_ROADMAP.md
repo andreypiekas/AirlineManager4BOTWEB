@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3/A4, navegação de hubs e validação de operações (G0)
+
+- Por volta das 09h23 BRT, a consulta nativa em `Hubs → Operations to/from hub` leu os 30 painéis gerenciados. Houve 251 vínculos entre operações de hub e 223 aeronaves distintas, com 12 vínculos em Los Angeles. A leitura é independente da captura das 09h14 BRT. A conciliação entre os painéis e a frota na mesma janela do worker segue pendente.
+- O worker passou a fechar o modal anterior antes de abrir Hubs pelo botão nativo. A coleta de operações e a comparação entre hubs gerenciados e selecionáveis no formulário de aquisição usam a mesma navegação. Passaram 100 testes focados, que incluem abertura e releitura dos hubs, a janela auditada, a frota e a prévia da rota. Ruff e `git diff --check` passaram.
+- Os testes locais da auditoria cobrem as proteções de decolagem, combustível e CO₂, manutenção e oficina, hangar, cabine, criação e troca de rota, encomenda, compra de hub e executor de investimentos. A simulação isolada confirmou os fluxos de cotação de campanhas ecológica e de reputação sem clicar em compra. O checklist registrou a atividade pendente em uma amostra com recompensa disponível sem disparar o resgate. As operações que alteram o jogo foram conferidas em teste local.
+- Às 09h25 BRT, o PP-254 continuava em entrega para Los Angeles, com chegada prevista às 13h08 BRT e `Parked (0)`. LAX–TUN segue aguardando a aeronave para a prévia. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A3/A4, acompanhamento do PP-254 e auditoria somente leitura (G0)
 
 - O Chrome dedicado confirmou o A380-800 PP-254 em entrega a Los Angeles às 09h14 BRT. O contador indicava chegada por volta das 13h08 BRT. LAX–TUN (1440–432) exibiu 10.515 km, pista de 10.499 ft em TUN e demanda `Daily` Y/J/F de 1.341/514/112, com aviso de evento. `Today` estava ausente e `A/C capable` era zero. O acompanhamento em modo somente leitura segue ativo para cotar a rota quando o PP-254 aparecer em `Parked`.
