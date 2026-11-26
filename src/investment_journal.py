@@ -24,6 +24,7 @@ import paths
 
 
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
+_NATIVE_ID = re.compile(r"^[1-9][0-9]{0,13}$")
 _CHOICE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
 _PLAN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SNAPSHOT_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -345,6 +346,16 @@ class InvestmentJournal:
                 if not self._confirmed(confirmation, plan):
                     raise ValueError("Confirmação independente e vinculada ao plano obrigatória.")
                 if plan["kind"] == "aircraft":
+                    baseline = self._submission_baseline(conn, intent_key)
+                    if baseline and (
+                        confirmation.get("company_id") != baseline["company_id"]
+                        or confirmation.get("delivery_hub_id") != baseline["delivery_hub_id"]
+                        or confirmation["observed_at"] < baseline["submitted_at"]
+                        or not _game_id(confirmation.get("aircraft_id"))
+                        or confirmation["aircraft_id"] in baseline["fleet_ids"]
+                        or not _choice_id(confirmation.get("debit_transaction_id"))
+                    ):
+                        raise ValueError("Comprovante do avião e débito divergente do envio assistido.")
                     # BEGIN IMMEDIATE serializes confirmations. Check durable
                     # receipts so one game order cannot settle two intentions.
                     receipts = conn.execute(
@@ -353,9 +364,11 @@ class InvestmentJournal:
                         "AND evidence_json IS NOT NULL",
                         (self.profile_id, intent_key),
                     )
-                    if any(json.loads(row["evidence_json"]).get("purchase_id")
-                           == confirmation["purchase_id"] for row in receipts):
-                        raise ValueError("comprovante de compra já usado por outra intenção.")
+                    compared = ("purchase_id", "aircraft_id", "debit_transaction_id")
+                    for receipt in receipts:
+                        saved = json.loads(receipt["evidence_json"])
+                        if any(name in confirmation and saved.get(name) == confirmation[name] for name in compared):
+                            raise ValueError("comprovante de compra já usado por outra intenção.")
             if next_state == "FAILED" and expected in ("SUBMITTED", "UNKNOWN"):
                 if not self._refused(confirmation, plan):
                     raise ValueError("Recusa independente com ausência de pedido obrigatória.")
@@ -369,6 +382,7 @@ class InvestmentJournal:
             public_evidence = ({name: confirmation[name] for name in (
                 "source", "profile_id", "verified", "observed_at", "purchase_id",
                 "hub_id", "model_id", "engine_id", "origin_id", "destination_id",
+                "company_id", "delivery_hub_id", "aircraft_id", "debit_transaction_id",
                 "before_owned", "after_owned", "request_rejected", "orders_checked",
                 "order_absent", "refusal_code",
             ) if name in confirmation} if next_state in ("CONFIRMED", "FAILED")
@@ -590,7 +604,8 @@ class InvestmentJournal:
                 (time.time(), self.profile_id, cycle_id),
             ).rowcount == 1
 
-    def claim_submission(self, intent_key: str, owner_token: str) -> bool:
+    def claim_submission(self, intent_key: str, owner_token: str, *,
+                         baseline: Mapping | None = None) -> bool:
         """Claim one submission only under the profile lock and no unknown orders."""
         if (not isinstance(intent_key, str) or _INTENT_KEY.fullmatch(intent_key) is None
                 or not isinstance(owner_token, str) or _PLAN_ID.fullmatch(owner_token) is None):
@@ -613,13 +628,44 @@ class InvestmentJournal:
             ).fetchone():
                 return False
             stamp = time.time()
+            evidence = None
+            if baseline is not None:
+                roles = ("company_id", "delivery_hub_id")
+                roster = baseline.get("fleet_ids")
+                observed = _timestamp_number(baseline.get("observed_at"))
+                cash = baseline.get("cash")
+                if (self.simulation or any(
+                        not isinstance(baseline.get(name), str) or not _NATIVE_ID.fullmatch(baseline[name])
+                        for name in roles)
+                        or not isinstance(roster, list) or any(not _game_id(item) for item in roster)
+                        or len(roster) != len(set(roster)) or observed is None
+                        or not 0 <= stamp - observed <= 120
+                        or type(cash) is not int or cash < 0):
+                    raise ValueError("Baseline de frota, companhia ou caixa inválido para envio assistido.")
+                evidence = {name: baseline[name] for name in roles}
+                evidence.update(fleet_ids=sorted(roster), observed_at=observed, cash=cash)
             conn.execute(
                 "UPDATE intents SET state='SUBMITTED', updated_at=?, "
                 "submit_attempts=submit_attempts+1 WHERE profile_id=? AND intent_key=?",
                 (stamp, self.profile_id, intent_key),
             )
-            self._event(conn, intent_key, "PRECHECKED", "SUBMITTED", stamp)
+            self._event(conn, intent_key, "PRECHECKED", "SUBMITTED", stamp, evidence)
             return True
+
+    def _submission_baseline(self, conn, intent_key: str) -> dict | None:
+        event = conn.execute(
+            "SELECT observed_at, evidence_json FROM events WHERE profile_id=? AND intent_key=? "
+            "AND new_state='SUBMITTED' ORDER BY event_id DESC LIMIT 1",
+            (self.profile_id, intent_key),
+        ).fetchone()
+        if event is None or event["evidence_json"] is None:
+            return None
+        return {**json.loads(event["evidence_json"]), "submitted_at": event["observed_at"]}
+
+    def submission_baseline(self, intent_key: str) -> dict | None:
+        """Restore the evidence recorded before the browser was clicked."""
+        with self._connect() as conn:
+            return self._submission_baseline(conn, intent_key)
 
     def budget_exposure_since(self, since: float, *, exclude_intent_key: str | None = None) -> int:
         """Conservatively count current commitments plus confirmed spend in a window."""

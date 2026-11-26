@@ -1,16 +1,22 @@
 """Planned cabins pass through the native preview without opening a purchase."""
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
 import aircraft_order_hub
 import aircraft_order_preview
+import assisted_aircraft_order
 import engine_selection
 import fleet
+import paths
+from investment_journal import InvestmentJournal
+from investment_policy import InvestmentPolicy
 
 
 PRICE = 216_079_503
@@ -36,6 +42,10 @@ def plan(cabin=CABIN):
 
 
 class NativePreview:
+    _observation_only = False
+    _observation_company_id = "101"
+    stopping = False
+
     def __init__(self, *, drift=None):
         self.driver = self
         self.config = SimpleNamespace(get=lambda *args: args[-1])
@@ -71,9 +81,12 @@ class NativePreview:
 
     def find_elements(self, by, selector):
         assert by == By.CSS_SELECTOR
-        button = {"button#newAcNext": "Configuration", "button#newAcBack": "Back"}[selector]
+        button = {
+            "button#newAcNext": "Configuration", "button#newAcBack": "Back",
+            "#btnPurchaseIntroA": "Order",
+        }[selector]
         return [SimpleNamespace(
-            is_displayed=lambda: self.opened == (button == "Back"),
+            is_displayed=lambda: self.opened == (button != "Configuration"),
             is_enabled=lambda: True,
             click=lambda: self.toggle(button),
         )]
@@ -195,3 +208,122 @@ def test_unrepresentable_layout_closes_preview_without_changing_seats():
     assert not fleet.order_aircraft(bot, MODEL, hub_id=DELIVERY_HUB, investment_plan=plan(layout))
     assert bot.positions == [600, 600]
     assert bot.actions[-2:] == ["Configuration", "Back"]
+
+
+@pytest.fixture
+def assisted(tmp_path, monkeypatch):
+    bot = NativePreview()
+    bot.dry_run = False
+    bot._require_observation_session = lambda: None
+    bot._verify_observation_company = lambda: None
+    cash = 300_000_000
+    bot.read_money = lambda: cash
+    profile = paths.current().label
+    journal = InvestmentJournal(tmp_path / "journal.sqlite3", profile_id=profile)
+    company = bot._observation_company_id
+    policy = InvestmentPolicy(
+        enabled=True, mode="approval", max_single_investment=cash,
+        max_daily_spend=cash, max_cycle_spend=cash, max_acquisitions_per_day=1,
+    )
+    exact = plan()
+    reserve = 20_000_000
+    approval = assisted_aircraft_order.aircraft_approval_key(
+        exact, profile_id=profile, company_id=company, delivery_hub_id=DELIVERY_HUB, reserve=reserve,
+    )
+    readiness = {
+        "profile_id": profile, "company_id": company, "snapshot_id": exact["snapshot_id"],
+        "origin_id": "1440", "destination_id": "432", "cash": cash, "pending_commitments": 500,
+        "pending_ids": ["20"], "commitments_verified": True, "observed_at": time.time(),
+        "delivery_hub_mapping": {
+            "verified": True, "source": "game_owned_hub_crosswalk", "profile_id": profile,
+            "snapshot_id": exact["snapshot_id"], "observed_at": time.time(),
+            "pairs": [{"airport_id": "1440", "delivery_hub_id": DELIVERY_HUB}],
+        },
+        **dict.fromkeys(("capacity_available", "model_available", "engine_available", "price_includes_engine",
+                         "route_available", "route_feasible", "demand_verified"), True),
+    }
+    monkeypatch.setattr(assisted_aircraft_order, "read_pilot_pending", lambda bot, baseline: {
+        "company_id": company, "profile_id": profile, "observed_at": time.time(),
+        "fleet_ids": ["19", "20"], "pending": {"rows": [{"id": "20"}]},
+    })
+    executor = assisted_aircraft_order.AssistedAircraftOrder(
+        journal, policy, bot, read_readiness=lambda _: readiness, read_receipt=lambda *_: None,
+    )
+    return SimpleNamespace(
+        bot=bot, journal=journal, executor=executor, readiness=readiness, plan=exact,
+        arguments=dict(company_id=company, delivery_hub_id=DELIVERY_HUB, approval_key=approval, reserve=reserve),
+    )
+
+
+def test_assisted_claim_is_durable_before_one_native_click_and_restart_reconciles(assisted):
+    bot, journal, executor = assisted.bot, assisted.journal, assisted.executor
+    intent, _ = journal.register(assisted.plan)
+    key = intent["intent_key"]
+    toggle = bot.toggle
+
+    def click(button):
+        toggle(button)
+        if button == "Order":
+            reopened = InvestmentJournal(journal.path, profile_id=journal.profile_id)
+            assert reopened.get(key)["state"] == "SUBMITTED"
+            assert reopened.get(key)["submit_attempts"] == 1
+            assert reopened.submission_baseline(key)["fleet_ids"] == ["19", "20"]
+            raise TimeoutException()
+
+    bot.toggle = click
+    assert executor.run(assisted.plan, **assisted.arguments)["state"] == "UNKNOWN"
+    assert executor.run(assisted.plan, **assisted.arguments)["state"] == "UNKNOWN"
+    assert bot.actions.count("Order") == 1
+    assert "Back" not in bot.actions
+
+    proof = {
+        "source": "game_order_list", "profile_id": journal.profile_id, "verified": True,
+        "company_id": bot._observation_company_id, "delivery_hub_id": DELIVERY_HUB,
+        "observed_at": time.time(), "purchase_id": "4444", "aircraft_id": "20",
+        "hub_id": "1440", "origin_id": "1440", "destination_id": "432",
+        "model_id": "2", "engine_id": "7", "configuration_yjf": CABIN,
+        "charged_checkout_cost": PRICE, "debit_transaction_id": "tx-432",
+    }
+    restarted = assisted_aircraft_order.AssistedAircraftOrder(
+        InvestmentJournal(journal.path, profile_id=journal.profile_id), executor.policy, bot,
+        read_readiness=None, read_receipt=lambda *_: proof,
+    )
+    assert restarted.reconcile(key)["state"] == "UNKNOWN"  # The aircraft was already in the fleet.
+    proof["aircraft_id"] = "21"
+    proof["charged_checkout_cost"] = PRICE + 1
+    assert restarted.reconcile(key)["state"] == "UNKNOWN"
+    proof["charged_checkout_cost"] = PRICE
+    assert restarted.reconcile(key)["state"] == "CONFIRMED"
+    assert restarted.journal.get(key)["submit_attempts"] == 1
+    assert bot.actions.count("Order") == 1
+
+
+@pytest.mark.parametrize(("field", "value", "reason"), [
+    ("commitments_verified", False, "compromissos_pendentes_nao_verificados"),
+    ("demand_verified", False, "demanda_nao_verificada"),
+    ("pending_ids", [], "frota_ou_compromissos_divergentes"),
+    ("cash", 299_999_999, "controle_de_envio_ou_saldo_divergente"),
+])
+def test_assisted_checkout_blocks_unverified_route_or_cash(assisted, field, value, reason):
+    assisted.readiness[field] = value
+    result = assisted.executor.run(assisted.plan, **assisted.arguments)
+    assert reason in result["reasons"]
+    assert "Order" not in assisted.bot.actions
+    assert result["state"] == "BLOCKED"
+    assert assisted.journal.get(result["intent_key"]) is None
+
+
+def test_assisted_approval_rejects_a_different_route(assisted):
+    other = {**assisted.plan, "destination_id": "433"}
+    result = assisted.executor.run(other, **assisted.arguments)
+    assert result["reasons"] == ["aprovacao_exata_necessaria"]
+    assert assisted.bot.actions == []
+
+
+def test_assisted_order_requires_live_receipt_reader_and_mutating_mode(assisted):
+    assisted.bot._observation_only = True
+    assert assisted.executor.run(assisted.plan, **assisted.arguments)["reasons"] == ["modo_assistido_indisponivel"]
+    assisted.bot._observation_only = False
+    assisted.executor.read_receipt = None
+    assert assisted.executor.run(assisted.plan, **assisted.arguments)["reasons"] == ["leitores_do_jogo_indisponiveis"]
+    assert assisted.bot.actions == []

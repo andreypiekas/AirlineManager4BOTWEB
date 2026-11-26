@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from selenium.common.exceptions import WebDriverException
@@ -139,11 +140,12 @@ def _configuration_button(panel, selector: str):
     return matches[0]
 
 
-def preview_aircraft_order(
+@contextmanager
+def _prepared_aircraft_order(
     bot, *, model_id: str, hub_id: str, engine_id: str,
     configuration_yjf: object, expected_checkout_cost: int,
-) -> dict:
-    """Return the observed single-unit quote and close the preview via Back."""
+):
+    """Keep the checked form open for the one-shot assisted executor."""
     seats = canonical_configuration_yjf(configuration_yjf)
     if (seats is None or not isinstance(model_id, str) or not re.fullmatch(r"[1-9][0-9]{0,11}", model_id)
             or not isinstance(hub_id, str) or not re.fullmatch(r"[1-9][0-9]{0,13}", hub_id)
@@ -174,6 +176,7 @@ def preview_aircraft_order(
 
     read_state(opened=False)
     next_button = _configuration_button(panel, "button#newAcNext")
+    attempted = False
     try:
         next_button.click()
         state = read_state(opened=True, wait_for_step=True)
@@ -196,24 +199,51 @@ def preview_aircraft_order(
                 "O total exibido pelo jogo com a cabine da rota diverge do plano.",
                 displayed_cost_usd=displayed_cost,
             )
-        observed_at = time.time()
-    finally:
-        # Back is inside the same detail panel. If the step vanished, there is
-        # no prepared form to close. A detached panel cannot be clicked here.
-        try:
-            matches = panel.find_elements(By.CSS_SELECTOR, "button#newAcBack")
-            if len(matches) == 1 and matches[0].is_displayed():
-                matches[0].click()
-        except WebDriverException:
-            pass
+        quote = {
+            "model_id": model_id, "engine_id": engine_id, "engine": motor,
+            "delivery_hub_id": hub_id, "configuration_yjf": observed["seats"].copy(),
+            "displayed_cost_usd": displayed_cost, "quantity": 1, "price_verified": False,
+            "observed_at": time.time(), "order_control_available": observed.get("order_available") is True,
+        }
 
-    read_state(opened=False, wait_for_step=True)
-    return {
-        "model_id": model_id, "engine_id": engine_id, "engine": motor, "delivery_hub_id": hub_id,
-        "configuration_yjf": observed["seats"], "displayed_cost_usd": displayed_cost,
-        "quantity": 1, "price_verified": False, "observed_at": observed_at,
-        "order_control_available": observed.get("order_available") is True,
-    }
+        def submit_once(claim) -> bool:
+            nonlocal attempted
+            if attempted or bot.dry_run or bot._observation_only or bot.stopping:
+                raise AircraftPreviewMismatch("Envio indisponível nesta sessão.")
+            bot._require_observation_session()
+            if observed.get("order_available") is not True or observed != read_state(opened=True):
+                raise AircraftPreviewMismatch("A configuração mudou antes do envio.")
+            button = _configuration_button(panel, "#btnPurchaseIntroA")
+            if not claim():
+                return False
+            attempted = True
+            button.click()
+            return True
+
+        yield quote, submit_once
+    finally:
+        if not attempted:
+            try:
+                matches = panel.find_elements(By.CSS_SELECTOR, "button#newAcBack")
+                if len(matches) == 1 and matches[0].is_displayed():
+                    matches[0].click()
+            except WebDriverException:
+                pass
+
+    if not attempted:
+        read_state(opened=False, wait_for_step=True)
+
+
+def preview_aircraft_order(
+    bot, *, model_id: str, hub_id: str, engine_id: str,
+    configuration_yjf: object, expected_checkout_cost: int,
+) -> dict:
+    """Return the observed single-unit quote and close the preview via Back."""
+    with _prepared_aircraft_order(
+        bot, model_id=model_id, hub_id=hub_id, engine_id=engine_id,
+        configuration_yjf=configuration_yjf, expected_checkout_cost=expected_checkout_cost,
+    ) as (quote, _):
+        return quote
 
 
 def probe_aircraft_order(bot, request: AircraftPreviewRequest) -> dict:
