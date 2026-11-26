@@ -12,12 +12,12 @@
 | Frente | Implementação disponível | Evidência ou trabalho pendente |
 | --- | --- | --- |
 | A0 | Proteções do G0 e testes automatizados de regressão. | Homologação autenticada e validação da instalação no servidor. |
-| A1/A2 | Checkout revalida modelo, motor, base, estabilidade do preço e aviso de saldo. A coleta auditada preserva o aviso de demanda de evento das leituras correlacionadas. | Provar o preço final por modelo, variante e hub de entrega, o vínculo permanente aeronave–hub e a cobertura de rotas. `#acCost` no A320-200 e no A380-800 exibiu valores estáveis nas configurações amostradas. Manter `price_verified=false` onde faltar prova do preço final. |
-| A3/A4 | O worker vincula a análise ao snapshot auditado e limita a decisão pelo menor dos três saldos independentes, líquido de compromissos e reserva. O cálculo revalida o prazo das evidências, a prova de cobertura e o checkout do preço final. O worker publica atomicamente casos econômicos completos e controles antes do planejamento A4, inclusive lote vazio, com conferência de identidade e vigência. | Coletar layout Y/J/F, disponibilidade, demanda residual, tarifas, taxa de rota e custos incrementais. Homologar a publicação com evidência autenticada e comprovar cobertura integral da fila e conciliação dos compromissos. |
+| A1/A2 | Checkout revalida modelo, motor, base, estabilidade do preço e aviso de saldo. A coleta auditada preserva o aviso de demanda de evento das leituras correlacionadas. | A varredura autenticada por modelo e pendências reconciliou as 225 aeronaves e encontrou paginação em Routes. Seguem pendentes preço final por modelo, variante e hub de entrega, vínculo permanente aeronave–hub e cobertura integral de rotas por hub. Manter `price_verified=false` onde faltar prova do preço final. |
+| A3/A4 | O worker vincula a análise ao snapshot auditado e limita a decisão pelo menor dos três saldos independentes, líquido de compromissos e reserva. O cálculo revalida o prazo das evidências, a prova de cobertura e o checkout do preço final. O worker publica atomicamente casos econômicos completos e controles antes do planejamento A4, inclusive lote vazio, com conferência de identidade e vigência. | Uma rota ativa confirmou a ordem da demanda Y/J/F e o layout durante evento. Repetir a demanda fora de evento e obter disponibilidade, layout, tarifas, taxa de rota e custos incrementais de um candidato. Homologar a publicação dos casos e comprovar cobertura integral da fila e conciliação dos compromissos. |
 | A6/A7 | Replay externo, painel e Telegram reutilizam a propriedade auditada. Conflitos de inventário impedem a recomendação. | Completar catálogo, demanda e cenários externos com custos próprios de expansão. Demonstrar o esgotamento das opções internas com cobertura auditada antes de recomendar um hub. |
 | A5/A8/A9 | Existem contratos de pré-voo, controles de execução e métricas. | Homologar o executor, testar a conciliação após falhas e calibrar o lucro previsto com observações reais. A execução segue bloqueada em G0. |
 
-A última validação registrou 2.287 testes aprovados e 1 ignorado no Windows, além de 16 testes simulados do instalador no Ubuntu via WSL. Evidências e resultados por entrega constam no [histórico de entregas](ENTREGAS_ROADMAP.md). Para retomar, leia o [contexto permanente](contexto.md).
+A última suíte registrou 2.288 testes aprovados e 1 ignorado no Windows, além de 16 testes simulados do instalador no Ubuntu via WSL. Evidências e resultados por entrega constam no [histórico de entregas](ENTREGAS_ROADMAP.md). Para retomar, leia o [contexto permanente](contexto.md).
 
 ## 1. Visão e regra central
 
@@ -131,7 +131,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 - Testar todas as variantes, seleção explícita, simulação, mudança de preço, reconstrução de DOM e seletores inesperados.
 - **Aceite:** nenhuma compra confirma motor/modelo/preço/hub diferentes dos previstos, e nenhuma alteração ocorre no modo análise.
 - Progresso em 25/11/2026: o pré-voo planejado reabre o painel atual após duas verificações de preço e bloqueia a encomenda se o jogo exibir aviso de saldo insuficiente. A evidência disponível ainda não confirma a fonte do preço final por modelo, variante e hub. G0 permanece vigente.
-- Consulta autenticada ao A380-800 em 25/11/2026: `#engSelection` apresentou três variantes. O valor em `#acCost` ficou estável ao alternar GP7270 e RR Trent 972 e consultar duas bases de entrega. O elemento observado não expôs `data-final-price`. A cotação final vinculada à configuração continua pendente.
+- Na consulta autenticada de 25/11/2026, o A380-800 apresentou três variantes em `#engSelection`. O valor em `#acCost` ficou estável nas seis combinações de variante e hub de entrega consultadas. A cotação final vinculada à configuração continua pendente.
 
 ### Fase A2 — Hubs, cobertura e dados de rota completos (P0)
 
@@ -140,7 +140,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 - Completar coleta de preço, pontos, pista, país, disponibilidade e demanda dos hubs candidatos; descobrir se pesquisa de rota pode partir de **hub ainda não comprado**.
 - Montar feed de cenários para HubAircraftResearchRegistry.record() e HubExpansionRegistry.record_research(), com fonte e data comprovadas.
 - Armazenar mapas de cobertura por hub, rota, modelo e ciclo; expirados não habilitam compra.
-- Evidência em 25/11/2026: uma consulta autenticada retornou 50 linhas de pesquisa, todas sinalizadas como demanda de evento, sem controle de continuação identificado. O fim das combinações da amostra continua insuficiente para provar a enumeração de destinos por hub ou o esgotamento interno. A aba de frota consultada exibiu contagens agregadas. Paginação da frota e vínculo por aeronave seguem pendentes.
+- Em 25/11/2026, uma consulta retornou 50 linhas com aviso de demanda de evento e sem controle de continuação identificado. Na varredura autenticada posterior, Routes exibiu paginação e a união das listas de modelos e pendências reconciliou a frota no intervalo observado. O detalhe do hub exibiu operações de ida e volta. A cobertura integral de rotas por hub em um snapshot, o esgotamento interno e o vínculo permanente aeronave–hub seguem pendentes.
 - **Aceite:** painel mostra evidência e cobertura; ausência de pesquisa de hub externo aparece como impeditivo, não como candidato viável.
 
 ### Fase A3 — Otimizador de rotas e rentabilidade por motor (P0)
@@ -148,6 +148,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 - Gerar candidatos para cada combinação admissível **hub próprio × rota × modelo × motor × configuração de assentos**; aplicar poda de inviáveis antes de estimar retorno.
 - Validar distância, alcance por segmento e escalas, comprimento de pista na unidade oficial do jogo, demanda residual após outras aeronaves, horários/rotação, competição da própria frota e regras de rotas duplicadas.
 - Registrar separadamente a demanda ampliada por evento. Se uma leitura correlacionada exibir o aviso, manter o bloqueio da projeção econômica para a amostra.
+- Na rota direta DAC–FNJ com evento ativo, o detalhe da pesquisa confirmou `Today` e `Daily` como primeira e segunda posições no detalhe da aeronave, e os atributos Y/J/F da pesquisa coincidiram com `Daily`. O detalhe informou uma aeronave na rota e zero aptas a serem alocadas. Repetir fora de evento e coletar os dados de um candidato elegível.
 - Calcular receita diária por Y/J/F e voos possíveis, combustível e CO₂ em preço configurado e cenários de stress. Incluir custos de rota/hangar/aeronave/motor e projetar manutenção, A-check e demais despesas **apenas se houver fórmula/evidência verificada**; caso contrário, marcar como excluídos e aplicar reserva/margem conservadora configurável.
 - Reportar lucro incremental, capex, caixa após compra, payback, ROI e sensibilidade (demanda, combustível, CO₂, ocupação), mais confiabilidade da observação.
 - Comparar alternativas para diferentes hubs e motores, não só o maior score de modelo.
@@ -303,7 +304,7 @@ Nenhum agente marca uma etapa como concluída por apenas gerar código ou mock. 
 
 ## 10. Próxima sequência de execução
 
-1. **A1/A2.** Investigar em sessão autenticada, somente leitura, o preço final por modelo, motor e hub de entrega, o vínculo permanente aeronave–hub, a paginação e as fontes nativas de layout, demanda e tarifas. Registrar a origem e a vigência de cada observação.
+1. **A1/A2.** Investigar em sessão autenticada, somente leitura, o preço final por modelo, motor e hub de entrega, o vínculo permanente aeronave–hub e a cobertura da paginação por hub. Repetir a correlação de demanda fora de evento e identificar as fontes de layout e tarifa para um candidato elegível. Registrar a origem e a vigência de cada observação.
 2. **A3/A4.** Alimentar a publicação atômica de casos completos e controles via `AuditedEconomicsRegistry.record_sweep()` no worker que possui a captura. Usar `record_portfolio_evidence()` para complementar a prova de cobertura e compromissos quando verificados. Vincular preço, layout Y/J/F, disponibilidade, demanda residual, tarifas, taxa de rota, custos incrementais e compromissos ao mesmo snapshot e manter os bloqueios quando faltarem dados.
 3. **A6/A7.** Completar os produtores de catálogo, demanda e custos externos e persistir cenários via `HubExpansionRegistry.record_research()`. Exigir prova de esgotamento interno com cobertura por hub antes de habilitar recomendações conclusivas no painel e no Telegram.
 4. **A5/A8/A9.** Validar pré-voo, conciliação de timeout e reinício, confirmação de propriedade e calibração conforme os gates. A base permanece em G0. Qualquer ensaio real exige avanço de gate, homologação e autorização explícita.
