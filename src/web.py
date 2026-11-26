@@ -11,6 +11,8 @@ assets/web/index.html and a JSON API:
                               the program; used by scripts/web_parar.ps1)
 * POST /api/admin/game-source-probe  authorized, read-only snapshot of the active game's DOM
 * POST /api/admin/flight-history-probe  authorized, read-only structural history for one aircraft
+* GET  /api/research/demand          scan progress or one observation by origin_id/destination_id
+* POST /api/research/demand/request {"confirm": true} queues a read-only scan
 
 Safety: by default it only listens on 127.0.0.1. To open it to the local network ([web] host = 0.0.0.0)
 a token is required ([web] token in config/secrets.ini); without one the server stays on 127.0.0.1.
@@ -54,6 +56,7 @@ from route_detail_evidence import RouteDetailRegistry
 from hub_recommendations import rank_next_aircraft
 from investment_policy import AUDITED_POLICY_LIMITS, InvestmentPolicy, MODES, audited_policy_values
 from investment_journal import InvestmentJournal
+from native_demand_store import DemandStore
 from route_creation import has_pending_creation
 from reroute import has_pending_reroute
 from investment_plan_bridge import build_aircraft_intent_plan
@@ -820,6 +823,20 @@ class WebDashboard:
                 self._send(HTTPStatus.FORBIDDEN, "Acesso negado: abra a página com ?token=...".encode("utf-8"),
                            "text/plain; charset=utf-8")
 
+            def _native_demand(self, *, queue: bool = False, pair: tuple[str, str] | None = None) -> None:
+                try:
+                    store = DemandStore()
+                    if queue:
+                        report = {"queued": store.request()}
+                    elif pair is not None:
+                        report = {"observation": store.lookup(*pair)}
+                    else:
+                        report = store.status()
+                except (OSError, sqlite3.Error):
+                    return self._json({"ok": False, "message": "Varredura de demanda indisponível."},
+                                      HTTPStatus.SERVICE_UNAVAILABLE)
+                return self._json(report)
+
             def do_GET(self) -> None:  # noqa: N802 - http.server API
                 if not self._allowed():
                     return self._deny()
@@ -843,6 +860,17 @@ class WebDashboard:
                     return self._json(dashboard.settings())
                 if url.path == "/api/investment/policy":
                     return self._json(dashboard.investment_settings())
+                if url.path == "/api/research/demand":
+                    params = parse_qs(url.query, keep_blank_values=True)
+                    origin = params.get("origin_id", [])
+                    destination = params.get("destination_id", [])
+                    if not origin and not destination:
+                        return self._native_demand()
+                    if (not all(len(ids) == 1 and re.fullmatch(r"[1-9][0-9]{0,11}", ids[0])
+                                for ids in (origin, destination)) or origin == destination):
+                        return self._json({"ok": False, "message": "Informe IDs válidos de origem e destino distintos."},
+                                          HTTPStatus.BAD_REQUEST)
+                    return self._native_demand(pair=(origin[0], destination[0]))
                 if url.path == "/api/investment/metrics":
                     status, report = dashboard.investment_metrics()
                     return self._json(report, status)
@@ -887,9 +915,11 @@ class WebDashboard:
             def do_POST(self) -> None:  # noqa: N802 - http.server API
                 path = urlparse(self.path).path
                 admin_probe = path in ("/api/admin/game-source-probe", "/api/admin/flight-history-probe")
-                policy_action = path in ("/api/investment/policy", "/api/investment/stop")
+                protected_action = path in (
+                    "/api/investment/policy", "/api/investment/stop", "/api/research/demand/request",
+                )
                 if (not self._allowed(require_token=admin_probe,
-                                      allow_query_token=not (admin_probe or policy_action))
+                                      allow_query_token=not (admin_probe or protected_action))
                         or self.headers.get("X-AM4") != "1"):
                     return self._deny()
                 length = parse_int(self.headers.get("Content-Length", "0")) or 0
@@ -901,6 +931,10 @@ class WebDashboard:
                     return self._json({"ok": False, "message": "JSON inválido."}, 400)
                 if not isinstance(payload, dict):
                     return self._json({"ok": False, "message": "JSON inválido."}, 400)
+                if path == "/api/research/demand/request":
+                    if set(payload) != {"confirm"} or payload["confirm"] is not True:
+                        return self._json({"ok": False, "message": "Confirme a varredura de demanda."}, 400)
+                    return self._native_demand(queue=True)
                 if admin_probe:
                     if path == "/api/admin/game-source-probe":
                         if payload:

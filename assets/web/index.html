@@ -662,6 +662,17 @@ footer strong { font-weight: 600; color: var(--aqua); }
         <button id="hubsRefresh" type="button" data-t="Atualizar relatório">Atualizar relatório</button>
       </div>
       <p id="hubsScope" class="hub-section-note"></p>
+      <section class="hub-card hub-subsection" aria-labelledby="nativeDemandHeading">
+        <h2 id="nativeDemandHeading" data-t="Varredura nativa de demanda">Varredura nativa de demanda</h2>
+        <p class="hub-section-note" data-t="Consulta a demanda diária dos hubs próprios para os aeroportos do jogo e salva os resultados neste perfil.">Consulta a demanda diária dos hubs próprios para os aeroportos do jogo e salva os resultados neste perfil.</p>
+        <p id="nativeDemandWarning" class="hub-section-note hub-coverage" hidden data-t="A cobertura de demanda ainda está incompleta.">A cobertura de demanda ainda está incompleta.</p>
+        <p id="nativeDemandStatus" class="hub-section-note" role="status" aria-live="polite">Consultando a varredura de demanda…</p>
+        <label id="nativeDemandProgress" class="hub-progress" hidden>
+          <span data-t="Progresso da varredura por partições">Progresso da varredura por partições</span>
+          <progress id="nativeDemandBar"></progress>
+        </label>
+        <button id="nativeDemandRequest" type="button" class="primary" disabled>Solicitar varredura</button>
+      </section>
       <div class="hub-card hub-subsection hub-policy">
         <h2 data-t="Controle de autonomia">Controle de autonomia</h2>
         <p id="investmentPolicyGate" class="hub-section-note hub-coverage" role="status" aria-live="polite"></p>
@@ -1608,6 +1619,28 @@ const EN = {
   "Preferência de motor": "Engine preference",
   "Compra automática legada": "Legacy automatic aircraft purchase",
   "Ajustar outros parâmetros": "Adjust other settings",
+  "Varredura nativa de demanda": "Native demand scan",
+  "Consulta a demanda diária dos hubs próprios para os aeroportos do jogo e salva os resultados neste perfil.":
+    "Looks up daily demand from owned hubs to in-game airports and saves results to this profile.",
+  "A cobertura de demanda ainda está incompleta.": "Demand coverage is still incomplete.",
+  "Consultando a varredura de demanda…": "Checking the demand scan…",
+  "Varredura pendente de autorização.": "The scan is awaiting approval.",
+  "Na fila. Aguardando uma janela segura do worker.": "Queued. Waiting for the worker to reach a safe stopping point.",
+  "Varredura em andamento.": "Scan in progress.",
+  "Varredura parcial.": "Partial scan.",
+  "Varredura concluída.": "Scan completed.",
+  "Não foi possível consultar a varredura de demanda.": "Could not retrieve demand scan status.",
+  "Não foi possível confirmar a solicitação.": "Could not confirm the request.",
+  "Solicitar varredura": "Request scan",
+  "Retomar varredura": "Resume scan",
+  "Solicitar nova varredura": "Request a new scan",
+  "Progresso da varredura por partições": "Scan progress by partition",
+  "{x} partições processadas": "{x} partitions processed",
+  "{x} pares pesquisados": "{x} pairs searched",
+  "{x} com demanda observada": "{x} with observed demand",
+  "Última atualização em {x}": "Last updated at {x}",
+  "Autoriza a varredura ampla de demanda no jogo? A coleta é somente leitura e pode levar vários ciclos do worker.":
+    "Queue a broad in-game demand scan? The read-only scan may take several worker cycles.",
 };
 let LANG = "pt_BR";
 const tr = (text, x) => { const s = LANG === "en" ? (EN[text] || text) : text; return x === undefined ? s : s.replace("{x}", x); };
@@ -1625,6 +1658,7 @@ function setLanguage(lang) {
   if (hubExpansionReport) { renderHubExpansion(hubExpansionReport); }
   if (externalResearchPage) { renderExternalHubResearch(externalResearchPage); }
   if (snapshotResearchPage) { renderSnapshotResearch(snapshotResearchPage); }
+  renderNativeDemand();
   if (gameSourceProbeReport) {
     renderGameSourceProbe(gameSourceProbeReport);
     showGameSourceProbeStatus("Verificação concluída.", "success");
@@ -2118,7 +2152,7 @@ function activateWorkspaceFromHash() {
   $("routesView").hidden = !isRoutes;
   $("hubsView").hidden = !isHubs;
   if (isRoutes) { loadRoutes(); }
-  if (isHubs) { loadHubs(); }
+  if (isHubs) { loadHubs(); loadNativeDemand(); }
   const current = isHubs ? "#hubs" : isRoutes ? "#routes" : isSettings ? "#parameters" : target === "#activity" ? "#activity" : "#overview";
   for (const link of document.querySelectorAll(".nav-list a")) {
     const selected = link.getAttribute("href") === current;
@@ -2144,6 +2178,18 @@ let researchRequestSequence = 0;
 let snapshotResearchPage = null;
 let snapshotResearchSequence = 0;
 let investmentPolicyVersion = null;
+const nativeDemandPath = "/api/research/demand";
+const nativeDemandStates = new Map([
+  ["pending", "Varredura pendente de autorização."],
+  ["queued", "Na fila. Aguardando uma janela segura do worker."],
+  ["running", "Varredura em andamento."],
+  ["partial", "Varredura parcial."],
+  ["completed", "Varredura concluída."],
+]);
+let nativeDemandReport = null;
+let nativeDemandBusy = false;
+let nativeDemandRequestError = false;
+let lastNativeDemandFetch = 0;
 window.addEventListener("hashchange", activateWorkspaceFromHash);
 activateWorkspaceFromHash();
 
@@ -3691,6 +3737,69 @@ function renderInvestmentPolicy(report) {
   link.textContent = tr("Ajustar outros parâmetros");
   context.append(link);
 }
+function renderNativeDemand() {
+  const report = nativeDemandReport;
+  const state = report?.state;
+  const active = state === "queued" || state === "running";
+  const request = $("nativeDemandRequest");
+  request.hidden = active;
+  request.disabled = !report || nativeDemandBusy || active;
+  request.textContent = tr(state === "partial" ? "Retomar varredura" :
+    state === "completed" ? "Solicitar nova varredura" : "Solicitar varredura");
+  $("nativeDemandWarning").hidden = !report || state === "completed";
+  $("nativeDemandProgress").hidden = state !== "running";
+
+  const lines = [tr(nativeDemandStates.get(state) || (lastNativeDemandFetch ?
+    "Não foi possível consultar a varredura de demanda." : "Consultando a varredura de demanda…"))];
+  if (report && (state !== "pending" || report.total_partitions > 0 || report.expected_pairs > 0)) {
+    const counts = (done, total) => nf.format(done) + " / " + (total > 0 ? nf.format(total) : "—");
+    lines.push(tr("{x} partições processadas", counts(report.processed_partitions, report.total_partitions)),
+      tr("{x} pares pesquisados", counts(report.searched_pairs, report.expected_pairs)),
+      tr("{x} com demanda observada", nf.format(report.observed_pairs)));
+  }
+  const bar = $("nativeDemandBar");
+  if (report?.total_partitions > 0) {
+    bar.max = report.total_partitions;
+    bar.value = report.processed_partitions;
+  } else {
+    bar.removeAttribute("value");
+  }
+  if (Number.isFinite(report?.updated_at)) { lines.push(tr("Última atualização em {x}", hubDate(report.updated_at))); }
+  if (report?.error) { lines.push(report.error); }
+  if (nativeDemandRequestError) { lines.push(tr("Não foi possível confirmar a solicitação.")); }
+  const status = $("nativeDemandStatus");
+  const text = lines.join(" · ");
+  if (status.textContent !== text) { status.textContent = text; }
+}
+async function loadNativeDemand(queue = false) {
+  if (nativeDemandBusy) { return; }
+  nativeDemandBusy = true;
+  lastNativeDemandFetch = Date.now();
+  $("nativeDemandRequest").disabled = true;
+  if (queue) {
+    try {
+      const result = await api(nativeDemandPath + "/request", {confirm: true});
+      nativeDemandRequestError = typeof result?.queued !== "boolean";
+    } catch (_) {
+      nativeDemandRequestError = true;
+    }
+  }
+  try {
+    const report = await api(nativeDemandPath);
+    nativeDemandReport = nativeDemandStates.has(report?.state) ? report : null;
+    if (report?.state === "queued" || report?.state === "running") { nativeDemandRequestError = false; }
+  } catch (_) {
+    nativeDemandReport = null;
+  } finally {
+    nativeDemandBusy = false;
+    renderNativeDemand();
+  }
+}
+$("nativeDemandRequest").addEventListener("click", () => {
+  if (window.confirm(tr("Autoriza a varredura ampla de demanda no jogo? A coleta é somente leitura e pode levar vários ciclos do worker."))) {
+    return loadNativeDemand(true);
+  }
+});
 async function loadInvestmentPolicy() {
   try {
     const report = await api("/api/investment/policy");
@@ -4687,6 +4796,7 @@ for (const [id, action] of [["btnStart", "start"], ["btnStop", "stop"], ["btnNow
   $(id).onclick = async () => { $(id).disabled = true; await api("/api/control", {action}); tick(); };
 }
 async function tick() {
+  if (!$("hubsView").hidden && Date.now() - lastNativeDemandFetch > 5000) { loadNativeDemand(); }
   try {
     renderStatus(await api("/api/status"));
     const log = await api("/api/log?since=" + lastId);

@@ -50,6 +50,8 @@ from notify import Telegram, esc
 from paths import current, worker_lock, write_atomic
 from reroute import has_pending_reroute
 from game_audit import audit_active
+from native_demand_scan import prepare_requested_scan, requested_work, run_demand_slice
+from native_demand_store import DemandStore
 from route_registry import RouteRegistry
 from selective_depart import selective_dispatch
 from seats import optimize_seats
@@ -624,6 +626,8 @@ class Bot:
                 self._cycle()
                 if self._stop.is_set():
                     break
+                if not self._observation_only:
+                    self._guard(lambda: prepare_requested_scan(self), "preparar pesquisa de demanda")
                 self._sleep_until_next_cycle()
         except Exception as exc:  # noqa: BLE001 - every failure must reach the GUI log
             if self._stop.is_set():
@@ -817,6 +821,8 @@ class Bot:
             self._guard(lambda: capture_game_snapshot(self, read_only_window=(started_at, confirmed_at),
                                                       operational_evidence=operational_evidence),
                         "gravar captura auditada")
+            self._guard(lambda: prepare_requested_scan(self, operational_evidence.get("route_search_universe")),
+                        "preparar pesquisa de demanda")
 
     def _guard(self, action: Callable[[], None], what: str) -> None:
         """Run one step of the cycle; a failing step is logged and the next ones still run.
@@ -885,11 +891,21 @@ class Bot:
             reason = f" (verificação antecipada: {self._next_event[1]})"
         self.next_cycle_at = time.time() + seconds
         log.info("Próxima verificação em %d min %02d s%s.", seconds // 60, seconds % 60, reason)
-        if self._observation_only:
-            self._wake.wait(seconds)
-            self._wake.clear()
-            return
         deadline = time.monotonic() + seconds
+        demand_store = DemandStore()
+        if self._observation_only:
+            while not (self.stopping or self._wake.is_set()) and time.monotonic() < deadline:
+                if deadline - time.monotonic() >= 40:
+                    work = requested_work(demand_store)
+                    if work == "catalog":
+                        self._guard(lambda: prepare_requested_scan(self), "preparar pesquisa de demanda")
+                    elif work == "batch":
+                        self._guard(lambda: run_demand_slice(self, demand_store), "coletar lote de demanda")
+                        continue
+                self._wake.wait(min(5, max(0, deadline - time.monotonic())))
+            self._wake.clear()
+            self.next_cycle_at = None
+            return
         interval = max(30, min(600, self.config.get_int("settings", "cash_sync_seconds", 60)))
         next_cash_check = time.monotonic() + interval
         try:
@@ -900,10 +916,17 @@ class Bot:
                     break
                 request = None
                 aircraft_id = None
+                demand_ready = (min(deadline, next_cash_check) - time.monotonic() >= 20
+                                and requested_work(demand_store) == "batch")
+                demand_reserved = False
                 with self._probe_condition:
                     if self._probe_request is None and not self._wake.is_set() and not self._stop.is_set():
-                        remaining = max(0.0, min(deadline, next_cash_check) - time.monotonic())
-                        self._probe_condition.wait(remaining)
+                        if demand_ready:
+                            self._probe_ready = False
+                            demand_reserved = True
+                        else:
+                            remaining = max(0.0, min(deadline, next_cash_check) - time.monotonic())
+                            self._probe_condition.wait(remaining)
                     if self._wake.is_set() or self._stop.is_set():
                         break
                     if self._probe_request is not None:
@@ -921,9 +944,12 @@ class Bot:
                                 self._probe_ready = False
                                 request = queued
                                 aircraft_id = queued_aircraft_id
-                if request is not None:
+                if request is not None or demand_reserved:
                     try:
-                        self._execute_game_source_probe(request, aircraft_id)
+                        if request is not None:
+                            self._execute_game_source_probe(request, aircraft_id)
+                        else:
+                            self._guard(lambda: run_demand_slice(self, demand_store), "coletar lote de demanda")
                     finally:
                         with self._probe_condition:
                             self._probe_ready = True
