@@ -863,14 +863,18 @@ return {routes: Number(routeLabel[1]), parked, pending};
 """
 
 
-def manage_fleet(bot: "Bot") -> None:
+def manage_fleet(bot: "Bot", *, observation_only: bool = False) -> None:
     cfg = bot.config
     registry = RouteRegistry()
-    planning_enabled = cfg.get_bool("investment", "planning_enabled", False)
+    planning_enabled = observation_only or cfg.get_bool("investment", "planning_enabled", False)
     if planning_enabled:
         registry.invalidate_fleet_coverage()
-    creation_ready = recover_pending_creation(bot, registry)
-    reroute_ready = recover_pending(bot, registry) and creation_ready
+    if observation_only:
+        creation_ready = not has_pending_creation()
+        reroute_ready = not has_pending_reroute() and creation_ready
+    else:
+        creation_ready = recover_pending_creation(bot, registry)
+        reroute_ready = recover_pending(bot, registry) and creation_ready
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
     measure_load(bot)
     counters = bot.js(_GAME_FLEET_COUNTS_JS)
@@ -923,11 +927,30 @@ def manage_fleet(bot: "Bot") -> None:
                            "integral correlacionada" if confirmed else "parcial")
     parked_ids = native_identity_evidence.get("parked_ids")
     if (reroute_ready and parked_ids and not bot.stopping
-            and cfg.get_bool("options", "collect_market_observations")):
+            and (observation_only or cfg.get_bool("options", "collect_market_observations"))):
         from parked_route_quote import collect_parked_route_quote
 
-        bot._guard(lambda: collect_parked_route_quote(bot, parked_ids),
+        bot._guard(lambda: collect_parked_route_quote(bot, parked_ids, refresh_demand=observation_only),
                    "consultar a prévia de rota de uma aeronave estacionada")
+    if not observation_only:
+        _manage_fleet_actions(bot, registry, parked, creation_ready=creation_ready, reroute_ready=reroute_ready)
+    flight_reader = getattr(registry, "next_flight_read_ids", None)
+    read_ids = flight_reader(limit=8) if callable(flight_reader) else []
+    if read_ids and not bot.stopping:
+        try:
+            financial = bot.driver.execute_async_script(_FLIGHT_HISTORY_JS, read_ids)
+            found = registry.record_flight_readings(
+                financial, fuel_price=bot.stock_price("fuel"),
+                co2_price=bot.stock_price("co2"))
+            log_fleet.info("Histórico financeiro: %d/%d aeronaves com leitura válida.", found, len(read_ids))
+        except Exception as exc:  # noqa: BLE001 - read-only financial enrichment must not halt operations
+            log_fleet.warning("Histórico financeiro indisponível neste ciclo (%s).", type(exc).__name__)
+    bot.close_popup()
+
+
+def _manage_fleet_actions(bot: "Bot", registry: RouteRegistry, parked: int, *,
+                          creation_ready: bool, reroute_ready: bool) -> None:
+    cfg = bot.config
     budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))
     if not cfg.get_bool("options", "allow_duplicate_routes", True):
         if reroute_ready:
@@ -950,18 +973,6 @@ def manage_fleet(bot: "Bot") -> None:
             log_market.info("Não comprarei aeronaves enquanto houver %d estacionadas sem rota.", parked)
         else:
             buy_aircraft(bot)
-    flight_reader = getattr(registry, "next_flight_read_ids", None)
-    read_ids = flight_reader(limit=8) if callable(flight_reader) else []
-    if read_ids and not bot.stopping:
-        try:
-            financial = bot.driver.execute_async_script(_FLIGHT_HISTORY_JS, read_ids)
-            found = registry.record_flight_readings(
-                financial, fuel_price=bot.stock_price("fuel"),
-                co2_price=bot.stock_price("co2"))
-            log_fleet.info("Histórico financeiro: %d/%d aeronaves com leitura válida.", found, len(read_ids))
-        except Exception as exc:  # noqa: BLE001 - read-only financial enrichment must not halt operations
-            log_fleet.warning("Histórico financeiro indisponível neste ciclo (%s).", type(exc).__name__)
-    bot.close_popup()
 
 
 # ---------------------------------------------------------------------- duplicate-route correction

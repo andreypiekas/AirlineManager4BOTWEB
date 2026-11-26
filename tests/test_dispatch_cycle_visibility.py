@@ -73,6 +73,7 @@ def test_auto_depart_disabled_explains_missing_dispatch_logs(tmp_path, monkeypat
 
     class Fake:
         dry_run = True
+        _observation_only = False
         _language_checked = True
 
         class Config:

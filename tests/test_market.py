@@ -27,12 +27,15 @@ def test_observe_only_trade_never_reaches_purchase_logic():
     assert bot.stats().fuel_quote is None
 
 
-@pytest.mark.parametrize("fuel,co2", [(False, False), (True, False), (False, True), (True, True)])
-def test_planning_reads_both_markets_and_respects_purchase_options(monkeypatch, fuel, co2):
+@pytest.mark.parametrize("fuel,co2,observation_only", [
+    (False, False, False), (True, False, False), (False, True, False),
+    (True, True, False), (True, True, True),
+])
+def test_planning_reads_both_markets_and_respects_purchase_options(monkeypatch, fuel, co2, observation_only):
     bot = Bot.__new__(Bot)
     bot._stats = Stats()
     bot._stats_lock = Lock()
-    settings = {"planning_enabled": True, "collect_market_observations": True,
+    settings = {"planning_enabled": not observation_only, "collect_market_observations": not observation_only,
                 "autobuy_fuel": fuel, "autobuy_co2": co2}
     bot.config = SimpleNamespace(get_bool=lambda section, key: settings[key])
     bot.open_popup = Mock()
@@ -42,9 +45,11 @@ def test_planning_reads_both_markets_and_respects_purchase_options(monkeypatch, 
     bot._sel = lambda key: key
     bot.driver = Mock()
     monkeypatch.setattr("bot.WebDriverWait", Mock())
-    bot._check_market()
+    bot._check_market(observation_only=observation_only)
     assert [(call.args, call.kwargs) for call in bot._trade.call_args_list] == [
-        (("fuel",), {"allow_purchase": fuel}), (("co2",), {"allow_purchase": co2})]
+        (("fuel",), {"allow_purchase": fuel and not observation_only}),
+        (("co2",), {"allow_purchase": co2 and not observation_only}),
+    ]
     bot.close_popup.assert_called_once()
 
 

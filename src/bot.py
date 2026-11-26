@@ -16,9 +16,11 @@ import socket
 import threading
 import time
 from concurrent.futures import Future, TimeoutError as FutureTimeout
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, Optional
+from urllib.parse import urlsplit
 
 from selenium.common.exceptions import (
     JavascriptException,
@@ -35,7 +37,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from checklist import check_checklist
 from config import AppConfig
-from driver import create_driver
+from driver import chrome_session_path, create_driver
 from fleet import manage_fleet
 from gamemode import EASY, GameMode, from_difficulty
 from helpers import clean_response, first_int, fmt, fmt_duration, game_whole_number, timer_seconds, to_int
@@ -45,7 +47,7 @@ from maintenance import run_maintenance
 from market import MarketQuote, PriceHistory, buy_thresholds, chart_prices, observed_market_quote
 from marketing import run_marketing
 from notify import Telegram, esc
-from paths import write_atomic
+from paths import current, worker_lock, write_atomic
 from reroute import has_pending_reroute
 from game_audit import audit_active
 from route_registry import RouteRegistry
@@ -134,8 +136,12 @@ class Stats:
 
 
 class Bot:
-    def __init__(self, config: AppConfig):
+    _observation_only = False
+
+    def __init__(self, config: AppConfig, *, observation_only: bool = False):
         self.config = config
+        self._observation_only = observation_only
+        self._observation_company_id: Optional[str] = None
         self.driver: Optional[WebDriver] = None
         self.state = BotState.IDLE
         self.last_error: Optional[str] = None
@@ -143,6 +149,7 @@ class Bot:
 
         self._stats = Stats()
         self._stats_lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._probe_condition = threading.Condition()
@@ -169,21 +176,23 @@ class Bot:
 
     # ------------------------------------------------------------------ lifecycle
     def start(self) -> None:
-        if self.is_alive():
-            return
-        self._stop.clear()
-        self._wake.clear()
-        self.last_error = None
-        self.marketing_next_check = 0.0
-        self._language_checked = False
-        self._thread = threading.Thread(target=self._run, name="am4bot", daemon=True)
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self.is_alive():
+                return
+            self._stop.clear()
+            self._wake.clear()
+            self.last_error = None
+            self.marketing_next_check = 0.0
+            self._language_checked = False
+            self._thread = threading.Thread(target=self._run, name="am4bot", daemon=True)
+            self._thread.start()
 
     def stop(self) -> None:
-        if self.is_alive():
-            self.state = BotState.STOPPING
-        self._stop.set()
-        self._wake.set()
+        with self._lifecycle_lock:
+            if self.is_alive():
+                self.state = BotState.STOPPING
+            self._stop.set()
+            self._wake.set()
         with self._probe_condition:
             self._probe_condition.notify_all()
 
@@ -268,7 +277,8 @@ class Bot:
 
     def kill_browser(self) -> None:
         """Last resort on shutdown when the bot thread does not finish in time."""
-        self._quit_driver()
+        if not self._observation_only:
+            self._quit_driver()
 
     @property
     def stopping(self) -> bool:
@@ -438,7 +448,7 @@ class Bot:
 
         Legacy calls without an event category remain supported.
         """
-        if not self.config.get_bool("options", "telegram") or not self.telegram.enabled:
+        if self._observation_only or not self.config.get_bool("options", "telegram") or not self.telegram.enabled:
             return False
         if category and not self.config.get_bool("options", f"telegram_{category}", True):
             return False
@@ -571,21 +581,37 @@ class Bot:
 
     # ------------------------------------------------------------------ main loop
     def _run(self) -> None:
+        locks = ExitStack()
         try:
             self.state = BotState.STARTING
-            self.config.reload_secrets()
-            self.telegram = Telegram(*self.config.telegram)
-            if self.config.get_bool("options", "telegram") and not self.telegram.enabled:
-                log_telegram.info("As notificações estão ativadas, mas faltam bot_token / chat_id em config/secrets.ini.")
-            self.notify(f"🟢 <b>Bot iniciado</b>{' (simulação)' if self.dry_run else ''}", silent=True, category="status")
+            url = self.config.get("app", "url", "https://www.airlinemanager.com/")
+            keep_session = self.config.get_bool("options", "keep_session")
+            if self._observation_only:
+                if not keep_session:
+                    raise RuntimeError("A observação exige o perfil Chrome persistente do worker.")
+                self._require_game_origin(url)
+            else:
+                self.config.reload_secrets()
+                self.telegram = Telegram(*self.config.telegram)
+                if self.config.get_bool("options", "telegram") and not self.telegram.enabled:
+                    log_telegram.info("As notificações estão ativadas, mas faltam bot_token / chat_id em config/secrets.ini.")
+                self.notify(f"🟢 <b>Bot iniciado</b>{' (simulação)' if self.dry_run else ''}",
+                            silent=True, category="status")
+            directories = {current().data.resolve()}
+            if keep_session:
+                directories.add(chrome_session_path())
+            for directory in sorted(directories):
+                locks.enter_context(worker_lock(directory))
             log.info("Abrindo Chrome ...")
             self.driver = create_driver(
-                url=self.config.get("app", "url", "https://www.airlinemanager.com/"),
-                keep_session=self.config.get_bool("options", "keep_session"),
+                url=url,
+                keep_session=keep_session,
                 headless=self.config.get_bool("options", "headless"),
             )
             self.state = BotState.LOGGING_IN
-            if not self._login():
+            if self._observation_only:
+                self._require_observation_session()
+            elif not self._login():
                 raise RuntimeError("O login falhou ou excedeu o tempo limite")
             self.state = BotState.RUNNING
             while not self._stop.is_set():
@@ -614,12 +640,20 @@ class Bot:
             log.info("Bot parado.")
             self.notify("⏹ Bot parado.", silent=True, category="status")
         finally:
-            self._quit_driver()
+            try:
+                self._quit_driver()
+            finally:
+                locks.close()
             self.next_cycle_at = None
             if self.state is not BotState.ERROR:
                 self.state = BotState.IDLE
 
     def _cycle(self) -> None:
+        if self._observation_only:
+            self._require_observation_session()
+            self._verify_observation_company()
+            self._observation_cycle()
+            return
         self._ensure_session()
         opt = lambda key: self.config.get_bool("options", key)  # noqa: E731
         if opt("collect_market_observations"):
@@ -723,6 +757,31 @@ class Bot:
             self._guard(lambda: publish_investment_event(self), "notificar evento de investimento")
         self._guard(self._maybe_daily_summary, "enviar o resumo diário")
 
+    def _observation_cycle(self) -> None:
+        """Read the native evidence on the browser-owning thread, independent of automation settings."""
+        from audited_game_snapshot import capture_game_snapshot
+        from finance_observations import collect_finance_observations
+        from game_observations import collect_owned_hub_demand
+        from staff_observations import collect_staff_observations
+
+        log.info("Consultando a companhia aérea [SOMENTE LEITURA].")
+        self._next_event = None
+        for action, label in (
+            (self._read_mode, "ler o modo de jogo"),
+            (lambda: collect_owned_hub_demand(self), "coletar demanda dos hubs"),
+            (lambda: self._check_market(observation_only=True), "consultar combustível / CO₂"),
+            (lambda: manage_fleet(self, observation_only=True), "conferir frota e prévia de rota"),
+            (lambda: collect_finance_observations(self), "conferir resumo financeiro"),
+            (lambda: collect_staff_observations(self), "conferir quadro de pessoal"),
+            (self._read_header, "consultar saldo e pontos"),
+        ):
+            if self.stopping:
+                break
+            self._guard(action, label)
+        if not self.stopping:
+            self._require_observation_session()
+            self._guard(lambda: capture_game_snapshot(self), "gravar captura auditada")
+
     def _guard(self, action: Callable[[], None], what: str) -> None:
         """Run one step of the cycle; a failing step is logged and the next ones still run.
 
@@ -790,6 +849,10 @@ class Bot:
             reason = f" (verificação antecipada: {self._next_event[1]})"
         self.next_cycle_at = time.time() + seconds
         log.info("Próxima verificação em %d min %02d s%s.", seconds // 60, seconds % 60, reason)
+        if self._observation_only:
+            self._wake.wait(seconds)
+            self._wake.clear()
+            return
         deadline = time.monotonic() + seconds
         interval = max(30, min(600, self.config.get_int("settings", "cash_sync_seconds", 60)))
         next_cash_check = time.monotonic() + interval
@@ -861,6 +924,32 @@ class Bot:
             return
         if self._next_event is None or seconds < self._next_event[0]:
             self._next_event = (int(seconds), what)
+
+    @staticmethod
+    def _require_game_origin(url: str) -> None:
+        origin = urlsplit(url)
+        if origin.scheme != "https" or origin.netloc.lower() not in {"www.airlinemanager.com", "airlinemanager.com"}:
+            raise RuntimeError("Origem do AM4 não reconhecida no modo de observação.")
+
+    def _require_observation_session(self) -> None:
+        self._require_game_origin(self.driver.current_url)
+        if not self._is_logged_in(timeout=5):
+            self.update_stats(money_read_at=None)
+            raise RuntimeError("Sessão do worker indisponível. Autentique o perfil Chrome antes da observação.")
+
+    def _verify_observation_company(self) -> None:
+        self._click("//*[@id='smallMainMenu']//*[@id='mapAcList']")
+        try:
+            selector = ("//*[@id='popup']//*[@id='companyAction']"
+                        "//*[contains(concat(' ', normalize-space(@class), ' '), ' font-weight-bold ')]"
+                        "[starts-with(normalize-space(.), 'User ID:') or starts-with(normalize-space(.), 'ID do usuário:')]")
+            label = self._text(selector)
+            match = re.fullmatch(r"(?:User ID|ID do usuário):\s*([1-9][0-9]{0,13})", label or "")
+            if match is None or self._observation_company_id not in (None, match[1]):
+                raise RuntimeError("Identidade da companhia sem confirmação no modo de observação.")
+            self._observation_company_id = match[1]
+        finally:
+            self.close_popup(quiet=True)
 
     def _ensure_session(self) -> None:
         # Raises WebDriverException (fatal) when the user closed the browser.
@@ -1147,11 +1236,11 @@ class Bot:
         })
         self.close_popup()
 
-    def _check_market(self) -> None:
-        planning = (self.config.get_bool("investment", "planning_enabled")
-                    and self.config.get_bool("options", "collect_market_observations"))
-        buy_fuel = self.config.get_bool("options", "autobuy_fuel")
-        buy_co2 = self.config.get_bool("options", "autobuy_co2")
+    def _check_market(self, *, observation_only: bool = False) -> None:
+        planning = observation_only or (self.config.get_bool("investment", "planning_enabled")
+                                        and self.config.get_bool("options", "collect_market_observations"))
+        buy_fuel = not observation_only and self.config.get_bool("options", "autobuy_fuel")
+        buy_co2 = not observation_only and self.config.get_bool("options", "autobuy_co2")
         with self._stats_lock:
             if planning or buy_fuel:
                 self._stats.fuel_quote = None
@@ -1162,7 +1251,11 @@ class Bot:
             if planning or buy_fuel:
                 self._trade("fuel", allow_purchase=buy_fuel)
             if planning or buy_co2:
-                self._click(self._sel("co2_tab"))
+                selector = self._sel("co2_tab")
+                if observation_only:
+                    selector = ('//*[@id="popup"]//*[@id="popBtn2"'
+                                ' and contains(@onclick, "Ajax(\'co2.php\',\'fuelMain\'")]')
+                self._click(selector)
                 WebDriverWait(self.driver, 10).until(
                     EC.visibility_of_element_located((By.XPATH, self._sel("co2_main")))
                 )

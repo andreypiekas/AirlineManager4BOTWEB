@@ -50,7 +50,7 @@ def _read_preview(bot, aircraft_id, sample):
         auto = panel.find_elements(By.ID, "introAuto")
         if len(auto) != 1:
             return None
-        bot.click_element(auto[0])
+        auto[0].click()
 
         def ready(_driver):
             if bot.stopping:
@@ -67,7 +67,7 @@ def _read_preview(bot, aircraft_id, sample):
         bot.js("$('#newRouteInfo').hide(); arrId = arguments[0];", previous)
 
 
-def collect_parked_route_quote(bot, parked_ids) -> bool:
+def collect_parked_route_quote(bot, parked_ids, *, refresh_demand: bool = False) -> bool:
     """Read at most one preview from verified Parked inventory and owned-hub research."""
     inventory = HubRegistry().snapshot()
     if not parked_ids or not inventory.get("hub_catalog_fresh") or bot.stopping:
@@ -83,7 +83,15 @@ def collect_parked_route_quote(bot, parked_ids) -> bool:
         quoted = {row["destination_id"] for row in native_route_quotes(bot)
                   if row["aircraft_id"] == aircraft_id and row["origin_id"] == origin
                   and row["stopover_id"] is None}
-        samples = HubExpansionRegistry().demand_research_snapshot({origin})["samples"]
+        demand = HubExpansionRegistry()
+        samples = demand.demand_research_snapshot({origin})["samples"]
+        if not samples and refresh_demand:
+            from game_observations import collect_owned_hub_demand
+
+            if not collect_owned_hub_demand(bot, origin_id=origin) or bot.stopping:
+                return False
+            samples = demand.demand_research_snapshot({origin})["samples"]
+            bot.open_popup("routes_main.php", "Routes", "nav_routes")
         candidates = [sample for sample in samples if sample["origin_id"] == origin
                       and sample["destination_id"] not in quoted and sample["distance_km"] <= limit
                       and not sample.get("route_detail_conflict")
@@ -104,9 +112,12 @@ def collect_parked_route_quote(bot, parked_ids) -> bool:
             (distance, fee, occupied), fares = quote
             daily = detail.get("observed_daily_demand")
             daily_counts = tuple(daily[key] for key in "yjf") if daily == again.get("observed_daily_demand") and daily else None
+            today = detail.get("observed_today_demand")
+            today_counts = tuple(today[key] for key in "yjf") if today == again.get("observed_today_demand") and today else None
             recorded = record_native_route_quote(
                 bot, aircraft_id=aircraft_id, origin_id=origin, destination_id=sample["destination_id"],
                 distance=distance, fee=fee, occupied=occupied, fares=fares, total_demand=daily_counts,
+                today_demand=today_counts,
                 research_distance_km=sample["distance_km"],
                 event_demand_boosted=any(row.get("event_demand_boosted") is True for row in (detail, again, sample)),
             )

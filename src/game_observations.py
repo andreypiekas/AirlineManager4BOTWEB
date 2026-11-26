@@ -449,9 +449,9 @@ def collect_hub_market_prices(bot: object, *, per_cycle: int = 3) -> int:
         bot.close_popup(quiet=True)
 
 
-def collect_owned_hub_demand(bot: object) -> int:
-    """Search one purchased hub per cycle, using the game's read-only research."""
-    return _collect_hub_demand(bot, external=False)
+def collect_owned_hub_demand(bot: object, *, origin_id: str | None = None) -> int:
+    """Search a native owned hub, optionally the origin of a parked aircraft."""
+    return _collect_hub_demand(bot, external=False, origin_id=origin_id)
 
 
 def collect_external_hub_demand(bot: object) -> int:
@@ -477,7 +477,7 @@ def _read_hub_demand_window(bot: object, origin: str, distance: int,
     return samples, read_at
 
 
-def _collect_hub_demand(bot: object, *, external: bool) -> int:
+def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = None) -> int:
     from fleet import _HUB_OPTIONS_JS
     from hub_registry import _hub_id
 
@@ -496,7 +496,9 @@ def _collect_hub_demand(bot: object, *, external: bool) -> int:
         expansion = HubExpansionRegistry()
         registry = expansion.external_demand_registry() if external else expansion
         origins = expansion.external_research_origins(set(ids)) if external else ids
-        origin = registry.next_demand_origin(origins)
+        if origin_id is not None and origin_id not in origins:
+            return 0
+        origin = origin_id if origin_id is not None else registry.next_demand_origin(origins)
         if origin is None:
             return 0
         # Reserve the rotation cursor before making AJAX requests. An empty,

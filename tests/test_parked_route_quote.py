@@ -20,6 +20,7 @@ SAMPLE = {"origin_id": ORIGIN, "destination_id": DESTINATION, "distance_km": 983
 DETAIL = {"codes": ["BCN", "SHA"], "runways": ["11,654 ft", "11,154 ft"],
           "occupied": "0", "occupancy_label": "A/C on route", "observed_capable_aircraft": "1",
           "capable_aircraft_ids": [AIRCRAFT], "observed_daily_demand": {"y": "1,991", "j": "376", "f": "176"},
+          "observed_today_demand": {"y": "1,800", "j": "300", "f": "160"},
           "event_demand_boosted": True}
 FORM = {"bound": True, "codes": ["BCN", "SHA"], "existing": "0", "distance": "9,831",
         "fee": "$996,630", "range": "14,500"}
@@ -43,13 +44,9 @@ class Bot:
 
     def find_elements(self, method, selector):
         if (method, selector) == (By.ID, "introAuto"):
-            return ["autoprice"]
+            return [SimpleNamespace(click=lambda: self.events.append("autoprice"))]
         assert (method, selector) == (By.CSS_SELECTOR, "#btnCreateNewRoute:not(.not-active):not([disabled])")
         return ["create"]
-
-    def click_element(self, element):
-        assert element == "autoprice"
-        self.events.append(element)
 
     def js(self, script, *args):
         if script == _FORM:
@@ -81,7 +78,7 @@ def setup(monkeypatch):
     monkeypatch.setattr(collector, "HubExpansionRegistry", lambda: SimpleNamespace(demand_research_snapshot=demand))
     monkeypatch.setattr(collector, "parked_specs", lambda bot, aircraft: {"id": ORIGIN, "range": "14,500"})
 
-    def sample(bot, *reads):
+    def sample(bot, *reads, refresh_demand=False):
         replies = iter(reads)
 
         def detail(owner, origin, dest):
@@ -90,22 +87,26 @@ def setup(monkeypatch):
             return next(replies)
 
         monkeypatch.setattr(collector, "research_details", detail)
-        return collector.collect_parked_route_quote(bot, {AIRCRAFT})
+        return collector.collect_parked_route_quote(bot, {AIRCRAFT}, refresh_demand=refresh_demand)
 
     return sample
 
 
 @pytest.mark.parametrize("daily_stable", [True, False])
-def test_existing_aircraft_quote_with_only_read_only_actions(setup, daily_stable):
+@pytest.mark.parametrize("today_stable", [True, False])
+def test_existing_aircraft_quote_with_only_read_only_actions(setup, daily_stable, today_stable):
     bot = Bot()
     again = {**DETAIL, "event_demand_boosted": None}
     if not daily_stable:
         again["observed_daily_demand"] = {**DETAIL["observed_daily_demand"], "y": "1,990"}
+    if not today_stable:
+        again.pop("observed_today_demand")
     assert setup(bot, DETAIL, again)
     assert bot.events == ["detail", "preview", "autoprice", "close", "detail"]
     assert bot.arrival == 17
     rows = native_route_quotes.native_route_quotes(bot)
     row, = rows
+    assert row.get("observed_today_demand") == ({"y": 1800, "j": 300, "f": 160} if today_stable else None)
     assert row["fares"] == {"y": 4103, "j": 8425, "f": 12998}
     assert row["route_fee"] == 996630 and row["distance_km"] == 9831
     assert row["event_demand_boosted"] is True
@@ -135,6 +136,24 @@ def test_loss_of_eligibility_discards_preview(setup):
     assert not setup(bot, DETAIL, {**DETAIL, "capable_aircraft_ids": ["102"]})
     assert bot.events[-2:] == ["close", "detail"]
     assert native_route_quotes.native_route_quotes(bot) == []
+
+
+def test_observation_refreshes_the_owned_parked_origin_without_cached_samples(setup, monkeypatch):
+    sample_reads = iter([{"samples": []}, {"samples": [SAMPLE]}])
+    bot = Bot()
+    actions = []
+
+    def refresh(owner, *, origin_id):
+        assert owner is bot
+        actions.append(("research", origin_id))
+        return 1
+
+    bot.open_popup = lambda url, title, selector: actions.append(("reopen", url))
+    monkeypatch.setattr(collector, "HubExpansionRegistry", lambda: SimpleNamespace(
+        demand_research_snapshot=lambda origins: next(sample_reads)))
+    monkeypatch.setattr("game_observations.collect_owned_hub_demand", refresh)
+    assert setup(bot, DETAIL, DETAIL, refresh_demand=True)
+    assert actions == [("research", ORIGIN), ("reopen", "routes_main.php")]
 
 
 def test_changed_form_discards_preview(setup):

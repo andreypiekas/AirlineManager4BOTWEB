@@ -98,6 +98,14 @@ def _open_driver_log():
         return None, path
 
 
+def chrome_session_path() -> Path:
+    override = os.environ.get("AM4_CHROME_PROFILE_DIR", "").strip()
+    session = Path(override).expanduser() if override else paths.current().session
+    if override and not session.is_absolute():
+        raise ValueError("AM4_CHROME_PROFILE_DIR deve ser um caminho absoluto.")
+    return session.resolve()
+
+
 def create_driver(url: str, keep_session: bool = False, headless: bool = False) -> WebDriver:
     options = Options()
     options.add_argument("--no-sandbox")
@@ -113,12 +121,9 @@ def create_driver(url: str, keep_session: bool = False, headless: bool = False) 
     if keep_session:
         # Dedicated Chrome profile inside the project (git-ignored), one per bot profile, so the
         # "remember me" cookie survives between runs and two airlines never share a browser.
-        session_override = os.environ.get("AM4_CHROME_PROFILE_DIR", "").strip()
-        session = Path(session_override).expanduser() if session_override else paths.current().session
-        if session_override and not session.is_absolute():
-            raise ValueError("AM4_CHROME_PROFILE_DIR deve ser um caminho absoluto.")
+        session = chrome_session_path()
         session.mkdir(parents=True, exist_ok=True)
-        options.add_argument(f"--user-data-dir={session.resolve()}")
+        options.add_argument(f"--user-data-dir={session}")
 
     chromedriver, browser = _selected_chrome()
     if chromedriver:

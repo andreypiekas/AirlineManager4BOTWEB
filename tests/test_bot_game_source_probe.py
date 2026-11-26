@@ -39,6 +39,7 @@ def make_bot():
     bot.state = BotState.RUNNING
     bot._stop = threading.Event()
     bot._wake = threading.Event()
+    bot._lifecycle_lock = threading.Lock()
     bot._probe_condition = threading.Condition()
     bot._probe_ready = False
     bot._probe_request = None

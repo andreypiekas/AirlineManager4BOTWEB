@@ -54,17 +54,27 @@ def test_route_creation_restores_routes_screen_after_duplicate_research(monkeypa
     fleet.manage_fleet(bot)
 
 
-@pytest.mark.parametrize("changed, reroute_ready, verified", [
-    (False, True, True), (True, True, False), (False, False, False),
+@pytest.mark.parametrize(
+    "changed, reroute_ready, verified, collect_quotes, observation_only, pending_creation", [
+        (False, True, True, True, False, False),
+        (False, True, True, False, False, False),
+        (True, True, False, True, False, False),
+        (True, True, False, False, False, False),
+        (False, False, False, True, False, False),
+        (False, False, False, False, False, False),
+        (False, True, True, False, True, False),
+        (False, False, False, False, True, False),
+        (False, False, False, False, True, True),
 ])
-@pytest.mark.parametrize("collect_quotes", [True, False])
 def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
-        tmp_path, monkeypatch, changed, reroute_ready, verified, collect_quotes):
+        tmp_path, monkeypatch, changed, reroute_ready, verified, collect_quotes, observation_only, pending_creation):
     registry = RouteRegistry(tmp_path / "routes.json")
 
     class Config:
         def get_bool(self, section, key, default=False):
-            return {"planning_enabled": True, "collect_market_observations": collect_quotes}.get(key, default)
+            return {"planning_enabled": not observation_only, "collect_market_observations": collect_quotes,
+                    "auto_route": observation_only, "autobuy_aircraft": observation_only,
+                    "allow_duplicate_routes": not observation_only}.get(key, default)
 
         def get_int(self, section, key, default):
             return default
@@ -106,8 +116,17 @@ def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
 
     monkeypatch.setattr(route_registry, "registry_file", lambda: registry.path)
     monkeypatch.setattr(fleet, "measure_load", lambda bot: None)
-    monkeypatch.setattr(fleet, "recover_pending", lambda bot, registry: reroute_ready)
-    monkeypatch.setattr(fleet, "has_pending_reroute", lambda: not reroute_ready)
+    def unexpected(*args, **kwargs):
+        pytest.fail("observation mode reached a fleet write path")
+
+    if observation_only:
+        monkeypatch.setattr(fleet, "recover_pending_creation", unexpected)
+        monkeypatch.setattr(fleet, "recover_pending", unexpected)
+        monkeypatch.setattr(fleet, "_manage_fleet_actions", unexpected)
+    else:
+        monkeypatch.setattr(fleet, "recover_pending", lambda bot, registry: reroute_ready)
+    monkeypatch.setattr(fleet, "has_pending_reroute", lambda: not reroute_ready and not pending_creation)
+    monkeypatch.setattr(fleet, "has_pending_creation", lambda: pending_creation)
     monkeypatch.setattr(RouteRegistry, "next_flight_read_ids", lambda self, **kwargs: [])
 
     def collect(bot, *, identity_evidence):
@@ -117,20 +136,21 @@ def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
         bot.close_popup()
         return True
 
-    def quote(bot, parked_ids):
+    def quote(bot, parked_ids, *, refresh_demand):
         assert parked_ids == {"102"}
         assert bot.screen == "routes_main.php"
+        assert refresh_demand is observation_only
         bot.events.append("quote")
 
     monkeypatch.setattr(fleet_commitment_observations, "collect_fleet_commitment_observations", collect)
     monkeypatch.setattr(parked_route_quote, "collect_parked_route_quote", quote)
     bot = Bot()
-    fleet.manage_fleet(bot)
+    fleet.manage_fleet(bot, observation_only=observation_only)
     assert registry.snapshot()["current_fleet_coverage_verified"] is verified
     assert bot.roster_reads == (2 if reroute_ready else 1)
     expected = ["roster", "native_lists"]
     if reroute_ready:
         expected.append("roster")
-        if collect_quotes:
+        if collect_quotes or observation_only:
             expected.append("quote")
     assert bot.events == expected

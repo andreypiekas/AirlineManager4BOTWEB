@@ -3,6 +3,8 @@
 ``python src/main.py --web`` runs the bot with only the web dashboard (no desktop window), for example on
 a machine that stays on all day: open the address it prints in a browser.
 
+``--observe-game`` starts the web worker in observation-only mode.
+
 ``--profile <name>`` runs another airline (game account) with its own settings, credentials, Chrome session,
 data and web port in profiles/<name>/ (created from the main settings the first time). See paths.py.
 """
@@ -25,7 +27,7 @@ def run_desktop() -> None:
         app.on_close()
 
 
-def run_web_only() -> None:
+def run_web_only(*, observation_only: bool = False) -> None:
     import logging
     import threading
 
@@ -50,24 +52,25 @@ def run_web_only() -> None:
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(logging.Formatter("[%(asctime)s] [%(tag)s] %(message)s", "%H:%M:%S"))
     setup_logging(cfg, buffer, console)
-    bot = Bot(cfg)
+    bot = Bot(cfg, observation_only=observation_only)
     restart = AutoRestart()
     quit_requested = threading.Event()
     web = WebDashboard(bot, cfg, buffer, lambda: restart.restart_in, on_quit=quit_requested.set)
     if not web.start():
         sys.exit(1)
-    if cfg.get_bool("options", "start_on_launch"):
+    if observation_only or cfg.get_bool("options", "start_on_launch"):
         bot.start()
     try:
         while not quit_requested.wait(1):
-            if restart.tick(bot.is_alive(), bot.state, cfg.get_bool("options", "auto_restart", True)):
+            if not observation_only and restart.tick(
+                    bot.is_alive(), bot.state, cfg.get_bool("options", "auto_restart", True)):
                 bot.start()
     except KeyboardInterrupt:
         pass
     # Stop cleanly so that Chrome and chromedriver are closed too.
     bot.stop()
     bot.join(timeout=20)
-    if bot.is_alive():
+    if bot.is_alive() and not observation_only:
         bot.kill_browser()
     web.stop()
 
@@ -95,9 +98,11 @@ def main() -> None:
     # Config, assets and logs are addressed relative to the project root.
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT / "src"))
-    select_profile(sys.argv[1:])
-    if "--web" in sys.argv[1:]:
-        run_web_only()
+    args = sys.argv[1:]
+    select_profile(args)
+    observation_only = "--observe-game" in args
+    if observation_only or "--web" in args:
+        run_web_only(observation_only=observation_only)
     else:
         run_desktop()
 

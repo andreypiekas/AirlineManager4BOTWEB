@@ -100,7 +100,7 @@ def _correlated_distance(search_distance, native_distance):
 
 def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
                              distance, fee, occupied, fares, stopover_id=None,
-                             total_demand=None, event_demand_boosted=None,
+                             total_demand=None, today_demand=None, event_demand_boosted=None,
                              research_distance_km=None, now=None):
     """Called only after matching reads of the bound native form and fares."""
     if (not all(_identity(value) for value in (aircraft_id, origin_id, destination_id))
@@ -110,6 +110,7 @@ def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
             or not _numbers((distance, fee, occupied), 3) or distance == 0
             or not _numbers(fares, 3) or not any(fares)
             or (total_demand is not None and not _numbers(total_demand, 3))
+            or (today_demand is not None and not _numbers(today_demand, 3))
             or (research_distance_km is not None and (stopover_id is not None
                 or not _correlated_distance(research_distance_km, distance)))):
         return False
@@ -126,6 +127,8 @@ def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
            "daily_demand_residual": None}
     if event_demand_boosted is True:
         row["event_demand_boosted"] = True
+    if today_demand is not None:
+        row["observed_today_demand"] = dict(zip("yjf", today_demand))
     if research_distance_km is not None:
         row["research_distance_km"] = research_distance_km
     previous = native_route_quotes(bot, now=now)
