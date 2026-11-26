@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from native_demand_scan import prepare_requested_scan, run_demand_slice
-from native_demand_store import DemandStore, demand_catalog
+from native_demand_store import MAX_DISTANCE_KM, DemandStore, demand_catalog
 from opportunity_models import DEFAULT_MAX_AGE_SECONDS
 
 
@@ -16,8 +16,9 @@ UNIVERSE = {
 
 
 def result(job, rows):
-    origin, country, destination = job
-    return {"origin_id": origin, "country": country, "destination_id": destination, "rows": rows}
+    origin, country, destination, limit_km = job
+    return {"origin_id": origin, "country": country, "destination_id": destination,
+            "limit_km": limit_km, "rows": rows}
 
 
 def row(airport, y=120):
@@ -47,7 +48,7 @@ def test_native_demand_requires_request_and_resolves_bulk_omissions_after_restar
     assert store.status()["observed_pairs"] == 2
     assert store.status()["expected_pairs"] == 3
     assert store.lookup("11", "44") is None
-    exact = ("11", "Tunisia", "44")
+    exact = ("11", "Tunisia", "44", MAX_DISTANCE_KM)
     assert store.jobs(10) == [exact]
     store.save([exact], [result(exact, [])])
     assert store.status()["state"] == "completed"
@@ -96,6 +97,41 @@ def test_demand_status_counts_only_recent_pairs_in_the_current_scan(tmp_path, mo
     store.save([brazil], [result(brazil, [row("22")])])
     now.return_value -= 1
     assert store.status()["recent_observed_pairs"] == 0
+
+
+def test_saturated_partitions_resume_narrowing_before_exact_fallback(tmp_path):
+    path = tmp_path / "demand.db"
+    store = DemandStore(path)
+    assert store.request()
+    assert store.begin("123", (("11",), {"Brazil": [str(i) for i in range(100, 202)]}))
+    first, = store.jobs(16)
+    broad = [{**row(str(i)), "distance_km": i * 10 + 0.25} for i in range(152, 202)]
+    store.save([first], [result(first, broad)])
+    assert store.status()["observed_pairs"] == 50
+    # Simulate upgrading a database that completed the country request.
+    with sqlite3.connect(path) as db:
+        db.execute("DROP TABLE demand_windows")
+
+    store = DemandStore(path)
+    assert store.begin("123", None)
+    window = ("11", "Brazil", "0", 1521)
+    assert store.jobs(16) == [window]
+    narrower = [{**row(str(i), y=200), "distance_km": i * 10 + 0.25} for i in range(103, 153)]
+    store.save([window], [result(window, narrower)])
+    assert store.status()["observed_pairs"] == 99
+    assert store.lookup("11", "152")["y"] == 120
+    assert store.lookup("11", "151")["y"] == 200
+    last = ("11", "Brazil", "0", 1031)
+    assert store.jobs(16) == [last]
+    # A response outside the requested window establishes no demand.
+    store.save([last], [result(last, [{**row("101"), "distance_km": 1032}])])
+    exact = [("11", "Brazil", str(i), MAX_DISTANCE_KM) for i in range(100, 103)]
+    assert store.status()["state"] == "running"
+    assert store.lookup("11", "101") is None
+    assert store.jobs(16) == exact
+    store.save(exact, [result(job, [row(job[2])]) for job in exact])
+    assert store.status()["observed_pairs"] == 102
+    assert store.status()["state"] == "completed"
 
 
 def test_catalog_needs_exact_origins_and_destination_union():

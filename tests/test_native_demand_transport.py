@@ -11,14 +11,14 @@ from native_demand_transport import _READ_DEMAND_BATCH_JS, read_demand_batch
 
 
 def test_batch_preserves_requests_and_limits_each_driver_call():
-    jobs = [("1440", "Tunisia", str(i)) for i in range(9)]
+    jobs = [("1440", "Tunisia", "0", 1723)] + [("1440", "Tunisia", str(i), 20000) for i in range(1, 9)]
     first = [{"destination_id": "1", "y": 0, "j": 4, "f": 0, "event_demand_boosted": None}]
     execute = Mock(side_effect=[[[], first, None, []], [None], [[]]])
     results = read_demand_batch(SimpleNamespace(driver=SimpleNamespace(execute_async_script=execute)), jobs)
 
     assert results == [
-        {"origin_id": origin, "country": country, "destination_id": dest, "rows": rows}
-        for (origin, country, dest), rows in zip(jobs, [[], first, None, [], None, None, None, None, []])
+        {"origin_id": origin, "country": country, "destination_id": dest, "limit_km": limit_km, "rows": rows}
+        for (origin, country, dest, limit_km), rows in zip(jobs, [[], first, None, [], None, None, None, None, []])
     ]
     calls = [call.args[1:] for call in execute.call_args_list]
     assert [len(requests) for requests, _ in calls] == [4, 4, 1]
@@ -27,7 +27,7 @@ def test_batch_preserves_requests_and_limits_each_driver_call():
 
 
 def test_driver_timeout_preserves_previous_results_and_does_not_retry():
-    jobs = [("1440", "Tunisia", "0")] * 9
+    jobs = [("1440", "Tunisia", "0", 20000)] * 9
     execute = Mock(side_effect=[[[], [], [], []], TimeoutException("private browser error")])
     bot = SimpleNamespace(driver=SimpleNamespace(execute_async_script=execute))
 
@@ -36,8 +36,8 @@ def test_driver_timeout_preserves_previous_results_and_does_not_retry():
 
 
 def test_stopping_bot_keeps_failed_placeholders_without_using_driver():
-    assert read_demand_batch(SimpleNamespace(stopping=True), [("1440", "Tunisia", "0")]) == [
-        {"origin_id": "1440", "country": "Tunisia", "destination_id": "0", "rows": None}
+    assert read_demand_batch(SimpleNamespace(stopping=True), [("1440", "Tunisia", "0", 20000)]) == [
+        {"origin_id": "1440", "country": "Tunisia", "destination_id": "0", "limit_km": 20000, "rows": None}
     ]
 
 
@@ -117,6 +117,7 @@ def run_script():
         pytest.skip("Node.js indisponível")
 
     def run(scenario, jobs=(("1440", "Tunisia", "0"),)):
+        jobs = [(*job, 20000) if len(job) == 3 else job for job in jobs]
         response = subprocess.run(
             ["node", "-e", _RUN_SCRIPT],
             input=json.dumps({"script": _READ_DEMAND_BATCH_JS, "scenario": scenario, "jobs": jobs}),
@@ -148,6 +149,15 @@ def test_detached_search_pins_native_parameters_and_keeps_short_direct_match(run
 def test_explicit_native_empty_has_no_inferred_demand(run_script):
     result = run_script({"notice": True}, (("1440", "Jamaica", "0"), ("1440", "Jamaica", "432")))
     assert result["rows"] == [[], []]
+
+
+def test_country_window_allows_only_supported_distance_limits(run_script):
+    jobs = (("1440", "Tunisia", "0", 1723), ("1440", "Tunisia", "432", 1723),
+            ("1440", "Tunisia", "0", 499), ("1440", "Tunisia", "0", "1723"))
+    result = run_script({"notice": True}, jobs)
+    assert result["rows"] == [[], None, None, None]
+    assert len(result["requests"]) == 1
+    assert "dist=1723&" in result["requests"][0]["path"]
 
 
 @pytest.mark.parametrize("scenario", [

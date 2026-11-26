@@ -5,6 +5,7 @@ import re
 import sqlite3
 import time
 from contextlib import closing
+from math import ceil
 from pathlib import Path
 
 import paths
@@ -14,6 +15,10 @@ _ID = re.compile(r"[1-9][0-9]{0,11}")
 _COMPANY_ID = re.compile(r"[1-9][0-9]{0,13}")
 _ACTIVE = ("queued", "running")
 _ATTEMPTS = 2
+_BULK_RESULT_LIMIT = 50
+_MIN_DISTANCE_KM = 500
+MAX_DISTANCE_KM = 20_000
+_MAX_REFINEMENTS = 20
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS scan (
     id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL,
@@ -130,6 +135,7 @@ class DemandStore:
                 db.execute("INSERT INTO scan (id, state, updated_at) VALUES (1, 'queued', ?)", (time.time(),))
             else:
                 if scan[0] == "completed":
+                    db.execute("DROP TABLE IF EXISTS demand_windows")
                     db.execute("DELETE FROM partitions")
                     db.execute("DELETE FROM targets")
                 else:
@@ -163,6 +169,7 @@ class DemandStore:
                 db.execute("""DELETE FROM demand WHERE NOT EXISTS (
                     SELECT 1 FROM targets WHERE targets.origin_id = demand.origin_id
                     AND targets.destination_id = demand.destination_id)""")
+            self._prepare_windows(db)
             db.execute("UPDATE scan SET company_id = ? WHERE id = 1", (company_id,))
             self._state(db, "running")
             return True
@@ -170,31 +177,64 @@ class DemandStore:
     def jobs(self, limit):
         with closing(self._connect()) as db:
             partitions = db.execute("""
-                SELECT origin_id, country, '0' FROM partitions WHERE state = 'open'
+                SELECT origin_id, country, '0', ? FROM partitions WHERE state = 'open'
                 ORDER BY attempts, origin_id, country LIMIT ?
-                """, (limit,)).fetchall()
+                """, (MAX_DISTANCE_KM, limit)).fetchall()
             if partitions:
                 return partitions
-            return db.execute("""
-                SELECT origin_id, country, destination_id FROM targets WHERE state = 'open'
-                ORDER BY attempts, origin_id, country, destination_id LIMIT ?
+            windows = db.execute("""
+                SELECT origin_id, country, '0', cutoff_km FROM demand_windows
+                ORDER BY origin_id, country LIMIT ?
                 """, (limit,)).fetchall()
+            if windows:
+                return windows
+            return db.execute("""
+                SELECT origin_id, country, destination_id, ? FROM targets WHERE state = 'open'
+                ORDER BY attempts, origin_id, country, destination_id LIMIT ?
+                """, (MAX_DISTANCE_KM, limit)).fetchall()
+
+    @staticmethod
+    def _prepare_windows(db):
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'demand_windows'").fetchone():
+            return
+        db.execute("""CREATE TABLE demand_windows (
+            origin_id TEXT NOT NULL, country TEXT NOT NULL, cutoff_km INTEGER NOT NULL,
+            remaining INTEGER NOT NULL, PRIMARY KEY (origin_id, country)
+        )""")
+        # Resume previously collected, saturated first windows after an upgrade.
+        saturated = db.execute("""
+            SELECT p.origin_id, p.country, MIN(CASE WHEN t.state = 'observed' THEN d.distance_km END)
+            FROM partitions AS p JOIN targets AS t USING (origin_id, country)
+            LEFT JOIN demand AS d USING (origin_id, destination_id)
+            WHERE p.state = 'done'
+            GROUP BY p.origin_id, p.country
+            HAVING SUM(t.state = 'observed') = ?
+               AND SUM(t.state = 'observed' AND d.distance_km > 0 AND d.distance_km <= ?) = ?
+               AND SUM(t.state = 'open') > 0
+            """, (_BULK_RESULT_LIMIT, MAX_DISTANCE_KM, _BULK_RESULT_LIMIT)).fetchall()
+        db.executemany("INSERT INTO demand_windows VALUES (?, ?, ?, ?)", (
+            (origin, country, cutoff, _MAX_REFINEMENTS)
+            for origin, country, distance in saturated
+            if (cutoff := max(_MIN_DISTANCE_KM, ceil(distance))) < MAX_DISTANCE_KM
+        ))
 
     def save(self, jobs, results):
         """Record one batch transactionally, including exact searches that return no demand."""
         by_job = {}
         for result in results or ():
             if isinstance(result, dict):
-                key = (result.get("origin_id"), result.get("country"), result.get("destination_id"))
-                if all(isinstance(value, str) for value in key):
+                identity = (result.get("origin_id"), result.get("country"), result.get("destination_id"))
+                limit_km = result.get("limit_km")
+                if all(isinstance(value, str) for value in identity) and type(limit_km) is int:
+                    key = (*identity, limit_km)
                     by_job[key] = None if key in by_job else result.get("rows")
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             now = time.time()
             failed = 0
-            for origin, country, destination in jobs:
-                rows = by_job.get((origin, country, destination))
-                if not self._save_job(db, origin, country, destination, rows, now):
+            for origin, country, destination, limit_km in jobs:
+                rows = by_job.get((origin, country, destination, limit_km))
+                if not self._save_job(db, origin, country, destination, limit_km, rows, now):
                     failed += 1
             if jobs and failed == len(jobs):
                 self._state(db, "partial", "O jogo não retornou um lote válido. Autorize a retomada para tentar de novo.")
@@ -207,13 +247,44 @@ class DemandStore:
             else:
                 self._state(db, "completed")
 
-    def _save_job(self, db, origin, country, destination, rows, now):
+    def _save_job(self, db, origin, country, destination, limit_km, rows, now):
         bulk = destination == "0"
         expected = {value for value, in db.execute(
             "SELECT destination_id FROM targets WHERE origin_id = ? AND country = ?",
             (origin, country))} if bulk else {destination}
+        observed = self._observations(rows, expected, bulk)
+        if limit_km < MAX_DISTANCE_KM:
+            self._save_window(db, origin, country, limit_km, observed, now)
+            return True
+        if observed is not None:
+            self._save_observations(db, origin, observed, now)
+            if bulk:
+                db.execute("UPDATE partitions SET state = 'done' WHERE origin_id = ? AND country = ?",
+                           (origin, country))
+                if len(observed) < len(expected):
+                    cutoff = self._next_window(observed, limit_km)
+                    if cutoff is not None:
+                        db.execute("INSERT INTO demand_windows VALUES (?, ?, ?, ?)",
+                                   (origin, country, cutoff, _MAX_REFINEMENTS))
+            elif not observed:
+                db.execute("UPDATE targets SET state = 'empty' WHERE origin_id = ? AND destination_id = ?",
+                           (origin, destination))
+                db.execute("DELETE FROM demand WHERE origin_id = ? AND destination_id = ?", (origin, destination))
+            return True
+        if bulk:
+            db.execute("""UPDATE partitions SET attempts = attempts + 1,
+                          state = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'open' END
+                          WHERE origin_id = ? AND country = ?""", (_ATTEMPTS, origin, country))
+        else:
+            db.execute("""UPDATE targets SET attempts = attempts + 1,
+                          state = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'open' END
+                          WHERE origin_id = ? AND destination_id = ?""", (_ATTEMPTS, origin, destination))
+        return False
+
+    @staticmethod
+    def _observations(rows, expected, bulk):
         observed = {}
-        if isinstance(rows, list) and len(rows) <= (50 if bulk else 1):
+        if isinstance(rows, list) and len(rows) <= (_BULK_RESULT_LIMIT if bulk else 1):
             for row in rows:
                 if not isinstance(row, dict):
                     break
@@ -232,24 +303,36 @@ class DemandStore:
                     runway = None
                 observed[airport] = (*demand, distance, runway, event)
             else:
-                self._save_observations(db, origin, observed, now)
-                if bulk:
-                    db.execute("UPDATE partitions SET state = 'done' WHERE origin_id = ? AND country = ?",
-                               (origin, country))
-                elif not observed:
-                    db.execute("UPDATE targets SET state = 'empty' WHERE origin_id = ? AND destination_id = ?",
-                               (origin, destination))
-                    db.execute("DELETE FROM demand WHERE origin_id = ? AND destination_id = ?", (origin, destination))
-                return True
-        if bulk:
-            db.execute("""UPDATE partitions SET attempts = attempts + 1,
-                          state = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'open' END
-                          WHERE origin_id = ? AND country = ?""", (_ATTEMPTS, origin, country))
-        else:
-            db.execute("""UPDATE targets SET attempts = attempts + 1,
-                          state = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'open' END
-                          WHERE origin_id = ? AND destination_id = ?""", (_ATTEMPTS, origin, destination))
-        return False
+                return observed
+        return None
+
+    @staticmethod
+    def _next_window(observed, limit_km):
+        distances = [values[3] for values in observed.values()]
+        if len(distances) != _BULK_RESULT_LIMIT or any(km is None or km > limit_km for km in distances):
+            return None
+        cutoff = max(_MIN_DISTANCE_KM, ceil(min(distances)))
+        return cutoff if cutoff < limit_km else None
+
+    def _save_window(self, db, origin, country, limit_km, observed, now):
+        key = (origin, country)
+        window = db.execute("SELECT cutoff_km, remaining FROM demand_windows WHERE origin_id = ? AND country = ?",
+                            key).fetchone()
+        if window is None or window[0] != limit_km:
+            return
+        db.execute("DELETE FROM demand_windows WHERE origin_id = ? AND country = ?", key)
+        if observed is None or any(values[3] is None or values[3] > limit_km for values in observed.values()):
+            return
+        pending = {airport for airport, in db.execute("""
+            SELECT destination_id FROM targets WHERE origin_id = ? AND country = ? AND state = 'open'
+            """, key)}
+        added = {airport: values for airport, values in observed.items() if airport in pending}
+        self._save_observations(db, origin, added, now)
+        if added and pending.difference(added) and window[1] > 1:
+            cutoff = self._next_window(observed, limit_km)
+            if cutoff is not None:
+                db.execute("INSERT INTO demand_windows VALUES (?, ?, ?, ?)",
+                           (*key, cutoff, window[1] - 1))
 
     @staticmethod
     def _save_observations(db, origin, observed, now):

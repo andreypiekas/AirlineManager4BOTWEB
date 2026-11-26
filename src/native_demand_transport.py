@@ -69,15 +69,17 @@ function readRows(html, origin, destination) {
   return rows;
 }
 
-async function search([origin, country, destination]) {
+async function search([origin, country, destination, limitKm]) {
   if (!['https://www.airlinemanager.com', 'https://airlinemanager.com'].includes(location.origin) ||
       typeof origin !== 'string' || !airportId.test(origin) ||
       typeof destination !== 'string' || (destination !== '0' && !airportId.test(destination)) ||
       destination === origin || typeof country !== 'string' || !country ||
-      country.length > 100 || country !== country.trim() || /[\x00-\x1f\x7f]/.test(country)) return null;
+      country.length > 100 || country !== country.trim() || /[\x00-\x1f\x7f]/.test(country) ||
+      !Number.isInteger(limitKm) || limitKm < 500 || limitKm > 20000 ||
+      (destination !== '0' && limitKm !== 20000)) return null;
   try {
     const params = new URLSearchParams({
-      mode: 'search', rwy: '1000', dist: '20000', depId: origin, arr: country, arrId: destination, charter: '0'
+      mode: 'search', rwy: '1000', dist: String(limitKm), depId: origin, arr: country, arrId: destination, charter: '0'
     });
     if (typeof fbSig !== 'undefined') params.set('fbSig', fbSig);
     const response = await fetch('/research_main.php?' + params, {
@@ -94,17 +96,17 @@ Promise.all(jobs.map(search)).then(done, () => done(null));
 """.replace("EVENT_WARNING", ROUTE_EVENT_WARNING_JS)
 
 
-def read_demand_batch(bot: object, jobs: Sequence[tuple[str, str, str]]) -> list[dict]:
+def read_demand_batch(bot: object, jobs: Sequence[tuple[str, str, str, int]]) -> list[dict]:
     """Return one result per job in input order. An empty search carries no demand values."""
     results = [
-        {"origin_id": origin, "country": country, "destination_id": destination, "rows": None}
-        for origin, country, destination in jobs
+        {"origin_id": origin, "country": country, "destination_id": destination, "limit_km": limit_km, "rows": None}
+        for origin, country, destination, limit_km in jobs
     ]
     for offset in range(0, len(results), _CONCURRENCY):
         if getattr(bot, "stopping", False):
             break
         group = results[offset:offset + _CONCURRENCY]
-        requests = [[result["origin_id"], result["country"], result["destination_id"]] for result in group]
+        requests = jobs[offset:offset + _CONCURRENCY]
         try:
             answer = bot.driver.execute_async_script(_READ_DEMAND_BATCH_JS, requests, _REQUEST_TIMEOUT_MS)
         except WebDriverException:
