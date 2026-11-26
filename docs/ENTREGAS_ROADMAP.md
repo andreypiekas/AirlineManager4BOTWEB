@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A5, cabine da rota na prévia nativa de compra (G0)
+
+- No Chrome dedicado autenticado, `Fleet → Order → A380-800 → Configuration` confirmou uma unidade do modelo `2`, motor **RR Trent 972** (`7`), entrega em **Los Angeles** (`24323457`) e **443/42/24 assentos Y/J/F**, a configuração usada no PP-254 em LAX–TUN. As alças do controle de 600 posições ficaram em 443 e 528. `#acCost` mostrou **US$ 216.079.503**, incluindo US$ 450.000 de configuração sobre os US$ 215.629.503 iniciais. A consulta saiu pelo botão `Back` e confirmou o retorno ao detalhe. O pedido não foi enviado.
+- A entrada de prévia do worker usa a intenção de compra A5 e recebe do chamador o valor nativo de entrega, cuja identificação é distinta do ID de aeroporto da rota. Em `dry_run`, seleciona hub e motor, ajusta as duas alças pelas teclas nativas e confere o layout exato. Duas leituras do mesmo formulário devem concordar e o total exibido precisa bater com `checkout_cost`. A taxa de abertura pertence ao investimento da rota e fica fora desse total. A prévia fecha pelo botão `Back` ao concluir ou ao rejeitar a configuração. Chamadas planejadas fora de `dry_run` são bloqueadas antes de abrir o formulário.
+- O replay local cobre o plano LAX–TUN e o fechamento após divergências de preço, assentos, hub, motor e saldo. Também cobre uma cabine que o controle não representa e a recusa de execução em modo real. Foram aprovados **194 testes focados** e **2.427 testes na suíte Windows**, com um pulado e exclusão de `tests/test_instalacao_linux.py`. Ruff e `git diff --check` passaram.
+- A confirmação autenticada foi manual no Chrome. A execução da prévia no worker autenticado segue pendente. A tela não forneceu um campo independente de preço final comprovado. O valor exibido é anterior ao envio, `price_verified` segue em `false` e a automação planejada permanece em G0. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A3/A4/A5, compra vinculada ao hub, à rota e à cabine (G0)
 
 - O teste de ponta a ponta parte de uma captura sintética com dois hubs próprios e uma rota candidata por hub. A3 calcula demanda residual por classe, cabine e economia. A4 compara os candidatos elegíveis e seleciona o investimento vencedor. A5 usa o hub de entrega, a rota, o modelo, o motor e os 100/20/10 assentos Y/J/F dessa mesma decisão. O executor simulado confirma uma encomenda para essa combinação e o painel exibe os assentos na prévia.

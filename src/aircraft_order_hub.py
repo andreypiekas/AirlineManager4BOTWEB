@@ -109,11 +109,13 @@ def _read_order_hub_state(bot) -> tuple[str, dict[str, bool]]:
     return selected_id, options
 
 
-def prepare_order_hub(bot, requested_hub_id: str | int | None = None) -> tuple[str, bool]:
+def prepare_order_hub(
+    bot, requested_hub_id: str | int | None = None, *, configure_preview: bool = False,
+) -> tuple[str, bool]:
     """Verify the current hub or select the requested hub and confirm the DOM.
 
     Returns the verified/planned hub ID and whether the live form changed.
-    Dry-run validates availability but never changes the form.
+    Dry-run validates availability. An explicit preview may stage a form selection.
     """
     requested_id = None
     if requested_hub_id is not None:
@@ -127,7 +129,7 @@ def prepare_order_hub(bot, requested_hub_id: str | int | None = None) -> tuple[s
         raise AircraftOrderHubError("A base definida no plano não aparece no formulário de encomenda.")
     if options[target_id]:
         raise AircraftOrderHubError("A base definida no plano está indisponível para encomenda.")
-    if target_id == selected_id or getattr(bot, "dry_run", False):
+    if target_id == selected_id or (getattr(bot, "dry_run", False) and not configure_preview):
         return target_id, False
 
     try:

@@ -355,8 +355,9 @@ def verify_engine_selection(bot: "Bot", expected: EngineCatalog) -> str:
 
 def prepare_engine(
     bot: "Bot", preference: str, *, expected_engine_id: str | None = None,
+    configure_preview: bool = False,
 ) -> str | None:
-    """Escolhe e confirma o motor. Em simulação, informa a opção sem clicar.
+    """Escolhe e confirma o motor. A prévia explícita pode alterar a seleção no formulário.
 
     Retorna o nome confirmado, inclusive quando o jogo já selecionou o padrão.
     Em falhas lança EngineSelectionError (order_aircraft interrompe a compra).
@@ -376,7 +377,7 @@ def prepare_engine(
     log.info("Motorização para a próxima compra: %s (%s).", choice.label, mode)
     if expected_engine_id is not None and before.selected_engine_id == choice.value:
         return choice.label
-    if bot.dry_run:
+    if bot.dry_run and not configure_preview:
         log.info("[SIMULAÇÃO] Selecionaria o motor %s sem alterar o jogo.", choice.label)
         return choice.label
     if not bot.js(_SET_ENGINE_JS, before.selector_type, before.selector_id, choice.value):

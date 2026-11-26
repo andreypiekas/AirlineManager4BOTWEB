@@ -22,6 +22,7 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from math import isfinite
 from typing import TYPE_CHECKING, Callable, Optional
@@ -1932,13 +1933,35 @@ def order_aircraft(
     hub_id: str | int | None = None,
     *, expected_checkout_cost: int | None = None,
     expected_engine_id: str | None = None,
+    investment_plan: Mapping | None = None,
 ) -> bool:
     """Order using the native #hubSelection value when a delivery ID is supplied.
 
     For a planned purchase, the caller must resolve the plan's airport ID via
     verified delivery-hub mapping before passing it as ``hub_id``. The two
-    native selectors use distinct identifier namespaces.
+    native selectors use distinct identifier namespaces. In dry-run, an
+    explicit investment plan stages the exact cabin and checks the displayed
+    quote. The prepared quote does not authorize submission.
     """
+    configuration = None
+    if investment_plan is not None:
+        from investment_journal import _validated_plan
+
+        try:
+            if not isinstance(investment_plan, Mapping):
+                raise ValueError("Plano de investimento inválido.")
+            plan = _validated_plan(investment_plan)
+            if (plan["kind"] != "aircraft" or plan["model_id"] != str(choice.id)
+                    or "configuration_yjf" not in plan or "checkout_cost" not in plan
+                    or expected_checkout_cost is not None or expected_engine_id is not None):
+                raise ValueError("A prévia exige um único plano com modelo, cabine e preço da rota.")
+        except ValueError as exc:
+            log_market.warning("Prévia de %s bloqueada: %s", choice.name, exc)
+            return False
+        configuration = plan["configuration_yjf"]
+        expected_checkout_cost = plan["checkout_cost"]
+        expected_engine_id = plan["engine_id"]
+
     plan_requested = any(value is not None for value in (
         hub_id, expected_checkout_cost, expected_engine_id,
     ))
@@ -1974,12 +1997,31 @@ def order_aircraft(
         from investment_policy import InvestmentPolicy
 
         policy_report = InvestmentPolicy.from_config(bot.config).report()
-        if not policy_report["execution_available"]:
-            log_market.warning(
-                "Encomenda de %s bloqueada pelo gate %s.",
-                choice.name, policy_report["release_gate"],
+        log_market.warning(
+            "Encomenda planejada de %s requer o executor homologado (gate %s).",
+            choice.name, policy_report["release_gate"],
+        )
+        return False
+
+    if configuration is not None:
+        from aircraft_order_preview import preview_aircraft_order
+
+        try:
+            preview = preview_aircraft_order(
+                bot, model_id=str(choice.id), hub_id=hub_id, engine_id=expected_engine_id,
+                configuration_yjf=configuration, expected_checkout_cost=expected_checkout_cost,
             )
+        except Exception as exc:
+            log_market.warning("Prévia de %s não confirmada: %s", choice.name, exc)
             return False
+        seats = "/".join(str(preview["configuration_yjf"][key]) for key in ("y", "j", "f"))
+        summary = (
+            f"1 x {choice.name} | {preview['engine']} | base {preview['delivery_hub_id']} | "
+            f"{seats} assentos Y/J/F | ${fmt(preview['displayed_cost_usd'])}"
+        )
+        log_market.info("[PRÉVIA NATIVA] %s. Preço exibido antes do pedido.", summary)
+        bot.notify(f"🧪 Prévia nativa: {esc(summary)}.", silent=True, category="simulation")
+        return True
 
     detail = bot.ajax(f"ac_orders.php?mode=detail&id={choice.id}&charter=0", "acModel")
     # O motor só pode ser escolhido antes de encomendar. Uma preferência
@@ -2106,17 +2148,6 @@ def order_aircraft(
         log_market.info("[SIMULAÇÃO] Encomendaria %s.", summary)
         bot.notify(f"🧪 SIMULAÇÃO: encomendaria {esc(summary)}.", silent=True, category="simulation")
         return True
-
-    if plan_requested and not bot.dry_run:
-        from investment_policy import InvestmentPolicy
-
-        policy_report = InvestmentPolicy.from_config(bot.config).report()
-        if not policy_report["execution_available"]:
-            log_market.warning(
-                "Encomenda de %s cancelada pelo gate %s durante a validação.",
-                choice.name, policy_report["release_gate"],
-            )
-            return False
 
     before = bot.read_money()
     RouteRegistry().invalidate_fleet_coverage()
