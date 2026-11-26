@@ -130,7 +130,7 @@ def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
     monkeypatch.setattr(RouteRegistry, "next_flight_read_ids", lambda self, **kwargs: [])
 
     def collect(bot, *, identity_evidence):
-        assert bot.events == ["roster"]
+        assert bot.events == (["early_quote", "roster"] if observation_only and reroute_ready else ["roster"])
         bot.events.append("native_lists")
         identity_evidence["parked_ids"] = frozenset({"102"})
         bot.close_popup()
@@ -142,15 +142,25 @@ def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
         assert refresh_demand is observation_only
         bot.events.append("quote")
 
+    def early_quote(bot):
+        assert bot.events == []
+        assert bot.screen == "routes_main.php"
+        bot.events.append("early_quote")
+        bot.screen = "preview"
+        return True
+
     monkeypatch.setattr(fleet_commitment_observations, "collect_fleet_commitment_observations", collect)
     monkeypatch.setattr(parked_route_quote, "collect_parked_route_quote", quote)
+    monkeypatch.setattr(parked_route_quote, "collect_parked_quote_before_audit", early_quote)
     bot = Bot()
     fleet.manage_fleet(bot, observation_only=observation_only)
     assert registry.snapshot()["current_fleet_coverage_verified"] is verified
     assert bot.roster_reads == (2 if reroute_ready else 1)
     expected = ["roster", "native_lists"]
+    if observation_only and reroute_ready:
+        expected.insert(0, "early_quote")
     if reroute_ready:
         expected.append("roster")
-        if collect_quotes or observation_only:
+        if collect_quotes and not observation_only:
             expected.append("quote")
     assert bot.events == expected

@@ -781,12 +781,12 @@ class Bot:
         self._next_event = None
         for action, label in (
             (self._read_mode, "ler o modo de jogo"),
-            (lambda: operational_evidence.update(demand_events=collect_demand_events(self)),
-             "consultar eventos de demanda"),
-            (lambda: collect_owned_hub_demand(self, country_windows=country_windows), "coletar demanda dos hubs"),
             (lambda: self._check_market(observation_only=True), "consultar combustível / CO₂"),
             (lambda: operational_evidence.update(pending=manage_fleet(self, observation_only=True)),
              "conferir frota e prévia de rota"),
+            (lambda: operational_evidence.update(demand_events=collect_demand_events(self)),
+             "consultar eventos de demanda"),
+            (lambda: collect_owned_hub_demand(self, country_windows=country_windows), "coletar demanda dos hubs"),
             (lambda: operational_evidence.update(hubs=collect_hub_operations(self)),
              "conferir operações dos hubs"),
             (lambda: collect_owned_route_details(self), "coletar detalhes das rotas"),

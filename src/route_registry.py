@@ -218,6 +218,8 @@ class RouteRegistry:
     def confirm_fleet_coverage(self, rows: object, *, before_counts: dict,
                                after_counts: object, audited_pages: list[int], native_identity_evidence=None) -> bool:
         """Correlate the roster before and after the paginated route audit."""
+        from fleet_commitment_observations import native_identity_proof
+
         # An observation can certify coverage only once. Revoking an existing
         # proof must never allow a previous audit to certify it again.
         with _LOCK:
@@ -235,10 +237,6 @@ class RouteRegistry:
         if aircraft is None or any(type(row["route_id"]) is not int or not row["registration"].strip()
                                    for row in aircraft.values()):
             return False
-        routed = {identity: row for identity, row in aircraft.items() if row["route_id"] > 0}
-        if (len(routed) != before_counts["routes"]
-                or len({row["route_id"] for row in routed.values()}) != len(routed)):
-            return False
         with _LOCK:
             data = _state(self.path)
             roster = data.get("game_roster")
@@ -249,6 +247,14 @@ class RouteRegistry:
             started_at = roster.get("observed_at")
             if (roster.get("aircraft") != aircraft or type(started_at) is not int
                     or not 0 <= now - started_at <= _LIVE_ROSTER_MAX_AGE):
+                return False
+            proof = native_identity_proof(native_identity_evidence, aircraft, before_counts,
+                                          started_at=started_at, now=now)
+            maintenance_with_route = set(proof.get("maintenance_with_map_route", ()))
+            routed = {identity: row for identity, row in aircraft.items()
+                      if row["route_id"] > 0 and identity not in maintenance_with_route}
+            if (len(routed) != before_counts["routes"]
+                    or len({row["route_id"] for row in routed.values()}) != len(routed)):
                 return False
             coverage = data.get("scan_coverage")
             coverage = coverage if isinstance(coverage, dict) else {}
@@ -297,15 +303,12 @@ class RouteRegistry:
                         and type(last_scan.get("at")) is int and last_scan["at"] >= started_at
                         and last_scan.get("visible") != 0)):
                     return False
-            from fleet_commitment_observations import native_identity_proof
-
             data["fleet_coverage"] = {
                 "source": "game_roster_and_route_audit", "observed_at": now,
                 "roster_observed_at": started_at, "audit_run_id": run_id,
                 "roster_observation_id": roster["observation_id"],
                 "total": total, **{key: before_counts[key] for key in keys},
-                **native_identity_proof(native_identity_evidence, aircraft, before_counts,
-                                        started_at=started_at, now=now),
+                **proof,
             }
             roster["coverage_finalized"] = True
             self._save(data)
@@ -1104,6 +1107,15 @@ class RouteRegistry:
                 and run.get("roster_observation_id") == roster.get("observation_id")
             ))
         )
+        maintenance_with_route = fleet_coverage.get("maintenance_with_map_route", [])
+        if fleet_verified and (not isinstance(maintenance_with_route, list)
+                or not all(isinstance(identity, str) and identity in roster_entries
+                           and roster_entries[identity]["route_id"] > 0 for identity in maintenance_with_route)
+                or (maintenance_with_route and (fleet_coverage.get("native_identity_status") != "matched"
+                    or len(set(maintenance_with_route)) != len(maintenance_with_route)
+                    or len(maintenance_with_route) > fleet_coverage["pending"]))):
+            fleet_verified = False
+        maintenance_with_route = set(maintenance_with_route) if fleet_verified else set()
         indexed = {str(row.get("aircraft_id")): row for row in rows}
         current_rows = []
         if roster_available:
@@ -1112,18 +1124,22 @@ class RouteRegistry:
                     continue
                 item = deepcopy(indexed.get(identity, {"aircraft_id": identity}))
                 item["registration"] = observed.get("registration") or item.get("registration") or identity
-                item["game_route_id"] = observed.get("route_id")
+                route_id = observed.get("route_id")
+                if identity in maintenance_with_route:
+                    item["pending_game_route_id"] = route_id
+                    route_id = 0
+                item["game_route_id"] = route_id
                 item["route_data_stale"] = (
                     not roster_verified
                     or not isinstance(item.get("last_seen"), (int, float))
                     or not 0 <= time.time() - item["last_seen"] <= 3600
-                    or item.get("observed_route_id") != observed.get("route_id")
+                    or item.get("observed_route_id") != route_id
                 )
-                if observed.get("route_id") == 0:
+                if route_id == 0:
                     item["status"] = "sem_rota_ou_pendente"
                 elif item["route_data_stale"] or not item.get("route_key"):
                     item["status"] = "rota_a_identificar"
-                if item["route_data_stale"] or observed.get("route_id") == 0:
+                if item["route_data_stale"] or route_id == 0:
                     item.pop("origin", None)
                     item.pop("destination", None)
                     item.pop("route_key", None)
@@ -1131,7 +1147,7 @@ class RouteRegistry:
                 for financial_key in ("last_flight", "last_24h"):
                     financial = item.get(financial_key)
                     if (not roster_verified or item["route_data_stale"] or not isinstance(financial, dict)
-                            or financial.get("game_route_id") != observed.get("route_id")
+                            or financial.get("game_route_id") != route_id
                             or financial.get("route_key") != item.get("route_key")
                             or financial.get("route_correlation") != "observed_endpoints"):
                         item.pop(financial_key, None)

@@ -89,7 +89,7 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
             "demand_events": [{"source": "game_route_events", "observed_at": events_observed_at,
                                "reported_count": 0, "events": []}],
         }
-    assert calls == ["session", "company", "mode", "demand_events", "demand", ("market", True), ("fleet", True),
+    assert calls == ["session", "company", "mode", ("market", True), ("fleet", True), "demand_events", "demand",
                      "hub_operations", "route_details", "aircraft_catalog", "delivery_hubs", "finance", "staff", "header",
                      "session", "company"]
     assert worker.notify("test", category="status") is False

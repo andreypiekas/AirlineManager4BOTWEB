@@ -71,10 +71,35 @@ def _read_preview(bot, aircraft_id, sample):
         bot.js("$('#newRouteInfo').hide(); arrId = arguments[0];", previous)
 
 
+def collect_parked_quote_before_audit(bot) -> bool:
+    """Check Parked before paginating or running the general demand rotation."""
+    from fleet_commitment_observations import read_parked_ids
+
+    parked_ids = read_parked_ids(bot)
+    if not parked_ids or bot.stopping:
+        return False
+    bot.open_popup("routes_main.php", "Routes", "nav_routes")
+    return collect_parked_route_quote(bot, parked_ids, refresh_demand=True)
+
+
 def collect_parked_route_quote(bot, parked_ids, *, refresh_demand: bool = False) -> bool:
     """Read at most one preview from verified Parked inventory and owned-hub research."""
-    inventory = HubRegistry().snapshot()
-    if not parked_ids or not inventory.get("hub_catalog_fresh") or bot.stopping:
+    if not parked_ids or bot.stopping:
+        return False
+    registry = HubRegistry()
+    inventory = registry.snapshot()
+    if refresh_demand and not inventory.get("hub_catalog_fresh"):
+        from fleet import _HUB_OPTIONS_JS
+        from game_observations import _stable_read
+
+        bot.ajax("research_main.php", "routeAction")
+        try:
+            registry.record_options(_stable_read(bot, _HUB_OPTIONS_JS))
+            inventory = registry.snapshot()
+        finally:
+            if not bot.stopping:
+                bot.open_popup("routes_main.php", "Routes", "nav_routes")
+    if not inventory.get("hub_catalog_fresh") or bot.stopping:
         return False
     hubs = {hub["id"]: hub.get("code") for hub in inventory["hubs"]}
     aircraft_limit = _PARKED_AIRCRAFT_LIMIT if refresh_demand else 1

@@ -88,6 +88,34 @@ def test_native_identity_proof_is_bound_to_audit_and_observation(tmp_path, monke
     assert reconcile_route_coverage(observation, coverage, now=clock[0])["identity_status"] == "unverified"
 
 
+@pytest.mark.parametrize("maintenance_ids,verified", [(frozenset({"104"}), True), (frozenset(), False)])
+def test_pending_maintenance_can_keep_its_map_route(tmp_path, monkeypatch, maintenance_ids, verified):
+    from research_route_occupancy import FleetRouteOccupancy
+
+    now = 1900000000
+    monkeypatch.setattr(route_registry.time, "time", lambda: now)
+    registry = RouteRegistry(tmp_path / "routes.json")
+    rows = [*game_rows(), {"aircraft_id": "104", "registration": "PP-104", "route_id": 804}]
+    counts = {"routes": 2, "parked": 0, "pending": 2}
+    assert registry.record_game_roster(rows, 4)
+    _audit_roster_routes(registry)
+    evidence = {"observation_id": "b" * 32, "observed_at": now, "observed_until": now,
+                "pending_ids": frozenset({"103", "104"}), "parked_ids": frozenset(),
+                "maintenance_ids": maintenance_ids}
+    assert registry.confirm_fleet_coverage(rows, before_counts=counts, after_counts=counts,
+                                           audited_pages=[1], native_identity_evidence=evidence) is verified
+    report = registry.snapshot()
+    assert report["current_fleet_coverage_verified"] is verified
+    relation = next(row for row in report["current_relations"] if row["aircraft_id"] == "104")
+    if verified:
+        assert relation["game_route_id"] == 0 and relation["pending_game_route_id"] == 804
+        assert relation["status"] == "sem_rota_ou_pendente"
+    else:
+        assert relation["game_route_id"] == 804
+    # A complete fleet partition does not establish endpoints for the retained assignment.
+    assert not FleetRouteOccupancy(report, now).complete
+
+
 def test_correlated_fleet_cannot_reuse_audit_from_same_second(tmp_path, monkeypatch):
     monkeypatch.setattr(route_registry.time, "time", lambda: 1900000000)
     registry = RouteRegistry(tmp_path / "routes.json")

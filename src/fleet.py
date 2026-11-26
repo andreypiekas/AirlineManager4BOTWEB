@@ -674,12 +674,15 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     staged: list[tuple[int, list[dict]]] = []
     staged_ids: set[str] = set()
     restored: Optional[tuple[int, Optional[int], list[dict]]] = None
+    overlap = False
 
     def stage(page: int) -> bool:
+        nonlocal overlap
         if not load(page):
             return False
         page_ids = {row["aircraft_id"] for row in verified_rows}
         if staged_ids.intersection(page_ids):
+            overlap = True
             log.warning("Auditoria paginada: aeronaves repetidas entre páginas do ciclo; "
                         "amostragem descartada por possível deslocamento da frota.")
             staged.clear()
@@ -710,15 +713,25 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
             if attempt_full:
                 log.info("Auditoria integral adiada: %d páginas excedem o limite de 25; "
                          "mantendo cobertura parcial.", total or partial_total)
-        for page in selected_pages:
-            if total is not None and page > total:
-                continue
-            if not stage(page):
-                break
-            if total is None and verified_rows[0].get("scan_has_next") is False:
-                total = page
-                if discover:
+        for attempt in range(2 if full_attempt else 1):
+            if attempt:
+                # Restart from the first selected page with fresh IDs and the
+                # original count, within the same deadline and roster window.
+                log.info("Auditoria paginada: repetindo a varredura após sobreposição de páginas.")
+                staged_ids.clear()
+                total = declared_total
+                overlap = False
+            for page in selected_pages:
+                if total is not None and page > total:
+                    continue
+                if not stage(page):
                     break
+                if total is None and verified_rows[0].get("scan_has_next") is False:
+                    total = page
+                    if discover:
+                        break
+            if not overlap or expired() or getattr(bot, "stopping", False):
+                break
         if (total is not None and len(staged) == total and
                 {page for page, _ in staged} == set(range(1, total + 1))):
             # Reread every page before publishing a full-cycle audit.
@@ -876,8 +889,22 @@ def manage_fleet(bot: "Bot", *, observation_only: bool = False) -> dict | None:
         creation_ready = recover_pending_creation(bot, registry)
         reroute_ready = recover_pending(bot, registry) and creation_ready
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
-    measure_load(bot)
     counters = bot.js(_GAME_FLEET_COUNTS_JS)
+    quoted_early = False
+    if (observation_only and reroute_ready and not bot.stopping and isinstance(counters, dict)
+            and type(counters.get("parked")) is int and counters["parked"] > 0):
+        from parked_route_quote import collect_parked_quote_before_audit
+
+        def quote_parked() -> None:
+            nonlocal quoted_early
+            quoted_early = collect_parked_quote_before_audit(bot)
+
+        bot._guard(quote_parked, "consultar primeiro a prévia de rota em Parked")
+        if bot.stopping:
+            return None
+        bot.open_popup("routes_main.php", "Routes", "nav_routes")
+        counters = bot.js(_GAME_FLEET_COUNTS_JS)
+    measure_load(bot)
     roster_verified = False
     if (isinstance(counters, dict) and all(
             type(counters.get(key)) is int and 0 <= counters[key] <= 50000
@@ -926,7 +953,7 @@ def manage_fleet(bot: "Bot", *, observation_only: bool = False) -> dict | None:
             log_fleet.info("Inventário e auditoria de rotas: cobertura %s.",
                            "integral correlacionada" if confirmed else "parcial")
     parked_ids = native_identity_evidence.get("parked_ids")
-    if (reroute_ready and parked_ids and not bot.stopping
+    if (reroute_ready and parked_ids and not quoted_early and not bot.stopping
             and (observation_only or cfg.get_bool("options", "collect_market_observations"))):
         from parked_route_quote import collect_parked_route_quote
 

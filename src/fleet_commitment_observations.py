@@ -160,6 +160,15 @@ def _fleet_list(value):
             "unclassified": len(rows) - maintenance - delivery}
 
 
+def read_parked_ids(bot):
+    """Read the native Parked list from Routes without relying on Pending or Hangar."""
+    from game_observations import _stable_read
+
+    bot.ajax("fleet_parked.php", "routesContainer")
+    value = _stable_read(bot, PARKED_FLEET_JS)
+    return frozenset(row["id"] for row in value["rows"]) if _fleet_list(value) else None
+
+
 def _pending_counts(value):
     if not isinstance(value, dict):
         return None
@@ -189,11 +198,18 @@ def native_identity_proof(evidence, aircraft, counts, *, started_at, now):
     if not all(isinstance(ids, frozenset) and all(isinstance(identity, str) and _ROW_ID.fullmatch(identity)
                for identity in ids) for ids in (pending, parked)):
         return {}
+    maintenance = evidence.get("maintenance_ids", frozenset())
+    if not isinstance(maintenance, frozenset) or not maintenance <= pending:
+        return {}
     unrouted = {identity for identity, row in aircraft.items() if row["route_id"] == 0}
+    # Maintenance can preserve the map's assignment while the aircraft is
+    # listed only in Pending. The route audit must independently exclude it.
+    pending_with_route = (maintenance & aircraft.keys()) - unrouted
     matched = (len(pending) == counts["pending"] and len(parked) == counts["parked"]
-               and not pending & parked and pending | parked == unrouted)
+               and not pending & parked and pending | parked == unrouted | pending_with_route)
     return {"native_observation_id": observation_id,
-            "native_identity_status": "matched" if matched else "different"}
+            "native_identity_status": "matched" if matched else "different",
+            **({"maintenance_with_map_route": sorted(pending_with_route)} if matched and pending_with_route else {})}
 
 
 def invalidate_observations(path: Path | None = None) -> None:
@@ -321,9 +337,7 @@ def collect_fleet_commitment_observations(bot, *, path=None, identity_evidence=N
         pending = _fleet_list(pending_rows)
         if getattr(bot, "stopping", False):
             return False
-        bot.ajax("fleet_parked.php", "routesContainer")
-        parked_rows = _stable_read(bot, PARKED_FLEET_JS)
-        parked = _fleet_list(parked_rows)
+        parked_ids = read_parked_ids(bot)
     finally:
         bot.close_popup(quiet=True)
     finished = time.time()
@@ -332,12 +346,13 @@ def collect_fleet_commitment_observations(bot, *, path=None, identity_evidence=N
     observation = {"observation_id": uuid.uuid4().hex, "observed_at": int(started), "observed_until": int(finished)}
     paths.write_atomic(path, json.dumps({"source": SOURCE, **observation,
                                         "passenger_hangar": hangar,
-                                        "pending_fleet": pending, "parked_count": parked["total"] if parked else None}))
-    if identity_evidence is not None and pending is not None and parked is not None:
+                                        "pending_fleet": pending,
+                                        "parked_count": len(parked_ids) if parked_ids is not None else None}))
+    if identity_evidence is not None and pending is not None and parked_ids is not None:
         identity_evidence.update(observation, pending_ids=frozenset(row["id"] for row in pending_rows["rows"]),
-                                 parked_ids=frozenset(row["id"] for row in parked_rows["rows"]),
+                                 parked_ids=parked_ids,
                                  maintenance_ids=frozenset(row["id"] for row in pending_rows["rows"]
                                                            if row["status"] == "maintenance"),
                                  unclassified_pending_ids=frozenset(row["id"] for row in pending_rows["rows"]
                                                                     if row["status"] == "unclassified"))
-    return all(value is not None for value in (hangar, pending, parked))
+    return all(value is not None for value in (hangar, pending, parked_ids))

@@ -113,6 +113,9 @@ class FleetRouteOccupancy:
                 complete = False
                 continue
             if route_id == 0:
+                if row.get("pending_game_route_id"):
+                    # Routes omits this assignment while the aircraft is in maintenance.
+                    complete = False
                 continue
             if route_ids[route_id] != 1:
                 complete = False

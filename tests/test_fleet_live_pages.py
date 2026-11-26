@@ -402,6 +402,25 @@ def test_cross_cycle_duplicate_aircraft_cannot_be_full_coverage(tmp_path):
     assert coverage["full_page_coverage_verified"] is False
 
 
+@pytest.mark.parametrize("persistent", [False, True])
+def test_full_audit_retries_an_overlapping_page_from_the_start(tmp_path, persistent):
+    class OverlappingPageBot(LiveRoutesBot):
+        def js(self, script):
+            rows = super().js(script)
+            visits = [page for page, _, _ in self.navigations].count(2)
+            if script == _ROUTE_AUDIT_JS and self.page == 2 and (persistent or visits == 1):
+                rows[0]["aircraft_id"] = "24000100"
+            return rows
+
+    bot = OverlappingPageBot(total_pages=3, native_pager=True)
+    registry = RouteRegistry(tmp_path / "routes.json")
+
+    assert audit_routes_live_pages(bot, registry, attempt_full=True) == ([] if persistent else [1, 2, 3])
+    assert [page for page, _, _ in bot.navigations][:3] == [2, 1, 2]
+    assert bot.page == 1
+    assert (registry.snapshot()["last_verified_full_audit"] is not None) is (not persistent)
+
+
 def test_changed_route_count_resets_stale_page_coverage(tmp_path):
     bot = LiveRoutesBot(total_pages=3)
     registry = RouteRegistry(tmp_path / "routes.json")
