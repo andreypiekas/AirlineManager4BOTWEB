@@ -34,9 +34,11 @@ class Bot:
         self.events = []
         self.arrival = 17
         self.form_reads = iter([FORM, FORM])
+        self.preview_aircraft = iter([AIRCRAFT])
 
     def ajax(self, url, target, *, timeout):
-        assert (url, target, timeout) == (f"new_route_info.php?id={AIRCRAFT}&airportId={DESTINATION}&mode=res",
+        self.preview_id = next(self.preview_aircraft)
+        assert (url, target, timeout) == (f"new_route_info.php?id={self.preview_id}&airportId={DESTINATION}&mode=res",
                                          "newRouteInfo", 8)
         assert self.arrival == int(DESTINATION)
         self.events.append("preview")
@@ -50,10 +52,10 @@ class Bot:
 
     def js(self, script, *args):
         if script == _FORM:
-            assert args == (AIRCRAFT, DESTINATION)
+            assert args == (self.preview_id, DESTINATION)
             return next(self.form_reads)
         if script == _FARES:
-            assert self.events == ["detail", "preview", "autoprice"]
+            assert self.events[-3:] == ["detail", "preview", "autoprice"]
             return [{"value": price, "disabled": False} for price in ("4103", "8425", "12998")]
         if script.startswith("const previous"):
             previous, self.arrival = self.arrival, args[0]
@@ -78,7 +80,7 @@ def setup(monkeypatch):
     monkeypatch.setattr(collector, "HubExpansionRegistry", lambda: SimpleNamespace(demand_research_snapshot=demand))
     monkeypatch.setattr(collector, "parked_specs", lambda bot, aircraft: {"id": ORIGIN, "range": "14,500"})
 
-    def sample(bot, *reads, refresh_demand=False):
+    def sample(bot, *reads, refresh_demand=False, parked_ids=(AIRCRAFT,)):
         replies = iter(reads)
 
         def detail(owner, origin, dest):
@@ -87,7 +89,7 @@ def setup(monkeypatch):
             return next(replies)
 
         monkeypatch.setattr(collector, "research_details", detail)
-        return collector.collect_parked_route_quote(bot, {AIRCRAFT}, refresh_demand=refresh_demand)
+        return collector.collect_parked_route_quote(bot, parked_ids, refresh_demand=refresh_demand)
 
     return sample
 
@@ -139,6 +141,51 @@ def test_loss_of_eligibility_discards_preview(setup):
     assert not setup(bot, DETAIL, {**DETAIL, "capable_aircraft_ids": ["102"]})
     assert bot.events[-2:] == ["close", "detail"]
     assert native_route_quotes.native_route_quotes(bot) == []
+
+
+@pytest.mark.parametrize("first_origin_matches", [True, False])
+def test_observation_records_only_the_next_aircraft_after_an_invalid_preview(setup, first_origin_matches):
+    bot = Bot()
+    bot.preview_aircraft = iter([AIRCRAFT, "102"])
+    next_detail = {**DETAIL, "capable_aircraft_ids": ["102"]}
+    if first_origin_matches:
+        bot.form_reads = iter([FORM, FORM, FORM, FORM])
+        reads = (DETAIL, next_detail, next_detail, next_detail)
+        first_actions = ["detail", "preview", "autoprice", "close", "detail"]
+    else:
+        bot.form_reads = iter([{**FORM, "codes": ["FUK", "SHA"]}, FORM, FORM])
+        reads = (DETAIL, next_detail, next_detail)
+        first_actions = ["detail", "preview", "close"]
+
+    assert setup(bot, *reads, refresh_demand=True, parked_ids={"103", "102", AIRCRAFT})
+    assert bot.events == first_actions + ["detail", "preview", "autoprice", "close", "detail"]
+    assert bot.arrival == 17
+    saved, = native_route_quotes.native_route_quotes(bot)
+    assert saved["aircraft_id"] == "102" and saved["purchase_eligible"] is False
+
+
+@pytest.mark.parametrize(("refresh_demand", "expected"), [(True, ["101", "102", "103"]), (False, ["101"])])
+def test_candidate_limit_and_one_refresh_per_origin(setup, monkeypatch, refresh_demand, expected):
+    bot = Bot()
+    checked, actions = [], []
+
+    def specs(owner, aircraft):
+        checked.append(aircraft)
+        return {"id": ORIGIN, "range": "14,500"}
+
+    def refresh(owner, *, origin_id):
+        actions.append(("research", origin_id))
+        raise TimeoutException()
+
+    bot.open_popup = lambda url, title, selector: actions.append(("reopen", url))
+    monkeypatch.setattr(collector, "parked_specs", specs)
+    monkeypatch.setattr(collector, "HubExpansionRegistry", lambda: SimpleNamespace(
+        demand_research_snapshot=lambda origins: {"samples": []}))
+    monkeypatch.setattr("game_observations.collect_owned_hub_demand", refresh)
+
+    assert not setup(bot, refresh_demand=refresh_demand, parked_ids={"103", AIRCRAFT, "102", "104"})
+    assert checked == expected
+    assert actions == ([("research", ORIGIN), ("reopen", "routes_main.php")] if refresh_demand else [])
 
 
 def test_observation_refreshes_the_owned_parked_origin_without_cached_samples(setup, monkeypatch):

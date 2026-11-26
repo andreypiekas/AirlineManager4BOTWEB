@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3, recuperação da coleta de uma prévia em Parked (G0)
+
+- Às 02h31 BRT, o Chrome mostrou o Black Friday Cargo Rush ativo, com +50% de demanda mundial de carga e 3 dias e 17h28 restantes. O fim continuava previsto para 29/11 às 20h BRT. Routes mostrou 221 rotas, 224 aeronaves, `Parked (0)` e `Pending (3)`. A consulta foi somente leitura. A evidência de BCN–SHA obtida durante o evento segue como referência de `Daily`, tarifa, taxa e combustível.
+- Em `--observe-game`, o coletor verifica até três aeronaves pelos IDs nativos de Parked em ordem crescente e até três destinos por aeronave. Registra no máximo uma prévia, com a mesma aeronave em `#capAc` nas duas leituras do detalhe. Pode consultar a próxima aeronave após origem divergente, perda de elegibilidade ou falha de leitura. Quando faltam amostras, a consulta complementar de demanda ocorre no máximo uma vez por origem por ciclo. Após a consulta complementar, o coletor tenta reabrir Routes para a próxima leitura. O fluxo legado continua examinando uma aeronave.
+- Os testes locais reproduziram a origem discordante, a perda de elegibilidade e o timeout na pesquisa. A homologação ao vivo depende do login manual no Chrome persistente do worker. A validação completa da demanda e dos custos incrementais depende de uma nova amostra com aeronave elegível fora do evento. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+- A suíte Windows passou com 2.368 testes e um pulado. Passaram os 19 testes focados, os 16 testes de instalação no Ubuntu via WSL, Ruff e `git diff --check`.
+
 ## 2026-11-26 — Autonomia Total A2, conciliação da pesquisa de GRU para a Argentina (G0)
 
 - No Chrome autenticado, `Fleet → Research` com GRU (ID nativo 2947), Argentina, `Any airport` e pista mínima de 1.000 ft devolveu 50 linhas com teto de 20.000 km. A menor distância nativa era 1.722,199 km (GRU–EZE) e a maior, 3.930,879 km (GRU–USH). O teto de 1.723 km devolveu 19 linhas, de GRU–IGR a GRU–EZE. GRU–EZE apareceu nas duas leituras. A união conciliou os 68 IDs de aeroporto do seletor nativo, sem IDs faltantes ou excedentes. A pista mais curta da união tinha 3.934 ft. A prova se aplica a esse recorte manual.
