@@ -27,6 +27,7 @@ ROSTER_SOURCE = "game_passenger_order_list"
 ROSTER_MAX_AGE_SECONDS = 900
 _MAX_EPOCH = 253402300799  # End of year 9999 (UTC).
 _UNSET = object()
+_ADVERTISED_FIELDS = ("range", "capacity", "price")
 
 # The native passenger list has one container, sequential listSection IDs and
 # model-specific order-detail handlers. Read every card without changing sort.
@@ -41,8 +42,13 @@ return cards.map(el => {
   const matches = Array.from((el.getAttribute('onclick') || '').matchAll(
     /Ajax\('ac_orders\.php\?mode=detail&id=([1-9][0-9]{0,11})&charter=0','acModel',/g));
   const name = el.querySelector('b');
+  const advertised = {};
+  for (const field of ['range', 'capacity', 'price']) {
+    if (el.dataset && el.dataset[field] !== undefined) advertised[field] = el.dataset[field];
+  }
   return {id: matches.length === 1 ? matches[0][1] : null,
-          name: name ? name.textContent.trim() : null, section: el.id};
+          name: name ? name.textContent.trim() : null, section: el.id,
+          ...(Object.keys(advertised).length ? {advertised} : {})};
 });
 """
 
@@ -80,7 +86,17 @@ def _roster_models(rows: object) -> list[dict] | None:
             return None
         ids.add(identity[0])
         sections.add(section)
-        models.append({"id": identity[0], "name": identity[1], "section": section})
+        model = {"id": identity[0], "name": identity[1], "section": section}
+        advertised = row.get("advertised")
+        if isinstance(advertised, dict):
+            metrics = {}
+            for field in _ADVERTISED_FIELDS:
+                value = advertised.get(field)
+                if type(value) in (int, str) and re.fullmatch(r"[1-9][0-9]{0,11}", str(value)):
+                    metrics[field] = int(value)
+            if metrics:
+                model["advertised"] = metrics
+        models.append(model)
     if sections != {f"listSection{i}" for i in range(1, len(models) + 1)}:
         return None
     return models
@@ -265,6 +281,22 @@ class EngineCatalogRegistry:
             state["roster"] = {"source": ROSTER_SOURCE, "observed_at": stamp, "models": models}
             self._write(state)
         return models
+
+    def advertised_market(self, *, now: int | float) -> dict | None:
+        """Expose fresh native list readings as planning inputs for a read-only worker."""
+        with _LOCK:
+            roster = self._load().get("roster")
+        if not isinstance(roster, dict) or roster.get("source") != ROSTER_SOURCE:
+            return None
+        stamp = _timestamp(roster.get("observed_at"))
+        if stamp is None or _timestamp(now) is None or not 0 <= now - stamp <= ROSTER_MAX_AGE_SECONDS:
+            return None
+        rows = _roster_models(roster.get("models")) or []
+        models = [{"id": row["id"], "name": row["name"], **row["advertised"]}
+                  for row in rows if "advertised" in row]
+        if not models:
+            return None
+        return {"observed_at": stamp, "models": models, "listing_source": ROSTER_SOURCE}
 
     def next_models(self, models: list[dict], *, per_cycle: int = 2) -> list[dict]:
         """Rotate even after failures; never schedule conflicting model identities."""

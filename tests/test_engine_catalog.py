@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import economy
 import engine_catalog
 import engine_selection
 import game_observations
@@ -81,6 +82,7 @@ const card = (id, section, name) => ({
 });
 const list = {offsetParent: {}, children: [card('12','listSection1','Cessna 172'),
   card('5','listSection2','A320-200')], querySelector: () => null};
+list.children[0].dataset = {range: '1289', capacity: '3', price: '43200'};
 globalThis.document = {querySelectorAll: () => [list]};
 globalThis.window = {jQuery: {active: 0}};
 """
@@ -98,9 +100,39 @@ console.log(JSON.stringify({original, busy, hidden, wrong: read()}));
     result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
     reads = json.loads(result.stdout)
-    assert reads["original"] == _roster(("12", "Cessna 172"), ("5", "A320-200"))
+    expected = _roster(("12", "Cessna 172"), ("5", "A320-200"))
+    expected[0]["advertised"] = {"range": "1289", "capacity": "3", "price": "43200"}
+    assert reads["original"] == expected
     assert reads["busy"] is None and reads["hidden"] is None
     assert reads["wrong"][1]["id"] is None
+
+
+def test_native_order_list_supplies_research_without_a_purchase_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine_catalog.time, "time", lambda: NOW)
+    market_path = tmp_path / "market.json"
+    registry = engine_catalog.EngineCatalogRegistry(tmp_path / "engines.json")
+    monkeypatch.setattr(economy, "market_file", lambda: market_path)
+    monkeypatch.setattr(engine_catalog, "EngineCatalogRegistry", lambda: registry)
+    rows = _roster(("11", "A320"), ("22", "B737"), ("33", "A380"))
+    rows[0]["advertised"] = {"range": "6150", "capacity": "180", "price": "6000000"}
+    rows[1]["advertised"] = {"range": "5600", "capacity": True, "price": "$8,000,000"}
+    assert registry.record_roster(rows, observed_at=NOW - 0.25)
+
+    evidence = economy.load_market_evidence(now=NOW)
+    assert evidence == {"source": "bot_aircraft_market_cache", "listing_source": engine_catalog.ROSTER_SOURCE,
+                        "observed_at": NOW - 0.25, "fresh": True, "engine_prices_verified": False,
+                        "models": [{"id": "11", "name": "A320", "range": 6150, "capacity": 180, "price": 6000000},
+                                   {"id": "22", "name": "B737", "range": 5600}]}
+    assert economy.load_market() == []
+    assert economy.load_market_evidence(now=NOW - 0.5)["fresh"] is False
+    assert economy.load_market_evidence(now=NOW + 900)["fresh"] is False
+
+    legacy = [{"id": "11", "name": "A320", "price": 5500000, "score": 0.1}]
+    economy.save_market(legacy)
+    assert economy.load_market() == legacy
+    assert economy.load_market_evidence(now=NOW)["models"] == legacy
+    registry.revoke_roster()
+    assert registry.advertised_market(now=NOW) is None
 
 
 def test_engine_collection_limit_is_configurable_and_clamped():

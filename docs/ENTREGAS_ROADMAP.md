@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A1–A3, catálogo nativo no worker de observação (G0)
+
+- `--observe-game` passou a consultar detalhes independentes de rota, o catálogo de aeronaves e motores e a cobertura do seletor de hubs de entrega. A coleta ocorre depois da prévia de Parked e antes da confirmação final de sessão. A consulta de variantes continua limitada a dois modelos por ciclo.
+- O planejamento pode usar alcance, capacidade e preço anunciado de uma lista nativa de passageiros validada em duas leituras. A evidência mantém o horário original, a fonte `game_passenger_order_list`, a validade de 15 minutos e `engine_prices_verified=false`. Uma lista nativa válida tem precedência se o cache de mercado legado estiver indisponível ou for mais antigo. O observador usa o registro do catálogo e preserva o cache legado de mercado.
+- O Chrome autenticado mostrou 311 cartões no catálogo de passageiros, todos com ID nativo único e atributos de alcance, capacidade e preço válidos. O A380-800 aparecia com 14.500 km, 600 lugares e preço anunciado de US$ 215.629.503. Routes mostrou 221 rotas, 224 aeronaves, `Parked (0)` e três em manutenção. A última confirmação do painel Events em 25/11 às 23h58 BRT mostrava o Black Friday Cargo Rush ativo, com término previsto em 29/11 às 20h BRT. A consulta foi somente leitura.
+- A suíte Windows passou com 2.344 testes e um pulado. Os 16 testes do instalador passaram no Ubuntu via WSL. Ruff e `git diff --check` passaram.
+- A validação no Chrome confirma os campos da lista nativa. A captura autenticada no perfil do worker, o preço final por variante e hub, a base permanente, a demanda residual fora do evento e o custo incremental completo do mesmo candidato seguem pendentes. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A2, pesquisa delimitada por país em Guarulhos (G0)
 
 - Na pesquisa nativa de GRU (2.947), o filtro mundial com teto de 2.000 km e pista mínima de 1.000 ft mostrou 50 destinos. Com Argentina e `Any airport`, a consulta mostrou 31, dos quais GRU–RES, GRU–CNQ, GRU–AOL, GRU–FMA, GRU–PSS e GRU–IGR estavam ausentes da lista mundial. Com o teto de 1.500 km, apareceram 11 destinos argentinos, com máximo exibido de 1.463 km. Mantido o teto de 2.000 km e elevada a pista mínima para 10.000 ft, quatro destinos argentinos passaram, com pista mínima retornada de 10.499 ft. A leitura de GRU–RES confirmou 1.339 km e `Daily` Y/J/F de 530/344/72 com aviso de evento. É uma descoberta de cobertura, sem evidência de aeronave apta ou demanda residual para a rota.

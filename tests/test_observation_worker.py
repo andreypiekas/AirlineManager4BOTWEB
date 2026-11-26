@@ -48,6 +48,9 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
 
     monkeypatch.setattr(bot_module, "manage_fleet", fleet)
     monkeypatch.setattr("game_observations.collect_owned_hub_demand", read("demand"))
+    monkeypatch.setattr("game_observations.collect_owned_route_details", read("route_details"))
+    monkeypatch.setattr("game_observations.collect_aircraft_engine_catalog", read("aircraft_catalog"))
+    monkeypatch.setattr("owned_delivery_coverage.collect_owned_delivery_coverage", read("delivery_hubs"))
     monkeypatch.setattr("finance_observations.collect_finance_observations", read("finance"))
     monkeypatch.setattr("staff_observations.collect_staff_observations", read("staff"))
     capture = Mock()
@@ -63,7 +66,8 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
         started_at, confirmed_at = capture.call_args.kwargs["read_only_window"]
         assert 0 < started_at <= confirmed_at
     assert calls == ["session", "company", "mode", "demand", ("market", True), ("fleet", True),
-                     "finance", "staff", "header", "session", "company"]
+                     "route_details", "aircraft_catalog", "delivery_hubs", "finance", "staff", "header",
+                     "session", "company"]
     assert worker.notify("test", category="status") is False
     assert not worker.telegram.mock_calls
     assert not worker.config.mock_calls
