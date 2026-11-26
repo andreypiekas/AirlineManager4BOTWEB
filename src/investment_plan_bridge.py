@@ -10,7 +10,7 @@ import time
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 
-from investment_journal import _validated_plan
+from investment_journal import _validated_plan, canonical_configuration_yjf
 from portfolio_planner import _audited_a3_cash
 
 
@@ -38,7 +38,7 @@ def build_aircraft_intent_plan(
     """Create a durable-plan payload for the portfolio winner, without approval.
 
     Requires the exact A3 economics record used for the global A4 winner. The
-    journal reserves total capex, whereas checkout quotes only aircraft+engine.
+    journal reserves total capex. Checkout must quote the exact cabin and engine.
     ``hub_id`` remains the research airport ID. A5 must independently resolve
     the native delivery option at checkout.
     """
@@ -60,10 +60,13 @@ def build_aircraft_intent_plan(
         raise ValueError("Identidade da oportunidade ausente.")
     if identity.get("stopover_id") is not None:
         raise ValueError("Execucao de itinerario com escala ainda nao homologada.")
+    configuration = canonical_configuration_yjf(evaluation.get("configuration_yjf"))
+    if (configuration is None
+            or canonical_configuration_yjf(winner.get("configuration_yjf")) != configuration):
+        raise ValueError("Configuração Y/J/F ausente, inválida ou divergente da avaliação A3.")
     if (any(winner.get(field) != evaluation.get(field) for field in
             ("plan_id", "profile_id", "snapshot_id", "economics_id"))
             or winner.get("identity") != identity
-            or winner.get("configuration_yjf") != evaluation.get("configuration_yjf")
             or any(not isinstance(identity.get(field), str) for field in _IDENTITY)):
         raise ValueError("Oportunidade difere da avaliacao A3 selecionada.")
 
@@ -88,6 +91,7 @@ def build_aircraft_intent_plan(
         "kind": "aircraft", "plan_id": winner["plan_id"],
         "profile_id": winner["profile_id"], "snapshot_id": winner["snapshot_id"],
         **{field: identity[field] for field in _IDENTITY},
+        "configuration_yjf": configuration,
         "estimated_cost": investment,
         "checkout_cost": capital_costs["aircraft_cost"] + capital_costs["engine_delta_cost"],
         "capital_costs": capital_costs,

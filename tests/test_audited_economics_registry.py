@@ -11,8 +11,11 @@ import paths
 import investment_plan_bridge
 from audited_economics_registry import AuditedEconomicsRegistry
 from expansion_economics import rank_expansion_economics
+from investment_executor import SimulatedAircraftGateway
+from opportunity_models import fingerprint_snapshot
 from portfolio_planner import compare_audited_portfolio
 from test_expansion_economics import NOW, fixture
+from test_investment_executor import checkout, executor
 from test_investment_policy_web import auth, request, served
 
 
@@ -104,6 +107,58 @@ def test_record_is_idempotent_and_recomputes_economics_from_evidence(registry):
     assert result["evaluations"][0]["components"]["daily_net_profit_estimate"] == 6656.5
     assert result["read_only"] is True
     assert len(json.loads(registry.path.read_text(encoding="utf-8"))["cases"]) == 1
+
+
+def test_a3_a4_selects_hub_route_and_cabin_for_simulated_a5_purchase(registry, tmp_path):
+    snapshot, candidate, inputs = fixture()
+    snapshot["hubs"].append({**snapshot["hubs"][0], "id": "321"})
+    snapshot_id = snapshot["snapshot_id"] = fingerprint_snapshot(snapshot)
+    for evidence in (candidate, candidate["route"], candidate["aircraft"], candidate["financial"],
+                     *candidate["costs"].values(), *inputs.values()):
+        evidence["snapshot_id"] = snapshot_id
+
+    other_candidate, other_inputs = deepcopy((candidate, inputs))
+    other_candidate["hub"]["id"] = "321"
+    other_identity = {"hub_id": "321", "origin_id": "321", "destination_id": "654"}
+    for evidence in (other_candidate["route"], other_candidate["financial"],
+                     *other_candidate["costs"].values(), *other_inputs.values()):
+        evidence.update({key: value for key, value in other_identity.items() if key in evidence})
+    other_candidate["route"]["demand_remaining"] = 55
+    other_candidate["financial"]["value"] = 2920.62
+    other_inputs["daily_demand"]["value"] = {"y": 40, "j": 10, "f": 5}
+    other_inputs["layout"]["value"] = {"y": 40, "j": 8, "f": 4}
+    other_inputs["fuel_units_per_day"]["value"] = 1000
+    assert registry.record(snapshot, other_candidate, other_inputs, now=NOW)
+    assert registry.record(snapshot, candidate, inputs, now=NOW)
+    assert registry.record_portfolio_evidence(
+        snapshot_id=snapshot_id, controls=controls(snapshot_id), hub_capacity={},
+        fleet_coverage_verified=True, research_coverage_verified=True,
+        commitments_verified=True,
+    )
+
+    portfolio = compare_registry(registry)
+    assert portfolio["eligible_count"] == 2, portfolio["blocking_reasons"]
+    evaluations = registry.snapshot(now=NOW)["evaluations"]
+    selected = next(row for row in evaluations if row["identity"]["hub_id"] == "123")
+    plan = investment_plan_bridge.build_aircraft_intent_plan(portfolio, selected, now=NOW)
+    seats = {"y": 100, "j": 20, "f": 10}
+    assert plan["configuration_yjf"] == seats
+
+    observation = checkout(snapshot_id=snapshot_id, model_id="789", engine_selected_id="engine-02",
+                           checkout_cost=10500, price_includes_configuration=True,
+                           configuration_yjf=seats)
+    observation["delivery_hub_mapping"].update(snapshot_id=snapshot_id, pairs=[
+        {"airport_id": "123", "delivery_hub_id": "800001"},
+        {"airport_id": "321", "delivery_hub_id": "800002"},
+    ])
+    gateway = SimulatedAircraftGateway(observation, order_store=tmp_path / "orders.sqlite3")
+    worker = executor(tmp_path)
+    result = worker.run(plan, gateway, reserve=5000)
+    assert result["state"] == "CONFIRMED", result
+    assert gateway.submit_calls == 1
+    receipt = worker.journal.history(result["intent_key"])[-1]["evidence"]
+    assert (receipt["hub_id"], receipt["origin_id"], receipt["destination_id"]) == ("123", "123", "456")
+    assert (receipt["model_id"], receipt["engine_id"], receipt["configuration_yjf"]) == ("789", "engine-02", seats)
 
 
 def test_worker_capture_supersedes_previous_cases_without_certifying_empty_coverage(registry):
@@ -672,6 +727,7 @@ def test_authenticated_a4_api_exposes_read_only_a5_purchase_plan_preview(
     assert result["purchase_plan_blockers"] == []
     assert result["purchase_plan_preview"]["plan_id"] == portfolio["best"]["plan_id"]
     assert result["purchase_plan_preview"]["engine_id"] == "engine-02"
+    assert result["purchase_plan_preview"]["configuration_yjf"] == portfolio["best"]["configuration_yjf"]
     assert result["purchase_plan_preview"]["estimated_cost"] == 10700
     assert result["purchase_plan_preview"]["checkout_cost"] == 10500
     assert result["read_only"] is True

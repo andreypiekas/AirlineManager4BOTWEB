@@ -10,6 +10,7 @@ from investment_preflight import validate_aircraft_preflight
 
 
 NOW = 1_800_000_000
+CONFIGURATION = {"y": 90, "j": 10, "f": 0}
 
 
 def approved_intent(tmp_path):
@@ -18,6 +19,7 @@ def approved_intent(tmp_path):
         "kind": "aircraft", "plan_id": "a320-hub123", "snapshot_id": "sha256:" + "c" * 64,
         "hub_id": "123", "origin_id": "123", "destination_id": "456",
         "model_id": "A320", "engine_id": "motor-2", "estimated_cost": 10000,
+        "configuration_yjf": CONFIGURATION.copy(),
     })
     assert ledger.transition(intent["intent_key"], "PROPOSED", "APPROVED")
     return ledger.get(intent["intent_key"])
@@ -42,6 +44,7 @@ def checkout(intent, **overrides):
         "engine_available": True, "route_available": True,
         "route_feasible": True, "demand_verified": True,
         "capacity_available": True, "price_includes_engine": True,
+        "configuration_yjf": CONFIGURATION.copy(), "price_includes_configuration": True,
         "checkout_cost": intent["estimated_cost"], "cash": 25000,
         "commitments_verified": True, "pending_commitments": 2000,
     }
@@ -62,6 +65,10 @@ def test_complete_preflight_is_only_read_only_provisional_evidence(tmp_path):
 
 
 @pytest.mark.parametrize(("changes", "reason"), [
+    ({"configuration_yjf": None}, "configuracao_checkout_nao_verificada"),
+    ({"configuration_yjf": {"y": 90, "j": 10, "f": False}}, "configuracao_checkout_nao_verificada"),
+    ({"configuration_yjf": {"y": 92, "j": 9, "f": 0}}, "configuracao_checkout_divergente"),
+    ({"price_includes_configuration": False}, "preco_configuracao_nao_confirmado"),
     ({"source": "game_notification"}, "checkout_nao_verificado"),
     ({"session_authenticated": False}, "checkout_nao_verificado"),
     ({"observed_at": NOW - 121}, "checkout_desatualizado"),

@@ -372,6 +372,32 @@ def test_invalid_order_proof_remains_unknown_and_cannot_be_swapped_between_modes
             InvestmentPolicy(enabled=True))
 
 
+def test_different_ordered_cabin_remains_unknown_after_restart(tmp_path):
+    class CheckoutChangedAfterPreflight(SimulatedAircraftGateway):
+        def submit_order(self, intent):
+            self.checkout["configuration_yjf"] = {"y": 102, "j": 9, "f": 1}
+            super().submit_order(intent)
+
+    seats = {"y": 100, "j": 10, "f": 1}
+    candidate = plan(configuration_yjf=seats)
+    observation = checkout(configuration_yjf=seats, price_includes_configuration=True)
+    order_store = tmp_path / "orders.sqlite3"
+    gateway = CheckoutChangedAfterPreflight(observation, order_store=order_store)
+    result = executor(tmp_path).run(candidate, gateway)
+    assert result["state"] == "UNKNOWN"
+    assert gateway.submit_calls == 1
+
+    restarted = executor(tmp_path)
+    order_reader = SimulatedAircraftGateway(observation, order_store=order_store)
+    key = result["intent_key"]
+    stored = restarted.journal.get(key)
+    assert stored["configuration_yjf"] == seats
+    assert order_reader.read_order_result(stored)["configuration_yjf"] != seats
+    assert restarted.reconcile(key, order_reader)["state"] == "UNKNOWN"
+    assert restarted.run(candidate, order_reader)["state"] == "UNKNOWN"
+    assert order_reader.submit_calls == 0
+
+
 def test_atomic_profile_guard_prevents_parallel_executors_but_isolates_profiles(tmp_path):
     journal = executor(tmp_path).journal
 

@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from uuid import uuid4
 
-from investment_journal import InvestmentJournal
+from investment_journal import InvestmentJournal, canonical_configuration_yjf
 from investment_policy import InvestmentPolicy
 from investment_preflight import validate_aircraft_preflight
 
@@ -67,6 +67,9 @@ class SimulatedAircraftGateway:
             "profile_id", "intent_key", "hub_id", "origin_id", "destination_id",
             "model_id", "engine_id",
         )}
+        configuration = canonical_configuration_yjf(self.checkout.get("configuration_yjf"))
+        if configuration is not None:
+            record["configuration_yjf"] = configuration
         record["purchase_id"] = self.purchase_id
         if key in self._submitted or key in self._rejected:
             raise AssertionError("A mesma intenção foi enviada duas vezes na simulação.")
@@ -124,6 +127,8 @@ class SimulatedAircraftGateway:
             "model_id": record["model_id"], "engine_id": record["engine_id"],
         }
         if order is not None:
+            if "configuration_yjf" in order:
+                evidence["configuration_yjf"] = order["configuration_yjf"]
             return {**evidence, "source": "simulation_order_list",
                     "purchase_id": order["purchase_id"]}
         return {**evidence, "source": "simulation_order_rejection",

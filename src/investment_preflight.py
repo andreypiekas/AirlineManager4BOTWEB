@@ -11,6 +11,8 @@ import re
 import time
 from collections.abc import Mapping
 
+from investment_journal import canonical_configuration_yjf
+
 
 MAX_CHECKOUT_AGE_SECONDS = 120
 _NATIVE_ID = re.compile(r"[1-9][0-9]{0,13}")
@@ -122,6 +124,20 @@ def validate_aircraft_preflight(
             reasons.append(reason)
 
     reasons.extend(_delivery_hub_reasons(intent, observation, now=now, simulation=simulation))
+
+    # Old synthetic fixtures can still be replayed. Audited plans and any game
+    # checkout need both the exact layout and the price for that configuration.
+    if not simulation or "configuration_yjf" in intent or "capital_costs" in intent:
+        planned_cabin = canonical_configuration_yjf(intent.get("configuration_yjf"))
+        checkout_cabin = canonical_configuration_yjf(observation.get("configuration_yjf"))
+        if planned_cabin is None:
+            reasons.append("configuracao_planejada_nao_verificada")
+        elif checkout_cabin is None:
+            reasons.append("configuracao_checkout_nao_verificada")
+        elif checkout_cabin != planned_cabin:
+            reasons.append("configuracao_checkout_divergente")
+        if observation.get("price_includes_configuration") is not True:
+            reasons.append("preco_configuracao_nao_confirmado")
 
     for check, reason in (
         ("hub_selection_confirmed", "hub_nao_confirmado"),

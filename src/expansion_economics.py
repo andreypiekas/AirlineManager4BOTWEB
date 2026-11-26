@@ -174,7 +174,9 @@ def _scenario(
     co2_cost = sum((sold[name] * emissions[name] for name in _CLASSES), Decimal(0)) * co2_price / 1000
     haircut = revenue * margin
     known_costs_profit_ceiling = revenue - fuel_cost - co2_cost - known_recurring - haircut
-    profit = known_costs_profit_ceiling if complete else None
+    reported_profit = _money(known_costs_profit_ceiling) if complete else None
+    # The ranker reproduces the return from the published daily profit in cents.
+    profit = Decimal(str(reported_profit)) if reported_profit is not None else None
     payback = investment / profit if profit is not None and profit > 0 and investment is not None else None
     roi = profit * 36500 / investment if profit is not None and investment is not None and investment > 0 else None
     return {
@@ -186,7 +188,7 @@ def _scenario(
         "known_recurring_cost_per_day": _money(known_recurring),
         "safety_margin_per_day": _money(haircut),
         "profit_ceiling_before_unknown_costs": _money(known_costs_profit_ceiling),
-        "daily_net_profit_estimate": _money(profit),
+        "daily_net_profit_estimate": reported_profit,
         "payback_days": _money(payback),
         "roi_365d_percent": _money(roi),
     }

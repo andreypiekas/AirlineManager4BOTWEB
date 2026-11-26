@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3/A4/A5, compra vinculada ao hub, à rota e à cabine (G0)
+
+- O teste de ponta a ponta parte de uma captura sintética com dois hubs próprios e uma rota candidata por hub. A3 calcula demanda residual por classe, cabine e economia. A4 compara os candidatos elegíveis e seleciona o investimento vencedor. A5 usa o hub de entrega, a rota, o modelo, o motor e os 100/20/10 assentos Y/J/F dessa mesma decisão. O executor simulado confirma uma encomenda para essa combinação e o painel exibe os assentos na prévia.
+- A intenção de compra preserva os assentos das três classes. O pré-voo exige correspondência exata da cabine e do preço total com configuração incluída. Uma intenção auditada antiga sem cabine precisa ser refeita. Se a evidência da encomenda divergir da cabine aprovada, o journal conserva o estado `UNKNOWN` após reinício e bloqueia novo envio até a conciliação. Um cenário de teste cobre a alteração da cabine entre o pré-voo e o envio simulado.
+- A3 passou a calcular ROI e prazo de retorno sobre o lucro diário já arredondado para centavos. A4 usa o mesmo valor para conferir a consistência do candidato. A simulação dos dois hubs cobre o caso que antes podia excluir uma rota válida pela diferença de arredondamento.
+- O modo somente leitura coleta evidências. A compra planejada permanece em G0 com `execution_available=false`. Falta integrar a configuração nativa de assentos ao executor do worker e homologar a trilha de ponta a ponta. A compra legada usa configuração independente. A homologação requer cobertura autenticada das rotas candidatas, o vínculo entre hub de entrega e aeroporto, a prova do preço final com a cabine e um registro independente para conciliar pedido, matrícula, valor, hub, modelo, motor e assentos.
+- A suíte Windows passou com **2.419 testes aprovados e um pulado**, com exclusão de `tests/test_instalacao_linux.py`. Ruff e `git diff --check` passaram. A revisão usou simulação local e não enviou pedidos ao jogo. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A1/A5, conciliação do débito do PP-254 (G0)
 
 - No Chrome autenticado, a tela nativa `Order → A380-800 → Configuration` cotou **US$ 216.079.503** com **RR Trent 972**, entrega em **Los Angeles (LAX)** e cabine **443/42/24 Y/J/F**, idêntica à ficha do PP-254. A opção nativa de entrega tem ID `24323457`. O registro anterior em `Pending` e a chegada em `Parked` confirmam Los Angeles como destino de entrega. A coincidência exata com o débito `A/C Purchased`, observado às 08h11–08h16 BRT, sustenta a associação ao PP-254. O lançamento é genérico e a ficha da frota não mostra o comprovante original.

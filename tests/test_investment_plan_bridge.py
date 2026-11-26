@@ -6,7 +6,7 @@ from copy import deepcopy
 
 import pytest
 
-from investment_journal import InvestmentJournal
+from investment_journal import IntentConflict, InvestmentJournal
 from investment_executor import SimulatedAircraftGateway, SimulatedInvestmentExecutor
 from investment_plan_bridge import build_aircraft_intent_plan
 from investment_policy import InvestmentPolicy
@@ -21,6 +21,7 @@ IDENTITY = {"hub_id": "123", "origin_id": "123", "destination_id": "456",
 COSTS = {"aircraft_cost": 10000.0, "engine_delta_cost": 500.0,
          "hub_cost": 0.0, "route_fee": 100.0, "hangar_cost": 50.0,
          "other_fees": 50.0, "total_investment": 10700.0}
+CONFIGURATION = {"y": 80, "j": 8, "f": 3}
 
 
 def reports():
@@ -39,7 +40,7 @@ def reports():
         "evidence_confidence": "provenance_complete", "excluded_costs": [],
         "plan_id": "plan-1", "economics_id": "economics-1",
         "profile_id": "principal", "snapshot_id": SNAPSHOT,
-        "identity": IDENTITY.copy(), "configuration_yjf": {"y": 100, "j": 0, "f": 0},
+        "identity": IDENTITY.copy(), "configuration_yjf": CONFIGURATION.copy(),
         "capital_costs": COSTS.copy(), "cash_after_purchase": 37300,
         "cash_required_reserve": 5000, "observed_at_oldest": NOW - 30,
         "provenance": provenance,
@@ -62,6 +63,7 @@ def test_bridge_preserves_total_exposure_and_exact_checkout_through_restart(tmp_
     assert plan["estimated_cost"] == 10700
     assert plan["checkout_cost"] == 10500
     assert plan["capital_costs"]["route_fee"] == 100
+    assert plan["configuration_yjf"] == CONFIGURATION
 
     database = tmp_path / "journal.sqlite3"
     ledger = InvestmentJournal(database, profile_id="principal")
@@ -71,6 +73,9 @@ def test_bridge_preserves_total_exposure_and_exact_checkout_through_restart(tmp_
     stored = InvestmentJournal(database, profile_id="principal").get(intent["intent_key"])
     assert stored["estimated_cost"] == 10700
     assert stored["checkout_cost"] == 10500
+    assert stored["configuration_yjf"] == CONFIGURATION
+    with pytest.raises(IntentConflict):
+        ledger.register({**plan, "configuration_yjf": {"y": 82, "j": 7, "f": 3}})
     assert ledger.budget_exposure_since(0) == 10700
 
     observation = {
@@ -89,10 +94,15 @@ def test_bridge_preserves_total_exposure_and_exact_checkout_through_restart(tmp_
         "engine_available": True, "route_available": True,
         "route_feasible": True, "demand_verified": True,
         "capacity_available": True, "price_includes_engine": True,
+        "configuration_yjf": CONFIGURATION.copy(), "price_includes_configuration": True,
         "checkout_cost": 10500, "cash": 20000,
         "commitments_verified": True, "pending_commitments": 2000,
     }
     assert validate_aircraft_preflight(stored, observation, reserve=5000, now=NOW)["ready"]
+    old_intent = {key: value for key, value in stored.items() if key != "configuration_yjf"}
+    assert validate_aircraft_preflight(old_intent, observation, now=NOW)["reasons"] == [
+        "configuracao_planejada_nao_verificada",
+    ]
     observation["checkout_cost"] = 10000
     assert "preco_divergente" in validate_aircraft_preflight(
         stored, observation, reserve=5000, now=NOW)["reasons"]
@@ -106,6 +116,7 @@ def test_bridge_preserves_total_exposure_and_exact_checkout_through_restart(tmp_
     lambda p, e: p.update(status="inconclusivo"),
     lambda p, e: p.update(blocking_reasons=["cobertura_incompleta"]),
     lambda p, e: p["best"].update(economics_id="outro"),
+    lambda p, e: p["best"]["configuration_yjf"].update(j=0),
     lambda p, e: p["best"].update(investment=10500),
     lambda p, e: e.update(status="blocked"),
     lambda p, e: e["capital_costs"].update(engine_delta_cost=1000),
@@ -124,6 +135,15 @@ def test_bridge_rejects_expired_evidence():
     portfolio, evaluation = reports()
     with pytest.raises(ValueError):
         build_aircraft_intent_plan(portfolio, evaluation, now=NOW + 90000)
+
+
+@pytest.mark.parametrize("invalid", [None, {}, {"y": 0, "j": 0, "f": 0},
+                                    {"y": 80, "j": 8.0, "f": 3}])
+def test_bridge_rejects_invalid_layout_even_when_rank_and_evaluation_agree(invalid):
+    portfolio, evaluation = reports()
+    portfolio["best"]["configuration_yjf"] = evaluation["configuration_yjf"] = invalid
+    with pytest.raises(ValueError, match="Configuração Y/J/F"):
+        build_aircraft_intent_plan(portfolio, evaluation, now=NOW)
 
 
 def test_full_exposure_governs_simulated_acquisition_limits(tmp_path):
@@ -145,6 +165,7 @@ def test_full_exposure_governs_simulated_acquisition_limits(tmp_path):
         "engine_available": True, "route_available": True,
         "route_feasible": True, "demand_verified": True,
         "capacity_available": True, "price_includes_engine": True,
+        "configuration_yjf": CONFIGURATION.copy(), "price_includes_configuration": True,
         "checkout_cost": 10500, "cash": 20000,
         "commitments_verified": True, "pending_commitments": 2000,
     }
@@ -153,7 +174,7 @@ def test_full_exposure_governs_simulated_acquisition_limits(tmp_path):
     policy = InvestmentPolicy(enabled=True, mode="autonomous", auto_buy_aircraft=True,
                               max_single_investment=10600, max_daily_spend=20000,
                               max_acquisitions_per_day=2, max_cycle_spend=20000)
-    gateway = SimulatedAircraftGateway(checkout)
+    gateway = SimulatedAircraftGateway(checkout, order_store=tmp_path / "orders.sqlite3")
     assert "limite_por_compra" in SimulatedInvestmentExecutor(journal, policy).run(
         plan, gateway)["reasons"]
     assert gateway.submit_calls == 0
@@ -168,10 +189,20 @@ def test_full_exposure_governs_simulated_acquisition_limits(tmp_path):
     assert gateway.submit_calls == 0
 
     gateway.checkout["cash"] = 20000
+    gateway.checkout["configuration_yjf"] = {"y": 106, "j": 0, "f": 0}
+    blocked = executor.run(plan, gateway, reserve=5000)
+    assert blocked["state"] == "APPROVED"
+    assert blocked["reasons"] == ["configuracao_checkout_divergente"]
+    assert gateway.submit_calls == 0
+
+    gateway.checkout["configuration_yjf"] = CONFIGURATION.copy()
     confirmed = executor.run(plan, gateway, reserve=5000)
     assert confirmed["state"] == "CONFIRMED"
     assert journal.budget_exposure_since(0) == 10700
     assert gateway.submit_calls == 1
+    intent = journal.get(confirmed["intent_key"])
+    assert gateway.read_order_result(intent)["configuration_yjf"] == CONFIGURATION
+    assert journal.history(intent["intent_key"])[-1]["evidence"]["configuration_yjf"] == CONFIGURATION
 
     second = {**plan, "plan_id": "plan-2", "destination_id": "789"}
     second_gateway = SimulatedAircraftGateway({**checkout, "destination_id": "789"})

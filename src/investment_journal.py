@@ -97,6 +97,16 @@ def _process_is_running(pid: object) -> bool:
     return True
 
 
+def canonical_configuration_yjf(value: object) -> dict[str, int] | None:
+    """Validate the exact passenger cabin shape shared by plans and game evidence."""
+    classes = ("y", "j", "f")
+    if (not isinstance(value, Mapping) or value.keys() != set(classes)
+            or any(type(value[name]) is not int or value[name] < 0 for name in classes)
+            or not any(value.values())):
+        return None
+    return {name: value[name] for name in classes}
+
+
 def _validated_plan(plan: Mapping) -> dict:
     plan_id = plan.get("plan_id")
     snapshot_id = plan.get("snapshot_id")
@@ -122,6 +132,11 @@ def _validated_plan(plan: Mapping) -> dict:
             raise ValueError("Modelo, motor, hub e rota da aeronave exigem IDs reais.")
         target.update(origin_id=origin_id, destination_id=destination_id,
                       model_id=model_id, engine_id=engine_id)
+        if "configuration_yjf" in plan:
+            configuration = canonical_configuration_yjf(plan["configuration_yjf"])
+            if configuration is None:
+                raise ValueError("Configuração Y/J/F inválida na intenção de compra.")
+            target["configuration_yjf"] = configuration
 
     if "capital_costs" in plan or "checkout_cost" in plan:
         components = plan.get("capital_costs")
@@ -358,6 +373,8 @@ class InvestmentJournal:
                 "order_absent", "refusal_code",
             ) if name in confirmation} if next_state in ("CONFIRMED", "FAILED")
                 and confirmation is not None else None)
+            if next_state == "CONFIRMED" and "configuration_yjf" in plan:
+                public_evidence["configuration_yjf"] = plan["configuration_yjf"]
             self._event(conn, intent_key, expected, next_state, stamp, public_evidence)
         return True
 
@@ -383,6 +400,10 @@ class InvestmentJournal:
             return (evidence.get("source") == source
                     and evidence.get("before_owned") is False
                     and evidence.get("after_owned") is True)
+        if ("configuration_yjf" in plan
+                and canonical_configuration_yjf(evidence.get("configuration_yjf"))
+                != plan["configuration_yjf"]):
+            return False
         source = "simulation_order_list" if self.simulation else "game_order_list"
         return evidence.get("source") == source and _game_id(evidence.get("purchase_id"))
 

@@ -3358,6 +3358,9 @@ function renderPurchasePlanPreview(audited, hubs) {
     addHubMetric(identityGrid, "Hub selecionado", hubLabel);
     addHubMetric(identityGrid, "Rota exata", exactValue(candidate.origin_id) +
       " ↔ " + exactValue(candidate.destination_id));
+    const seats = ["y", "j", "f"].map(key => candidate.configuration_yjf?.[key]);
+    addHubMetric(identityGrid, "Configuração Y/J/F", seats.every(Number.isInteger)
+      ? seats.join(" / ") : tr("Sem dados"));
 
     addHubMetric(costsGrid, "Custo no checkout", hubMoney(candidate.checkout_cost));
     addHubMetric(costsGrid, "Custo da aeronave", hubMoney(capitalCosts.aircraft_cost));

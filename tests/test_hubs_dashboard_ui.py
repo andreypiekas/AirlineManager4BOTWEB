@@ -989,6 +989,7 @@ assert.match(details.children[4].textContent, /Combined stress ×1.2 \/ 1.2 \/ 0
 report.purchase_plan_preview = {
   hub_id:'1', model_id:'A380-800 <model>', engine_id:'Trent XWB <variant>',
   origin_id:'AAA', destination_id:'BBB', checkout_cost:9200,
+  configuration_yjf:{y:443, j:42, f:24},
   estimated_cost:10500,
   capital_costs:{total_investment:10500, aircraft_cost:9000,
     engine_delta_cost:200, route_fee:300, hangar_cost:400,
@@ -1007,6 +1008,7 @@ assert.equal(previewMetrics['Exact model'], 'A380-800 <model>');
 assert.equal(previewMetrics['Exact engine'], 'Trent XWB <variant>');
 assert.equal(previewMetrics['Selected hub'], 'AAA · Alpha · 1');
 assert.equal(previewMetrics['Exact route'], 'AAA ↔ BBB');
+assert.equal(previewMetrics['Y/J/F configuration'], '443 / 42 / 24');
 assert.equal(previewMetrics['Checkout cost'], '$9200');
 assert.equal(previewMetrics['Total investment'], '$10500');
 
