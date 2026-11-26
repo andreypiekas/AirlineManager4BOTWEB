@@ -1378,6 +1378,18 @@ def search_routes(bot: "Bot", hub_id: str, max_distance: int, min_runway: int, *
         f"research_main.php?mode=search&rwy={min_runway}&dist={max_distance}&depId={hub_id}&arr=0&arrId=0&charter=0",
         "resResult",
     )
+    candidates = read_route_candidates(bot)
+    if persist_demand and candidates:
+        samples = [{"arr_id": item.arr_id, "distance": item.distance,
+                    "y": item.y, "j": item.j, "f": item.f,
+                    "event_demand_boosted": item.event_demand_boosted} for item in candidates]
+        count = HubExpansionRegistry().record_demand(hub_id, samples)
+        log.info("Pesquisa de rotas: %d amostras de demanda persistidas para hub %s.", count, hub_id)
+    return candidates
+
+
+def read_route_candidates(bot: "Bot") -> list[RouteCandidate]:
+    """Parse the native result list after a search has loaded."""
     candidates = []
     for row in bot.js(_CANDIDATES_JS) or []:
         if not row.get("arr"):
@@ -1391,12 +1403,6 @@ def search_routes(bot: "Bot", hub_id: str, max_distance: int, min_runway: int, *
             to_int(row["y"]) or 0, to_int(row["j"]) or 0, to_int(row["f"]) or 0, to_int(row["rwy"]) or 0,
             code_from_candidate(row), event_demand_boosted=row.get("event_demand_boosted") is True,
         ))
-    if persist_demand and candidates:
-        samples = [{"arr_id": item.arr_id, "distance": item.distance,
-                    "y": item.y, "j": item.j, "f": item.f,
-                    "event_demand_boosted": item.event_demand_boosted} for item in candidates]
-        count = HubExpansionRegistry().record_demand(hub_id, samples)
-        log.info("Pesquisa de rotas: %d amostras de demanda persistidas para hub %s.", count, hub_id)
     return candidates
 
 

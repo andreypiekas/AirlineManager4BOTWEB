@@ -371,7 +371,9 @@ def test_demand_script_keeps_missing_attributes_visible_to_validator():
 const attrs = {onclick: 'route_research_route.php?dep=2926&arr=3139',
                'data-distance': '1992.763', 'data-yclass': '120',
                'data-jclass': '106', 'data-fclass': '40', 'data-rwy': '5013'};
-const row = {getAttribute: name => attrs[name] ?? null, querySelector: () => null,
+const row = {getAttribute: name => attrs[name] ?? null,
+             querySelector: selector => selector.includes('span:nth-of-type') ?
+               {textContent: 'Brazil, São Luís'} : null,
              dataset: {distance: '1992.763', yclass: '120', jclass: '106', fclass: '40', rwy: '5013'}};
 const result = {querySelector: () => null,
                 querySelectorAll: () => [row]};
@@ -393,11 +395,55 @@ console.log(JSON.stringify({valid, boosted, missing, ordinaryCandidate, boostedC
     data = json.loads(response.stdout)
     assert data["valid"] == [{"dep_id": "2926", "arr_id": "3139", "distance": "1992.763",
                               "y": "120", "j": "106", "f": "40", "runway": "5013",
-                              "event_demand_boosted": None}]
+                              "event_demand_boosted": None, "destination_country": "Brazil"}]
     assert data["boosted"][0]["event_demand_boosted"] is True
     assert data["missing"][0]["y"] is None
     assert data["ordinaryCandidate"]["event_demand_boosted"] is False
     assert data["boostedCandidate"]["event_demand_boosted"] is True
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="Node.js indisponível")
+def test_native_country_search_waits_for_airport_selector_and_clears_old_results():
+    js = r"""
+const args = ['2947', 2000, 1000, 'Argentina'];
+const selected = [];
+const actions = [];
+const controls = {
+  'select#hubSelect': {
+    value: '2926', options: [{value: '2947'}],
+    dispatchEvent: event => selected.push(['hub', event.type])
+  },
+  'input#maxDist': {value: '5000'},
+  'input#rwyLength': {value: '0'},
+  'select#arrSelector': {
+    value: '0', options: [{textContent: 'Argentina', value: 'Argentina'}],
+    dispatchEvent: event => selected.push(['country', event.type])
+  },
+  '#resResult': {replaceChildren: () => actions.push('clear')},
+  'button#resSearch': {form: null, click: () => actions.push('search')}
+};
+globalThis.document = {querySelector: () => ({querySelector: selector => controls[selector]})};
+globalThis.window = {jQuery: {active: 1}};
+const prepare = new Function(process.argv[1]);
+const start = new Function(process.argv[2]);
+const country = prepare(...args);
+const busy = start(...args);
+window.jQuery.active = 0;
+const noAirportSelector = start(...args);
+controls['select#citySelectArr'] = {value: '2850'};
+const specificAirport = start(...args);
+controls['select#citySelectArr'].value = '0';
+const ready = start(...args);
+console.log(JSON.stringify({country, selected, busy, noAirportSelector, specificAirport, ready, actions}));
+"""
+    result = subprocess.run(["node", "-e", js, game_observations._PREPARE_COUNTRY_SEARCH_JS,
+                             game_observations._START_COUNTRY_SEARCH_JS],
+                            capture_output=True, text=True, check=True, timeout=8)
+    assert json.loads(result.stdout) == {
+        "country": "Argentina", "selected": [["hub", "change"], ["country", "change"]],
+        "busy": False, "noAirportSelector": False, "specificAirport": False, "ready": True,
+        "actions": ["clear", "search"],
+    }
 
 
 def test_price_collection_requires_identical_correlated_reads(tmp_path, monkeypatch):
@@ -902,9 +948,11 @@ def test_search_keeps_event_warning_when_followup_dom_read_loses_it(tmp_path, mo
     assert samples[0]["event_demand_boosted"] is True
 
 
-@pytest.mark.parametrize("bad_origin", [False, True])
-def test_saturated_planning_search_reads_shorter_window_and_keeps_coverage_partial(
-        tmp_path, monkeypatch, bad_origin):
+@pytest.mark.parametrize(("window_type", "bad_result"), [
+    ("distance", None), ("distance", "origin"), ("country", None), ("country", "country"),
+])
+def test_saturated_planning_search_reads_second_window_and_keeps_coverage_partial(
+        tmp_path, monkeypatch, window_type, bad_result):
     registry = HubExpansionRegistry(tmp_path / "expansion.json")
     monkeypatch.setattr(game_observations, "HubExpansionRegistry", lambda: registry)
     monkeypatch.setattr(game_observations, "HubRegistry", lambda: HubRegistry(tmp_path / "hubs.json"))
@@ -918,23 +966,30 @@ def test_saturated_planning_search_reads_shorter_window_and_keeps_coverage_parti
     shorter = RouteCandidate("3200", "SHORT", 1750, 90, 10, 0, 6600, event_demand_boosted=True)
     rows = []
 
-    def search(_bot, origin, distance, runway, *, persist_demand):
-        requests.append((origin, distance, runway, persist_demand))
-        window = results if distance == 6000 else [shorter, results[0]]
-        dep_id = "2950" if len(requests) == 2 and bad_origin else origin
+    def prepare_rows(window, *, extra=False):
+        dep_id = "2950" if extra and bad_result == "origin" else "2926"
+        country = "Uruguay" if extra and bad_result == "country" else "Argentina"
         rows[:] = [{"dep_id": dep_id, "arr_id": item.arr_id, "distance": str(item.distance),
                     "y": str(item.y), "j": str(item.j), "f": str(item.f),
                     "runway": str(item.runway),
-                    "event_demand_boosted": distance == 1901 and item.arr_id == "3100"}
+                    "destination_country": country if window_type == "country" else None,
+                    "event_demand_boosted": extra and item.arr_id == "3100"}
                    for item in window]
         return window
 
+    def search(_bot, origin, distance, runway, *, persist_demand):
+        requests.append((origin, distance, runway, persist_demand))
+        extra = len(requests) == 2
+        return prepare_rows([shorter, results[0]] if extra else results, extra=extra)
+
     monkeypatch.setattr(fleet, "search_routes", search)
+    monkeypatch.setattr(fleet, "read_route_candidates", lambda _bot: [shorter, results[0]])
     monkeypatch.setattr(game_observations, "_stable_read", lambda *_args, **_kwargs: (
         rows, first_at if len(requests) == 1 else second_at))
 
     class Bot:
         stopping = False
+        driver = object()
 
         class config:
             @staticmethod
@@ -954,18 +1009,33 @@ def test_saturated_planning_search_reads_shorter_window_and_keeps_coverage_parti
         def ajax(self, *_args):
             pass
 
-        def js(self, script):
-            assert script == _HUB_OPTIONS_JS
-            return [{"id": "2926", "text": "XAP - Chapecó", "code": "XAP"}]
+        def js(self, script, *args):
+            if script == _HUB_OPTIONS_JS:
+                return [{"id": "2926", "text": "XAP - Chapecó", "code": "XAP"}]
+            assert window_type == "country"
+            if script == game_observations._PREPARE_COUNTRY_SEARCH_JS:
+                assert args == ("2926", 6000, 5000, "Argentina")
+                return "Argentina"
+            assert script == game_observations._START_COUNTRY_SEARCH_JS
+            assert args == ("2926", 6000, 5000, "Argentina")
+            requests.append(args)
+            prepare_rows([shorter, results[0]], extra=True)
+            return True
 
-    assert game_observations.collect_owned_hub_demand(Bot()) == (50 if bad_origin else 51)
-    assert requests == [("2926", 6000, 5000, False), ("2926", 1901, 5000, False)]
+        def wait_loaded(self, target, *, timeout):
+            assert (target, timeout) == ("resResult", 8)
+            return "New route search result"
+
+    assert game_observations.collect_owned_hub_demand(Bot()) == (50 if bad_result else 51)
+    second = (("2926", 6000, 5000, "Argentina") if window_type == "country"
+              else ("2926", 1901, 5000, False))
+    assert requests == [("2926", 6000, 5000, False), second]
     snapshot = registry.demand_research_snapshot({"2926"}, now=now)
     assert snapshot["coverage"] == "partial"
     stored = {row["destination_id"]: row for row in snapshot["samples"]}
     assert stored["3100"]["observed_at"] == first_at
-    assert stored["3100"].get("event_demand_boosted", False) is (not bad_origin)
-    if bad_origin:
+    assert stored["3100"].get("event_demand_boosted", False) is (not bad_result)
+    if bad_result:
         assert "3200" not in stored
     else:
         assert stored["3200"]["observed_at"] == second_at

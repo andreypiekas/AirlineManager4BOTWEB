@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2, pesquisa delimitada por país em Guarulhos (G0)
+
+- Na pesquisa nativa de GRU (2.947), o filtro mundial com teto de 2.000 km e pista mínima de 1.000 ft mostrou 50 destinos. Com Argentina e `Any airport`, a consulta mostrou 31, dos quais GRU–RES, GRU–CNQ, GRU–AOL, GRU–FMA, GRU–PSS e GRU–IGR estavam ausentes da lista mundial. Com o teto de 1.500 km, apareceram 11 destinos argentinos, com máximo exibido de 1.463 km. Mantido o teto de 2.000 km e elevada a pista mínima para 10.000 ft, quatro destinos argentinos passaram, com pista mínima retornada de 10.499 ft. A leitura de GRU–RES confirmou 1.339 km e `Daily` Y/J/F de 530/344/72 com aviso de evento. É uma descoberta de cobertura, sem evidência de aeronave apta ou demanda residual para a rota.
+- O coletor passou a usar, na rodada configurada de um hub próprio com lista saturada, uma segunda consulta pelo país do destino mais próximo da primeira lista. Usa o seletor nativo com `Any airport`, limpa o resultado anterior e exige origem, país, distância e pista coerentes com a consulta. Os destinos inéditos preservam o horário da respectiva leitura. As rodadas amplas e externas seguem com janela adicional por distância. Todos os resultados mantêm cobertura parcial.
+- A suíte Windows executada sem o instalador Linux passou com 2.342 testes e um pulado. Após o ajuste final dos controles nativos, a suíte focada passou com 57 testes. Os 16 testes do instalador passaram no Ubuntu via WSL. Ruff e `git diff --check` passaram.
+- Às 23h58 BRT de 25/11, a consulta em Chrome confirmou o Black Friday Cargo Rush ativo até 29/11 às 20h BRT. Às 00h06 de 26/11, o painel Routes mostrou `Parked (0)` e `Pending (3)`. Os três A380-800 estavam em `Pending maintenance`. A lista do mapa exibia PP-253 como `PARKED`, mas seu detalhe atualizado mostrou o voo XP-224 em GRU–FUK via HOR, com partida e chegada em andamento. O painel Routes e o detalhe atualizado prevalecem ao determinar disponibilidade. A validação foi somente leitura. O checkout não continha sessão persistente do worker para homologar a nova consulta.
+
 ## 2026-11-25 — Autonomia Total A3/A9, entrega em Guarulhos e consumo na prévia (G0)
 
 - Às 23h43 BRT, o A380-800 PP-253 (ID 25.943.576) saiu de Pending e apareceu em Parked em Guarulhos com 409/41/36 lugares Y/J/F. O detalhe de GRU–SYD (2.947 → 3.870, 13.368 km) mostrou uma única opção em `#capAc`, vinculada ao PP-253, com zero aeronaves na rota. `Daily` era 910/942/171, com aviso de evento e sem `Today`.

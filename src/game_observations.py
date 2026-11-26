@@ -8,6 +8,7 @@ import threading
 import time
 
 from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.support.ui import WebDriverWait
 
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
@@ -229,17 +230,62 @@ if (!result || result.querySelector('img[src*="loader"]') ||
 if (typeof window !== 'undefined' && window.jQuery && window.jQuery.active > 0) return null;
 const rows = Array.from(result.querySelectorAll('#list .sorter'));
 if (!rows.length || rows.length > 1000) return null;
-return rows.map(el => ({
-  dep_id: ((String(el.getAttribute('onclick') || '').match(/(?:[?&]|\b)dep=(\d+)(?!\d)/) || [])[1]) || null,
-  arr_id: ((String(el.getAttribute('onclick') || '').match(/(?:[?&]|\b)arr=(\d+)(?!\d)/) || [])[1]) || null,
-  distance: el.getAttribute('data-distance'),
-  runway: el.getAttribute('data-rwy'),
-  y: el.getAttribute('data-yclass'),
-  j: el.getAttribute('data-jclass'),
-  f: el.getAttribute('data-fclass'),
-  event_demand_boosted: EVENT_WARNING.test(el.textContent || '') ? true : null
-}));
+return rows.map(el => {
+  const arrival = el.querySelector('.col-6.m-text:first-child > span:nth-of-type(2)')?.textContent.trim();
+  const comma = arrival?.indexOf(', ') ?? -1;
+  return {
+    dep_id: ((String(el.getAttribute('onclick') || '').match(/(?:[?&]|\b)dep=(\d+)(?!\d)/) || [])[1]) || null,
+    arr_id: ((String(el.getAttribute('onclick') || '').match(/(?:[?&]|\b)arr=(\d+)(?!\d)/) || [])[1]) || null,
+    distance: el.getAttribute('data-distance'),
+    runway: el.getAttribute('data-rwy'),
+    y: el.getAttribute('data-yclass'),
+    j: el.getAttribute('data-jclass'),
+    f: el.getAttribute('data-fclass'),
+    event_demand_boosted: EVENT_WARNING.test(el.textContent || '') ? true : null,
+    ...(comma > 0 ? {destination_country: arrival.slice(0, comma)} : {})
+  };
+});
 """.replace("EVENT_WARNING", ROUTE_EVENT_WARNING_JS)
+
+_PREPARE_COUNTRY_SEARCH_JS = """
+const [origin, distance, runway, country] = arguments;
+const panel = document.querySelector('#routeAction');
+if (!panel) return null;
+const hub = panel.querySelector('select#hubSelect');
+const max = panel.querySelector('input#maxDist');
+const min = panel.querySelector('input#rwyLength');
+const arrival = panel.querySelector('select#arrSelector');
+if (!hub || !max || !min || !arrival || [hub, max, min, arrival].some(el => el.disabled)) return null;
+const hubs = Array.from(hub.options).filter(opt => !opt.disabled && opt.value === origin);
+const countries = Array.from(arrival.options).filter(opt =>
+  !opt.disabled && opt.value && opt.value !== '0' && opt.textContent.trim() === country);
+if (hubs.length !== 1 || countries.length !== 1) return null;
+if (hub.value !== origin) {
+  hub.value = origin;
+  hub.dispatchEvent(new Event('change', {bubbles: true}));
+}
+max.value = String(distance);
+min.value = String(runway);
+arrival.value = countries[0].value;
+arrival.dispatchEvent(new Event('change', {bubbles: true}));
+return arrival.value;
+"""
+
+_START_COUNTRY_SEARCH_JS = """
+const [origin, distance, runway, country] = arguments;
+const panel = document.querySelector('#routeAction');
+if (!panel || (window.jQuery && window.jQuery.active > 0)) return false;
+const value = id => panel.querySelector(id)?.value;
+const result = panel.querySelector('#resResult');
+const button = panel.querySelector('button#resSearch');
+if (!result || !button || button.disabled || button.form || value('select#hubSelect') !== origin ||
+    value('input#maxDist') !== String(distance) || value('input#rwyLength') !== String(runway) ||
+    value('select#arrSelector') !== country || value('select#citySelectArr') !== '0') return false;
+// Discard the previous world result before starting the native read-only search.
+result.replaceChildren();
+button.click();
+return true;
+"""
 
 _AIRPORT_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _COUNT = re.compile(r"^[0-9]{1,9}$")
@@ -298,6 +344,9 @@ def _verified_demand(candidates: list, rows: object, origin: str) -> list[dict]:
             return []
         sample = {"arr_id": destination, "distance": distance,
                   "y": counts[0], "j": counts[1], "f": counts[2]}
+        country = raw.get("destination_country")
+        if isinstance(country, str) and 0 < len(country) <= 100 and country == country.strip():
+            sample["destination_country"] = country
         # Keep a positive warning from either correlated DOM read.
         if candidate.event_demand_boosted is True or raw.get("event_demand_boosted") is True:
             sample["event_demand_boosted"] = True
@@ -462,15 +511,32 @@ def collect_external_hub_demand(bot: object) -> int:
 
 
 def _read_hub_demand_window(bot: object, origin: str, distance: int,
-                            runway: int) -> tuple[list[dict], float | None]:
-    from fleet import search_routes
+                            runway: int, *, country: str | None = None) -> tuple[list[dict], float | None]:
+    from fleet import read_route_candidates, search_routes
 
-    candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
+    if country is None:
+        candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
+    else:
+        selected = bot.js(_PREPARE_COUNTRY_SEARCH_JS, origin, distance, runway, country)
+        if not isinstance(selected, str) or selected in ("", "0"):
+            return [], None
+
+        def start_search(_driver):
+            return bot.stopping or bot.js(_START_COUNTRY_SEARCH_JS, origin, distance, runway, selected)
+
+        WebDriverWait(bot.driver, 8).until(start_search)
+        if bot.stopping or not bot.wait_loaded("resResult", timeout=8):
+            return [], None
+        candidates = read_route_candidates(bot)
     read = _stable_read(bot, _VERIFIED_ROUTE_DEMAND_JS, with_timestamp=True)
     if read is None:
         return [], None
     rows, read_at = read
     samples = _verified_demand(candidates, rows, origin)
+    if country is not None and any(sample.get("destination_country") != country
+                                   or sample.get("destination_runway_ft", 0) < runway
+                                   for sample in samples):
+        return [], None
     if any(sample["distance"] > distance + 0.001
            or sample.get("destination_runway_ft", runway) < runway for sample in samples):
         return [], None
@@ -525,15 +591,20 @@ def _collect_hub_demand(bot: object, *, external: bool, origin_id: str | None = 
             log.debug("Pesquisa de demanda do hub %s incompleta ou sem resultados confirmados.", origin)
             return 0
         extra, extra_at = [], None
-        if scope is not None and len(samples) >= _ROUTE_SEARCH_SAMPLE_LIMIT:
-            # Overlap the shortest result at the integer-kilometre boundary.
-            # A second bounded sample can expose omissions without proving coverage.
-            cutoff = math.ceil(min(sample["distance"] for sample in samples))
-            if 300 <= cutoff < distance and not getattr(bot, "stopping", False):
-                try:
+        if (scope is not None and len(samples) >= _ROUTE_SEARCH_SAMPLE_LIMIT
+                and not getattr(bot, "stopping", False)):
+            # Country selection is verified for owned departures. Keep the
+            # overlapping distance window for the broad and custom searches.
+            nearest = min(samples, key=lambda sample: sample["distance"])
+            cutoff = math.ceil(nearest["distance"])
+            country = nearest.get("destination_country") if not external and scope == "configured" else None
+            try:
+                if country:
+                    extra, extra_at = _read_hub_demand_window(bot, origin, distance, runway, country=country)
+                elif 300 <= cutoff < distance:
                     extra, extra_at = _read_hub_demand_window(bot, origin, cutoff, runway)
-                except WebDriverException:
-                    log.debug("A segunda janela de demanda do hub %s foi interrompida.", origin)
+            except WebDriverException:
+                log.debug("A segunda janela de demanda do hub %s foi interrompida.", origin)
         if external:
             # A changed or missing ownership selector invalidates the external
             # classification. Keep the attempt, but discard its observations.
