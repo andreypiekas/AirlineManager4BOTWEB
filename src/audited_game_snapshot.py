@@ -137,7 +137,7 @@ def _catalog_scopes(coverage, now):
 def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                      quotes, cash, cash_at, now, mode=None, mode_at=None,
                      preview_margin=0.10, native_quotes=(), configured_prices=None, policy_values=None,
-                     external_demand=None, operational_reserve=None):
+                     external_demand=None, operational_reserve=None, read_only_window=None):
     """Translate independently collected observations without upgrading their provenance."""
     hub_at = inventory.get("observed_at")
     raw_hubs = inventory.get("hubs", [])
@@ -239,6 +239,13 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
                              "observed_at": cash_at if cash_verified else None,
                              "committed": None, "reserve": None},
                 }}
+    if read_only_window is not None:
+        started_at, company_confirmed_at = read_only_window
+        if not 0 < started_at <= company_confirmed_at <= now:
+            raise ValueError("Janela de observação fora da captura")
+        snapshot["observations"]["read_only_window"] = {
+            "started_at": started_at, "company_confirmed_at": company_confirmed_at,
+        }
     if policy_values is not None:
         snapshot["observations"]["investment_policy"] = policy_values
     if external_demand is not None:
@@ -250,7 +257,7 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
     return snapshot
 
 
-def capture_game_snapshot(bot):
+def capture_game_snapshot(bot, *, read_only_window=None):
     """Called on the browser-owning worker after the cycle's market/finance reads."""
     from dashboard import recent_verified_money
     from economy import load_market_evidence
@@ -286,6 +293,7 @@ def capture_game_snapshot(bot):
                                 mode_at=stats.mode_read_at if mode else None, preview_margin=margin,
                                 native_quotes=native_route_quotes(bot, now=now),
                                 configured_prices=configured_price_assumptions(config), external_demand=external,
+                                read_only_window=read_only_window,
                                 operational_reserve=config.get_int("settings", "cash_reserve", -1) if config else None,
                                 policy_values=audited_policy_values(
                                     InvestmentPolicy.from_config(config),
@@ -545,6 +553,7 @@ def snapshot_summary(*, now=None, path: Path | None = None):
             }
         return {"status": "parcial", "snapshot_id": snapshot["snapshot_id"],
                 "captured_at": observations["captured_at"],
+                **({"read_only_window": observations["read_only_window"]} if "read_only_window" in observations else {}),
                 "observed_at": snapshot["observed_at"],
                 "scopes": scopes,
                 "owned_hub_count": len(snapshot["hubs"]) if scopes["hubs"] else None,

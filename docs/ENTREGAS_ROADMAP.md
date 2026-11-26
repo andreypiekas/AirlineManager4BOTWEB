@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A3/A9, janela de observação e custos de referência (G0)
+
+- Às 23h31–23h32 BRT, a pesquisa direta GRU–SYD (IDs 2.947 e 3.870) listou 13.367 km e o detalhe mostrou 13.368 km. As pistas eram de 12.139 e 12.999 pés. `Daily` mostrava 910/942/171 em Y/J/F e 683.000/1.413.000 lb de carga, com aviso de evento, sem linha `Today`, zero aeronaves na rota e zero aptas antes da entrega. A ajuda do jogo no mesmo detalhe descreve `Today` como os passageiros restantes no dia e a demanda como diária.
+- As cotações verificadas às 23h30 BRT, com vigência até 00h00, eram US$ 1.950 por 1.000 lb e US$ 157 por 1.000 quotas. Em GRU–HAC via YPY, o histórico do A380-800 mostrou um trecho com 412/19/11 passageiros, 405.458 lb, 1.379.127 quotas e receita de US$ 3.722.135. As três tarifas sugeridas no controle `Auto`, de US$ 7.682/15.583/23.734, reproduzem a receita registrada dos cinco trechos exibidos nos dois sentidos. Aos valores de mercado da consulta, o primeiro trecho teria US$ 790.643,10 de combustível e US$ 216.522,94 de CO₂. O subtotal de US$ 1.007.166,04 usa os consumos históricos e preços da consulta.
+- O catálogo exibiu US$ 6.468.885 de A-check a cada 450 horas para o A380-800 nas variantes GP7270, RR Trent 970 e RR Trent 972. A divisão resulta em US$ 14.375,30 por hora de voo como referência de provisionamento para a revisão. Descontos, desgaste, outros custos de operação e o débito efetivo do A-check dependem de comprovação separada.
+- O worker de observação confirma a mesma companhia imediatamente antes de gravar o snapshot. A janela gravada informa início do ciclo e confirmação da companhia. Cada insumo conserva seu horário original, inclusive quando vem de uma observação anterior à janela. A janela entra no identificador verificável da captura. O ID da companhia fica em memória.
+- Validação com 52 testes direcionados, suíte Windows com 2.334 aprovados e um pulado, Ruff e `git diff --check`. A exclusividade e a liberação da trava `flock` foram conferidas no Ubuntu via WSL. A consulta ao AM4 ocorreu em modo somente leitura. G0 mantido. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-25 — Autonomia Total A2–A4, worker de observação autenticada (G0)
 
 - Às 23h22 BRT, o Chrome autenticado voltou a exibir o `Black Friday Cargo Rush` ativo, com +50% de demanda mundial de carga e fim previsto para 29/11 às 20h BRT. Parked estava vazio. Pending mostrava o A380-800 em entrega a Guarulhos para aproximadamente 23h44 BRT.

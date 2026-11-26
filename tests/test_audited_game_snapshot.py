@@ -234,7 +234,8 @@ def test_cycle_capture_persists_real_cash_and_missing_registry_evidence(tmp_path
     bot = SimpleNamespace(stats=lambda: SimpleNamespace(money=2500, money_read_at=cash_at))
     assert record_native_route_quote(bot, aircraft_id="101", origin_id="11", destination_id="12",
                                      distance=1000, fee=250, occupied=0, fares=(100, 200, 300), now=cash_at)
-    snapshot = capture_game_snapshot(bot)
+    started_at, confirmed_at = cash_at + 1, cash_at + 2
+    snapshot = capture_game_snapshot(bot, read_only_window=(started_at, confirmed_at))
     assert json.loads((tmp_path / FILENAME).read_text(encoding="utf-8")) == snapshot
     assert snapshot["profile_id"] == "isolated"
     assert snapshot["verified"] is False
@@ -244,6 +245,8 @@ def test_cycle_capture_persists_real_cash_and_missing_registry_evidence(tmp_path
     assert snapshot["observations"]["native_route_quotes"][0]["observed_at"] == cash_at
     summary = snapshot_summary()
     assert summary["status"] == "parcial"
+    assert summary["read_only_window"] == {"started_at": started_at, "company_confirmed_at": confirmed_at}
+    assert summary["cash_control"]["observed_at"] < summary["read_only_window"]["started_at"]
     assert summary["native_route_quote_count"] == 1
     assert "native_route_quotes" not in summary
 

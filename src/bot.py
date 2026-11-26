@@ -765,6 +765,7 @@ class Bot:
         from staff_observations import collect_staff_observations
 
         log.info("Consultando a companhia aérea [SOMENTE LEITURA].")
+        started_at = time.time()
         self._next_event = None
         for action, label in (
             (self._read_mode, "ler o modo de jogo"),
@@ -778,9 +779,14 @@ class Bot:
             if self.stopping:
                 break
             self._guard(action, label)
+        if self.stopping:
+            return
+        self._require_observation_session()
+        self._verify_observation_company()
+        confirmed_at = time.time()
         if not self.stopping:
-            self._require_observation_session()
-            self._guard(lambda: capture_game_snapshot(self), "gravar captura auditada")
+            self._guard(lambda: capture_game_snapshot(self, read_only_window=(started_at, confirmed_at)),
+                        "gravar captura auditada")
 
     def _guard(self, action: Callable[[], None], what: str) -> None:
         """Run one step of the cycle; a failing step is logged and the next ones still run.

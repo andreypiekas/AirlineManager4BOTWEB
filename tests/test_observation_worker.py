@@ -12,7 +12,8 @@ import web
 from bot import Bot
 
 
-def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch):
+@pytest.mark.parametrize("company_changes", [False, True])
+def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, company_changes):
     worker = Bot.__new__(Bot)
     worker._observation_only = True
     worker._stop = Event()
@@ -23,10 +24,16 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch):
     calls = []
     worker._ensure_session = Mock(side_effect=AssertionError("automatic login"))
     worker._require_observation_session = lambda: calls.append("session")
-    worker._verify_observation_company = lambda: calls.append("company")
     worker._read_mode = lambda: calls.append("mode")
     worker._read_header = lambda: calls.append("header")
     worker._check_market = lambda *, observation_only: calls.append(("market", observation_only))
+
+    def verify_company():
+        calls.append("company")
+        if company_changes and calls.count("company") == 2:
+            raise RuntimeError("Identidade mudou durante a coleta")
+
+    worker._verify_observation_company = verify_company
 
     def fleet(owner, *, observation_only):
         assert owner is worker
@@ -43,11 +50,20 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch):
     monkeypatch.setattr("game_observations.collect_owned_hub_demand", read("demand"))
     monkeypatch.setattr("finance_observations.collect_finance_observations", read("finance"))
     monkeypatch.setattr("staff_observations.collect_staff_observations", read("staff"))
-    monkeypatch.setattr("audited_game_snapshot.capture_game_snapshot", read("snapshot"))
+    capture = Mock()
+    monkeypatch.setattr("audited_game_snapshot.capture_game_snapshot", capture)
 
-    worker._cycle()
+    if company_changes:
+        with pytest.raises(RuntimeError, match="Identidade"):
+            worker._cycle()
+        capture.assert_not_called()
+    else:
+        worker._cycle()
+        assert capture.call_count == 1 and capture.call_args.args == (worker,)
+        started_at, confirmed_at = capture.call_args.kwargs["read_only_window"]
+        assert 0 < started_at <= confirmed_at
     assert calls == ["session", "company", "mode", "demand", ("market", True), ("fleet", True),
-                     "finance", "staff", "header", "session", "snapshot"]
+                     "finance", "staff", "header", "session", "company"]
     assert worker.notify("test", category="status") is False
     assert not worker.telegram.mock_calls
     assert not worker.config.mock_calls
