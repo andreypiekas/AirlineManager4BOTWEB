@@ -74,9 +74,18 @@ const range = (specs.match(/([\d,]+)\s*km\//i) || [])[1];
 const distance = panel.querySelector('.row.p-0 > .col-2 > span')?.textContent.trim();
 const submissions = Array.from(root.querySelectorAll('script')).flatMap(s =>
   Array.from(s.textContent.matchAll(/new_route_info\.php\?mode=do&id=([0-9]+)&airportId=([0-9]+)&/g)));
+const readWithUnit = (id, unit) => {
+  const matches = panel.querySelectorAll('#' + id);
+  if (matches.length !== 1) return null;
+  const field = matches[0];
+  const value = field.textContent.trim();
+  const label = field.parentElement.textContent.trim().replace(/\s+/g, ' ');
+  return label.toLowerCase() === `${value} ${unit}` ? value : null;
+};
 return {codes, existing: counts.length === 1 ? counts[0].textContent.trim() : null,
   fee: fees.length === 1 ? fees[0].textContent.trim() : null,
-  range, distance,
+  range, distance, fuel_lbs_per_leg: readWithUnit('departFuelInfo', 'lbs'),
+  co2_kg_per_pax_km: readWithUnit('departCo2Info', 'kg/pax/km'),
   bound: submissions.length > 0 && submissions.every(m => m[1] === arguments[0] && m[2] === arguments[1])};
 """
 
@@ -186,7 +195,7 @@ def _check_route(bot, aircraft_id, condition):
     return last
 
 
-def read_direct_form(bot, aircraft_id, origin, destination, *, allow_duplicates=False):
+def read_direct_form(bot, aircraft_id, origin, destination, *, allow_duplicates=False, include_consumption=False):
     """Validate the direct route form against the intended endpoints and aircraft."""
     form = bot.js(_FORM, aircraft_id, destination["id"])
     if not form or form.get("bound") is not True or len(form.get("codes", [])) != 2:
@@ -203,7 +212,16 @@ def read_direct_form(bot, aircraft_id, origin, destination, *, allow_duplicates=
     fee = game_whole_number(form.get("fee"), currency=True)
     if fee is None or fee <= 0:
         return None
-    return distance, fee, occupied
+    if not include_consumption:
+        return distance, fee, occupied
+    fuel = game_whole_number(form.get("fuel_lbs_per_leg"))
+    raw_co2 = form.get("co2_kg_per_pax_km")
+    co2 = None
+    if isinstance(raw_co2, str) and re.fullmatch(r"[0-9]+(?:[.,][0-9]+)?", raw_co2):
+        rate = float(raw_co2.replace(",", "."))
+        if rate <= 100:
+            co2 = rate
+    return distance, fee, occupied, fuel or None, co2
 
 
 def _prepare_form(bot, aircraft_id, origin, destination):

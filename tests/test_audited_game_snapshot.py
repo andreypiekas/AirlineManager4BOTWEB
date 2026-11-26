@@ -233,7 +233,8 @@ def test_cycle_capture_persists_real_cash_and_missing_registry_evidence(tmp_path
     cash_at = time.time() - 3
     bot = SimpleNamespace(stats=lambda: SimpleNamespace(money=2500, money_read_at=cash_at))
     assert record_native_route_quote(bot, aircraft_id="101", origin_id="11", destination_id="12",
-                                     distance=1000, fee=250, occupied=0, fares=(100, 200, 300), now=cash_at)
+                                     distance=1000, fee=250, occupied=0, fares=(100, 200, 300),
+                                     fuel_lbs_per_leg=21000, co2_kg_per_pax_km=0.16, now=cash_at)
     started_at, confirmed_at = cash_at + 1, cash_at + 2
     snapshot = capture_game_snapshot(bot, read_only_window=(started_at, confirmed_at))
     assert json.loads((tmp_path / FILENAME).read_text(encoding="utf-8")) == snapshot
@@ -242,7 +243,9 @@ def test_cycle_capture_persists_real_cash_and_missing_registry_evidence(tmp_path
     assert snapshot["observations"]["cash"]["available"] == 2500
     assert snapshot["observations"]["cash"]["observed_at"] == cash_at
     assert not any(snapshot["coverage"]["scopes"].values())
-    assert snapshot["observations"]["native_route_quotes"][0]["observed_at"] == cash_at
+    quote, = snapshot["observations"]["native_route_quotes"]
+    assert quote["observed_at"] == cash_at
+    assert quote["fuel_lbs_per_leg"] == 21000 and quote["co2_kg_per_pax_km"] == 0.16
     summary = snapshot_summary()
     assert summary["status"] == "parcial"
     assert summary["read_only_window"] == {"started_at": started_at, "company_confirmed_at": confirmed_at}

@@ -44,7 +44,7 @@ def _read_preview(bot, aircraft_id, sample):
     try:
         panel = bot.ajax(f"new_route_info.php?id={aircraft_id}&airportId={dest_id}&mode=res",
                          "newRouteInfo", timeout=8)
-        form = read_direct_form(bot, aircraft_id, origin, dest)
+        form = read_direct_form(bot, aircraft_id, origin, dest, include_consumption=True)
         if not form or abs(form[0] - sample["distance_km"]) > 5 or bot.stopping:
             return None
         auto = panel.find_elements(By.ID, "introAuto")
@@ -59,7 +59,7 @@ def _read_preview(bot, aircraft_id, sample):
             return read_route_fares(bot) if len(buttons) == 1 else None
 
         fares = WebDriverWait(bot.driver, 5).until(ready)
-        if (bot.stopping or read_direct_form(bot, aircraft_id, origin, dest) != form
+        if (bot.stopping or read_direct_form(bot, aircraft_id, origin, dest, include_consumption=True) != form
                 or read_route_fares(bot) != fares):
             return None
         return form, fares
@@ -109,7 +109,7 @@ def collect_parked_route_quote(bot, parked_ids, *, refresh_demand: bool = False)
             again = _eligible_detail(bot, aircraft_id, sample, hubs[origin])
             if not again or bot.stopping:
                 break
-            (distance, fee, occupied), fares = quote
+            (distance, fee, occupied, fuel, co2_rate), fares = quote
             daily = detail.get("observed_daily_demand")
             daily_counts = tuple(daily[key] for key in "yjf") if daily == again.get("observed_daily_demand") and daily else None
             today = detail.get("observed_today_demand")
@@ -117,7 +117,7 @@ def collect_parked_route_quote(bot, parked_ids, *, refresh_demand: bool = False)
             recorded = record_native_route_quote(
                 bot, aircraft_id=aircraft_id, origin_id=origin, destination_id=sample["destination_id"],
                 distance=distance, fee=fee, occupied=occupied, fares=fares, total_demand=daily_counts,
-                today_demand=today_counts,
+                today_demand=today_counts, fuel_lbs_per_leg=fuel, co2_kg_per_pax_km=co2_rate,
                 research_distance_km=sample["distance_km"],
                 event_demand_boosted=any(row.get("event_demand_boosted") is True for row in (detail, again, sample)),
             )

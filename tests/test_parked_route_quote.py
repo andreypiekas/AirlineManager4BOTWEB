@@ -23,7 +23,7 @@ DETAIL = {"codes": ["BCN", "SHA"], "runways": ["11,654 ft", "11,154 ft"],
           "observed_today_demand": {"y": "1,800", "j": "300", "f": "160"},
           "event_demand_boosted": True}
 FORM = {"bound": True, "codes": ["BCN", "SHA"], "existing": "0", "distance": "9,831",
-        "fee": "$996,630", "range": "14,500"}
+        "fee": "$996,630", "range": "14,500", "fuel_lbs_per_leg": "212,273", "co2_kg_per_pax_km": "0.16"}
 
 
 class Bot:
@@ -109,12 +109,15 @@ def test_existing_aircraft_quote_with_only_read_only_actions(setup, daily_stable
     assert row.get("observed_today_demand") == ({"y": 1800, "j": 300, "f": 160} if today_stable else None)
     assert row["fares"] == {"y": 4103, "j": 8425, "f": 12998}
     assert row["route_fee"] == 996630 and row["distance_km"] == 9831
+    assert row["fuel_lbs_per_leg"] == 212273 and row["co2_kg_per_pax_km"] == 0.16
     assert row["event_demand_boosted"] is True
     assert row["daily_demand_total"] == ({"y": 1991, "j": 376, "f": 176} if daily_stable else None)
     assert row["daily_demand_residual"] is None and row["purchase_eligible"] is False
     lookup = {"profile_id": "test-parked-quote", "origin_id": ORIGIN, "destination_id": DESTINATION, "now": NOW}
     reference = native_route_quotes.reference_for_route(rows, **lookup, distance_km=SAMPLE["distance_km"])
     assert reference["native_distance_range"] == {"min": 9831, "max": 9831}
+    assert reference["fuel_lbs_per_leg_range"] == {"min": 212273, "max": 212273}
+    assert reference["co2_kg_per_pax_km_range"] == {"min": 0.16, "max": 0.16}
     assert reference["event_demand_boosted"] is True
     assert reference["purchase_eligible"] is False
     assert native_route_quotes.reference_for_route(rows, **lookup, distance_km=9830.577) is None
@@ -156,12 +159,31 @@ def test_observation_refreshes_the_owned_parked_origin_without_cached_samples(se
     assert actions == [("research", ORIGIN), ("reopen", "routes_main.php")]
 
 
-def test_changed_form_discards_preview(setup):
+@pytest.mark.parametrize("changed", [{"fee": "$996,631"}, {"fuel_lbs_per_leg": "212,274"}])
+def test_changed_form_discards_preview(setup, changed):
     bot = Bot()
-    bot.form_reads = iter([FORM, {**FORM, "fee": "$996,631"}])
+    bot.form_reads = iter([FORM, {**FORM, **changed}])
     assert not setup(bot, DETAIL)
     assert bot.events[-1] == "close" and bot.arrival == 17
     assert native_route_quotes.native_route_quotes(bot) == []
+
+
+def test_preview_from_another_airport_is_closed_before_autoprice(setup):
+    bot = Bot()
+    bot.form_reads = iter([{**FORM, "codes": ["FUK", "SHA"]}])
+    assert not setup(bot, DETAIL)
+    assert bot.events == ["detail", "preview", "close"] and bot.arrival == 17
+    assert native_route_quotes.native_route_quotes(bot) == []
+
+
+def test_unknown_consumption_preserves_only_the_other_preview_fields(setup):
+    bot = Bot()
+    form = {**FORM, "fuel_lbs_per_leg": "212,273 / 2", "co2_kg_per_pax_km": None}
+    bot.form_reads = iter([form, form])
+    assert setup(bot, DETAIL, DETAIL)
+    row, = native_route_quotes.native_route_quotes(bot)
+    assert row["route_fee"] == 996630
+    assert "fuel_lbs_per_leg" not in row and "co2_kg_per_pax_km" not in row
 
 
 def test_timeout_restores_arrival(setup):

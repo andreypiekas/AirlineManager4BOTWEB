@@ -36,6 +36,7 @@ def test_scope_and_freshness_are_preserved(monkeypatch):
     {"origin_id": ""}, {"origin_id": "12"}, {"stopover_id": "12"},
     {"fee": True}, {"distance": 0}, {"occupied": -1},
     {"fares": (100, 200)}, {"fares": (0, 0, 0)}, {"total_demand": (1, None, 3)},
+    {"fuel_lbs_per_leg": True}, {"fuel_lbs_per_leg": 0}, {"co2_kg_per_pax_km": float("nan")},
 ])
 def test_invalid_quote_is_not_retained(invalid):
     bot = SimpleNamespace()
@@ -95,6 +96,7 @@ def test_reference_filters_profile_clock_direction_and_stopover():
                                   "j": {"min": 200, "max": 200},
                                   "f": {"min": 300, "max": 400}}
     assert ref["aircraft_on_route_range"] == {"min": 0, "max": 2}
+    assert "fuel_lbs_per_leg_range" not in ref and "co2_kg_per_pax_km_range" not in ref
     assert ref["oldest_observed_at"] == NOW - 10 and ref["newest_observed_at"] == NOW
     assert ref["expires_at"] == NOW + 890
     assert "aircraft_id" not in ref and "900001" not in str(ref) and "900002" not in str(ref)

@@ -27,6 +27,10 @@ def _numbers(values, length):
             and all(type(value) is int and value >= 0 for value in values))
 
 
+def _valid_co2_rate(value):
+    return type(value) in (int, float) and 0 <= value <= 100
+
+
 def _fresh(row, now, profile_id):
     stamp = row.get("observed_at")
     return (row.get("profile_id") == profile_id and type(stamp) in (int, float)
@@ -90,6 +94,13 @@ def reference_for_route(rows, *, profile_id, origin_id, destination_id, distance
         reference["native_distance_range"] = bounds([row["distance_km"] for row in matching])
     if any(row.get("event_demand_boosted") is True for row in matching):
         reference["event_demand_boosted"] = True
+    fuel = [row["fuel_lbs_per_leg"] for row in matching
+            if type(row.get("fuel_lbs_per_leg")) is int and row["fuel_lbs_per_leg"] > 0]
+    co2 = [row["co2_kg_per_pax_km"] for row in matching if _valid_co2_rate(row.get("co2_kg_per_pax_km"))]
+    if fuel:
+        reference["fuel_lbs_per_leg_range"] = bounds(fuel)
+    if co2:
+        reference["co2_kg_per_pax_km_range"] = bounds(co2)
     return reference
 
 
@@ -101,7 +112,7 @@ def _correlated_distance(search_distance, native_distance):
 def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
                              distance, fee, occupied, fares, stopover_id=None,
                              total_demand=None, today_demand=None, event_demand_boosted=None,
-                             research_distance_km=None, now=None):
+                             research_distance_km=None, fuel_lbs_per_leg=None, co2_kg_per_pax_km=None, now=None):
     """Called only after matching reads of the bound native form and fares."""
     if (not all(_identity(value) for value in (aircraft_id, origin_id, destination_id))
             or origin_id == destination_id
@@ -111,6 +122,8 @@ def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
             or not _numbers(fares, 3) or not any(fares)
             or (total_demand is not None and not _numbers(total_demand, 3))
             or (today_demand is not None and not _numbers(today_demand, 3))
+            or (fuel_lbs_per_leg is not None and (type(fuel_lbs_per_leg) is not int or fuel_lbs_per_leg <= 0))
+            or (co2_kg_per_pax_km is not None and not _valid_co2_rate(co2_kg_per_pax_km))
             or (research_distance_km is not None and (stopover_id is not None
                 or not _correlated_distance(research_distance_km, distance)))):
         return False
@@ -131,6 +144,10 @@ def record_native_route_quote(bot, *, aircraft_id, origin_id, destination_id,
         row["observed_today_demand"] = dict(zip("yjf", today_demand))
     if research_distance_km is not None:
         row["research_distance_km"] = research_distance_km
+    if fuel_lbs_per_leg is not None:
+        row["fuel_lbs_per_leg"] = fuel_lbs_per_leg
+    if co2_kg_per_pax_km is not None:
+        row["co2_kg_per_pax_km"] = co2_kg_per_pax_km
     previous = native_route_quotes(bot, now=now)
     previous = [old for old in previous if not all(old[key] == value for key, value in identity.items())]
     bot._native_route_quotes = [*previous, row][-_MAX_QUOTES:]
