@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A2, limites da busca por país em GRU (G0)
+
+- Por volta de 03h BRT, `Fleet → Research`, origem GRU (2947), Brasil, `Any airport` e pista mínima de 1.000 ft mostrou 50 linhas em 20.000 km e 44 em 1.261 km. A união retornou 93 dos 116 IDs de aeroportos do seletor, com um destino em comum. Entre os 23 IDs ausentes estava o próprio GRU. A menor distância nativa da união foi 400,808 km.
+- Selecionar GIG (2944) diretamente retornou GRU–GIG a 337 km, pista de 13.123 ft e `Daily` Y/J/F de 541/141/220, com aviso de evento, sem `Today` e com `A/C on route` e `A/C capable` iguais a zero. Os tetos de 400 e 401 km foram ajustados pelo formulário para 500 km. As duas consultas e a entrada de 500 km retornaram 12 rotas entre 400,808 e 497,225 km.
+- A coleta de demanda por país passou a enviar ao formulário pelo menos 500 km, verificar a coerência da resposta inteira com os filtros enviados e reaplicar o limite solicitado antes de persistir. Os testes cobrem a retenção de leituras dentro do limite original com seu horário e aviso de evento, e a rejeição de uma resposta incorreta mesmo para o teto de 500 km. A cobertura permanece parcial. Ainda é necessário conciliar os IDs omitidos e comprovar a elegibilidade das rotas correspondentes.
+- A consulta foi somente leitura. Black Friday Cargo Rush seguia ativo até 29/11 às 20h BRT. Routes continuava com `Parked (0)` e `Pending (2)` às 03h04 BRT. Faltam uma nova prévia elegível fora do evento e a primeira captura autenticada no perfil do worker. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+- Passaram 61 testes focados, 2.387 testes no Windows com um pulado e 16 testes de instalação no Ubuntu via WSL. Ruff e `git diff --check` passaram.
+
 ## 2026-11-26 — Autonomia Total A2, escopo do campo Base no inventário (G0)
 
 - Entre 02h55 e 02h57 BRT, `Company` exibiu `Base` na ficha da companhia, com São Paulo Guarulhos, e listou 30 hubs. A lista `Fleet → A380-800` tinha 70 links para detalhes individuais e nenhum atributo `data-home-hub-id`, `data-base-id` ou `data-hub-id` no painel da lista.

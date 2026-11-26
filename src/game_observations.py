@@ -24,6 +24,7 @@ from engine_selection import (
 log = logging.getLogger("am4bot.observations")
 
 _ROUTE_SEARCH_SAMPLE_LIMIT = 50  # Observed in authenticated owned and custom departures.
+_COUNTRY_SEARCH_MIN_CEILING_KM = 500  # The native form normalizes smaller ceilings.
 
 # The engine groups and model identity must come from the same synchronous DOM
 # snapshot. Separate stable reads can straddle an AJAX panel replacement and
@@ -516,15 +517,17 @@ def _read_hub_demand_window(bot: object, origin: str, distance: int,
                             runway: int, *, country: str | None = None) -> tuple[list[dict], float | None]:
     from fleet import read_route_candidates, search_routes
 
+    search_distance = distance
     if country is None:
         candidates = search_routes(bot, origin, distance, runway, persist_demand=False)
     else:
-        selected = bot.js(_PREPARE_COUNTRY_SEARCH_JS, origin, distance, runway, country)
+        search_distance = max(distance, _COUNTRY_SEARCH_MIN_CEILING_KM)
+        selected = bot.js(_PREPARE_COUNTRY_SEARCH_JS, origin, search_distance, runway, country)
         if not isinstance(selected, str) or selected in ("", "0"):
             return [], None
 
         def start_search(_driver):
-            return bot.stopping or bot.js(_START_COUNTRY_SEARCH_JS, origin, distance, runway, selected)
+            return bot.stopping or bot.js(_START_COUNTRY_SEARCH_JS, origin, search_distance, runway, selected)
 
         WebDriverWait(bot.driver, 8).until(start_search)
         if bot.stopping or not bot.wait_loaded("resResult", timeout=8):
@@ -539,9 +542,11 @@ def _read_hub_demand_window(bot: object, origin: str, distance: int,
                                    or sample.get("destination_runway_ft", 0) < runway
                                    for sample in samples):
         return [], None
-    if any(sample["distance"] > distance + 0.001
+    if any(sample["distance"] > search_distance + 0.001
            or sample.get("destination_runway_ft", runway) < runway for sample in samples):
         return [], None
+    if search_distance > distance:
+        samples = [sample for sample in samples if sample["distance"] <= distance + 0.001]
     return samples, read_at
 
 

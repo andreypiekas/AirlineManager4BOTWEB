@@ -954,6 +954,39 @@ def test_search_keeps_event_warning_when_followup_dom_read_loses_it(tmp_path, mo
     assert samples[0]["event_demand_boosted"] is True
 
 
+@pytest.mark.parametrize(("extra_distance", "expected"), [(497.225, ["3020"]), (501, [])])
+def test_native_country_window_keeps_requested_distance_below_form_minimum(monkeypatch, extra_distance, expected):
+    cutoff = 401
+    candidates = [RouteCandidate("3020", "IZA", 400.808, 100, 20, 5, 8284),
+                  RouteCandidate("2967", "MEA", extra_distance, 100, 20, 5, 3937)]
+    rows = [{"dep_id": "2947", "arr_id": item.arr_id, "distance": str(item.distance),
+             "runway": str(item.runway), "destination_country": "Brazil", "y": "100", "j": "20", "f": "5",
+             "event_demand_boosted": True} for item in candidates]
+    observed_at = 1_900_000_000.0
+    monkeypatch.setattr(fleet, "read_route_candidates", lambda _bot: candidates)
+    monkeypatch.setattr(game_observations, "_stable_read", lambda *_args, **_kwargs: (rows, observed_at))
+
+    class Bot:
+        stopping = False
+        driver = object()
+
+        def js(self, script, *args):
+            assert args == ("2947", 500, 1000, "Brazil")
+            if script == game_observations._PREPARE_COUNTRY_SEARCH_JS:
+                return "Brazil"
+            assert script == game_observations._START_COUNTRY_SEARCH_JS
+            return True
+
+        def wait_loaded(self, target, *, timeout):
+            assert (target, timeout) == ("resResult", 8)
+            return True
+
+    samples, timestamp = game_observations._read_hub_demand_window(Bot(), "2947", cutoff, 1000, country="Brazil")
+    assert [sample["arr_id"] for sample in samples] == expected
+    assert all(sample["event_demand_boosted"] for sample in samples)
+    assert timestamp == (observed_at if expected else None)
+
+
 @pytest.mark.parametrize(("window_type", "bad_result"), [
     ("distance", None), ("distance", "origin"), ("country", None), ("country", "country"),
     ("saturated_country", None), ("saturated_country", "timeout"),
