@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A1/A5, conferência da compra de aeronave (G0)
+
+- A revisão do registro autenticado das 08h11–08h16 BRT reproduziu o débito `A/C Purchased` de US$ 216.079.503 com o preço-base de US$ 215.629.503 anunciado para o A380-800 em Los Angeles e US$ 450.000 para os 42 assentos J e 24 F observados no PP-254. A diferença foi zero. O lançamento genérico não contém matrícula, motor ou hub. A coincidência de valor e janela sustenta a associação histórica, com `price_verified=false` para a configuração exata.
+- O snapshot autenticado das 10h10min25s–10h12min37s BRT confirmou uma vaga PAX (224/225), uma aeronave em entrega, duas em manutenção e 30 opções habilitadas de entrega, iguais aos 30 IDs da gestão de hubs para o modelo amostrado. O campo `A/C orders` da captura financeira de 24h veio zerado e não conciliou com o lançamento individual já observado. O total agregado não serve como prova de compra, preço ou compromissos pendentes nesse caso. A correspondência individual entre a opção de entrega e o aeroporto de pesquisa continua pendente.
+- Passaram 355 testes focados. Eles cobrem modo somente leitura, seleção e conferência de motor/hub, bloqueio por preço ou caixa divergente, capacidade, recusa, timeout, reinício e conciliação sem duplicidade. A política do perfil retornou `release_gate=G0` e `execution_available=false`. O controle do Chrome foi interrompido porque a ferramenta não conseguiu confirmar a URL da aba. A revisão usou as observações autenticadas anteriores e testes locais, sem envio de pedido. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A3/A9, primeiro voo LAX–TUN e auditoria dos hubs (G0)
 
 - O `Flight history` do A380-800 PP-254 registrou uma única entrada, XP-224, de LAX para TUN. O voo decolou às 09h48min22s BRT e estava em andamento na leitura, com chegada prevista às 16h29min22s BRT. O jogo registrou 376/35/21 passageiros Y/J/F, 432 de 509 assentos (84,87%), receita de US$ 2.451.390, 227.063 lb de combustível e 814.085 quotas de CO₂. O `Today's demand` após a decolagem mostrou 965/479/91 remanescentes sobre 1.341/514/112 diários. A diferença por classe é igual ao embarque desse trecho.
