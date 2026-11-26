@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3, identificação da companhia no Chrome (G0)
+
+- A tentativa de captura às 07h58 BRT avançou até a leitura da identidade da companhia e encerrou sem gravar a captura. Na consulta autenticada em Chrome, o seletor nativo encontrou um único rótulo de identidade visível. O texto renderizado estava em maiúsculas (`USER ID`), enquanto a expressão do worker exigia `User ID`. A validação agora aceita as capitalizações dos rótulos em inglês e português. A leitura continua exigindo um identificador numérico nativo e interrompe o ciclo se ele divergir entre as duas verificações.
+- Por volta de 08h02 BRT, `Special Events` mostrou Black Friday Cargo Rush ativo, com +50% na demanda mundial de carga e fim previsto para 29/11 às 20h BRT. `Events` manteve o bônus de +863 na classe executiva em YYZ–VAG, com fim por volta de 30/11 às 01h36 BRT. `Routes` exibiu 223 rotas, 224 aeronaves, `Parked (0)` e `Pending (1)`. A única pendência era manutenção, com cerca de 4h11 restantes. A consulta foi somente leitura e não havia aeronave estacionada para abrir uma nova prévia.
+- O mercado cotou US$ 2.470 por 1.000 lb de combustível e US$ 193 por 1.000 quotas de CO₂ até 08h30 BRT. Aplicar a cotação às 212.273 lb da prévia histórica de BCN–SHA resulta em US$ 524.314,31 de combustível por trecho. O cálculo cruza observações de horários diferentes e fica como referência. Ainda faltam demanda residual, prévia elegível fora do aviso e quotas de CO₂ do mesmo candidato.
+- A nova execução com a correção aguardou login manual de 08h04 a 08h09 BRT. A janela expirou sem login e a captura autenticada do worker continua pendente. A sessão do Chrome usada para a consulta manual permanece em outro perfil.
+- Passaram 69 testes focados, 2.401 testes no Windows com um pulado e 16 testes do instalador no Ubuntu via WSL. A execução integral no Windows reproduziu sete falhas restritas ao instalador Linux. Ruff e `git diff --check` passaram. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A3, registro dos eventos de demanda (G0)
 
 - Entre 03h34 e 03h36 BRT, uma consulta somente leitura no Chrome encontrou dois eventos ativos. `Special Events` mostrou Black Friday Cargo Rush com +50% na demanda mundial de carga e fim previsto para 29/11 às 20h BRT. `Events` mostrou +863 passageiros de classe executiva em YYZ–VAG, a 8.051 km, com fim previsto para 30/11 por volta de 01h36 BRT. As estimativas de fim vêm dos contadores regressivos do jogo.

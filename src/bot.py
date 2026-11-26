@@ -986,7 +986,7 @@ class Bot:
                         "//*[contains(concat(' ', normalize-space(@class), ' '), ' font-weight-bold ')]"
                         "[starts-with(normalize-space(.), 'User ID:') or starts-with(normalize-space(.), 'ID do usuário:')]")
             label = self._text(selector)
-            match = re.fullmatch(r"(?:User ID|ID do usuário):\s*([1-9][0-9]{0,13})", label or "")
+            match = re.fullmatch(r"(?:User ID|ID do usuário):\s*([1-9][0-9]{0,13})", label or "", re.IGNORECASE)
             if match is None or self._observation_company_id not in (None, match[1]):
                 raise RuntimeError("Identidade da companhia sem confirmação no modo de observação.")
             self._observation_company_id = match[1]

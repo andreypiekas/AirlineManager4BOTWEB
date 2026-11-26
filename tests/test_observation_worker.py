@@ -195,19 +195,21 @@ def test_cli_rejects_manual_login_without_observation_before_profile_selection(m
     select.assert_not_called()
 
 
-def test_observation_rejects_changed_native_company_id():
+@pytest.mark.parametrize("label", ["User ID", "USER ID", "ID DO USUÁRIO"])
+def test_observation_rejects_changed_native_company_id(label):
     worker = Bot.__new__(Bot)
     worker._observation_company_id = None
     worker._click = Mock()
     worker.close_popup = Mock()
-    worker._text = Mock(side_effect=["User ID: 123", "User ID: 456"])
+    worker._text = Mock(side_effect=[f"{label}: 123", f"{label}: 123", f"{label}: 456"])
 
+    worker._verify_observation_company()
     worker._verify_observation_company()
     with pytest.raises(RuntimeError, match="Identidade"):
         worker._verify_observation_company()
 
     assert worker._observation_company_id == "123"
-    assert worker.close_popup.call_count == 2
+    assert worker.close_popup.call_count == 3
 
 
 def test_worker_directory_lock_remains_exclusive_until_release(tmp_path):
