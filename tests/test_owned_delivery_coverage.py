@@ -81,7 +81,12 @@ def test_collector_brackets_form_and_persists_only_profile_counts(tmp_path, monk
     monkeypatch.setattr(game_observations, "_stable_read", read)
     monkeypatch.setattr(owned_delivery_coverage, "open_managed_hubs", lambda bot: bot.calls.append("hubs.php"))
     bot = _Bot()
-    assert collect_owned_delivery_coverage(bot, path=path)
+    observation = {}
+    assert collect_owned_delivery_coverage(bot, path=path, observation=observation)
+    assert observation["model_id"] == "2"
+    assert observation["source"] == SOURCE
+    assert observation["options"] == _order()["state"]["options"]
+    assert observation["started_at"] <= observation["observed_at"]
     assert bot.calls == ["hubs.php", "close", "routes_main.php", "ac_orders.php?first=true",
                          "ac_orders.php?mode=detail&id=2&charter=0", "close", "hubs.php", "close"]
     assert "80000" not in path.read_text(encoding="utf-8")
@@ -92,7 +97,8 @@ def test_collector_brackets_form_and_persists_only_profile_counts(tmp_path, monk
     assert coverage_snapshot(path, now=time.time() + 901)["status"] == "unverified"
     assert coverage_snapshot(tmp_path / "other" / path.name, now=time.time())["status"] == "unverified"
     monkeypatch.setattr(game_observations, "_stable_read", lambda *_: None)
-    assert not collect_owned_delivery_coverage(bot, path=path)
+    assert not collect_owned_delivery_coverage(bot, path=path, observation=observation)
+    assert observation == {}
     assert coverage_snapshot(path, now=time.time())["status"] == "unverified"
 
 

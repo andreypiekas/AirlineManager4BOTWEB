@@ -8,7 +8,7 @@ from collections import defaultdict
 from selenium.common.exceptions import TimeoutException
 
 from airport_catalog import by_code
-from owned_delivery_coverage import MANAGED_HUB_IDS_JS, native_ids, open_managed_hubs
+from owned_delivery_coverage import MANAGED_HUB_IDS_JS, SOURCE as DELIVERY_SOURCE, native_ids, open_managed_hubs
 
 MAX_WINDOW = 120
 
@@ -123,6 +123,50 @@ def _airport_aliases(panels, owned_hubs):
         seen.add(matches[0])
         aliases.update(dict.fromkeys(codes, matches[0]))
     return aliases
+
+
+def reconcile_delivery_hubs(evidence, *, owned_hubs, hub_at, window):
+    """Join native selector airport codes to explicit management IDs in the delivery form."""
+    result = {"status": "incomplete", "pairs": []}
+    delivery = evidence.get("delivery_hubs") or {}
+    managed = evidence.get("hubs") or {}
+    if (not window or not owned_hubs or managed.get("enumerated") is not True
+            or managed.get("source") != "game_hub_operations" or delivery.get("source") != DELIVERY_SOURCE
+            or not native_ids([delivery.get("model_id")])):
+        return result
+
+    started, confirmed = window
+    timestamps = [hub_at, managed.get("started_at"), managed.get("observed_at"),
+                  delivery.get("started_at"), delivery.get("observed_at")]
+    if (any(type(stamp) not in (int, float) for stamp in timestamps)
+            or not int(started) <= timestamps[0] <= timestamps[1] <= timestamps[2]
+            <= timestamps[3] <= timestamps[4] <= confirmed or timestamps[1] < started):
+        return result
+
+    panels = managed.get("panels") or []
+    if not panels or any(not isinstance(panel, dict) for panel in panels):
+        return result
+    management_ids = native_ids([panel.get("management_id") for panel in panels])
+    options = delivery.get("options") or []
+    if (not management_ids or len(management_ids) != managed.get("managed_count")
+            or len(management_ids) != len(owned_hubs)
+            or any(not isinstance(option, dict) or type(option.get("disabled")) is not bool for option in options)
+            or management_ids != native_ids([option.get("id") for option in options])
+            or any(not _valid_panel(panel, panel["management_id"]) for panel in panels)):
+        return result
+    aliases = _airport_aliases(panels, owned_hubs)
+    if aliases is None:
+        return result
+
+    enabled = {option["id"] for option in options if not option["disabled"]}
+    pairs = [{"airport_id": aliases[panel["iata"]], "delivery_hub_id": panel["management_id"],
+              "iata": panel["iata"], "icao": panel["icao"]}
+             for panel in panels if panel["management_id"] in enabled]
+    if not pairs:
+        return result
+    return {"status": "matched", "source": "game_owned_hub_crosswalk", "model_id": delivery["model_id"],
+            "observed_at": delivery["observed_at"], "disabled_count": len(options) - len(pairs),
+            "pairs": sorted(pairs, key=lambda pair: int(pair["airport_id"]))}
 
 
 def reconcile_hub_operations(evidence, *, owned_hubs, hub_at, routes, fleet_verified, window):

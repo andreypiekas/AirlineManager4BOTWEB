@@ -298,11 +298,14 @@ def compose_snapshot(*, profile_id, routes, inventory, demand, engines, market,
             "started_at": started_at, "company_confirmed_at": company_confirmed_at,
         }
     if operational_evidence is not None:
-        from hub_operations import reconcile_hub_operations
+        from hub_operations import reconcile_delivery_hubs, reconcile_hub_operations
 
         snapshot["observations"]["hub_operations"] = reconcile_hub_operations(
             operational_evidence, owned_hubs=hubs, hub_at=hub_at, routes=routes,
             fleet_verified=fleet_verified, window=read_only_window)
+        if "delivery_hubs" in operational_evidence:
+            snapshot["observations"]["delivery_hub_crosswalk"] = reconcile_delivery_hubs(
+                operational_evidence, owned_hubs=hubs, hub_at=hub_at, window=read_only_window)
         if "country_search_windows" in operational_evidence:
             snapshot["observations"]["route_search_partitions"] = _country_search_partitions(
                 operational_evidence["country_search_windows"], owned_ids, read_only_window)

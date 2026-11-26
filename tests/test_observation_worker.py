@@ -62,13 +62,17 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
         read("demand")(owner)
         country_windows.append({"origin_id": "11"})
 
+    def delivery_hubs(owner, *, observation):
+        read("delivery_hubs")(owner)
+        observation["model_id"] = "2"
+
     monkeypatch.setattr(bot_module, "manage_fleet", fleet)
     monkeypatch.setattr("demand_events.collect_demand_events", demand_events)
     monkeypatch.setattr("game_observations.collect_owned_hub_demand", demand)
     monkeypatch.setattr("hub_operations.collect_hub_operations", read("hub_operations"))
     monkeypatch.setattr("game_observations.collect_owned_route_details", read("route_details"))
     monkeypatch.setattr("game_observations.collect_aircraft_engine_catalog", read("aircraft_catalog"))
-    monkeypatch.setattr("owned_delivery_coverage.collect_owned_delivery_coverage", read("delivery_hubs"))
+    monkeypatch.setattr("owned_delivery_coverage.collect_owned_delivery_coverage", delivery_hubs)
     monkeypatch.setattr("finance_observations.collect_finance_observations", read("finance"))
     monkeypatch.setattr("staff_observations.collect_staff_observations", read("staff"))
     capture = Mock()
@@ -86,6 +90,7 @@ def test_observation_worker_uses_only_readers_and_local_capture(monkeypatch, com
         assert capture.call_args.kwargs["operational_evidence"] == {
             "pending": {"observation_id": "fleet"}, "hubs": None,
             "country_search_windows": [{"origin_id": "11"}],
+            "delivery_hubs": {"model_id": "2"},
             "demand_events": [{"source": "game_route_events", "observed_at": events_observed_at,
                                "reported_count": 0, "events": []}],
         }

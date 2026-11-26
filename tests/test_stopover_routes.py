@@ -8,6 +8,7 @@ import route_creation
 import route_stopover
 from fleet import ParkedAircraft, RouteCandidate
 from gamemode import EASY
+from hub_registry import HubRegistry
 from route_registry import RouteRegistry, endpoint
 from route_stopover import Stopover
 
@@ -21,6 +22,7 @@ def test_plan_stopover_from_parked_base_before_direct_route(tmp_path, monkeypatc
     calls = []
     registry = RouteRegistry(tmp_path / "routes.json")
     monkeypatch.setattr(fleet, "RouteRegistry", lambda: registry)
+    monkeypatch.setattr(fleet, "HubRegistry", lambda: HubRegistry(tmp_path / "hubs.json"))
     monkeypatch.setattr(fleet, "read_parked", lambda bot: [ParkedAircraft("101", "A380", "PP-101", 600)])
     monkeypatch.setattr(fleet, "load_market", lambda: [])
     monkeypatch.setattr(fleet, "find_model", lambda *_: {

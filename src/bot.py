@@ -777,7 +777,8 @@ class Bot:
         log.info("Consultando a companhia aérea [SOMENTE LEITURA].")
         started_at = time.time()
         country_windows = []
-        operational_evidence = {"country_search_windows": country_windows}
+        delivery_hubs = {}
+        operational_evidence = {"country_search_windows": country_windows, "delivery_hubs": delivery_hubs}
         self._next_event = None
         for action, label in (
             (self._read_mode, "ler o modo de jogo"),
@@ -791,7 +792,8 @@ class Bot:
              "conferir operações dos hubs"),
             (lambda: collect_owned_route_details(self), "coletar detalhes das rotas"),
             (lambda: collect_aircraft_engine_catalog(self), "pesquisar catálogo de aeronaves e motores"),
-            (lambda: collect_owned_delivery_coverage(self), "conferir cobertura dos hubs de entrega"),
+            (lambda: collect_owned_delivery_coverage(self, observation=delivery_hubs),
+             "conferir cobertura dos hubs de entrega"),
             (lambda: collect_finance_observations(self), "conferir resumo financeiro"),
             (lambda: collect_staff_observations(self), "conferir quadro de pessoal"),
             (self._read_header, "consultar saldo e pontos"),

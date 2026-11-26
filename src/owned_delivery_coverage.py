@@ -1,4 +1,4 @@
-"""Independent managed-hub versus order-form coverage; never an airport crosswalk."""
+"""Independent coverage of managed hubs in the aircraft order form."""
 from __future__ import annotations
 
 import json
@@ -122,11 +122,13 @@ def coverage_snapshot(path: Path, *, now: float) -> dict:
             "source": SOURCE, "observed_at": stamp, **{key: saved[key] for key in keys}}
 
 
-def collect_owned_delivery_coverage(bot, *, path=None):
-    """Read-only, bounded independent check through native managed and order screens."""
+def collect_owned_delivery_coverage(bot, *, path=None, observation=None):
+    """Record counts and pass native option IDs only to the current observation cycle."""
     from fleet import _MODELS_JS
     from game_observations import _stable_read
 
+    if observation is not None:
+        observation.clear()
     if getattr(bot, "stopping", False):
         return False
     path = Path(path) if path is not None else paths.current().data / "owned_delivery_coverage.json"
@@ -168,4 +170,8 @@ def collect_owned_delivery_coverage(bot, *, path=None):
     if not counts or not 0 <= finished - started <= MAX_WINDOW or getattr(bot, "stopping", False):
         return False
     paths.write_atomic(path, json.dumps({"source": SOURCE, "observed_at": int(finished), **counts}))
-    return counts["managed_count"] == counts["delivery_count"] == counts["matching_count"]
+    matched = counts["managed_count"] == counts["delivery_count"] == counts["matching_count"]
+    if matched and observation is not None:
+        observation.update(source=SOURCE, model_id=model_id, started_at=started, observed_at=finished,
+                           options=order["state"]["options"])
+    return matched
