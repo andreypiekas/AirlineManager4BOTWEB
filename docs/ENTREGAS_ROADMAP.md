@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A2, conciliação das varreduras de Routes (G0)
+
+- O AM4 já mostrou aeronaves em páginas diferentes e inversão de sentido de uma rota entre leituras do mesmo inventário. A auditoria integral anterior exigia igualdade das linhas em cada página. Agora, quando a apresentação varia, a cobertura exige duas varreduras completas com o mesmo total nativo, IDs de rota e aeronave únicos em cada varredura e igualdade dos vínculos, aeroportos, matrículas, modelos e sinais explícitos de base. O registro usa as páginas da última varredura e mantém a verificação da restauração da página inicial.
+- Os testes locais confirmaram a conciliação com o inventário após mudança de página e inversão de sentido. Duplicidade de aeronave entre páginas, duplicidade de ID de rota e mudança de aeroporto impediram o registro do lote. A certificação em um snapshot autenticado do worker e a prova de cobertura da pesquisa de candidatos seguem pendentes.
+- Validação: 2.308 testes aprovados e um pulado na suíte Windows, além de 16 testes do instalador em WSL. Ruff nos arquivos alterados e `git diff --check` aprovados.
+- Na retomada, a sessão Chrome autenticada estava indisponível. A última observação do evento segue sendo a coleta de BCN–SHA, com término previsto para 29/11 às 20h BRT. Demanda fora de evento e custos completos seguem pendentes. G0 mantido. Reversão por `git revert` do commit desta entrega. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-25 — Autonomia Total A2–A4, cotação nativa BCN–SHA com A380-800 apto (G0)
 
 - Por volta das 22h39–22h42 BRT, Parked passou de zero para dois A380-800 após as entregas. O cartão em Barcelona mostrou 465/28/26 assentos Y/J/F. A pesquisa de BCN–SHA (IDs 1.780 e 3.950, direta) mostrou `A/C on route` igual a zero e `A/C capable` igual a um. A única opção de `#capAc` correspondia ao ID do A380 de Barcelona. O detalhe manteve o aviso de evento, `Daily` de 1.991/376/176 e nenhum `Today` visível.

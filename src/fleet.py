@@ -483,6 +483,29 @@ return Array.from(document.querySelectorAll('#popContent .pagination [onclick]')
 """
 
 
+def _native_route_bindings(pages: list[tuple[int, list[dict]]], expected_routes: Optional[int]
+                           ) -> Optional[dict[str, tuple]]:
+    """Fingerprint complete native route assignments independently of pagination and direction."""
+    bindings = {}
+    route_ids = set()
+    for _, rows in pages:
+        for row in rows:
+            aircraft_id = row["aircraft_id"]
+            route_id = row.get("route_id")
+            origin = endpoint(row.get("origin_id"), row.get("origin_code"))
+            destination = endpoint(row.get("destination_id"), row.get("destination_code"))
+            if (type(route_id) is not int or route_id <= 0 or route_id in route_ids
+                    or aircraft_id in bindings or not row.get("registration") or not row.get("model")
+                    or not route_key(origin, destination)):
+                return None
+            route_ids.add(route_id)
+            airports = tuple(sorted((airport["id"], airport["code"])
+                                    for airport in (origin, destination)))
+            bindings[aircraft_id] = (route_id, row["registration"], row["model"],
+                                     row.get("home_hub_id"), airports)
+    return bindings if len(bindings) == expected_routes else None
+
+
 def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cycle: int = 3,
                             attempt_full: bool = False) -> list[int]:
     """Audit verified AJAX pages across bounded cycles, restoring the initial view."""
@@ -698,16 +721,28 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
                     break
         if (total is not None and len(staged) == total and
                 {page for page, _ in staged} == set(range(1, total + 1))):
-            # A stable route count alone cannot prove a coherent fleet snapshot:
-            # aircraft may move between pages without changing the total.
-            # Revisit every page before publishing a full-cycle audit.
+            # Reread every page before publishing a full-cycle audit.
             recheck = reversed(staged) if full_attempt else staged
+            recaptured = {}
             for page, original_rows in recheck:
-                if not load(page) or verified_rows != original_rows:
+                if not load(page) or (not full_attempt and verified_rows != original_rows):
                     log.warning("Auditoria paginada: conteúdo da página %d mudou na "
                                 "releitura integral; lote descartado.", page)
                     staged.clear()
                     break
+                recaptured[page] = verified_rows
+            if full_attempt and staged:
+                latest = [(page, recaptured[page]) for page, _ in staged]
+                if latest != staged:
+                    # Rows can move between pages or display the return direction.
+                    # Both passes must independently reconcile every native binding.
+                    bindings = _native_route_bindings(staged, route_count)
+                    if bindings is None or bindings != _native_route_bindings(latest, route_count):
+                        log.warning("Auditoria paginada: vínculos divergentes entre as varreduras; "
+                                    "lote descartado.")
+                        staged.clear()
+                    else:
+                        staged = latest
     finally:
         try:
             current = snapshot()

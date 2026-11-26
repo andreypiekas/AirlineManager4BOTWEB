@@ -298,6 +298,64 @@ def test_same_total_page_movement_during_full_recheck_discards_audit(tmp_path):
     assert registry.snapshot()["last_verified_full_audit"] is None
 
 
+@pytest.mark.parametrize("drift", [None, "aircraft_id", "route_id", "destination_id"])
+def test_full_native_audit_reconciles_moved_rows_and_reversed_routes(tmp_path, drift):
+    class ReorderedRoutesBot(LiveRoutesBot):
+        shifted = False
+
+        def ajax(self, url, target):
+            previous_page = self.page
+            super().ajax(url, target)
+            if previous_page == 3 and self.page == 2:
+                self.shifted = True
+
+        def js(self, script):
+            rows = super().js(script)
+            if script != _ROUTE_AUDIT_JS:
+                return rows
+            for row in rows:
+                row.update(route_id=int(row["aircraft_id"]) + 1, origin_id="1", destination_id="2")
+            if self.shifted and self.page in (1, 2):
+                source_page = 3 - self.page
+                aircraft_id = str(24000000 + source_page * 100)
+                rows[0].update(aircraft_id=aircraft_id, route_id=int(aircraft_id) + 1,
+                               registration=f"PP-{source_page}-0", origin_id="2", destination_id="1",
+                               origin_code="GRU", destination_code="XAP", in_flight=True)
+                if drift and self.page == 2:
+                    rows[0][drift] = {
+                        "aircraft_id": "24000200",
+                        "route_id": rows[1]["route_id"],
+                        "destination_id": "3",
+                    }[drift]
+                rows.reverse()
+            return rows
+
+    bot = ReorderedRoutesBot(total_pages=3, native_pager=True, page_counts={1: 2, 2: 3, 3: 1})
+    registry = RouteRegistry(tmp_path / "routes.json")
+    roster = []
+    for page in (1, 2, 3):
+        bot.page = page
+        roster.extend(bot.js(_ROUTE_AUDIT_JS))
+    bot.page = 1
+    assert registry.record_game_roster(roster, len(roster))
+    before = registry.snapshot()
+
+    visited = audit_routes_live_pages(bot, registry, attempt_full=True)
+    assert bot.shifted and bot.page == 1
+    if drift:
+        assert visited == []
+        assert registry.snapshot() == before
+        return
+
+    assert visited == [1, 2, 3]
+    coverage = registry.snapshot()["scan_coverage"]
+    assert coverage["full_page_coverage_verified"] is True
+    assert set(coverage["pages"]["1"]["aircraft_ids"]) == {"24000200", "24000101"}
+    counts = {"routes": len(roster), "parked": 0, "pending": 0}
+    assert registry.confirm_fleet_coverage(roster, before_counts=counts, after_counts=counts,
+                                           audited_pages=visited)
+
+
 def test_same_total_page_movement_during_restoration_discards_full_audit(tmp_path):
     class MovingOnRestoreBot(LiveRoutesBot):
         shifted = False

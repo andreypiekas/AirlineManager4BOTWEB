@@ -137,6 +137,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 
 - Finalizar inventário real de hubs próprios e status de base por aeronave com fonte explícita. Quando desconhecido, manter "Base a confirmar" sem impedir ranking das bases com dados independentes verificados.
 - Auditar paginação dinâmica: 20 posições típicas por página, páginas variáveis, aeronaves chegando durante a auditoria, IDs únicos, totais coerentes, cobertura integral no mesmo snapshot ou marcação **parcial**.
+- Na auditoria integral do worker, duas varreduras aceitam variação da ordem, da distribuição nas páginas e do sentido exibido quando todos os pares nativos aeronave–rota e seus aeroportos coincidem. Testes locais exercitaram a conciliação com o inventário. A homologação com o snapshot do worker segue pendente.
 - Completar coleta de preço, pontos, pista, país, disponibilidade e demanda dos hubs candidatos. Em 25/11/2026, `Custom departure` permitiu pesquisar a partir de Lisboa, ausente dos hubs próprios naquele momento.
 - Montar feed de cenários para HubAircraftResearchRegistry.record() e HubExpansionRegistry.record_research(), com fonte e data comprovadas.
 - Armazenar mapas de cobertura por hub, rota, modelo e ciclo; expirados não habilitam compra.
