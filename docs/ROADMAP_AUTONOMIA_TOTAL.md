@@ -132,6 +132,7 @@ Campos desconhecidos = null e bloqueiam a ação se obrigatórios. Usar timestam
 - **Aceite:** nenhuma compra confirma motor/modelo/preço/hub diferentes dos previstos, e nenhuma alteração ocorre no modo análise.
 - Progresso em 25/11/2026: o pré-voo planejado reabre o painel atual após duas verificações de preço e bloqueia a encomenda se o jogo exibir aviso de saldo insuficiente. A evidência disponível ainda não confirma a fonte do preço final por modelo, variante e hub. G0 permanece vigente.
 - Na consulta autenticada de 25/11/2026, o A380-800 apresentou três variantes em `#engSelection`. O valor em `#acCost` ficou estável nas seis combinações de variante e hub de entrega consultadas. A etapa `Configuration` manteve o preço anunciado nas prévias do RR Trent 972 em Barcelona e do GP7270 em Caracas. A cotação final vinculada à configuração continua pendente.
+- Em 26/11/2026, `Configuration` recalculou `#acCost` ao variar os assentos premium do A380-800 GP7270 para Chapecó. Para uma unidade, a prévia acrescentou US$ 5.000 por assento executivo e US$ 10.000 por assento de primeira classe. Vincular qualquer uso da prévia ao layout e à quantidade observados. O valor cobrado pelo jogo por variante e hub segue pendente.
 
 ### Fase A2 — Hubs, cobertura e dados de rota completos (P0)
 

@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A1, preço exibido na configuração de cabine (G0)
+
+- Por volta de 02h53 BRT, `Fleet → Order → Configuration` mostrou US$ 215.629.503 para uma unidade do A380-800 com motor GP7270, entrega em Chapecó e layout inicial de 600/0/0 assentos Y/J/F. Ao mover os seletores da prévia, `#acCost` mostrou US$ 215.634.503 com 598/1/0 e US$ 215.639.503 com 594/0/1.
+- O cálculo exibido para esse modelo soma US$ 5.000 por assento executivo e US$ 10.000 por assento de primeira classe ao valor-base e multiplica pela quantidade. As duas variações foram verificadas na interface com quantidade igual a um. O botão `Order` inicia a submissão do pedido com modelo, motor, hub, assentos e quantidade. A consulta terminou pelo botão `Back`, sem envio de pedido. O valor efetivamente cobrado por variante e hub continua sem confirmação e `price_verified=false` permanece em G0.
+- A leitura anterior de Routes às 02h48 BRT seguia com `Parked (0)` e Black Friday Cargo Rush ativo até 29/11 às 20h BRT. BCN–SHA segue como referência durante o evento. Ainda faltam uma prévia elegível fora do evento, a quantidade de quotas de CO₂ do mesmo candidato e o login no perfil dedicado para homologar o worker. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A3, combustível cotado para a mesma prévia (G0)
 
 - Em `--observe-game`, a linha privada da prévia registra o custo de reposição do combustível por trecho, em centavos de dólar, se a cotação nativa por 1.000 lb já tiver sido observada na abertura da prévia e continuar vigente até o fim da conferência. Preserva o início da prévia, o preço, sua fonte e sua vigência. A captura conserva essa referência histórica se o preço vencer depois da conferência. O consumo, o custo e o layout pertencem à aeronave existente. O coeficiente de CO₂ segue como referência e o custo de quotas do mesmo trecho exige uma quantidade verificada.
