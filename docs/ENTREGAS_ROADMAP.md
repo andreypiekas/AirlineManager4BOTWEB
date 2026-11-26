@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A2–A4, página terminal de Routes e vigência da amostra (G0)
+
+- No Chrome autenticado por volta das 22h BRT, `Black Friday Cargo Rush` seguia ativo com 3d 21:57:14 restantes e aumento mundial de 50% na demanda de carga. Parked exibiu zero aeronaves. Pending mostrou seis itens, entre eles três entregas previstas em 00:36:11, 00:36:28 e 01:41:35. A aptidão para uma rota precisa ser confirmada em `#capAc` após a entrega. A consulta foi somente leitura. Demanda fora de evento, tarifa, taxa de abertura, consumo e emissões de um candidato apto seguem pendentes.
+- O paginador nativo de Routes lista a página atual e os links `Previous` e `Next` quando aplicáveis. A lista de 218 rotas começou com 17 linhas e terminou na 12ª página. A divisão do total por 20 produzia uma estimativa de 11 páginas. A auditoria integral segue os links até a página terminal, repete a leitura em ordem inversa e exige contagem e IDs coerentes no mesmo ciclo. O ciclo integral é limitado a 25 páginas e 120 segundos. Leituras parciais preservam as exigências de cobertura e uma mudança na posição terminal invalida a certificação anterior.
+- Os testes reproduziram o paginador observado, páginas intermediárias incompletas e alterações incompatíveis com a cobertura já certificada. A conferência no jogo foi manual pelo Chrome. A execução do worker contra a conta e a certificação de cobertura por hub ficam para nova validação. Passaram 2.302 testes na suíte Windows, com um teste ignorado e o instalador Linux excluído. Ruff e `git diff --check` passaram. G0 segue vigente. Reversão por `git revert` do commit desta entrega. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-25 — Autonomia Total A2–A4, demanda nativa e paginação de Routes (G0)
 
 - No Chrome, em modo somente leitura, Parked voltou a exibir zero aeronaves. A pesquisa de DAC–FNJ a partir de DAC manteve o aviso de evento. Em `#rDetails`, a seção Y/J/F mostrou `Daily` de 1.081/510/272 e `Today` de 1.054/461/249. O detalhe exibiu `A/C on route` igual a um e `A/C capable` igual a zero. Layout do candidato, tarifa aplicável, taxa de abertura e custos incrementais seguem pendentes de uma prévia com aeronave apta e de observação sem aviso de evento.

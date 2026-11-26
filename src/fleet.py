@@ -258,13 +258,22 @@ _ROUTE_AUDIT_JS = """
 // Capture pagination from the same DOM snapshot as the route rows. A numeric
 // active page is evidence of a page index; absence means page unknown.
 const popup = typeof document.querySelector === "function" ? document.querySelector("#popContent") : null;
-const pagination = popup && popup.querySelector ? popup.querySelector(".pagination") : null;
+const pagination = popup && popup.querySelector ?
+  popup.querySelector('#routeAction #routesContainer .pagination') || popup.querySelector('.pagination') : null;
 const active = pagination && pagination.querySelector ?
   pagination.querySelector(".page-item.not-active > .page-link, .page-item.active > .page-link, .page-link[aria-current='page']") : null;
 const pageNumber = value => /^[1-9][0-9]{0,2}$/.test(String(value || "").trim()) ?
   Number(String(value).trim()) : null;
 const scanPage = pageNumber(active && active.textContent) ||
   pageNumber(popup && popup.getAttribute && popup.getAttribute("data-current-page"));
+// The native pager may expose only Previous, the current number, and Next.
+const pagerLabels = active && pagination.querySelectorAll ?
+  Array.from(pagination.querySelectorAll('a.page-link'), link => link.textContent.trim()) : [];
+const nativeLabels = [String(scanPage), ...(scanPage > 1 ? ['Previous'] : [])];
+const hasNativeNext = pagerLabels.includes('Next');
+if (hasNativeNext) nativeLabels.push('Next');
+const scanHasNext = scanPage && pagerLabels.length === nativeLabels.length &&
+  nativeLabels.every(label => pagerLabels.includes(label)) ? hasNativeNext : null;
 const routeCount = Array.from(document.querySelectorAll(
   '#popContent .row.font-weight-bold > .col-12.exo.text-center.p-2'))
   .map(node => String(node.textContent || '').trim())
@@ -274,7 +283,7 @@ const totalFromRouteCount = routeCount ? Math.ceil(Number(routeCount[1]) / 20) :
 const scanTotalPages = pageNumber(pagination && pagination.getAttribute &&
   pagination.getAttribute("data-total-pages")) ||
   pageNumber(popup && popup.getAttribute && popup.getAttribute("data-total-pages")) ||
-  pageNumber(totalFromRouteCount);
+  (scanHasNext === null ? pageNumber(totalFromRouteCount) : null);
 return Array.from(document.querySelectorAll("#popContent #routeAction #routesContainer [id^='routeMainList']")).map(row => {
   // The existing seats module identifies routes by this real game link.
   const detailLink = row.querySelector("a[onclick*='fleet_details.php']");
@@ -314,6 +323,7 @@ return Array.from(document.querySelectorAll("#popContent #routeAction #routesCon
     route_id: routeIdMatch ? Number(routeIdMatch[1]) : null,
     scan_page: scanPage,
     scan_total_pages: scanTotalPages,
+    scan_has_next: scanHasNext,
     scan_route_count: routeCount ? Number(routeCount[1]) : null,
     registration: label.split(" - ")[0] || aircraftId,
     model: label.includes(" - ") ? label.split(" - ").slice(1).join(" - ") : "",
@@ -413,6 +423,7 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
             "origin": origin, "destination": destination, "at_base": base,
             "observed_route_id": row.get("route_id"),
             "home_hub_id": home_hub_id,
+            "scan_has_next": row.get("scan_has_next"),
             **home_hub_evidence,
         })
     missing = sum(1 for row in rows
@@ -479,13 +490,16 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     if pages_per_cycle <= 0 or getattr(bot, "stopping", False):
         return []
 
+    page_limit = 25
     deadline = time.monotonic() + 120 if attempt_full else None
+    declared_total: Optional[int] = None
 
     def expired() -> bool:
         return deadline is not None and time.monotonic() >= deadline
 
     def snapshot(expected_total: Optional[int] = None,
-                 expected_count: Optional[int] = None) -> Optional[tuple[int, int, list[dict]]]:
+                 expected_count: Optional[int] = None
+                 ) -> Optional[tuple[int, Optional[int], list[dict]]]:
         """Accept only two identical, internally consistent page reads."""
         rows = bot.js(_ROUTE_AUDIT_JS) or []
         if not isinstance(rows, list) or not 0 < len(rows) <= 20:
@@ -498,12 +512,19 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
             return None
         page = RouteRegistry._valid_page(rows[0].get("scan_page"))
         total = RouteRegistry._valid_page(rows[0].get("scan_total_pages"))
-        if (page is None or total is None or page > total or
-                (expected_total is not None and total != expected_total) or
+        has_next = rows[0].get("scan_has_next")
+        if (page is None or (total is None and type(has_next) is not bool) or
+                (expected_total is not None and declared_total is not None and total != declared_total) or
+                (total is not None and (page > total or expected_total not in (None, total))) or
+                (expected_total is not None and page > expected_total) or
                 (expected_count is not None and rows[0].get("scan_route_count") != expected_count)):
+            return None
+        end = total if total is not None else expected_total
+        if end is not None and type(has_next) is bool and has_next != (page < end):
             return None
         if any(RouteRegistry._valid_page(row.get("scan_page")) != page or
                RouteRegistry._valid_page(row.get("scan_total_pages")) != total or
+               row.get("scan_has_next") != has_next or
                row.get("scan_route_count") != rows[0].get("scan_route_count")
                for row in rows):
             return None
@@ -515,12 +536,17 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
         initial = snapshot()
         if initial is None or expired() or getattr(bot, "stopping", False):
             return []
-        start, total, initial_rows = initial
+        start, declared_total, initial_rows = initial
+        total = declared_total
         route_count = initial_rows[0].get("scan_route_count")
         if type(route_count) is not int or not 0 < route_count <= 50000:
             route_count = None
         audit_run_id = uuid.uuid4().hex
-        if total == 1:
+        if total == 1 or (total is None and start == 1 and
+                          initial_rows[0]["scan_has_next"] is False and route_count == len(initial_rows)):
+            if total is None:
+                total = 1
+                initial_rows = [dict(row, scan_total_pages=1) for row in initial_rows]
             return [start] if audit_routes(bot, registry, page=start, total_pages=total,
                                            _rows=initial_rows,
                                            _audit_run_id=audit_run_id) else []
@@ -532,7 +558,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     if not isinstance(links, list):
         return []
     adjacent = {20 * (page - 1) for page in (start - 1, start + 1)
-                if 1 <= page <= total}
+                if page >= 1 and (total is None or page <= total)}
 
     def valid_link(link: object, offset: int) -> bool:
         if not isinstance(link, dict) or type(link.get("offset")) is not int:
@@ -592,7 +618,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
                 verified_rows = current_rows
                 return True
 
-            for _ in range(max(total, current)):
+            for _ in range(max(total or page_limit, current)):
                 if not restore and (getattr(bot, "stopping", False) or expired()):
                     return False
                 if current == page:
@@ -624,33 +650,53 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
 
     staged: list[tuple[int, list[dict]]] = []
     staged_ids: set[str] = set()
-    restored: Optional[tuple[int, int, list[dict]]] = None
+    restored: Optional[tuple[int, Optional[int], list[dict]]] = None
+
+    def stage(page: int) -> bool:
+        if not load(page):
+            return False
+        page_ids = {row["aircraft_id"] for row in verified_rows}
+        if staged_ids.intersection(page_ids):
+            log.warning("Auditoria paginada: aeronaves repetidas entre páginas do ciclo; "
+                        "amostragem descartada por possível deslocamento da frota.")
+            staged.clear()
+            return False
+        staged_ids.update(page_ids)
+        staged.append((page, verified_rows))
+        return True
+
+    # This estimate schedules partial reads only. A full native audit must
+    # reach the last page using actual Next links, within the cycle bounds.
+    first_page_shortfall = 20 - len(initial_rows) if start == 1 else 0
+    partial_total = max(start + int(initial_rows[0].get("scan_has_next") is True),
+                        ((route_count or 0) + first_page_shortfall + 19) // 20)
+    discover = total is None and attempt_full and partial_total <= page_limit
     try:
-        full_attempt = attempt_full and total <= 25
-        if full_attempt:
+        full_attempt = attempt_full and (discover or (total is not None and total <= page_limit))
+        if discover:
+            selected_pages = range(1, page_limit + 1)
+        elif full_attempt:
             # Travel to one end first, then sweep the remaining pages in order.
             if start <= (total + 1) / 2:
                 selected_pages = list(range(start, 0, -1)) + list(range(start + 1, total + 1))
             else:
                 selected_pages = list(range(start, total + 1)) + list(range(start - 1, 0, -1))
         else:
-            selected_pages = registry.next_scan_pages(total, limit=pages_per_cycle, max_pages=25)
+            selected_pages = registry.next_scan_pages(total or partial_total, limit=pages_per_cycle,
+                                                       max_pages=page_limit)
             if attempt_full:
                 log.info("Auditoria integral adiada: %d páginas excedem o limite de 25; "
-                         "mantendo cobertura parcial.", total)
+                         "mantendo cobertura parcial.", total or partial_total)
         for page in selected_pages:
-            if not load(page):
+            if total is not None and page > total:
+                continue
+            if not stage(page):
                 break
-            # Keep page evidence until the original view and total are verified.
-            page_ids = {row["aircraft_id"] for row in verified_rows}
-            if staged_ids.intersection(page_ids):
-                log.warning("Auditoria paginada: aeronaves repetidas entre páginas do ciclo; "
-                            "amostragem descartada por possível deslocamento da frota.")
-                staged.clear()
-                break
-            staged_ids.update(page_ids)
-            staged.append((page, verified_rows))
-        if (len(staged) == total and
+            if total is None and verified_rows[0].get("scan_has_next") is False:
+                total = page
+                if discover:
+                    break
+        if (total is not None and len(staged) == total and
                 {page for page, _ in staged} == set(range(1, total + 1))):
             # A stable route count alone cannot prove a coherent fleet snapshot:
             # aircraft may move between pages without changing the total.
@@ -688,7 +734,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     if restored is None or restored[0] != start:
         log.warning("Auditoria paginada: página inicial %d não confirmada; cobertura descartada.", start)
         return []
-    if (restored[1] != total or
+    if (restored[1] != declared_total or
             (route_count is not None and restored[2][0].get("scan_route_count") != route_count)):
         # The fleet size or pagination changed while browsing. Invalidate
         # prior coverage using the verified current page before continuing.
@@ -701,7 +747,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     if expired() or getattr(bot, "stopping", False):
         log.info("Auditoria paginada interrompida por prazo ou cancelamento; lote descartado.")
         return []
-    if (len(staged) == total and
+    if (total is not None and len(staged) == total and
             {page for page, _ in staged} == set(range(1, total + 1))):
         original_start_rows = next(rows for page, rows in staged if page == start)
         if restored[2] != original_start_rows:
@@ -709,16 +755,21 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
                         "restauração; lote integral descartado.")
             return []
 
+    if total is None:
+        staged = staged[:pages_per_cycle]
+    recorded_total = total or max(partial_total, max((page for page, _ in staged), default=start))
     visited = []
     for page, rows in staged:
-        if not audit_routes(bot, registry, page=page, total_pages=total, _rows=rows,
-                            _audit_run_id=audit_run_id):
+        if declared_total is None:
+            rows = [dict(row, scan_total_pages=recorded_total) for row in rows]
+        if not audit_routes(bot, registry, page=page, total_pages=recorded_total, _rows=rows,
+                            _audit_run_id=audit_run_id if total is not None else None):
             break
         visited.append(page)
     coverage = registry.snapshot().get("scan_coverage") or {}
     log.info("Auditoria paginada: %d páginas confirmadas neste ciclo; cobertura %s/%s, "
              "IDs repetidos=%s, total conferido=%s.",
-             len(visited), coverage.get("observed_pages", 0), total,
+             len(visited), coverage.get("observed_pages", 0), recorded_total,
              coverage.get("repeated_aircraft_across_pages", 0),
              bool(coverage.get("full_page_coverage_verified")))
     if coverage.get("full_page_coverage_verified"):

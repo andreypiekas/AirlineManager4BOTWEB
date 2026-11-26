@@ -28,12 +28,14 @@ def observe_route(registry):
                                 }])
 
 
-def _audit_roster_routes(registry, run_id="a" * 32):
+def _audit_roster_routes(registry, run_id="a" * 32, *, native_next=None):
     rows = [{**row, "model": "A320", "observed_route_id": row["route_id"],
-             "origin": endpoint(code="XAP"), "destination": endpoint(code="GRU")}
+             "origin": endpoint(code="XAP"), "destination": endpoint(code="GRU"),
+             "scan_has_next": native_next}
             for row in game_rows() if row["route_id"]]
     registry.record_scan(2, 2, 0, aircraft_ids=["101", "102"], page=1,
-                         total_pages=1, expected_routes=2, audit_run_id=run_id,
+                         total_pages=1 if native_next is None else None,
+                         expected_routes=2, audit_run_id=run_id,
                          route_observations=rows)
 
 
@@ -108,7 +110,8 @@ def test_correlated_fleet_cannot_reuse_audit_from_same_second(tmp_path, monkeypa
                                                audited_pages=[1])
 
 
-def test_certified_coverage_survives_compatible_reads_but_not_mutation(tmp_path):
+@pytest.mark.parametrize("native_next", [None, False])
+def test_certified_coverage_survives_compatible_reads_but_not_mutation(tmp_path, native_next):
     registry = RouteRegistry(tmp_path / "routes.json")
     counts = {"routes": 2, "parked": 1, "pending": 0}
     registry.record("999", "PP-999", "A320", endpoint(code="DAC"), endpoint(code="OSL"))
@@ -120,7 +123,7 @@ def test_certified_coverage_survives_compatible_reads_but_not_mutation(tmp_path)
     assert registry.unassign("103", "PP-103", "A320")
     historical = next(row for row in registry.snapshot()["relations"] if row["aircraft_id"] == "999")
     assert registry.retire_missing_assignment("999", expected_route=historical["route_key"])
-    _audit_roster_routes(registry, None)
+    _audit_roster_routes(registry, None, native_next=native_next)
     assert registry.snapshot()["fleet_coverage"] == proof
     registry.record("101", "PP-101", "A320", endpoint(code="XAP"), endpoint(code="GRU"),
                     observed_route_id=801)
@@ -129,6 +132,19 @@ def test_certified_coverage_survives_compatible_reads_but_not_mutation(tmp_path)
     assert not registry.snapshot()["current_fleet_coverage_verified"]
     assert not registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
                                                after_counts=counts, audited_pages=[1])
+
+
+def test_native_pager_next_revokes_coverage_for_a_previously_terminal_page(tmp_path):
+    registry = RouteRegistry(tmp_path / "routes.json")
+    counts = {"routes": 2, "parked": 1, "pending": 0}
+    assert registry.record_game_roster(game_rows(), 3)
+    _audit_roster_routes(registry)
+    assert registry.confirm_fleet_coverage(game_rows(), before_counts=counts,
+                                           after_counts=counts, audited_pages=[1])
+
+    _audit_roster_routes(registry, None, native_next=True)
+
+    assert not registry.snapshot()["current_fleet_coverage_verified"]
 
 
 def test_certified_coverage_revoked_when_a_parked_read_contradicts_roster(tmp_path):

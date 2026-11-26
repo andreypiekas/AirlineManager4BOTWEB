@@ -13,15 +13,16 @@ from route_registry import RouteRegistry
 
 
 @pytest.mark.parametrize(
-    ("page", "visible", "actions", "expected_offsets"),
+    ("page", "visible", "actions", "expected_offsets", "has_next"),
     [
-        (1, 14, ["Ajax('routes.php?start=20&sort=','routeAction',this);"], [20]),
+        (1, 17, ["Ajax('routes.php?start=20&sort=','routeAction',this);"], [20], True),
         (2, 20, ["Ajax('routes.php?start=0&sort=','routeAction',this);",
-                 "Ajax('routes.php?start=40&sort=','routeAction',this);"], [0, 40]),
+                 "Ajax('routes.php?start=40&sort=','routeAction',this);"], [0, 40], True),
+        (12, 1, ["Ajax('routes.php?start=200&sort=','routeAction',this);"], [200], False),
     ],
 )
 def test_real_am4_dom_page_identity_and_ajax_links(tmp_path, page, visible,
-                                                    actions, expected_offsets):
+                                                    actions, expected_offsets, has_next):
     if not shutil.which("node"):
         pytest.skip("Node.js required to execute the AM4 DOM adapters")
 
@@ -42,7 +43,12 @@ const row = id => ({
 const pager = {
   getAttribute: () => null,
   querySelector: selector => selector.includes('.page-item.not-active > .page-link') ?
-    {textContent: String(page)} : null
+    {textContent: String(page)} : null,
+  querySelectorAll: () => [
+    ...(page === 1 ? [] : [{textContent: 'Previous'}]),
+    {textContent: String(page)},
+    ...(NEXT ? [{textContent: 'Next'}] : [])
+  ]
 };
 const popup = {
   querySelector: selector => selector === '.pagination' ? pager : null,
@@ -54,11 +60,11 @@ globalThis.document = {
   querySelectorAll: selector => selector.includes('routeMainList') ?
     Array.from({length: VISIBLE}, (_, index) => row(24000000 + page * 100 + index)) :
     selector.includes('.pagination [onclick]') ? actions :
-    selector.includes('.row.font-weight-bold') ? [{textContent: '203 Routes'}] : []
+    selector.includes('.row.font-weight-bold') ? [{textContent: '218 Routes'}] : []
 };
 """
     fixture = fixture.replace("PAGE", str(page)).replace("VISIBLE", str(visible))
-    fixture = fixture.replace("ACTIONS", json.dumps(actions))
+    fixture = fixture.replace("ACTIONS", json.dumps(actions)).replace("NEXT", json.dumps(has_next))
     fixture += ("\nconsole.log(JSON.stringify({rows: (new Function(" +
                 json.dumps(_ROUTE_AUDIT_JS) + "))(), links: (new Function(" +
                 json.dumps(_ROUTES_PAGER_LINKS_JS) + "))()}));\n")
@@ -69,8 +75,8 @@ globalThis.document = {
     assert result.returncode == 0, result.stderr
     snapshot = json.loads(result.stdout)
     assert len(snapshot["rows"]) == visible
-    assert all(row["scan_page"] == page and row["scan_total_pages"] == 11
-               for row in snapshot["rows"])
+    assert all(row["scan_page"] == page and row["scan_total_pages"] is None
+               and row["scan_has_next"] is has_next for row in snapshot["rows"])
     assert all(row["aircraft_id"].isdigit() for row in snapshot["rows"])
     assert all(not row["home_hub_id"] for row in snapshot["rows"])
     assert [link["offset"] for link in snapshot["links"]] == expected_offsets
@@ -105,12 +111,13 @@ class LiveRoutesBot:
 
     def __init__(self, *, initial_page=1, total_pages=11, fail_after_ajax=None,
                  change_total_after_ajax=None, wrong_page_after_ajax=None,
-                 page_counts=None):
+                 page_counts=None, native_pager=False):
         self.page = initial_page
         self.total_pages = total_pages
         self.fail_after_ajax = fail_after_ajax
         self.change_total_after_ajax = change_total_after_ajax
         self.wrong_page_after_ajax = wrong_page_after_ajax
+        self.native_pager = native_pager
         self.page_counts = page_counts if page_counts is not None else {
             1: 14, 11: 3,
         }
@@ -132,7 +139,8 @@ class LiveRoutesBot:
                      "registration": f"PP-{self.page}-{index}", "model": "A320",
                      "origin_code": "XAP", "destination_code": "GRU",
                      "scan_page": self.page,
-                     "scan_total_pages": self.total_pages,
+                     "scan_total_pages": None if self.native_pager else self.total_pages,
+                     "scan_has_next": self.page < self.total_pages if self.native_pager else None,
                      "scan_route_count": expected_routes, "home_hub_id": None}
                     for index in range(count)]
         raise AssertionError(f"unexpected read: {script[:40]}")
@@ -209,6 +217,30 @@ def test_planning_audits_all_pages_despite_incremental_budget(tmp_path, initial_
     assert sorted(visited) == list(range(1, 12))
     assert bot.page == initial_page
     assert registry.snapshot()["scan_coverage"]["full_page_coverage_verified"] is True
+
+
+@pytest.mark.parametrize(("initial_page", "page_two_count"), [(1, 20), (6, 19), (12, 19)])
+def test_planning_uses_the_native_last_page_with_underfilled_pages(tmp_path, initial_page,
+                                                                  page_two_count):
+    bot = LiveRoutesBot(initial_page=initial_page, total_pages=12, native_pager=True,
+                        page_counts={1: 17, 2: page_two_count, 12: 1})
+    registry = RouteRegistry(tmp_path / "routes.json")
+
+    assert audit_routes_live_pages(bot, registry, attempt_full=True) == list(range(1, 13))
+    assert bot.page == initial_page
+    coverage = registry.snapshot()["scan_coverage"]
+    assert coverage["expected_routes"] == 198 + page_two_count
+    assert coverage["observed_pages"] == 12
+    assert coverage["full_page_coverage_verified"] is True
+
+
+def test_incremental_native_pager_never_certifies_its_page_estimate(tmp_path):
+    bot = LiveRoutesBot(total_pages=4, native_pager=True, page_counts={1: 17, 2: 2, 3: 2, 4: 1})
+    registry = RouteRegistry(tmp_path / "routes.json")
+
+    assert audit_routes_live_pages(bot, registry, pages_per_cycle=3) == [1, 2]
+    assert bot.page == 1
+    assert registry.snapshot()["last_verified_full_audit"] is None
 
 
 def test_planning_over_page_limit_stays_partial(tmp_path):

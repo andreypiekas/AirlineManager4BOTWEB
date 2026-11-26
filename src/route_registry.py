@@ -721,15 +721,35 @@ class RouteRegistry:
                     expected_routes = None
                 if not isinstance(audit_run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", audit_run_id):
                     audit_run_id = None
+                previous_coverage = data.get("scan_coverage")
+                native_rows = isinstance(route_observations, list) and any(
+                    isinstance(row, dict) and row.get("scan_has_next") is not None
+                    for row in route_observations
+                )
+                # A single native page has no global page counter. Reuse the
+                # prior total only for a compatible refresh of verified coverage.
+                if (total_pages is None and native_rows and audit_run_id is None
+                        and isinstance(previous_fleet_coverage, dict) and previous_fleet_coverage
+                        and isinstance(previous_coverage, dict)
+                        and previous_coverage.get("full_page_coverage_verified") is True
+                        and previous_coverage.get("expected_routes") == expected_routes):
+                    raw_total_pages = previous_coverage.get("total_pages")
+                    total_pages = self._valid_page(raw_total_pages)
+                native_boundary = (
+                    native_rows
+                    and page is not None and total_pages is not None
+                    and all(isinstance(row, dict)
+                            and row.get("scan_has_next") is (page < total_pages)
+                            for row in route_observations)
+                )
                 pagination_verified = (
                     type(raw_page) is int and type(raw_total_pages) is int
                     and page is not None and total_pages is not None
                     and page <= total_pages and expected_routes is not None
-                    and total_pages == (expected_routes + 19) // 20
+                    and (native_boundary or (not native_rows and total_pages == (expected_routes + 19) // 20))
                 )
                 if total_pages and page and page > total_pages:
                     page = None
-                previous_coverage = data.get("scan_coverage")
                 coverage = previous_coverage if isinstance(previous_coverage, dict) else {}
                 prior_run = coverage.get("audit_run")
                 updated_at = coverage.get("updated_at")
