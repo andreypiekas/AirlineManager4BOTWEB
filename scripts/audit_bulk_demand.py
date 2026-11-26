@@ -12,8 +12,6 @@ import json
 import time
 from pathlib import Path
 
-import duckdb
-
 DATASET_FILES = {
     "airports.parquet": "93842f6b6aea3c140ec92984b2050ba58cb294bade3336ff97e97046795daf41",
     "routes.parquet": "b43b2ca296f55e827171b950a9a868e095ea12f3477cee0d55d5cd8130a3c4a0",
@@ -49,6 +47,8 @@ def dataset_file(directory, name):
 
 
 def scan_matrix(directory, origins, destinations):
+    import duckdb
+
     airports_file = dataset_file(directory, "airports.parquet")
     routes_file = dataset_file(directory, "routes.parquet")
     with duckdb.connect() as conn:
@@ -95,6 +95,10 @@ def main():
     parser.add_argument("dataset", type=Path, help="Diretório com os dois arquivos Parquet da revisão auditada")
     parser.add_argument("--export", type=Path, help="Gravar candidatos históricos em um novo CSV")
     args = parser.parse_args()
+    try:
+        import duckdb
+    except ImportError:
+        parser.exit(2, "Instale DuckDB para executar a triagem histórica.\n")
     started = time.monotonic()
     try:
         snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
