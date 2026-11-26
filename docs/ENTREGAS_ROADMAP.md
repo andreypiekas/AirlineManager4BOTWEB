@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3, custos observados de dois MC-21-400 pousados (G0)
+
+- Entre 08h30 e 08h33 BRT, o Chrome mostrou 223 rotas, 225 aeronaves, `Parked (0)` e `Pending (2)`. A lista `Landed` mostrou PP-118-3 e PP-118 prontas para decolar em suas rotas existentes. Foram conferidos o detalhe nativo de cada aeronave, a cabine, `Todays demand` e o histórico de voos. A consulta foi somente leitura.
+- PP-118-3, rota XP-107 ORD–CCS, 4.040 km. A cabine tinha 46/59/22 assentos Y/J/F. A demanda disponível era 642/241/93 de 831/481/185 no dia. As tarifas Y/J/F inferidas de US$ 1.960/4.090/6.410 reproduzem exatamente a receita de sete trechos do histórico. O último CCS–ORD levou 33/43/18 passageiros, faturou US$ 355.930 e consumiu 76.691 lb de combustível e 106.356 quotas de CO₂.
+- PP-118, rota XP-109 DFW–CCS, 3.946 km. A cabine tinha 118/41/10 assentos Y/J/F. A demanda disponível era 1.169/115/223 de 1.743/320/273 no dia. As tarifas Y/J/F inferidas de US$ 1.920/4.010/6.290 reproduzem exatamente a receita de cinco trechos do histórico. O último CCS–DFW levou 90/33/8 passageiros, faturou US$ 355.450 e consumiu 74.906 lb e 108.123 quotas. O cartão de voo exibia 74.907 lb para o próximo trecho.
+- O mercado exibiu US$ 390 por 1.000 lb e US$ 157 por 1.000 quotas, com próxima atualização por volta das 09h BRT. Aplicadas aos consumos históricos, as cotações totalizam US$ 46.607,38 para CCS–ORD e US$ 46.188,65 para CCS–DFW. A receita menos esses dois insumos resulta em US$ 309.322,62 e US$ 309.261,35, respectivamente, antes de manutenção e demais despesas. Os valores representam reposição pela cotação da consulta. O histórico prova o consumo dos trechos já operados. Com `Parked (0)`, a taxa de abertura de uma nova rota continuou pendente e as rotas ocupadas ficam fora da elegibilidade A3/A4.
+- Às 08h30 BRT, o Chrome dedicado passou pela verificação de sessão, mas o worker encerrou na confirmação da identidade da companhia antes de gerar a captura auditada. Ao reabrir o perfil às 08h34 BRT, a sessão não estava disponível. A amostra de voo veio da consulta manual autenticada. A conciliação das receitas e o cálculo de reposição foram conferidos com os valores do histórico. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A3/A4, alcance do histórico de taxas de rota (G0)
 
 - Entre 08h18 e 08h20 BRT, `Routes` manteve 223 rotas, 225 aeronaves, `Parked (0)` e `Pending (2)`. A prévia de LAX–TUN continuou indisponível para o PP-254, com entrega prevista por volta de 13h09 BRT.
