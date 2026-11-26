@@ -45,6 +45,11 @@ fetch(url, {cache:'no-store', signal:AbortSignal.timeout(5000), redirect:'error'
       return rows.length === 1 ? rows[0].cells[1].textContent.trim() : null;
     };
     const onRoute = countCell('A/C on route');
+    const capableMenus = detail.querySelectorAll('select#capAc');
+    const capableAircraft = capableMenus.length === 1
+      ? Array.from(capableMenus[0].options).filter(option => !option.disabled && option.value !== '')
+          .map(option => /^([1-9][0-9]{0,13});/.exec(option.value)?.[1] ?? null)
+      : null;
     const rowTexts = table => Array.from(table.rows, row => Array.from(row.cells, cell => cell.textContent.trim()));
     const paxTables = Array.from(detail.querySelectorAll('table.table-bordered'), rowTexts)
       .filter(rows => rows[0]?.join('|') === '|Y class|J class|F class');
@@ -66,6 +71,7 @@ fetch(url, {cache:'no-store', signal:AbortSignal.timeout(5000), redirect:'error'
     return {codes, runways:Array.from(roads, node => node.parentElement.textContent.trim()),
             occupied:onRoute, occupancy_label:onRoute !== null ? 'A/C on route' : null,
             observed_capable_aircraft:countCell('A/C capable'),
+            capable_aircraft_ids:capableAircraft,
             observed_daily_demand:demandRow('Daily'), observed_today_demand:demandRow('Today'),
             event_demand_boosted:EVENT_WARNING.test(detail.textContent || '') ? true : null};
   }).then(done, () => done(null));

@@ -19,7 +19,7 @@ _MAX_RECORDS = 10000
 _ID = re.compile(r"[1-9][0-9]{0,11}")
 _FEET = re.compile(r"([0-9]{1,5}|[0-9]{1,2}(?:,[0-9]{3}))\s*ft", re.I)
 _OBSERVED_DEMAND = ("observed_daily_demand", "observed_today_demand")
-_VOLATILE_FIELDS = {*_OBSERVED_DEMAND, "observed_capable_aircraft", "event_demand_boosted"}
+_VOLATILE_FIELDS = {*_OBSERVED_DEMAND, "observed_capable_aircraft", "capable_aircraft_ids", "event_demand_boosted"}
 _LOCK = threading.RLock()
 
 

@@ -444,7 +444,7 @@ def test_replay_rejects_legacy_or_modified_snapshot(tmp_path, monkeypatch):
     assert replay_research_page(now=NOW, path=path)["status"] == "registro_invalido"
 
 
-def test_replay_native_positive_count_vetoes_preview_without_fleet_match(tmp_path, monkeypatch):
+def test_replay_native_count_and_event_veto_preview(tmp_path, monkeypatch):
     from test_owned_hub_research_feed import _inventory, _market, _preview_engines, _sample
 
     monkeypatch.setattr(paths, "current", lambda: paths.Profile(""))
@@ -454,24 +454,29 @@ def test_replay_native_positive_count_vetoes_preview_without_fleet_match(tmp_pat
                     quotes={kind: {"source": "game_market", "unit": "USD/1000",
                                    "price": price, "observed_at": NOW - 5, "expires_at": NOW + 60}
                             for kind, price in (("fuel", 600), ("co2", 100))})
-    samples = [_sample(dest=str(dest)) for dest in range(3140, 3144)]
+    samples = [_sample(dest=str(dest)) for dest in range(3140, 3145)]
     # A positive count in correlated route detail is also useful without a roster.
-    samples[-1]["route_detail"] = {"source": "game_route_detail", "observed_at": NOW - 5,
-                                   "origin_id": "2926", "destination_id": "3143",
-                                   "origin_runway_ft": 6500, "destination_runway_ft": 6500,
-                                   "observed_aircraft_on_route": 2}
+    samples[3]["route_detail"] = {"source": "game_route_detail", "observed_at": NOW - 5,
+                                  "origin_id": "2926", "destination_id": "3143",
+                                  "origin_runway_ft": 6500, "destination_runway_ft": 6500,
+                                  "observed_aircraft_on_route": 2}
+    samples[4]["distance_km"] = 1999.6
     evidence["demand"]["samples"] = samples
     bot = SimpleNamespace()
     for dest, distance, occupied in (("3140", 2000, 1), ("3141", 2000, 0), ("3142", 1999, 2)):
         assert record_native_route_quote(bot, aircraft_id="900001", origin_id="2926",
                                          destination_id=dest, distance=distance, fee=1000,
                                          occupied=occupied, fares=(900, 1800, 2700), now=NOW - 10)
+    assert record_native_route_quote(bot, aircraft_id="900001", origin_id="2926",
+                                     destination_id="3144", distance=2000, fee=1000,
+                                     occupied=0, fares=(900, 1800, 2700), now=NOW - 10,
+                                     research_distance_km=1999.6, event_demand_boosted=True)
     evidence["native_quotes"] = native_route_quotes(bot, now=NOW)
     path = tmp_path / FILENAME
     path.write_text(json.dumps(compose_snapshot(**evidence)), encoding="utf-8")
     result = replay_research_page(now=NOW, path=path)
     rows = {item["destination_id"]: item for item in result["items"] if item["engine_id"] == "1"}
-    assert set(rows) == {"3140", "3141", "3142", "3143"}
+    assert set(rows) == {"3140", "3141", "3142", "3143", "3144"}
     for dest, item in rows.items():
         assert item["fleet_occupancy"] is None
         gate = item["accounting_gate"]
@@ -485,9 +490,12 @@ def test_replay_native_positive_count_vetoes_preview_without_fleet_match(tmp_pat
         else:
             assert "ROUTE_OCCUPANCY_UNVERIFIED" in codes
             assert "ROUTE_OCCUPIED" not in codes
-            assert item["economics_preview"] is not None
+            assert (item["economics_preview"] is None) == (dest == "3144")
     assert all("rota_ocupada_frota_propria" in rows[dest]["pending"] for dest in ("3140", "3143"))
     assert "native_route_quote_reference" not in rows["3142"]
+    assert rows["3144"]["event_demand_boosted"] is True
+    assert "demanda_evento_temporario" in rows["3144"]["pending"]
+    assert rows["3144"]["native_route_quote_reference"]["distance_km"] == 1999.6
 
 
 def test_replay_accounting_gate_uses_only_current_correlated_detail(tmp_path, monkeypatch):

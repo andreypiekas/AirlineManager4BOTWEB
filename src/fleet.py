@@ -921,6 +921,13 @@ def manage_fleet(bot: "Bot") -> None:
                 native_identity_evidence=native_identity_evidence)
             log_fleet.info("Inventário e auditoria de rotas: cobertura %s.",
                            "integral correlacionada" if confirmed else "parcial")
+    parked_ids = native_identity_evidence.get("parked_ids")
+    if (reroute_ready and parked_ids and not bot.stopping
+            and cfg.get_bool("options", "collect_market_observations")):
+        from parked_route_quote import collect_parked_route_quote
+
+        bot._guard(lambda: collect_parked_route_quote(bot, parked_ids),
+                   "consultar a prévia de rota de uma aeronave estacionada")
     budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))
     if not cfg.get_bool("options", "allow_duplicate_routes", True):
         if reroute_ready:

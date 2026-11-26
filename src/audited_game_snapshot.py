@@ -376,6 +376,11 @@ def replay_research_page(*, offset=0, expected_snapshot=None, expected_fingerpri
             )
             if reference is not None:
                 item["native_route_quote_reference"] = reference
+                if reference.get("event_demand_boosted") is True:
+                    item["event_demand_boosted"] = True
+                    item["economics_preview"] = None
+                    if "demanda_evento_temporario" not in item["pending"]:
+                        item["pending"].append("demanda_evento_temporario")
                 if reference["aircraft_on_route_range"]["max"] > 0:
                     # The form was bound to an existing aircraft. Its positive
                     # count vetoes an optimistic preview, but its fares and

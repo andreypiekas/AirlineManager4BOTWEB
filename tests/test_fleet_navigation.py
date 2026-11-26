@@ -2,6 +2,7 @@
 
 import fleet
 import fleet_commitment_observations
+import parked_route_quote
 import pytest
 import route_registry
 from route_registry import RouteRegistry
@@ -56,13 +57,14 @@ def test_route_creation_restores_routes_screen_after_duplicate_research(monkeypa
 @pytest.mark.parametrize("changed, reroute_ready, verified", [
     (False, True, True), (True, True, False), (False, False, False),
 ])
+@pytest.mark.parametrize("collect_quotes", [True, False])
 def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
-        tmp_path, monkeypatch, changed, reroute_ready, verified):
+        tmp_path, monkeypatch, changed, reroute_ready, verified, collect_quotes):
     registry = RouteRegistry(tmp_path / "routes.json")
 
     class Config:
         def get_bool(self, section, key, default=False):
-            return True if key == "planning_enabled" else default
+            return {"planning_enabled": True, "collect_market_observations": collect_quotes}.get(key, default)
 
         def get_int(self, section, key, default):
             return default
@@ -111,12 +113,24 @@ def test_planning_cycle_correlates_live_route_roster_before_and_after_audit(
     def collect(bot, *, identity_evidence):
         assert bot.events == ["roster"]
         bot.events.append("native_lists")
+        identity_evidence["parked_ids"] = frozenset({"102"})
         bot.close_popup()
         return True
 
+    def quote(bot, parked_ids):
+        assert parked_ids == {"102"}
+        assert bot.screen == "routes_main.php"
+        bot.events.append("quote")
+
     monkeypatch.setattr(fleet_commitment_observations, "collect_fleet_commitment_observations", collect)
+    monkeypatch.setattr(parked_route_quote, "collect_parked_route_quote", quote)
     bot = Bot()
     fleet.manage_fleet(bot)
     assert registry.snapshot()["current_fleet_coverage_verified"] is verified
     assert bot.roster_reads == (2 if reroute_ready else 1)
-    assert bot.events == (["roster", "native_lists", "roster"] if reroute_ready else ["roster", "native_lists"])
+    expected = ["roster", "native_lists"]
+    if reroute_ready:
+        expected.append("roster")
+        if collect_quotes:
+            expected.append("quote")
+    assert bot.events == expected

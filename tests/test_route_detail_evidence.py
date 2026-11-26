@@ -85,6 +85,10 @@ const readDetail = async (today, header = 'J class', duplicateDaily = false) => 
     querySelectorAll: selector => ({
       'table.table-bordered': [{rows}],
       'table.m-text:not(.table-bordered) tr': [cells('A/C on route', '1'), cells('A/C capable', '0')],
+      'select#capAc': today ? [{options: [
+        {disabled: true, value: '0'}, {disabled: false, value: '123;A380-800'},
+        {disabled: false, value: 'broken'},
+      ]}] : [],
     })[selector] || [],
   };
   // Both a bare AJAX fragment and a wrapped detail are accepted.
@@ -103,6 +107,10 @@ const readDetail = async (today, header = 'J class', duplicateDaily = false) => 
     assert full["observed_today_demand"] == {"y": "1,054", "j": "461", "f": "249"}
     assert full["occupied"] == "1" and full["observed_capable_aircraft"] == "0"
     assert full["event_demand_boosted"] is True
+    assert full["capable_aircraft_ids"] == ["123", None]
+    assert daily_only["capable_aircraft_ids"] is None
+    assert "capable_aircraft_ids" not in evidence.validated_detail(
+        {**RAW, "capable_aircraft_ids": ["123"]}, "2926", "3139")
     assert daily_only["observed_daily_demand"] == full["observed_daily_demand"]
     assert daily_only["observed_today_demand"] is None and daily_only["event_demand_boosted"] is None
     assert unknown_header["observed_daily_demand"] is None and unknown_header["observed_today_demand"] is None
