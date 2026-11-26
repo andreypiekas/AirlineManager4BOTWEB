@@ -1,5 +1,13 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3/A4, cobertura de entrega e auditoria após reinício (G0)
+
+- O Chrome dedicado retomou o acompanhamento às 09h30 BRT. O monitor confirmou o PP-254 em entrega para Los Angeles, previsão de chegada às 13h08 BRT, zero em `Parked` e quatro registros em `Pending`. A demanda de LAX–TUN voltou a ser 1.341/514/112 em Y/J/F, sem `Today` e sem aeronave apta. A prévia depende da elegibilidade do PP-254.
+- A captura das 09h30min48s–09h33min15s BRT passou pelo carregador auditado. Certificou os 30 hubs próprios e registrou cotação de combustível de US$ 670 por 1.000 lb e CO₂ de US$ 181 por 1.000 quotas, além de histórico financeiro e quadro salarial. A certificação da frota ficou indisponível nesse ciclo. A alteração de navegação não resolveu o timeout no Chrome dedicado. As operações dos hubs ficaram sem painéis validados e a conferência do formulário de entrega também expirou.
+- Por volta das 09h35 BRT, a consulta nativa independente comparou os IDs gerenciados antes e depois da oferta do A380-800. As 30 opções de entrega estavam habilitadas e coincidiram com os 30 hubs próprios, incluindo Los Angeles. O resultado cobre o formulário observado desse modelo. O preço efetivamente cobrado e a cobertura dos demais modelos seguem pendentes em G0.
+- Na consulta nativa das 09h32–09h33 BRT, Marketing mostrou campanhas ecológica e de reputação ativas, com reputação de 90% em passageiros e 59% em carga. O painel de manutenção confirmou um A-check já iniciado de US$ 8.823.099 e um reparo agendado de US$ 255.056. A leitura abriu os detalhes de serviços existentes. `Finances` mostrava registros recentes de decolagens da frota.
+- A suíte Windows depois da alteração passou com 2.406 testes e um pulado. Os 16 testes do instalador Linux passaram separadamente em Ubuntu via WSL. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A3/A4, navegação de hubs e validação de operações (G0)
 
 - Por volta das 09h23 BRT, a consulta nativa em `Hubs → Operations to/from hub` leu os 30 painéis gerenciados. Houve 251 vínculos entre operações de hub e 223 aeronaves distintas, com 12 vínculos em Los Angeles. A leitura é independente da captura das 09h14 BRT. A conciliação entre os painéis e a frota na mesma janela do worker segue pendente.
