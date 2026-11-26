@@ -9,6 +9,7 @@ from helpers import game_whole_number, to_int
 from route_registry import endpoint, endpoint_matches
 
 _ID = re.compile(r"[0-9]{1,14}")
+ROUTE_EVENT_WARNING_JS = r"/\bDemand is currently boosted due to a special event\b/i"
 
 # The fragments contain map callbacks. Parse their data in detached documents
 # so research does not change the map state or run any of the returned scripts.
@@ -35,17 +36,40 @@ fetch(url, {cache:'no-store', signal:AbortSignal.timeout(5000), redirect:'error'
         Math.abs(Number(a.lon) - Number(lon[1])) < 0.001);
       return airports.length === 1 ? {id:String(airports[0].Id), range:model[1], runway:model[2]} : null;
     }
-    const roads = page.querySelectorAll('.glyphicons-road');
-    const occupancyRows = Array.from(page.querySelectorAll('table.m-text:not(.table-bordered) tr'))
-      .filter(row => row.cells.length === 2 && row.cells[0].textContent.trim() === 'A/C on route'
+    const detail = page.getElementById('rDetails') || page.body;
+    const roads = detail.querySelectorAll('.glyphicons-road');
+    const countRows = Array.from(detail.querySelectorAll('table.m-text:not(.table-bordered) tr'));
+    const countCell = label => {
+      const rows = countRows.filter(row => row.cells.length === 2 && row.cells[0].textContent.trim() === label
         && row.cells[1].classList.contains('text-right'));
-    const onRoute = occupancyRows.length === 1 ? occupancyRows[0].cells[1] : null;
-    const codes = Array.from(page.querySelectorAll('.row .col-4 .xl-text'), node => node.textContent.trim());
+      return rows.length === 1 ? rows[0].cells[1].textContent.trim() : null;
+    };
+    const onRoute = countCell('A/C on route');
+    const rowTexts = table => Array.from(table.rows, row => Array.from(row.cells, cell => cell.textContent.trim()));
+    const paxTables = Array.from(detail.querySelectorAll('table.table-bordered'), rowTexts)
+      .filter(rows => rows[0]?.join('|') === '|Y class|J class|F class');
+    const paxRows = [];
+    if (paxTables.length === 1) {
+      // Cargo shares the table and repeats the same row labels under a new header.
+      for (const row of paxTables[0].slice(1)) {
+        if (row[0] !== 'Daily' && row[0] !== 'Today') break;
+        paxRows.push(row);
+      }
+    }
+    const demandRow = label => {
+      const rows = paxRows.filter(row => row[0] === label);
+      if (rows.length !== 1 || rows[0].length !== 4) return null;
+      const [, y, j, f] = rows[0];
+      return {y, j, f};
+    };
+    const codes = Array.from(detail.querySelectorAll('.row .col-4 .xl-text'), node => node.textContent.trim());
     return {codes, runways:Array.from(roads, node => node.parentElement.textContent.trim()),
-            occupied:onRoute?.textContent.trim() ?? null,
-            occupancy_label:onRoute ? 'A/C on route' : null};
+            occupied:onRoute, occupancy_label:onRoute !== null ? 'A/C on route' : null,
+            observed_capable_aircraft:countCell('A/C capable'),
+            observed_daily_demand:demandRow('Daily'), observed_today_demand:demandRow('Today'),
+            event_demand_boosted:EVENT_WARNING.test(detail.textContent || '') ? true : null};
   }).then(done, () => done(null));
-"""
+""".replace("EVENT_WARNING", ROUTE_EVENT_WARNING_JS)
 
 _CANDIDATES = r"""
 const [from, to, range, limit] = arguments;

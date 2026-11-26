@@ -47,7 +47,8 @@ from reroute import (aircraft_details_missing, confirm_direct_route, confirm_sto
                      landed_departure, read_direct_form, recover_pending, replace_route)
 from reroute_preflight import check_existing_route
 from route_creation import has_pending_creation, stage_creation, finish_creation, recover_pending_creation
-from route_stopover import Stopover, find_stopover, parked_specs, read_form, read_route_fares, research_details
+from route_stopover import (ROUTE_EVENT_WARNING_JS, Stopover, find_stopover, parked_specs, read_form,
+                            read_route_fares, research_details)
 
 if TYPE_CHECKING:
     from bot import Bot
@@ -155,7 +156,6 @@ return Array.from(document.querySelectorAll("#routesContainer [id^='routeMainPar
 });
 """
 
-ROUTE_EVENT_WARNING_JS = r"/\bDemand is currently boosted due to a special event\b/i"
 
 _CANDIDATES_JS = r"""
 return Array.from(document.querySelectorAll("#resResult #list .sorter")).map(el => {

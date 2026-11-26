@@ -1,4 +1,4 @@
-"""Independent, bounded observations of physical route details for planning."""
+"""Independent, bounded observations of native route details for planning."""
 from __future__ import annotations
 
 import json
@@ -10,6 +10,7 @@ from pathlib import Path
 
 import paths
 from airport_catalog import by_id
+from helpers import game_whole_number
 from route_stopover import research_details
 
 SOURCE = "game_route_detail"
@@ -17,6 +18,8 @@ MAX_AGE = 900
 _MAX_RECORDS = 10000
 _ID = re.compile(r"[1-9][0-9]{0,11}")
 _FEET = re.compile(r"([0-9]{1,5}|[0-9]{1,2}(?:,[0-9]{3}))\s*ft", re.I)
+_OBSERVED_DEMAND = ("observed_daily_demand", "observed_today_demand")
+_VOLATILE_FIELDS = {*_OBSERVED_DEMAND, "observed_capable_aircraft", "event_demand_boosted"}
 _LOCK = threading.RLock()
 
 
@@ -37,11 +40,31 @@ def _time(value):
     return type(value) in (int, float) and math.isfinite(value) and value > 0
 
 
+def _observed_count(value):
+    if isinstance(value, str) and len(value) > 11:
+        return None
+    return game_whole_number(value)
+
+
+def _retain_observations(raw, result):
+    for field in _OBSERVED_DEMAND:
+        demand = raw.get(field)
+        if isinstance(demand, dict) and set(demand) == set("yjf"):
+            counts = {key: _observed_count(demand[key]) for key in "yjf"}
+            if all(value is not None and value <= 100_000_000 for value in counts.values()):
+                result[field] = counts
+    capable = _observed_count(raw.get("observed_capable_aircraft"))
+    if capable is not None and capable <= 999_999_999:
+        result["observed_capable_aircraft"] = capable
+    if raw.get("event_demand_boosted") is True:
+        result["event_demand_boosted"] = True
+
+
 def validated_detail(raw, origin, destination, *, expected_runway=None, hub_code=None):
     """Correlate the ordered response using the game airport catalogue.
 
-    Only the label-bound game count is retained as an observation. It still
-    requires independent fleet reconciliation to establish route occupancy.
+    Label-bound values remain observations. Route occupancy requires independent
+    fleet reconciliation, and passenger demand requires economic eligibility checks.
     """
     if not _key(origin, destination) or not isinstance(raw, dict):
         return None
@@ -65,6 +88,7 @@ def validated_detail(raw, origin, destination, *, expected_runway=None, hub_code
     if (raw.get("occupancy_label") == "A/C on route" and isinstance(count, str)
             and re.fullmatch(r"[0-9]{1,9}", count)):
         result["observed_aircraft_on_route"] = int(count)
+    _retain_observations(raw, result)
     return result
 
 
@@ -85,6 +109,7 @@ def current_detail(raw, origin, destination, now, *, expected_runway=None):
     count = raw.get("observed_aircraft_on_route")
     if type(count) is int and 0 <= count <= 999999999:
         result["observed_aircraft_on_route"] = count
+    _retain_observations(raw, result)
     return result
 
 
@@ -167,6 +192,8 @@ class RouteDetailRegistry:
                     row["route_detail_conflict"] = True
                 else:
                     row["route_detail"] = proof
+                    if proof.get("event_demand_boosted") is True:
+                        row["event_demand_boosted"] = True
             result.append(row)
         return result
 
@@ -193,9 +220,18 @@ def collect_route_details(bot, registry, samples, hub_codes, *, per_cycle=2):
             # Selenium errors may contain authenticated URLs or session details.
             continue
         observed_at = time.time()
-        if first != second or getattr(bot, "stopping", False):
+        if (not isinstance(first, dict) or not isinstance(second, dict)
+                or getattr(bot, "stopping", False)):
             continue
-        proof = validated_detail(second, origin, dest,
+        identity = (first.keys() | second.keys()) - _VOLATILE_FIELDS
+        if any(first.get(key) != second.get(key) for key in identity):
+            continue
+        # Preserve stable physical data when boarding changes Today between reads.
+        # A warning on either response still qualifies the correlated observation.
+        stable = {key: value for key, value in second.items() if first.get(key) == value}
+        if first.get("event_demand_boosted") is True or second.get("event_demand_boosted") is True:
+            stable["event_demand_boosted"] = True
+        proof = validated_detail(stable, origin, dest,
                                  expected_runway=sample.get("destination_runway_ft"),
                                  hub_code=hub_codes.get(origin))
         if proof and registry.finish(origin, dest, attempted_at, proof, observed_at=observed_at):

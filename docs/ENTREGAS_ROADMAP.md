@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-25 — Autonomia Total A2–A4, demanda nativa e paginação de Routes (G0)
+
+- No Chrome, em modo somente leitura, Parked voltou a exibir zero aeronaves. A pesquisa de DAC–FNJ a partir de DAC manteve o aviso de evento. Em `#rDetails`, a seção Y/J/F mostrou `Daily` de 1.081/510/272 e `Today` de 1.054/461/249. O detalhe exibiu `A/C on route` igual a um e `A/C capable` igual a zero. Layout do candidato, tarifa aplicável, taxa de abertura e custos incrementais seguem pendentes de uma prévia com aeronave apta e de observação sem aviso de evento.
+- Routes exibiu 218 linhas em 12 páginas. A navegação de ida e volta reconciliou os mesmos 218 IDs de linha. Onze páginas coincidiram por ID e par de aeroportos. A outra leitura capturou um campo de distância no lugar do par em uma linha, cuja identificação TNR–TOJ foi confirmada na primeira página. Os filtros oferecidos eram de passageiros e carga. As passagens sequenciais documentam o alcance da paginação. A cobertura por hub ainda exige atribuição e reconciliação no mesmo snapshot.
+- O coletor do detalhe usa o cabeçalho Y/J/F para separar passageiros da seção de carga, que repete os rótulos. `Daily`, `Today` e `A/C capable` entram no snapshot auditado como observações quando concordam nas duas leituras. `Today` ausente ou instável permanece sem valor. O aviso de qualquer uma das duas leituras correlacionadas segue até a fila e bloqueia a projeção econômica. A admissão em A3/A4 continua exigindo as evidências completas da rota e do candidato.
+- Passaram 115 testes direcionados e 2.295 na suíte Windows, com um teste ignorado e o instalador Linux excluído. Ruff e `git diff --check` passaram. G0 segue vigente, com homologação econômica pendente. Reversão por `git revert` do commit desta entrega. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-25 — Autonomia Total A2–A4, vigência dos eventos e busca de aeronave apta (G0)
 
 - No Chrome autenticado entre 21h35 e 21h39 BRT, Events → Special Events mostrava `Black Friday Cargo Rush` com aumento mundial de 50% na demanda de carga e cerca de 3 dias e 22 horas restantes. A aba Events também mostrava um bônus de classe executiva em YYZ–VAG, com cerca de 4 dias e 4 horas restantes. A busca exibiu `Demand is currently boosted due to a special event` nas 101 linhas consultadas. A descrição do evento global documenta o aumento de carga, e o aviso da pesquisa deixa a demanda de passageiros sem validação fora de evento.

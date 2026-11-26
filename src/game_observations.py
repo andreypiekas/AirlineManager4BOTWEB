@@ -9,7 +9,7 @@ import time
 
 from hub_expansion import HubExpansionRegistry
 from hub_registry import HubRegistry
-from fleet import ROUTE_EVENT_WARNING_JS
+from route_stopover import ROUTE_EVENT_WARNING_JS
 from engine_catalog import EngineCatalogRegistry, MODEL_ROSTER_JS
 from engine_detail import (
     MODEL_DETAIL_IDENTITY_JS, parse_displayed_metrics, parse_operational_requirements, parse_seat_observation,

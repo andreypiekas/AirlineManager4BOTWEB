@@ -416,6 +416,8 @@ def _build_hub_research_queue(
                                 expected_runway=sample.get("destination_runway_ft"))
         if detail:
             sample["route_detail"] = detail
+            if detail.get("event_demand_boosted") is True:
+                sample["event_demand_boosted"] = True
         raw_detail = current_detail(row.get("route_detail"), origin, destination, now)
         if (isinstance(row.get("stopover_research"), list)
                 and row.get("route_detail_conflict") is not True and (not raw_detail or detail)):

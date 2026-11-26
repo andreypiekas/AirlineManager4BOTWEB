@@ -1,3 +1,6 @@
+import json
+import shutil
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -6,6 +9,7 @@ import route_detail_evidence as evidence
 from hub_expansion import HubExpansionRegistry
 from owned_hub_research_feed import build_owned_hub_research_queue
 from owned_hub_research_ingestion import OwnedHubResearchInputsRegistry
+from route_stopover import _READ
 
 
 NOW = 1_900_000_000
@@ -59,6 +63,92 @@ def test_label_bound_count_does_not_certify_occupancy(tmp_path):
             {**raw, "occupied": count}, "2926", "3139")
     assert "observed_aircraft_on_route" not in evidence.validated_detail(
         {**raw, "occupancy_label": "A/C capable"}, "2926", "3139")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js not available")
+def test_read_binds_passenger_labels_to_the_passenger_section():
+    js = r"""
+const read = new Function(process.argv[1]);
+const cells = (...texts) => ({cells: texts.map((text, index) => ({
+  textContent: text, classList: {contains: name => index === 1 && name === 'text-right'},
+}))});
+global.location = {href: 'https://example.test/'};
+global.fetch = async () => ({ok: true, text: async () => ''});
+const readDetail = async (today, header = 'J class', duplicateDaily = false) => {
+  const rows = [cells('', 'Y class', header, 'F class'), cells('Daily', '1,081', '510', '272')];
+  if (duplicateDaily) rows.push(cells('Daily', '1,080', '510', '272'));
+  if (today) rows.push(cells('Today', '1,054', '461', '249'));
+  rows.push(cells('', 'Large', '', 'Heavy'), cells('Daily', '811,000 Lbs', '', '765,000 Lbs'),
+    cells('Today', '541,000 Lbs', '', '510,000 Lbs'));
+  const detail = {
+    textContent: today ? '*Demand is currently boosted due to a special event' : '',
+    querySelectorAll: selector => ({
+      'table.table-bordered': [{rows}],
+      'table.m-text:not(.table-bordered) tr': [cells('A/C on route', '1'), cells('A/C capable', '0')],
+    })[selector] || [],
+  };
+  // Both a bare AJAX fragment and a wrapped detail are accepted.
+  global.DOMParser = class {parseFromString() {return {body: detail, getElementById: () => today ? detail : null};}};
+  return new Promise((resolve, reject) => read('read-only', '', data => data ? resolve(data) : reject()));
+};
+(async () => {
+  const result = [await readDetail(true), await readDetail(false), await readDetail(true, 'Business'),
+    await readDetail(true, 'J class', true)];
+  process.stdout.write(JSON.stringify(result));
+})();
+"""
+    output = subprocess.run(["node", "-e", js, _READ], capture_output=True, text=True, check=True, timeout=10)
+    full, daily_only, unknown_header, duplicate = json.loads(output.stdout)
+    assert full["observed_daily_demand"] == {"y": "1,081", "j": "510", "f": "272"}
+    assert full["observed_today_demand"] == {"y": "1,054", "j": "461", "f": "249"}
+    assert full["occupied"] == "1" and full["observed_capable_aircraft"] == "0"
+    assert full["event_demand_boosted"] is True
+    assert daily_only["observed_daily_demand"] == full["observed_daily_demand"]
+    assert daily_only["observed_today_demand"] is None and daily_only["event_demand_boosted"] is None
+    assert unknown_header["observed_daily_demand"] is None and unknown_header["observed_today_demand"] is None
+    assert duplicate["observed_daily_demand"] is None
+
+
+@pytest.mark.parametrize("today", [None, {"y": "1,00", "j": "4", "f": "0"},
+                                   {"y": "9" * 5000, "j": "4", "f": "0"},
+                                   {"y": False, "j": 4, "f": 0}, {"y": "27 Lbs", "j": "4", "f": "0"}])
+def test_absent_or_malformed_today_stays_unknown(today):
+    raw = {**RAW, "observed_daily_demand": {"y": "1,200", "j": "106", "f": "0"},
+           "observed_today_demand": today, "observed_capable_aircraft": "0"}
+    detail = evidence.validated_detail(raw, "2926", "3139")
+    assert detail["observed_daily_demand"] == {"y": 1200, "j": 106, "f": 0}
+    assert detail["observed_capable_aircraft"] == 0
+    assert "observed_today_demand" not in detail
+
+
+def test_warning_from_either_read_blocks_economics_with_changing_today(tmp_path, monkeypatch):
+    daily = {"y": "120", "j": "106", "f": "40"}
+    today = {"y": "70", "j": "101", "f": "0"}
+    raw = {**RAW, "observed_daily_demand": daily, "observed_today_demand": today,
+           "observed_capable_aircraft": "2"}
+    changed = {**raw, "observed_today_demand": {**today, "y": "68"}, "observed_capable_aircraft": "1"}
+    reads = iter([{**raw, "event_demand_boosted": True}, changed, changed,
+                  {**changed, "event_demand_boosted": True}])
+    registry = evidence.RouteDetailRegistry(tmp_path / "details.json")
+    monkeypatch.setattr(evidence, "research_details", lambda *_: next(reads))
+    monkeypatch.setattr(evidence.time, "time", lambda: NOW)
+    bot = SimpleNamespace(stopping=False)
+    for today_was_stable in (False, True):
+        assert evidence.collect_route_details(bot, registry, [SAMPLE], {"2926": "XAP"}) == 1
+        sample = registry.enrich([SAMPLE], now=NOW)[0]
+        assert sample["event_demand_boosted"] is True
+        detail = sample["route_detail"]
+        assert detail["observed_daily_demand"] == {"y": 120, "j": 106, "f": 40}
+        assert detail.get("observed_today_demand") == ({"y": 68, "j": 101, "f": 0} if today_was_stable else None)
+        assert detail.get("observed_capable_aircraft") == (1 if today_was_stable else None)
+        sample.pop("event_demand_boosted")
+        inventory = {"source": "game_hub_select", "observed_at": NOW, "hubs": [{"id": "2926", "code": "XAP"}]}
+        market = {"source": "bot_aircraft_market_cache", "fresh": True, "observed_at": NOW,
+                  "models": [{"id": 11, "name": "A320", "range": 6000, "capacity": 180, "price": 1700000}]}
+        item = build_owned_hub_research_queue(inventory, [sample], market, now=NOW)["items"][0]
+        assert item["event_demand_boosted"] is True
+        assert "demanda_evento_temporario" in item["pending"]
+        assert item["economics_preview"] is None and item["purchase_eligible"] is False
 
 
 def test_stable_observation_expires_and_failed_refresh_revokes_it(tmp_path, monkeypatch):
