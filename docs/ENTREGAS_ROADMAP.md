@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — Autonomia Total A3/A4, alcance do histórico de taxas de rota (G0)
+
+- Entre 08h18 e 08h20 BRT, `Routes` manteve 223 rotas, 225 aeronaves, `Parked (0)` e `Pending (2)`. A prévia de LAX–TUN continuou indisponível para o PP-254, com entrega prevista por volta de 13h09 BRT.
+- No Chrome, `Finances → History → Summary` exibiu `Route fees` de US$ 0 para as últimas 24 horas. `Expenses` exibiu seis lançamentos de 8 a 59 minutos antes da consulta, referentes a combustível, quotas e compra de aeronave. A tela individual não mostrou taxa de abertura nem vínculo a um par de aeroportos. O total de 24 horas serve à conciliação agregada. Para LAX–TUN, a taxa segue pendente da prévia do formulário e as tarifas e os consumos da mesma aeronave também seguem pendentes.
+- Consulta somente leitura e alteração documental conferida com `git diff --check`. [PR #46](https://github.com/andreypiekas/AirlineManager4BOTWEB/pull/46).
+
 ## 2026-11-26 — Autonomia Total A1/A3/A4, entrega em Los Angeles e custo de hangar (G0)
 
 - Entre 08h11 e 08h16 BRT, `Routes` mostrou 223 rotas, 225 aeronaves, `Parked (0)` e `Pending (2)`. `Pending` identificou o A380-800 PP-254 em entrega a Los Angeles com previsão por volta de 13h09 BRT, e outro A380-800 em manutenção em Dzaoudzi. O detalhe individual do PP-254 trazia o rótulo `Parked`. A disponibilidade vem da lista nativa e do seletor de aeronaves aptas no detalhe da rota. O cartão de entrega ainda mostrava a contagem regressiva.
