@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-27 — Revalidação de ASB–GYD e capacidade às 18h35 BRT
+
+- No Chrome autenticado, o catálogo de encomendas exibiu `Max pax fleet size reached` e limite de 226. A frota tinha 226 aeronaves, 219 rotas, zero em Parked e sete em manutenção. Nenhuma entrega pendente.
+- Ashgabat–Baku continuava com 768 km, zero aeronaves na rota, demanda diária Y/J/F de 1.199/187/256 e aviso de evento. A pesquisa listava uma única matrícula, PP-113-3. A frota identificou um MC-21-400 em manutenção em Ashgabat com cerca de 12 minutos restantes. O detalhe omitia a demanda residual. A tarifa F e a taxa do Cessna permanecem sem cotação. O catálogo mostrava 1.000 km de alcance e US$ 51.000 de preço base para o Cessna.
+- Finanças mostrou saldo bruto de US$ 288.160.406. O resumo de 24 horas fechou em US$ 97.358.925 de receitas menos US$ 7.898.766 de despesas, com resultado de US$ 89.460.159. As despesas conferem com quotas de US$ 4.745.306, taxa de rota de US$ 1.899.391 e A-check do 340-200-13 de US$ 1.254.069. A taxa no extrato não identifica a rota. A rubrica de pedidos estava zerada. O extrato consultado não comprovou a liquidação das demais obrigações.
+- Consulta somente leitura. Nenhum Cessna encomendado, sem débito de teste para confirmar. A compra automática do modelo configurado continua aguardando a homologação. Alteração exclusivamente documental.
+
 ## 2026-11-27 — Implantação do comprovante e busca de alternativa em hub próprio
 
 - Backup de dados e configuração do AM4, checkout de `96741e9` e reinício apenas de `am4bot@principal.service`. O painel autenticado retornou `RUNNING`. A comparação dos processos vizinhos confirmou os mesmos PIDs e horários de início. Às 17h40 BRT a unidade estava ativa com zero reinícios automáticos. O planejador registrou zero elegíveis e `hangar_sem_vaga`.
