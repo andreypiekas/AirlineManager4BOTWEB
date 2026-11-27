@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-27 — ASB–GYD sem aeronave apta às 18h51 BRT
+
+- O Chrome autenticado mostrou 226 aeronaves, 221 rotas, zero em Parked e cinco manutenções. O catálogo indicou explicitamente que a frota PAX atingiu o limite de 226. As pendências eram PP-220, PP-218, 380-800-4, 340-200-16 e 340-200-13. O encerramento das duas pendências anteriores não abriu vaga.
+- Na pesquisa de ASB–GYD (768 km), zero aeronaves operavam a rota e zero estavam aptas. Demanda diária de 1.199/187/256 passageiros Y/J/F, com aviso de evento e sem linha residual. Tarifa de primeira e taxa de abertura do Cessna permanecem sem confirmação.
+- Finanças exibiu saldo bruto de US$ 305.492.889. As receitas de US$ 108.174.233 e despesas de US$ 6.899.888 conferiram com o resultado de US$ 101.274.345. As despesas somaram combustível de US$ 282.592, quotas de US$ 4.717.905 e taxa de rota de US$ 1.899.391, sem identificação da rota. A rubrica de encomendas mostrou zero. O extrato consultado não permitiu concluir a conciliação dos compromissos ainda em aberto.
+- Consulta somente leitura. Sem envio do pedido de teste ou ativação da compra recorrente. Registro documental, sem alteração de código ou implantação.
+
 ## 2026-11-27 — Revalidação de ASB–GYD e capacidade às 18h35 BRT
 
 - No Chrome autenticado, o catálogo de encomendas exibiu `Max pax fleet size reached` e limite de 226. A frota tinha 226 aeronaves, 219 rotas, zero em Parked e sete em manutenção. Nenhuma entrega pendente.
