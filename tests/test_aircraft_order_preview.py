@@ -364,6 +364,49 @@ def test_worker_recovers_checkout_debit_without_resending(assisted, monkeypatch)
     assert bot.actions.count("Order") == 1
 
 
+@pytest.mark.parametrize("case", ["complete", "late_delivery", "wrong_airport", "wrong_seats", "not_parked", "no_debit"])
+def test_worker_links_the_native_receipt_to_the_single_submitted_order(assisted, monkeypatch, case):
+    bot = assisted.bot
+    bot.drift["registration"] = "PP-258"
+    profile = assisted.journal.profile_id
+
+    def roster(_, *, baseline):
+        rows = {"19": "PP-19", "20": "PP-20"}
+        if "Order" in bot.actions:
+            rows["21"] = "PP-258"
+        return {"registrations_by_id": rows, "fleet_ids": sorted(rows), "company_id": bot._observation_company_id,
+                "profile_id": profile, "pending": {"rows": [{"id": "20"}]},
+                "observed_at": time.time(), "observed_until": time.time()}
+
+    monkeypatch.setattr(assisted_aircraft_order, "read_pilot_pending", roster)
+    monkeypatch.setattr(assisted_aircraft_order, "read_parked_ids", lambda _: set() if case == "not_parked" else {"21"})
+    monkeypatch.setattr(assisted_aircraft_order, "parked_specs",
+                        lambda _, identity: {"id": "99" if case == "wrong_airport" else assisted.plan["hub_id"]})
+    seats = (0, 0, 1) if case == "wrong_seats" else tuple(CABIN[k] for k in "yjf")
+    monkeypatch.setattr(assisted_aircraft_order, "parked_seat_layout", lambda _, identity: seats)
+    if case == "no_debit":
+        reader = assisted_aircraft_order.read_checkout_ledger
+        monkeypatch.setattr(assisted_aircraft_order, "read_checkout_ledger",
+                            lambda worker, cost: None if "Order" in bot.actions else reader(worker, cost))
+    result = assisted.executor.run(assisted.plan, **assisted.arguments)
+    assert result["state"] == "UNKNOWN"
+    if case == "late_delivery":
+        delivered_at = time.time() + 4 * 3600
+        monkeypatch.setattr(time, "time", lambda: delivered_at)
+    monkeypatch.setattr(paths.Profile, "data", property(lambda _: assisted.journal.path.parent))
+    monkeypatch.setattr(InvestmentPolicy, "from_config", lambda _: assisted.executor.policy)
+    assisted_aircraft_order.reconcile_submitted_aircraft(bot)
+    intent = assisted.journal.get(result["intent_key"])
+    assert intent["state"] == ("CONFIRMED" if case in {"complete", "late_delivery"} else "UNKNOWN")
+    if case in {"complete", "late_delivery"}:
+        receipt = assisted.journal.history(result["intent_key"])[-1]["evidence"]
+        assert receipt["source"] == "game_parked_delivery_and_debit"
+        assert receipt["aircraft_id"] == "21" and receipt["registration"] == "PP-258"
+        assert receipt["charged_checkout_cost"] == PRICE and "purchase_id" not in receipt
+        assert receipt["observed_checkout_debit_at"] == intent["observed_checkout_debit_at"]
+    assert intent["submit_attempts"] == bot.actions.count("Order") == 1
+
+
 def test_balance_drift_immediately_before_claim_keeps_zero_attempts(assisted):
     cash = assisted.readiness["cash"]
     readings = iter([cash, cash - 1])

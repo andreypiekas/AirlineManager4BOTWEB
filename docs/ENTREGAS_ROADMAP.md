@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-27 — Caixa no Chrome autenticado e comprovante do pedido assistido
+
+- Entre 12h44 e 12h48 BRT o Chrome aberto confirmou Caracas–Oranjestad, 392 km, pistas de 11.483 e 9.000 ft, zero aeronaves na rota e zero aptas. A única linha de passageiros foi `Daily`, com 1.416/290/175. O detalhe mencionou o evento. Faltaram residual e taxa do Cessna. O hangar confirmou 225/226 e uma vaga. Nenhum pedido enviado.
+- O saldo de US$ 338.710.402 conferiu no cabeçalho e em Finanças. No resumo de 24 horas, receitas de US$ 30.660.378 menos US$ 1.567.165 em quotas resultaram em US$ 29.093.213. Compras de aeronaves e taxas de rota apareceram zeradas. O extrato de 30 linhas não trouxe o débito de US$ 61.000 nem comprovante do PP-254. O A-check do PP-220 já havia iniciado, com custo de US$ 8.041.845. O do PP-218 estava agendado, com custo de US$ 8.154.203. A tela de manutenção mostrou o preço dos serviços, sem discriminar liquidação.
+- O executor e a recuperação do worker passaram a reunir as evidências no evento `CONFIRMED`. O journal exige débito isolado no valor do checkout e um único ID novo com a matrícula proposta na janela de envio. O leitor verifica depois se a aeronave está em Parked, no aeroporto selecionado e com a cabine contratada. A releitura da companhia e da matrícula precede a confirmação. Motor e modelo vêm do formulário vinculado à intenção. A fonte é identificada separadamente do recibo nativo com número de pedido. A recuperação pode aguardar a entrega com as duas evidências iniciais já gravadas.
+- 142 testes dirigidos passaram, incluindo confirmação após reinício, entrega após quatro horas, aeroporto ou cabine divergentes, ausência de Parked e de débito. Ruff e compilação aprovados. A homologação no jogo segue pendente. Para o envio produtivo ainda falta alimentar a prontidão do executor com rota e caixa reconciliados.
+
 ## 2026-11-27 — Validação do servidor e planejamento pelo modelo configurado
 
 - A revisão `1dcb2ef` foi implantada somente em `am4bot@principal.service` após backup das configurações e dos dados. O painel autenticado respondeu com `available_cash`, modelo 2 e decisão `nao_comprar`. O primeiro ciclo concluiu às 12h40 BRT com 80 de 80 combinações examinadas bloqueadas, zero elegíveis e US$ 338.710.402 brutos. A captura deixou o valor comprometido em aberto. O journal confirmou zero intenções e zero tentativas. A unidade registrou zero reinícios automáticos e os processos dos serviços vizinhos conferidos mantiveram as mesmas identidades e horários de início.

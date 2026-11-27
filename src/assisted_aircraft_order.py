@@ -16,10 +16,11 @@ from uuid import uuid4
 import paths
 from aircraft_order_preview import AircraftPreviewRequest, _prepared_aircraft_order
 from finance_observations import read_checkout_ledger
-from fleet_commitment_observations import MAX_WINDOW, read_pilot_pending
+from fleet_commitment_observations import MAX_WINDOW, read_parked_ids, read_pilot_pending
 from investment_journal import InvestmentJournal, _intent_key, _validated_plan
 from investment_policy import InvestmentPolicy
 from investment_preflight import validate_aircraft_preflight
+from route_stopover import parked_seat_layout, parked_specs
 
 
 def aircraft_approval_key(plan: Mapping, *, profile_id: str, company_id: str,
@@ -31,14 +32,45 @@ def aircraft_approval_key(plan: Mapping, *, profile_id: str, company_id: str,
 
 class AssistedAircraftOrder:
     def __init__(self, journal: InvestmentJournal, policy: InvestmentPolicy, bot, *,
-                 read_readiness, read_receipt):
+                 read_readiness, read_receipt=None):
         if journal.simulation:
             raise ValueError("A compra assistida exige o diário real do perfil.")
         self.journal = journal
         self.policy = policy
         self.bot = bot
         self.read_readiness = read_readiness
-        self.read_receipt = read_receipt
+        self.read_receipt = self._read_delivery if read_receipt is None else read_receipt
+
+    def _read_delivery(self, intent, baseline):
+        """Combine persisted checkout observations with the delivered aircraft's own details."""
+        identity = intent.get("observed_aircraft_id")
+        if not identity or "observed_checkout_debit_at" not in intent or not baseline.get("registration"):
+            return None
+        bot = self.bot
+        try:
+            bot.open_popup("routes_main.php", "Routes", "nav_routes")
+            parked = read_parked_ids(bot)
+            if not parked or identity not in parked:
+                return None
+            specs = parked_specs(bot, identity)
+            seats = parked_seat_layout(bot, identity)
+            if (not specs or specs.get("id") != intent["hub_id"] or seats is None
+                    or dict(zip("yjf", seats)) != intent["configuration_yjf"]):
+                return None
+        finally:
+            bot.close_popup(quiet=True)
+        fleet = read_pilot_pending(bot, baseline=True)
+        if (not fleet or fleet["company_id"] != baseline["company_id"]
+                or fleet["profile_id"] != intent["profile_id"]
+                or fleet["registrations_by_id"].get(identity) != baseline["registration"]):
+            return None
+        # Model and engine come from the bound checkout. The roster, airport,
+        # seat layout and ledger are independent post-submit observations.
+        return {**{k: intent[k] for k in ("profile_id", "model_id", "engine_id", "origin_id", "destination_id")},
+                "source": "game_parked_delivery_and_debit", "verified": True, "observed_at": time.time(),
+                "company_id": fleet["company_id"], "aircraft_id": identity, "registration": baseline["registration"],
+                "hub_id": specs["id"], "delivery_hub_id": baseline["delivery_hub_id"],
+                "configuration_yjf": dict(zip("yjf", seats)), "charged_checkout_cost": intent["checkout_cost"]}
 
     @contextmanager
     def _exclusive(self):
@@ -253,14 +285,13 @@ def reconcile_submitted_aircraft(bot) -> None:
     pending = InvestmentJournal.read_existing()["intents"]
     candidates = [intent for intent in pending if intent["kind"] == "aircraft"
                   and intent["state"] in ("SUBMITTED", "UNKNOWN")
-                  and (intent["state"] == "SUBMITTED" or (
-                      ("observed_checkout_debit_at" not in intent or "observed_aircraft_id" not in intent)
-                      and 0 <= time.time() - intent["updated_at"] <= MAX_WINDOW))]
+                  and (intent["state"] == "SUBMITTED" or 0 <= time.time() - intent["updated_at"] <= MAX_WINDOW
+                       or ("observed_checkout_debit_at" in intent and "observed_aircraft_id" in intent))]
     if not candidates:
         return
     journal = InvestmentJournal()
     executor = AssistedAircraftOrder(journal, InvestmentPolicy.from_config(bot.config), bot,
-                                    read_readiness=None, read_receipt=None)
+                                    read_readiness=None)
     for intent in candidates:
         if bot.stopping:
             break

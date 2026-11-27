@@ -344,7 +344,8 @@ class InvestmentJournal:
         with self._connect() as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT state, plan_json, observed_aircraft_id FROM intents WHERE profile_id=? AND intent_key=?",
+                "SELECT state, plan_json, observed_aircraft_id, observed_checkout_debit_at FROM intents "
+                "WHERE profile_id=? AND intent_key=?",
                 (self.profile_id, intent_key),
             ).fetchone()
             if row is None:
@@ -357,6 +358,15 @@ class InvestmentJournal:
                     raise ValueError("Confirmação independente e vinculada ao plano obrigatória.")
                 if plan["kind"] == "aircraft":
                     baseline = self._submission_baseline(conn, intent_key)
+                    parked_receipt = confirmation.get("source") == "game_parked_delivery_and_debit"
+                    if parked_receipt and (
+                        not baseline or not baseline.get("registration") or not baseline.get("ledger_rows")
+                        or row["observed_checkout_debit_at"] is None
+                        or row["observed_aircraft_id"] != confirmation.get("aircraft_id")
+                        or not baseline["submitted_at"] <= row["observed_checkout_debit_at"] <= confirmation["observed_at"]
+                        or row["observed_checkout_debit_at"] - baseline["submitted_at"] > 120
+                    ):
+                        raise ValueError("Entrega sem débito e matrícula vinculados ao mesmo envio.")
                     if baseline and (
                         confirmation.get("company_id") != baseline["company_id"]
                         or confirmation.get("delivery_hub_id") != baseline["delivery_hub_id"]
@@ -366,7 +376,7 @@ class InvestmentJournal:
                         or (row["observed_aircraft_id"] is not None
                             and row["observed_aircraft_id"] != confirmation["aircraft_id"])
                         or ("registration" in baseline and baseline["registration"] != confirmation.get("registration"))
-                        or not _choice_id(confirmation.get("debit_transaction_id"))
+                        or (not parked_receipt and not _choice_id(confirmation.get("debit_transaction_id")))
                     ):
                         raise ValueError("Comprovante do avião e débito divergente do envio assistido.")
                     # BEGIN IMMEDIATE serializes confirmations. Check durable
@@ -404,6 +414,8 @@ class InvestmentJournal:
                 public_evidence["configuration_yjf"] = plan["configuration_yjf"]
             if next_state == "CONFIRMED" and plan["kind"] == "aircraft" and baseline and "registration" in baseline:
                 public_evidence["registration"] = baseline["registration"]
+                if parked_receipt:
+                    public_evidence["observed_checkout_debit_at"] = row["observed_checkout_debit_at"]
             if next_state == "CONFIRMED" and "checkout_cost" in plan:
                 public_evidence["charged_checkout_cost"] = confirmation["charged_checkout_cost"]
             self._event(conn, intent_key, expected, next_state, stamp, public_evidence)
@@ -440,6 +452,8 @@ class InvestmentJournal:
             if type(charged) is not int or charged != plan["checkout_cost"]:
                 return False
         source = "simulation_order_list" if self.simulation else "game_order_list"
+        if not self.simulation and evidence.get("source") == "game_parked_delivery_and_debit":
+            return "configuration_yjf" in plan and "checkout_cost" in plan and _game_id(evidence.get("aircraft_id"))
         return evidence.get("source") == source and _game_id(evidence.get("purchase_id"))
 
     def _refused(self, evidence: Mapping | None, plan: Mapping) -> bool:
