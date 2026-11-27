@@ -55,6 +55,8 @@ Leia este arquivo no início de cada tarefa e após toda compactação. Antes de
 
 ## Próxima ação
 
+27/11 às 18h59 BRT. O catálogo confirmou lotação de 226/226. O saldo bruto fechou em US$ 322.221.365, com a variação desde as 18h51 integralmente explicada por duas receitas de decolagem. Ainda falta o valor total dos compromissos para obter o caixa livre. ASB–GYD, LAX–SAN, DTW–CON e DTW–ATL estavam sem aeronave apta. O ensaio do Cessna 0Y/0J/1F continua dependendo de vaga e de uma rota com demanda residual, tarifa e taxa verificadas. Compra recorrente do modelo configurado aguarda comprovação do ensaio.
+
 27/11 às 18h51 BRT. O catálogo voltou a bloquear encomendas PAX por lotação (226/226). A frota passou a 221 rotas e cinco manutenções, com zero Parked. ASB–GYD passou a zero aeronaves aptas e continua sem demanda residual ou cotação de primeira para o Cessna. O saldo bruto conferido em Finanças foi de US$ 305.492.889. A próxima compra depende de uma vaga real, da validação da rota e do caixa livre. A compra automática do A380-800 permanece condicionada ao teste com pedido e débito confirmados.
 
 27/11 às 18h35 BRT. A tela de encomendas confirmou que as 226 vagas PAX estão ocupadas. As sete pendências são manutenções. ASB–GYD mostrou 256 passageiros diários em primeira e listou apenas o MC-21-400 PP-113-3, em manutenção em Ashgabat. Faltam demanda residual, tarifa F e taxa de abertura para o Cessna. Saldo bruto de US$ 288.160.406 e caixa livre ainda sem conciliação integral. Retomar o ensaio 0Y/0J/1F quando houver vaga e evidências de rota e caixa. A ativação do A380-800 depende também da confirmação do pedido e do débito do ensaio.

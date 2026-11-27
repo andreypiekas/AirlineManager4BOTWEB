@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-27 — Conciliação do saldo e busca de rotas alternativas às 18h59 BRT
+
+- O saldo anterior de US$ 305.492.889, somado aos créditos de US$ 12.733.923 por 11 decolagens e US$ 3.994.553 por nove decolagens, fechou exatamente no saldo de US$ 322.221.365 do Chrome. O resumo de 24 horas exibiu US$ 115.578.207 em receitas e US$ 4.942.354 em despesas, com resultado de US$ 110.635.853. Combustível, quotas e taxa de rota somaram essas despesas. A rubrica de encomendas exibiu zero. A variação do saldo está conciliada. A liquidação integral das obrigações de manutenção segue sem prova.
+- ASB–GYD (768 km) mostrou demanda diária Y/J/F de 1.199/187/256. LAX–SAN (176 km) mostrou 889/130/127. Na pesquisa de até 1.000 km do hub de Detroit, o detalhe de DTW–CON (974 km, pista de 6.005 ft) mostrou 337/134/155 e o de DTW–ATL (959 km, pista de 11.890 ft) mostrou 423/472/69. Nos quatro detalhes, zero aeronaves na rota e zero aptas, com aviso de evento e sem linha de demanda residual. Sem prévia elegível de tarifa ou taxa do Cessna.
+- O catálogo bloqueou encomendas PAX por lotação, com 226 de 226 ocupadas. A frota mostrou 221 rotas, cinco pendências e zero Parked. Nenhum pedido enviado nem débito de teste. Compra recorrente segue desligada. Alteração documental.
+
 ## 2026-11-27 — ASB–GYD sem aeronave apta às 18h51 BRT
 
 - O Chrome autenticado mostrou 226 aeronaves, 221 rotas, zero em Parked e cinco manutenções. O catálogo indicou explicitamente que a frota PAX atingiu o limite de 226. As pendências eram PP-220, PP-218, 380-800-4, 340-200-16 e 340-200-13. O encerramento das duas pendências anteriores não abriu vaga.
