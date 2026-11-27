@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-26 — LAX–SAN, movimento do caixa e custo individual do PP-220
+
+- A consulta direta em `Fleet → Research` partiu de Los Angeles (opção `1440`) para San Diego Int (`1644`). O detalhe confirmou LAX–SAN, 176 km, pista de 9.401 ft em SAN e demanda diária Y/J/F de 889/130/127. Mostrou zero aeronaves na rota e zero aptas. A frota tinha 224 aeronaves, 222 em Routes, zero em Parked e duas em manutenção. A pesquisa não expôs `Today`, tarifas nem taxa de abertura. A elegibilidade de um futuro Cessna nessa rota continua sem comprovação.
+- A agenda em `Maintenance → Maintenance schedule` permite abrir a barra de cada serviço. O detalhe de `A-Check` identificou o PP-220 e **US$ 8.041.845** de custo total, com início em cerca de 9 h 16 min. O de `Repair` identificou o PP-121-2 e **US$ 250.929**, com início em cerca de 1 h 46 min. O extrato já continha esse débito como `PP-121-2 Repair`. Deduzir o reparo novamente duplicaria a despesa. Para o PP-220, o detalhe não indicou liquidação nem saldo a pagar. A busca pelo valor nos registros textuais locais também não localizou o débito.
+- `ACCOUNT` e `Finances` mostraram **US$ 382.195.120**. Os 15 lançamentos mais recentes explicam exatamente a variação desde o saldo anterior de US$ 364.741.253. Entraram US$ 18.544.964 e saíram US$ 1.091.097, com aumento líquido de **US$ 17.453.867**. As 30 linhas visíveis também conferem com o resumo: receitas de US$ 45.657.715 e despesas de US$ 2.316.237 (combustível US$ 440.769, quotas US$ 1.624.539 e reparo US$ 250.929). Resultado de US$ 43.341.478. Se o A-check do PP-220 ainda estiver integralmente a pagar, provisioná-lo deixaria **US$ 374.153.275** antes da reserva e de outros compromissos.
+- O extrato e o resumo mostraram zero compras de aeronave e taxas de rota nessa janela. O journal local de investimentos tinha zero intenções e zero eventos. Nenhuma dessas fontes vinculou o pedido do PP-254 ao débito histórico de US$ 216.079.503 nem a abertura de LAX–TUN à taxa cotada de US$ 1.063.229. A compra assistida do Cessna não passou na homologação. Nenhum pedido enviado. G0 vigente.
+
 ## 2026-11-26 — Débitos recentes no worker e prévia de primeira classe para LAX–SAN (G0)
 
 - No Chrome autenticado, `Fleet → Pending` listou **PP-220** em Valdivia e **PP-121-2** em Asunción, ambos em manutenção, com zero entregas pendentes. O detalhe do PP-220 exibiu local, estado e prazo de aproximadamente **1 d 4 h**. Os campos visíveis não informaram valor devido. A frota mostrou **222 Routes, 224 Fleet, 0 Parked e 2 Pending**.
