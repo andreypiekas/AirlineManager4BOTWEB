@@ -140,25 +140,42 @@ def test_aircraft_preview_runs_only_on_observation_worker_and_rechecks_company(m
         verify("quote")
         return {"status": "matched", "execution_available": False}
 
+    pending = {"fleet_total": 224, "pending": {"total": 0}, "observed_at": 42,
+               "company_id": "123", "fleet_ids": ["456"]}
+
     def read_pending(worker, *, baseline):
-        assert worker is bot and baseline
-        verify("pending")
-        return {"fleet_total": 224, "pending": {"total": 0}, "observed_at": 42,
-                "company_id": "123", "fleet_ids": ["456"]}
+        assert worker is bot
+        verify("baseline" if baseline else "pending")
+        return pending
+
+    def read_cash(worker, roster, checkout_amount):
+        assert worker is bot and roster is pending and checkout_amount == 51000
+        verify("cash evidence")
+        return {"receipt_verified": False}
 
     bot._require_observation_session = lambda: verify("session")
     bot._verify_observation_company = lambda: verify("company")
     monkeypatch.setattr("bot.probe_aircraft_order", quote)
     monkeypatch.setattr("bot.read_pilot_pending", read_pending)
+    monkeypatch.setattr("bot.read_aircraft_cash_observation", read_cash)
     with running_worker(bot):
         wait_until_idle(bot)
         status, report = bot.request_aircraft_order_preview(request, timeout=2)
         assert status == "ok" and report["status"] == "matched"
         assert report["fleet_baseline"] == {"status": "verified", "fleet_total": 224,
                                             "pending_total": 0, "observed_at": 42}
+        assert report["order_and_debit_observation"] == {"receipt_verified": False}
         assert calls == [(label, bot._thread.ident) for label in
-                         ("session", "company", "quote", "pending", "session", "company")]
+                         ("session", "company", "quote", "baseline", "cash evidence", "session", "company")]
         assert bot.cash_reads == 0
+
+        monkeypatch.setattr("bot.read_pilot_pending", lambda worker, *, baseline=False: (
+            None if baseline else read_pending(worker, baseline=False)
+        ))
+        calls.clear()
+        status, report = bot.request_aircraft_order_preview(request, timeout=2)
+        assert status == "ok" and report["fleet_baseline"] == {"status": "unverified"}
+        assert report["order_and_debit_observation"] == {"receipt_verified": False}
 
         def changed_company():
             if calls[-1][0] == "session" and any(label == "quote" for label, _ in calls):

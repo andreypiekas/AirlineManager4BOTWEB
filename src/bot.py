@@ -40,6 +40,7 @@ from checklist import check_checklist
 from config import AppConfig
 from driver import chrome_session_path, create_driver
 from fleet import manage_fleet
+from finance_observations import read_aircraft_cash_observation
 from fleet_commitment_observations import read_pilot_pending
 from gamemode import EASY, GameMode, from_difficulty
 from helpers import clean_response, first_int, fmt, fmt_duration, game_whole_number, timer_seconds, to_int
@@ -276,6 +277,10 @@ class Bot:
                             "pending_total": baseline["pending"]["total"],
                             "observed_at": baseline["observed_at"],
                         } if baseline is not None else {"status": "unverified"})
+                        pending = baseline if baseline is not None else read_pilot_pending(self)
+                        report["order_and_debit_observation"] = read_aircraft_cash_observation(
+                            self, pending, target.expected_checkout_cost,
+                        )
                     self._require_observation_session()
                     self._verify_observation_company()
                 elif isinstance(target, str):

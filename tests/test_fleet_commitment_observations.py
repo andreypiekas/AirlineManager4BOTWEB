@@ -422,7 +422,8 @@ const button = {get textContent(){return `${kind} (${total})`},
 const statusCell = label => ({childNodes:[{nodeType:3,textContent:label}],
   querySelectorAll:selector=>selector==='span.hasCountdown'?[{}]:[]});
 const pendingRow = (id, ...labels) => ({id:`routeMainPendingList${id}`,
-  querySelectorAll:selector=>selector==='.row.p-2 > .col-6'?labels.map(statusCell):[]});
+  querySelectorAll:selector=>selector==='.row.p-2 > .col-6'?labels.map(statusCell):
+    id==='101' && selector==='div[onclick*="routeParkedDetails"] .row > .col-6 > b'?[cell('A380-800, PP-220')]:[]});
 const panel = {querySelector:()=>null, children:[cell('2 AIRCRAFT'),
   pendingRow('101','Pending maintenance:'), pendingRow('102','Pending delivery:'), {tagName:'SCRIPT'}],
   replaceChildren:()=>navigation.push('cleared')};
@@ -443,7 +444,8 @@ upgrades=[one,ten]; ten.parentElement.innerText='INCREASE CAPACITY BY +1 A/C\\n0
 assert.deepEqual(Object.keys(hangar().upgrade_quotes),['1']);
 one.textContent='$190,835,956 00:18:00'; assert.equal(hangar().upgrade_quotes,undefined);
 rows[1].cells[1].textContent = 'Other slots'; assert.equal(hangar(),null);
-assert.deepEqual(pending(), {total:2,rows:[{id:'101',status:'maintenance'},{id:'102',status:'delivery'}]});
+assert.deepEqual(pending(), {total:2,rows:[{id:'101',status:'maintenance',registration:'PP-220'},
+  {id:'102',status:'delivery'}]});
 panel.children[2]=pendingRow('102','Entrega pendente:');
 assert.equal(pending().rows[1].status,'delivery');
 panel.children[2]=pendingRow('102','Pending delivery:','Pending maintenance:');

@@ -9,7 +9,8 @@ import game_observations
 import paths
 from expansion_metrics import build_expansion_metrics
 from finance_observations import (
-    FILENAME, SOURCE, SUMMARY_JS, collect_finance_observations, finance_snapshot, validate_summary,
+    FILENAME, SOURCE, SUMMARY_JS, TRANSACTIONS_JS, collect_finance_observations, finance_snapshot,
+    read_aircraft_cash_observation, validate_summary,
 )
 from hub_registry import HubRegistry
 from investment_journal import InvestmentJournal
@@ -35,6 +36,7 @@ def test_summary_strips_private_fields():
 
 class Bot:
     stopping = False
+    _observation_company_id = "123"
 
     def __init__(self):
         self.calls = []
@@ -47,6 +49,44 @@ class Bot:
 
     def close_popup(self, quiet):
         self.calls.append("close")
+
+
+def test_aircraft_cash_observation_distinguishes_maintenance_from_order_receipt(monkeypatch):
+    bot = Bot()
+    now = time.time()
+    pending = {"profile_id": paths.current().label, "company_id": "123",
+               "observed_at": now, "observed_until": now, "pending": {"total": 4, "rows": [
+                   {"id": "11", "status": "maintenance", "registration": "PP-220"},
+                   {"id": "12", "status": "maintenance", "registration": "PP-121-2"},
+                   {"id": "13", "status": "delivery", "registration": "PP-254"},
+                   {"id": "14", "status": "unclassified"},
+               ]}}
+    history = [
+        {"debit": True, "label": "PP-121-2 Repair", "amount": "-250,929"},
+        {"debit": True, "label": "PP-2200 Repair", "amount": "-140"},
+        {"debit": True, "label": "Some unrelated expense", "amount": "-51,000"},
+        {"debit": False, "label": "Private label", "amount": "910"},
+    ]
+    monkeypatch.setattr(game_observations, "_stable_read", lambda _, script: {
+        TRANSACTIONS_JS: history, SUMMARY_JS: SAMPLE,
+    }[script])
+    assert read_aircraft_cash_observation(bot, pending, 51000) == {
+        "status": "observed", "pending_counts": {"total": 4, "maintenance": 2, "delivery": 1, "unclassified": 1},
+        "pending_maintenance": [
+            {"registration": "PP-220", "recent_debits": []},
+            {"registration": "PP-121-2", "recent_debits": [{"type": "repair", "amount_usd": 250929}]},
+        ],
+        "recent_transaction_count": 4, "recent_debit_count": 3, "recent_debits_equal_to_checkout": 1,
+        "aircraft_order_expenses_24h": 900, "other_expenses_24h": 250,
+        "receipt_verified": False, "cash_commitments_verified": False,
+    }
+    assert bot.calls == ["finances.php", ("transactions.php?mode=summary", "transactionSummaryContainer"), "close"]
+    assert read_aircraft_cash_observation(bot, {**pending, "company_id": "789"}, 51000)["pending_counts"] is None
+    history[0]["amount"] = "250,929"
+    partial = read_aircraft_cash_observation(bot, pending, 51000)
+    assert partial["status"] == "partial" and partial["recent_debit_count"] is None
+    assert all(row["recent_debits"] is None for row in partial["pending_maintenance"])
+    assert partial["receipt_verified"] is False
 
 
 def test_collector_and_profile_isolation(tmp_path, monkeypatch):

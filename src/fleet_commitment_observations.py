@@ -113,7 +113,15 @@ const classify = row => {
     }
     return states.length === 1 ? states[0] : 'unclassified';
 };
-return {total, rows: children.map(row => ({id: row.id.slice(prefix.length), status: classify(row)}))};
+return {total, rows: children.map(row => {
+    const result = {id: row.id.slice(prefix.length), status: classify(row)};
+    if (kind === 'pending') {
+        const headings = row.querySelectorAll('div[onclick*="routeParkedDetails"] .row > .col-6 > b');
+        const match = headings.length === 1 && /,\s*([A-Z0-9][A-Z0-9-]{0,15})\s*$/i.exec(headings[0].textContent);
+        if (match) result.registration = match[1].toUpperCase();
+    }
+    return result;
+})};
 """
 
 
