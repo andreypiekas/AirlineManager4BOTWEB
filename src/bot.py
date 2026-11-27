@@ -701,6 +701,10 @@ class Bot:
             self._observation_cycle()
             return
         self._ensure_session()
+        if not self.dry_run:
+            from assisted_aircraft_order import reconcile_submitted_aircraft
+
+            self._guard(lambda: reconcile_submitted_aircraft(self), "conciliar pedidos de aeronave enviados")
         opt = lambda key: self.config.get_bool("options", key)  # noqa: E731
         if opt("collect_market_observations"):
             from game_observations import collect_hub_market_prices

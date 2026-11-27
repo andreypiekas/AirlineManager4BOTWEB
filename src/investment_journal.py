@@ -241,6 +241,8 @@ class InvestmentJournal:
             intent_columns = {row["name"] for row in conn.execute("PRAGMA table_info(intents)")}
             if "cycle_id" not in intent_columns:
                 conn.execute("ALTER TABLE intents ADD COLUMN cycle_id TEXT")
+            if "observed_checkout_debit_at" not in intent_columns:
+                conn.execute("ALTER TABLE intents ADD COLUMN observed_checkout_debit_at REAL")
             environment = "simulation" if self.simulation else "game"
             rows = conn.execute("SELECT environment FROM journal_environment").fetchall()
             if not rows:
@@ -269,7 +271,10 @@ class InvestmentJournal:
         return {"profile_id": row["profile_id"], "intent_key": row["intent_key"],
                 "state": row["state"], "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
-                "submit_attempts": row["submit_attempts"], **json.loads(row["plan_json"])}
+                "submit_attempts": row["submit_attempts"], **json.loads(row["plan_json"]),
+                **({"observed_checkout_debit_at": row["observed_checkout_debit_at"]}
+                   if "observed_checkout_debit_at" in row.keys() and row["observed_checkout_debit_at"] is not None
+                   else {})}
 
     def register(self, plan: Mapping) -> tuple[dict, bool]:
         """Reserve one purchase target. Replays return its existing state.
@@ -644,6 +649,15 @@ class InvestmentJournal:
                     raise ValueError("Baseline de frota, companhia ou caixa inválido para envio assistido.")
                 evidence = {name: baseline[name] for name in roles}
                 evidence.update(fleet_ids=sorted(roster), observed_at=observed, cash=cash)
+                if "ledger_rows" in baseline:
+                    rows = baseline["ledger_rows"]
+                    ledger_at = _timestamp_number(baseline.get("ledger_observed_at"))
+                    if (not isinstance(rows, list) or not 1 <= len(rows) <= 100
+                            or any(not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{64}", item)
+                                   for item in rows)
+                            or ledger_at is None or not 0 <= stamp - ledger_at <= 120):
+                        raise ValueError("Histórico financeiro inválido ou expirado antes do envio.")
+                    evidence.update(ledger_rows=rows, ledger_observed_at=ledger_at)
             conn.execute(
                 "UPDATE intents SET state='SUBMITTED', updated_at=?, "
                 "submit_attempts=submit_attempts+1 WHERE profile_id=? AND intent_key=?",
@@ -666,6 +680,27 @@ class InvestmentJournal:
         """Restore the evidence recorded before the browser was clicked."""
         with self._connect() as conn:
             return self._submission_baseline(conn, intent_key)
+
+    def observe_checkout_debit(self, intent_key: str, ledger: dict, *, company_id: str) -> bool:
+        """Retain a corroborated balance movement independently of the aircraft receipt."""
+        from finance_observations import isolated_checkout_debit
+
+        with self._connect() as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            intent = self._unpack(conn.execute(
+                "SELECT * FROM intents WHERE profile_id=? AND intent_key=?", (self.profile_id, intent_key),
+            ).fetchone())
+            baseline = self._submission_baseline(conn, intent_key)
+            if (not intent or intent["state"] not in ("SUBMITTED", "UNKNOWN") or not baseline
+                    or baseline.get("company_id") != company_id or "checkout_cost" not in intent):
+                return False
+            if "observed_checkout_debit_at" in intent:
+                return True
+            if not isolated_checkout_debit(baseline, ledger, intent["checkout_cost"]):
+                return False
+            conn.execute("UPDATE intents SET observed_checkout_debit_at=? WHERE profile_id=? AND intent_key=?",
+                         (ledger["observed_at"], self.profile_id, intent_key))
+            return True
 
     def budget_exposure_since(self, since: float, *, exclude_intent_key: str | None = None) -> int:
         """Conservatively count current commitments plus confirmed spend in a window."""

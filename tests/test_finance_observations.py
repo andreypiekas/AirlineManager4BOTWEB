@@ -10,7 +10,7 @@ import paths
 from expansion_metrics import build_expansion_metrics
 from finance_observations import (
     FILENAME, SOURCE, SUMMARY_JS, TRANSACTIONS_JS, collect_finance_observations, finance_snapshot,
-    read_aircraft_cash_observation, validate_summary,
+    isolated_checkout_debit, read_aircraft_cash_observation, read_checkout_ledger, validate_summary,
 )
 from hub_registry import HubRegistry
 from investment_journal import InvestmentJournal
@@ -77,16 +77,49 @@ def test_aircraft_cash_observation_distinguishes_maintenance_from_order_receipt(
             {"registration": "PP-121-2", "recent_debits": [{"type": "repair", "amount_usd": 250929}]},
         ],
         "recent_transaction_count": 4, "recent_debit_count": 3, "recent_debits_equal_to_checkout": 1,
+        "recent_aircraft_purchases_equal_to_checkout": 0,
         "aircraft_order_expenses_24h": 900, "other_expenses_24h": 250,
         "receipt_verified": False, "cash_commitments_verified": False,
     }
     assert bot.calls == ["finances.php", ("transactions.php?mode=summary", "transactionSummaryContainer"), "close"]
+    history[2]["label"] = "A/C Purchased"
+    assert read_aircraft_cash_observation(bot, pending, 51000)["recent_aircraft_purchases_equal_to_checkout"] == 1
     assert read_aircraft_cash_observation(bot, {**pending, "company_id": "789"}, 51000)["pending_counts"] is None
     history[0]["amount"] = "250,929"
     partial = read_aircraft_cash_observation(bot, pending, 51000)
     assert partial["status"] == "partial" and partial["recent_debit_count"] is None
     assert all(row["recent_debits"] is None for row in partial["pending_maintenance"])
     assert partial["receipt_verified"] is False
+
+
+def test_checkout_ledger_compares_signed_rows_and_stable_cash(monkeypatch):
+    bot = Bot()
+    amounts = iter([200000, 200000, 139000, 139000, 139000, 138999])
+    bot.read_money = lambda: next(amounts)
+    history = [{"debit": False, "label": label, "amount": "100"} for label in ("PP-1", "PP-2", "PP-3")]
+    monkeypatch.setattr(game_observations, "_stable_read", lambda _, js: history if js == TRANSACTIONS_JS else None)
+    before = read_checkout_ledger(bot, 61000)
+    assert not before["first_is_checkout"] and "PP-" not in str(before) and len(set(before["ledger_rows"])) == 3
+    before["submitted_at"] = time.time()
+    history.insert(0, {"debit": True, "label": "A/C Purchased", "amount": "-61,000"})
+    after = read_checkout_ledger(bot, 61000)
+    assert isolated_checkout_debit(before, after, 61000)
+    assert isolated_checkout_debit(before, {**after, "ledger_rows": after["ledger_rows"][:-1]}, 61000)
+    assert read_checkout_ledger(bot, 61000) is None
+    assert bot.calls == ["finances.php", "close"] * 3
+
+
+@pytest.mark.parametrize(("before", "after", "typed", "cash", "elapsed"), [
+    ("abc", "dabc", False, 39, 1), ("abc", "dabc", True, 40, 1),
+    ("abc", "dabc", True, 39, 121), ("abc", "dabc", True, 39, -1),
+    ("abc", "deab", True, 39, 1), ("abab", "dabab", True, 39, 1),
+    ("aaa", "daaa", True, 39, 1), ("abc", "abc", True, 39, 1),
+])
+def test_unrelated_stale_or_ambiguous_debit(before, after, typed, cash, elapsed):
+    assert not isolated_checkout_debit(
+        {"cash": 100, "ledger_rows": list(before), "submitted_at": 100},
+        {"cash": cash, "ledger_rows": list(after), "observed_at": 100 + elapsed, "first_is_checkout": typed}, 61,
+    )
 
 
 def test_collector_and_profile_isolation(tmp_path, monkeypatch):

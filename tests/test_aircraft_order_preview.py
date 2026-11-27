@@ -218,8 +218,15 @@ def assisted(tmp_path, monkeypatch):
     bot._verify_observation_company = lambda: None
     cash = 300_000_000
     bot.read_money = lambda: cash
+    def ledger(_, checkout_cost):
+        clicked = "Order" in bot.actions
+        rows = [ch * 64 for ch in "abc"]
+        return {"cash": cash - checkout_cost if clicked else cash, "observed_at": time.time(),
+                "first_is_checkout": clicked, "ledger_rows": ["d" * 64, *rows] if clicked else rows}
+
+    monkeypatch.setattr(assisted_aircraft_order, "read_checkout_ledger", ledger)
     profile = paths.current().label
-    journal = InvestmentJournal(tmp_path / "journal.sqlite3", profile_id=profile)
+    journal = InvestmentJournal(tmp_path / "investment_journal.sqlite3", profile_id=profile)
     company = bot._observation_company_id
     policy = InvestmentPolicy(
         enabled=True, mode="approval", max_single_investment=cash,
@@ -268,10 +275,13 @@ def test_assisted_claim_is_durable_before_one_native_click_and_restart_reconcile
             assert reopened.get(key)["state"] == "SUBMITTED"
             assert reopened.get(key)["submit_attempts"] == 1
             assert reopened.submission_baseline(key)["fleet_ids"] == ["19", "20"]
+            assert reopened.submission_baseline(key)["ledger_rows"] == [ch * 64 for ch in "abc"]
             raise TimeoutException()
 
     bot.toggle = click
-    assert executor.run(assisted.plan, **assisted.arguments)["state"] == "UNKNOWN"
+    result = executor.run(assisted.plan, **assisted.arguments)
+    assert result["state"] == "UNKNOWN" and result["isolated_checkout_debit"] is True
+    assert journal.get(key)["observed_checkout_debit_at"] >= journal.submission_baseline(key)["submitted_at"]
     assert executor.run(assisted.plan, **assisted.arguments)["state"] == "UNKNOWN"
     assert bot.actions.count("Order") == 1
     assert "Back" not in bot.actions
@@ -296,6 +306,35 @@ def test_assisted_claim_is_durable_before_one_native_click_and_restart_reconcile
     assert restarted.reconcile(key)["state"] == "CONFIRMED"
     assert restarted.journal.get(key)["submit_attempts"] == 1
     assert bot.actions.count("Order") == 1
+
+
+def test_worker_recovers_checkout_debit_without_resending(assisted, monkeypatch):
+    bot = assisted.bot
+    monkeypatch.setattr(paths.Profile, "data", property(lambda _: assisted.journal.path.parent))
+    reader = assisted_aircraft_order.read_checkout_ledger
+    monkeypatch.setattr(assisted_aircraft_order, "read_checkout_ledger",
+                        lambda bot, cost: None if "Order" in bot.actions else reader(bot, cost))
+    result = assisted.executor.run(assisted.plan, **assisted.arguments)
+    key = result["intent_key"]
+    assert result["state"] == "UNKNOWN"
+    assert "observed_checkout_debit_at" not in assisted.journal.get(key)
+    monkeypatch.setattr(assisted_aircraft_order, "read_checkout_ledger", reader)
+    monkeypatch.setattr(InvestmentPolicy, "from_config", lambda _: assisted.executor.policy)
+    assisted_aircraft_order.reconcile_submitted_aircraft(bot)
+    assert assisted.journal.get(key)["observed_checkout_debit_at"] > 0
+    assisted_aircraft_order.reconcile_submitted_aircraft(bot)
+    assert assisted.journal.get(key)["state"] == "UNKNOWN"
+    assert bot.actions.count("Order") == 1
+
+
+def test_balance_drift_immediately_before_claim_keeps_zero_attempts(assisted):
+    cash = assisted.readiness["cash"]
+    readings = iter([cash, cash - 1])
+    assisted.bot.read_money = lambda: next(readings)
+    result = assisted.executor.run(assisted.plan, **assisted.arguments)
+    assert result["state"] == "PRECHECKED" and result["reasons"] == ["submissao_bloqueada"]
+    assert assisted.journal.get(result["intent_key"])["submit_attempts"] == 0
+    assert "Order" not in assisted.bot.actions
 
 
 @pytest.mark.parametrize(("field", "value", "reason"), [

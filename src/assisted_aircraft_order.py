@@ -15,7 +15,8 @@ from uuid import uuid4
 
 import paths
 from aircraft_order_preview import AircraftPreviewRequest, _prepared_aircraft_order
-from fleet_commitment_observations import read_pilot_pending
+from finance_observations import read_checkout_ledger
+from fleet_commitment_observations import MAX_WINDOW, read_pilot_pending
 from investment_journal import InvestmentJournal, _intent_key, _validated_plan
 from investment_policy import InvestmentPolicy
 from investment_preflight import validate_aircraft_preflight
@@ -137,6 +138,11 @@ class AssistedAircraftOrder:
             return ["frota_ou_compromissos_divergentes"]
 
         bot.close_popup(quiet=True)
+        ledger = read_checkout_ledger(bot, request.expected_checkout_cost)
+        if ledger is None or ledger["cash"] != readiness.get("cash"):
+            return ["controle_de_envio_ou_saldo_divergente"]
+        if self._company() != company_id:
+            return ["companhia_divergente"]
         try:
             bot.open_popup("routes_main.php", "Routes", "nav_routes")
             bot.ajax("ac_orders.php?first=true", "routeAction")
@@ -165,7 +171,7 @@ class AssistedAircraftOrder:
                     self.journal.transition(key, "APPROVED", "PRECHECKED")
 
                 def claim():
-                    if not validate_aircraft_preflight(
+                    if bot.stopping or bot.read_money() != ledger["cash"] or not validate_aircraft_preflight(
                         {**intent, "state": "APPROVED"}, observation, reserve=reserve,
                     )["ready"]:
                         return False
@@ -173,6 +179,7 @@ class AssistedAircraftOrder:
                         "company_id": company_id, "delivery_hub_id": request.delivery_hub_id,
                         "fleet_ids": roster["fleet_ids"], "observed_at": roster["observed_at"],
                         "cash": observation["cash"],
+                        "ledger_rows": ledger["ledger_rows"], "ledger_observed_at": ledger["observed_at"],
                     })
 
                 return [] if submit(claim) else ["submissao_bloqueada"]
@@ -181,11 +188,24 @@ class AssistedAircraftOrder:
 
     def _resolve(self, key: str, expected: str) -> dict:
         baseline = self.journal.submission_baseline(key)
+        intent = self.journal.get(key)
+        debit = True if "observed_checkout_debit_at" in intent else None
         if baseline is not None:
+            company = baseline["company_id"]
+            if (baseline.get("ledger_rows") and debit is None
+                    and 0 <= time.time() - baseline["submitted_at"] <= MAX_WINDOW):
+                try:
+                    if self._company() == company:
+                        ledger = read_checkout_ledger(self.bot, intent["checkout_cost"])
+                        if ledger and self._company() == company:
+                            debit = self.journal.observe_checkout_debit(key, ledger, company_id=company)
+                except Exception:
+                    # An unavailable ledger cannot prevent reading an independent receipt.
+                    pass
             try:
-                if self._company() == baseline["company_id"]:
+                if callable(self.read_receipt) and self._company() == company:
                     evidence = self.read_receipt(self.journal.get(key), baseline)
-                    if evidence and self._company() == baseline["company_id"] and self.journal.transition(
+                    if evidence and self._company() == company and self.journal.transition(
                         key, expected, "CONFIRMED", confirmation=evidence,
                     ):
                         return {"state": "CONFIRMED", "intent_key": key, "reasons": []}
@@ -195,7 +215,8 @@ class AssistedAircraftOrder:
                 pass
         if expected == "SUBMITTED":
             self.journal.transition(key, "SUBMITTED", "UNKNOWN")
-        return {"state": "UNKNOWN", "intent_key": key, "reasons": ["pedido_ou_debito_sem_comprovacao"]}
+        return {"state": "UNKNOWN", "intent_key": key, "reasons": ["pedido_ou_debito_sem_comprovacao"],
+                "isolated_checkout_debit": debit}
 
     def reconcile(self, key: str) -> dict:
         """Read the recorded checkout after restart without sending another order."""
@@ -208,3 +229,22 @@ class AssistedAircraftOrder:
             if intent["state"] != "UNKNOWN":
                 return {"state": intent["state"], "intent_key": key, "reasons": []}
             return self._resolve(key, "UNKNOWN")
+
+
+def reconcile_submitted_aircraft(bot) -> None:
+    """Recover a real submission on the worker without issuing another order."""
+    pending = InvestmentJournal.read_existing()["intents"]
+    candidates = [intent for intent in pending if intent["kind"] == "aircraft"
+                  and intent["state"] in ("SUBMITTED", "UNKNOWN")
+                  and (intent["state"] == "SUBMITTED" or (
+                      "observed_checkout_debit_at" not in intent
+                      and 0 <= time.time() - intent["updated_at"] <= MAX_WINDOW))]
+    if not candidates:
+        return
+    journal = InvestmentJournal()
+    executor = AssistedAircraftOrder(journal, InvestmentPolicy.from_config(bot.config), bot,
+                                    read_readiness=None, read_receipt=None)
+    for intent in candidates:
+        if bot.stopping:
+            break
+        executor.reconcile(intent["intent_key"])

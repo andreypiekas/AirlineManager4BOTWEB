@@ -1,6 +1,7 @@
 """Read the native finance summary and transaction history without altering the account."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -80,10 +81,10 @@ _REGISTRATION = re.compile(r"[A-Z0-9][A-Z0-9-]{0,15}")
 _MAINTENANCE_DEBIT = re.compile(r"([A-Z0-9][A-Z0-9-]{0,15}) (Repair|A-Check)", re.IGNORECASE | re.ASCII)
 
 
-def _history_debits(rows):
+def _history_entries(rows):
     if not isinstance(rows, list) or not 0 < len(rows) <= 100:
         return None
-    debits = []
+    entries = []
     for row in rows:
         if (not isinstance(row, dict) or type(row.get("debit")) is not bool
                 or not isinstance(row.get("label"), str) or not 0 < len(row["label"]) <= 160
@@ -95,9 +96,51 @@ def _history_debits(rows):
         amount = game_whole_number(raw.removeprefix("-"), currency=True)
         if amount is None or amount > 2**53 - 1 or (row["debit"] and amount == 0):
             return None
-        if row["debit"]:
-            debits.append((row["label"], amount))
-    return debits
+        entries.append((row["label"], -amount if row["debit"] else amount))
+    return entries
+
+
+def _purchase_label(label):
+    return " ".join(label.casefold().split()) == "a/c purchased"
+
+
+def read_checkout_ledger(bot, checkout_cost):
+    """Capture the ordered history and stable balance without storing private transaction text."""
+    from game_observations import _stable_read
+
+    started = time.time()
+    if bot.stopping:
+        return None
+    try:
+        bot.open_popup("finances.php", "Finances", "nav_finances")
+        cash = bot.read_money()
+        entries = _history_entries(_stable_read(bot, TRANSACTIONS_JS))
+        if type(cash) is not int or cash < 0 or cash != bot.read_money() or not entries:
+            return None
+    finally:
+        bot.close_popup(quiet=True)
+    if bot.stopping or not 0 <= time.time() - started <= MAX_WINDOW:
+        return None
+    # Relative timestamps change even when the history stays identical.
+    fingerprints = [hashlib.sha256(json.dumps(entry, ensure_ascii=False).encode()).hexdigest()
+                    for entry in entries]
+    return {"observed_at": started, "cash": cash, "ledger_rows": fingerprints,
+            "first_is_checkout": _purchase_label(entries[0][0]) and entries[0][1] == -checkout_cost}
+
+
+def isolated_checkout_debit(baseline, current, checkout_cost):
+    """Require a single new purchase, two distinct retained anchors and the exact cash movement."""
+    if not current or not baseline.get("ledger_rows") or current["first_is_checkout"] is not True:
+        return False
+    before, after = baseline["ledger_rows"], current["ledger_rows"]
+    retained = after[1:]
+    if (len(after) not in (len(before), len(before) + 1) or len(set(retained)) < 2
+            or before[:len(retained)] != retained or after == before
+            or baseline["cash"] - current["cash"] != checkout_cost
+            or not 0 <= current["observed_at"] - baseline["submitted_at"] <= MAX_WINDOW):
+        return False
+    # A repeated prefix could also be explained by several unseen additions.
+    return sum(after[i:i+2] == before[:2] for i in range(len(after)-1)) == 1
 
 
 def read_aircraft_cash_observation(bot, pending: dict | None, checkout_amount: int) -> dict:
@@ -133,7 +176,8 @@ def read_aircraft_cash_observation(bot, pending: dict | None, checkout_amount: i
         pending = None
 
     counts = _fleet_list(pending["pending"]) if pending is not None else None
-    debits = _history_debits(history)
+    entries = _history_entries(history)
+    debits = [(label, -amount) for label, amount in entries if amount < 0] if entries is not None else None
     maintenance = None
     if counts is not None:
         rows = pending["pending"]["rows"]
@@ -161,6 +205,9 @@ def read_aircraft_cash_observation(bot, pending: dict | None, checkout_amount: i
         "recent_debit_count": len(debits) if debits is not None else None,
         "recent_debits_equal_to_checkout": sum(amount == checkout_amount for _, amount in debits)
         if debits is not None else None,
+        "recent_aircraft_purchases_equal_to_checkout": sum(
+            _purchase_label(label) and amount == checkout_amount for label, amount in debits
+        ) if debits is not None else None,
         "aircraft_order_expenses_24h": summary["aircraft_orders"] if summary is not None else None,
         "other_expenses_24h": summary["expenses"] - sum(summary[key] for key in FIELDS[3:8])
         if summary is not None else None,

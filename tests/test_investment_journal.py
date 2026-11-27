@@ -162,6 +162,7 @@ def test_read_existing_legacy_cycle_schema_is_not_migrated(tmp_path, monkeypatch
     with sqlite3.connect(path) as conn:
         conn.execute("DROP TABLE investment_cycles")
         conn.execute("ALTER TABLE intents DROP COLUMN cycle_id")
+        conn.execute("ALTER TABLE intents DROP COLUMN observed_checkout_debit_at")
     before = path.read_bytes()
     result = InvestmentJournal.read_existing(since=time.time() - 86400)
     assert result["estimated_exposure"] == 10000

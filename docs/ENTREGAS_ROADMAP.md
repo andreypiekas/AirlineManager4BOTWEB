@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-27 — Prévia do Cessna em Caracas e conciliação no worker
+
+- Às 11h12 BRT, o worker autenticado abriu o formulário de uma unidade, selecionou Caracas, motor IO-360-L2A e cabine 0Y/0J/1F. O preço final exibido foi US$ 61.000. A frota tinha 225 aeronaves, duas em manutenção (PP-220 e PP-218) e zero entregas pendentes. O saldo estava estável em US$ 313.918.367 na leitura do extrato. Dos 30 lançamentos, 12 eram débitos e nenhum era uma compra de US$ 61.000. A janela não mostrou um débito de manutenção associado ao PP-220 e tampouco comprovou o vínculo pedido/débito do PP-254.
+- Duas consultas correlacionadas a CCS–AUA mostraram zero aeronaves na rota, zero aptas e demanda diária de 1.416/290/175. O AM4 não exibiu demanda residual nem taxa aplicável ao Cessna. A última leitura específica do hangar PAX permanece a de 26/11. Nenhum pedido enviado.
+- O journal grava o saldo e as impressões digitais da sequência do extrato imediatamente antes do envio. O executor verifica de novo o saldo antes de reivindicar a tentativa. A conciliação aceita como débito isolado uma única compra nova do valor exato, com variação idêntica do saldo e continuidade verificável entre as listas. Após reinício, o worker retoma a conciliação dos envios reais pendentes. Um débito isolado mantém a intenção reservada até existir comprovante independente do avião. A emissão em produção ainda depende dos leitores nativos de prontidão e recibo.
+- Validação local de prévia, concorrência do journal, divergência do saldo e recuperação sem segundo clique: 66 testes aprovados, Ruff e compilação aprovados. O servidor de produção respondeu via SSH, já executava a unidade principal e tinha ambiente Python 3.10 compatível com a revisão em preparação.
+
 ## 2026-11-26 — CCS–AUA sem aeronave apta e conferência das cabines do PP-254 e PP-257
 
 - No Chrome autenticado, a pesquisa direta de Caracas para Oranjestad exibiu 392 km, zero aeronaves na rota e zero aptas. A consulta anterior tinha uma apta. A pesquisa exibiu apenas a linha `Daily`, com 1.416/290/175 passageiros Y/J/F. O registro local do par 3207–3254 contém os mesmos valores diários. A frota tinha zero em `Parked` e nenhum Cessna entre os três modelos listados. O hangar PAX confirmou uma vaga (225/226). Sem prévia específica, a demanda restante de primeira classe e a taxa do Cessna seguem desconhecidas. A taxa anterior de US$ 36.713 permanece atribuída ao MC-21-400.
