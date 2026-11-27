@@ -128,6 +128,24 @@ def _block_portfolio(portfolio: dict, blockers: list[str]) -> None:
             portfolio["decision"] = "nao_comprar"
 
 
+def _selected_aircraft_id(cfg) -> str | None:
+    """Resolve the configured model exactly; an unresolved selection excludes every candidate."""
+    goal = cfg.get("settings", "goal_model", "") if cfg.get_bool("options", "save_for_goal", False) else ""
+    if goal and is_auto_goal(goal):
+        return None
+    name = (goal or cfg.get("settings", "aircraft_model", "")).strip().casefold()
+    if not name:
+        return None
+    market = load_market_evidence()
+    if market.get("fresh") is not True:
+        return ""
+    models = market["models"]
+    matches = [str(row.get("id")) for row in models if row["name"].strip().casefold() == name]
+    if len(matches) != 1 or not re.fullmatch(r"[1-9][0-9]{0,11}", matches[0]):
+        return ""
+    return matches[0] if sum(str(row.get("id")) == matches[0] for row in models) == 1 else ""
+
+
 def _current_audited_finance_blockers(bot, evaluation: dict, record: dict, journal: dict,
                                       controls: dict, passenger_hangar: dict,
                                       cash_limits: dict) -> list[str]:
@@ -487,6 +505,8 @@ class WebDashboard:
             live_cash = (None, None)
         portfolio = compare_audited_portfolio(
             evaluations,
+            aircraft_budget_mode=self.cfg.get("investment", "aircraft_budget_mode", "fixed"),
+            selected_model_id=_selected_aircraft_id(self.cfg),
             profile_id=paths.current().label,
             snapshot_id=snapshot_id,
             controls=controls,

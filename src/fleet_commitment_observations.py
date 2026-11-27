@@ -194,7 +194,9 @@ def _pilot_roster(bot):
     if not isinstance(counts, dict) or any(not _count(counts.get(key)) for key in keys):
         return None
     roster = RouteRegistry._parse_game_roster(value.get("rows"), sum(counts[key] for key in keys))
-    return (set(roster), counts) if roster is not None else None
+    if roster is None:
+        return None
+    return {identity: row["registration"].strip().upper() for identity, row in roster.items()}, counts
 
 
 def read_pilot_pending(bot, *, baseline: bool = False) -> dict | None:
@@ -241,10 +243,11 @@ def read_pilot_pending(bot, *, baseline: bool = False) -> dict | None:
     result = {"profile_id": profile_id, "company_id": company_id, "observed_at": started,
               "observed_until": finished, "pending": pending}
     if roster is not None:
-        roster_ids, counts = roster
-        if counts["pending"] != pending["total"] or not {row["id"] for row in pending["rows"]} <= roster_ids:
+        registrations, counts = roster
+        if counts["pending"] != pending["total"] or not {row["id"] for row in pending["rows"]} <= registrations.keys():
             return None
-        result.update(fleet_ids=sorted(roster_ids), fleet_total=len(roster_ids))
+        result.update(fleet_ids=sorted(registrations), fleet_total=len(registrations),
+                      registrations_by_id=registrations)
     return result
 
 

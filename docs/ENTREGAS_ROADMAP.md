@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-27 — Validação do servidor e planejamento pelo modelo configurado
+
+- A unidade AM4 estava ativa em `b1be670`, com zero reinícios automáticos, zero intenções no journal e compra legada e planejada desligadas. O worker leu as 12 páginas da frota, com 225 aeronaves, 223 em rota, duas em manutenção, zero em entrega e uma vaga PAX entre 226. Os contadores do perfil registravam 60 decolagens, compras de combustível e quotas, um reparo, um check e uma rota. Os contadores são acumulados.
+- O mercado autenticado confirmou A380-800 como modelo fixo, ID 2. A projeção A4 passou a restringir o ranking ao ID do modelo configurado. Uma seleção ausente ou ambígua no catálogo atual bloqueia a sugestão daquele modelo. O modo de planejamento `aircraft_budget_mode=available_cash` usa o menor saldo verificado, deduz reserva e compromissos e exige vaga e caso econômico. O modo padrão dos perfis existentes continua `fixed`. O operador escolheu caixa disponível para o período após homologação.
+- Na prévia nativa de Caracas, o Cessna 172 IO-360-L2A, 0/0/1, custou US$ 61.000. O formulário propôs PP-258, ausente em 225 de 225 matrículas identificadas. No ensaio assistido, o journal associa a matrícula ao envio e pode registrar um único ID novo compatível com a frota anterior. Um débito e uma matrícula isolados continuam sujeitos à comprovação independente do pedido. Nenhum pedido de teste enviado.
+- No ciclo anterior à implantação desta alteração, o planejador retornou zero elegíveis. Faltam demanda residual e taxa do Cessna em CCS–AUA, conciliação dos compromissos e leitores produtivos para o envio e a confirmação do pedido. G3/G4 pendentes.
+
 ## 2026-11-27 — Prévia do Cessna em Caracas e conciliação no worker
 
 - Às 11h12 BRT, o worker autenticado abriu o formulário de uma unidade, selecionou Caracas, motor IO-360-L2A e cabine 0Y/0J/1F. O preço final exibido foi US$ 61.000. A frota tinha 225 aeronaves, duas em manutenção (PP-220 e PP-218) e zero entregas pendentes. O saldo estava estável em US$ 313.918.367 na leitura do extrato. Dos 30 lançamentos, 12 eram débitos e nenhum era uma compra de US$ 61.000. A janela não mostrou um débito de manutenção associado ao PP-220 e tampouco comprovou o vínculo pedido/débito do PP-254.

@@ -74,8 +74,11 @@ const selected = selector => {
   return !option.matches(':disabled') && control.value === option.value ? option.value : null;
 };
 if (!identity || !step || !visible(cost)) return null;
+const registration = unique(panel, '#acReg');
+const tail = registration?.tagName === 'INPUT' ? registration.value.trim().toUpperCase() : '';
 const state = {
   model_id: identity.model_id ?? identity.script_model_id,
+  registration: /^[A-Z0-9][A-Z0-9-]{0,15}$/.test(tail) ? tail : null,
   hub_id: selected('#hubSelection'),
   engine_id: selected('#engSelection'),
   price: cost.textContent.trim(),
@@ -205,6 +208,8 @@ def _prepared_aircraft_order(
             "displayed_cost_usd": displayed_cost, "quantity": 1, "price_verified": False,
             "observed_at": time.time(), "order_control_available": observed.get("order_available") is True,
         }
+        if observed.get("registration"):
+            quote["registration"] = observed["registration"]
 
         def submit_once(claim) -> bool:
             nonlocal attempted

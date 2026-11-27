@@ -552,6 +552,41 @@ def a4_compare(*evaluations, controls=None, capacities=None, **changes):
     return compare_audited_portfolio(list(evaluations), **settings)
 
 
+def test_cash_budget_requires_space_reconciled_cash_and_configured_model():
+    evaluated = a4_evaluation(cost=11000)
+    controls = a4_controls(pending_orders_incremental=300, future_commitments_incremental=200)
+    for key in ("cycle_limit", "cycle_spent", "period_limit", "period_spent"):
+        del controls[key]
+    settings = dict(controls=controls, aircraft_budget_mode="available_cash", selected_model_id="model-a",
+                    captured_cash=a4_proof(25000, "game_snapshot"), live_cash=(25000, NOW))
+    report = a4_compare(evaluated, **settings)
+    assert report["best"]["economics_id"] == evaluated["economics_id"]
+    assert report["budget_after_reservations_and_limits"] == 20000
+    assert report["decision"] == "sugestao_para_analise"
+    for override in ({"selected_model_id": "other"}, {"selected_model_id": ""}, {"live_cash": None},
+                     {"commitments_verified": False}, {"capacities": a4_proof(0, "game_hangar_and_fleet_status")}):
+        assert a4_compare(evaluated, **{**settings, **override})["decision"] == "nao_comprar"
+
+
+def test_configured_aircraft_preference_requires_unique_current_catalog_entry(monkeypatch):
+    from config import AppConfig
+    import web
+
+    cfg = AppConfig()
+    cfg.set("options", "save_for_goal", "off")
+    cfg.set("settings", "aircraft_model", "a380-800")
+    catalog = {"fresh": True, "models": [{"name": "A380-800", "id": "2"}, {"name": "Cessna 172", "id": "12"}]}
+    monkeypatch.setattr(web, "load_market_evidence", lambda: catalog)
+    assert web._selected_aircraft_id(cfg) == "2"
+    cfg.set("options", "save_for_goal", "on")
+    cfg.set("settings", "goal_model", "Cessna 172")
+    assert web._selected_aircraft_id(cfg) == "12"
+    catalog["models"].append({"name": "Cessna 172", "id": "15"})
+    assert web._selected_aircraft_id(cfg) == ""
+    cfg.set("settings", "goal_model", "auto")
+    assert web._selected_aircraft_id(cfg) is None
+
+
 def test_a4_current_policy_caps_audited_budget_without_double_counting():
     cheap = a4_evaluation(cost=2000)
     expensive = a4_evaluation("789", "999", cost=7000, profit=350)

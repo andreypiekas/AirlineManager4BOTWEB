@@ -25,6 +25,7 @@ import paths
 
 _GAME_ID = re.compile(r"^[1-9][0-9]{0,11}$")
 _NATIVE_ID = re.compile(r"^[1-9][0-9]{0,13}$")
+_TAIL = re.compile(r"[A-Z0-9][A-Z0-9-]{0,15}")
 _CHOICE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
 _PLAN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SNAPSHOT_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -243,6 +244,8 @@ class InvestmentJournal:
                 conn.execute("ALTER TABLE intents ADD COLUMN cycle_id TEXT")
             if "observed_checkout_debit_at" not in intent_columns:
                 conn.execute("ALTER TABLE intents ADD COLUMN observed_checkout_debit_at REAL")
+            if "observed_aircraft_id" not in intent_columns:
+                conn.execute("ALTER TABLE intents ADD COLUMN observed_aircraft_id TEXT")
             environment = "simulation" if self.simulation else "game"
             rows = conn.execute("SELECT environment FROM journal_environment").fetchall()
             if not rows:
@@ -272,6 +275,8 @@ class InvestmentJournal:
                 "state": row["state"], "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
                 "submit_attempts": row["submit_attempts"], **json.loads(row["plan_json"]),
+                **({"observed_aircraft_id": row["observed_aircraft_id"]}
+                   if "observed_aircraft_id" in row.keys() and row["observed_aircraft_id"] else {}),
                 **({"observed_checkout_debit_at": row["observed_checkout_debit_at"]}
                    if "observed_checkout_debit_at" in row.keys() and row["observed_checkout_debit_at"] is not None
                    else {})}
@@ -339,7 +344,7 @@ class InvestmentJournal:
         with self._connect() as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT state, plan_json FROM intents WHERE profile_id=? AND intent_key=?",
+                "SELECT state, plan_json, observed_aircraft_id FROM intents WHERE profile_id=? AND intent_key=?",
                 (self.profile_id, intent_key),
             ).fetchone()
             if row is None:
@@ -358,6 +363,9 @@ class InvestmentJournal:
                         or confirmation["observed_at"] < baseline["submitted_at"]
                         or not _game_id(confirmation.get("aircraft_id"))
                         or confirmation["aircraft_id"] in baseline["fleet_ids"]
+                        or (row["observed_aircraft_id"] is not None
+                            and row["observed_aircraft_id"] != confirmation["aircraft_id"])
+                        or ("registration" in baseline and baseline["registration"] != confirmation.get("registration"))
                         or not _choice_id(confirmation.get("debit_transaction_id"))
                     ):
                         raise ValueError("Comprovante do avião e débito divergente do envio assistido.")
@@ -394,6 +402,8 @@ class InvestmentJournal:
                 and confirmation is not None else None)
             if next_state == "CONFIRMED" and "configuration_yjf" in plan:
                 public_evidence["configuration_yjf"] = plan["configuration_yjf"]
+            if next_state == "CONFIRMED" and plan["kind"] == "aircraft" and baseline and "registration" in baseline:
+                public_evidence["registration"] = baseline["registration"]
             if next_state == "CONFIRMED" and "checkout_cost" in plan:
                 public_evidence["charged_checkout_cost"] = confirmation["charged_checkout_cost"]
             self._event(conn, intent_key, expected, next_state, stamp, public_evidence)
@@ -649,6 +659,11 @@ class InvestmentJournal:
                     raise ValueError("Baseline de frota, companhia ou caixa inválido para envio assistido.")
                 evidence = {name: baseline[name] for name in roles}
                 evidence.update(fleet_ids=sorted(roster), observed_at=observed, cash=cash)
+                if "registration" in baseline:
+                    tail = baseline["registration"]
+                    if not isinstance(tail, str) or not _TAIL.fullmatch(tail):
+                        raise ValueError("Matrícula inválida no formulário.")
+                    evidence["registration"] = tail
                 if "ledger_rows" in baseline:
                     rows = baseline["ledger_rows"]
                     ledger_at = _timestamp_number(baseline.get("ledger_observed_at"))
@@ -701,6 +716,40 @@ class InvestmentJournal:
             conn.execute("UPDATE intents SET observed_checkout_debit_at=? WHERE profile_id=? AND intent_key=?",
                          (ledger["observed_at"], self.profile_id, intent_key))
             return True
+
+    def observe_checkout_aircraft(self, intent_key: str, roster: Mapping) -> str | None:
+        """Correlate one new native fleet ID with the tail read before submission."""
+        with self._connect() as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            baseline = self._submission_baseline(conn, intent_key)
+            if (not baseline or "registration" not in baseline or roster.get("profile_id") != self.profile_id
+                    or roster.get("company_id") != baseline["company_id"]):
+                return None
+            started = _timestamp_number(roster.get("observed_at"))
+            finished = _timestamp_number(roster.get("observed_until"))
+            now = time.time()
+            if (started is None or finished is None or not baseline["submitted_at"] <= started <= finished <= now
+                    or now - baseline["submitted_at"] > 120):
+                return None
+            registrations = roster.get("registrations_by_id")
+            if (not isinstance(registrations, dict) or not all(registrations.values())
+                    or set(roster.get("fleet_ids", ())) != registrations.keys()):
+                return None
+            previous = set(baseline["fleet_ids"])
+            added = registrations.keys() - previous
+            if len(added) != 1 or not previous <= registrations.keys():
+                return None
+            identity, = added
+            tail = baseline["registration"]
+            if (not _game_id(identity) or registrations[identity] != tail
+                    or sum(reg == tail for reg in registrations.values()) != 1):
+                return None
+            changed = conn.execute(
+                "UPDATE intents SET observed_aircraft_id=? WHERE profile_id=? AND intent_key=? "
+                "AND state IN ('SUBMITTED','UNKNOWN') AND (observed_aircraft_id IS NULL OR observed_aircraft_id=?)",
+                (identity, self.profile_id, intent_key, identity),
+            )
+            return identity if changed.rowcount == 1 else None
 
     def budget_exposure_since(self, since: float, *, exclude_intent_key: str | None = None) -> int:
         """Conservatively count current commitments plus confirmed spend in a window."""

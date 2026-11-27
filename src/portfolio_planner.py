@@ -532,6 +532,7 @@ def _a4_risk_index(row: Mapping[str, Any], profit: float) -> float | None:
 
 def compare_audited_portfolio(
     evaluations: Sequence[Mapping[str, Any]], *, profile_id: str, snapshot_id: str,
+    aircraft_budget_mode: str = "fixed", selected_model_id: str | None = None,
     controls: Mapping[str, Any] | None = None,
     passenger_hangar: Mapping[str, Any] | None = None,
     diversification_evidence: Mapping[str, Any] | None = None,
@@ -582,6 +583,17 @@ def compare_audited_portfolio(
     now = time.time() if now is None else now
     blockers: list[str] = []
     excluded: Counter[str] = Counter()
+    cash_budget = aircraft_budget_mode == "available_cash"
+    if cash_budget:
+        require_independent_cash = True
+        max_daily_spend = None
+        max_cycle_spend = None
+        max_acquisitions_per_day = None
+        max_single_investment = None
+    if aircraft_budget_mode not in ("fixed", "available_cash"):
+        blockers.append("politica_invalida")
+    if selected_model_id == "":
+        blockers.append("modelo_configurado_nao_identificado")
     if _number(now, positive=True) is None or not profile_id or not snapshot_id:
         blockers.append("identidade_ou_relogio_invalido")
         now = 0
@@ -602,9 +614,9 @@ def compare_audited_portfolio(
     cycle_limit = _number(max_cycle_spend, positive=True)
     count_limit = (max_acquisitions_per_day if type(max_acquisitions_per_day) is int
                    and max_acquisitions_per_day > 0 else None)
-    if current_reserve is None or daily_limit is None or count_limit is None:
+    if current_reserve is None or (not cash_budget and (daily_limit is None or count_limit is None)):
         blockers.append("limites_periodo_invalidos")
-    if cycle_limit is None:
+    if cycle_limit is None and not cash_budget:
         blockers.append("limite_ciclo_nao_configurado")
     journal = local_journal if isinstance(local_journal, Mapping) else {}
     usage = journal.get("period_usage")
@@ -672,7 +684,7 @@ def compare_audited_portfolio(
                        if max_payback_days is not None else None)
     single_limit = _number(max_single_investment, positive=True)
     if (total_weight is None or not math.isfinite(total_weight) or total_weight <= 0
-            or minimum_profit is None or single_limit is None
+            or minimum_profit is None or (single_limit is None and not cash_budget)
             or (max_payback_days is not None and maximum_payback is None)):
         blockers.append("criterios_planejamento_invalidos")
 
@@ -682,7 +694,10 @@ def compare_audited_portfolio(
                              snapshot_id=snapshot_id, now=now)
         for name, source in _A4_CONTROL_SOURCES.items()
     }
+    spending_controls = {"cycle_limit", "cycle_spent", "period_limit", "period_spent"}
     for name, value in observed.items():
+        if cash_budget and name in spending_controls:
+            continue
         if value is None:
             blockers.append(f"evidencia_{name}_a_confirmar")
     # The native window ended at observation time. Its known acquisition and
@@ -792,7 +807,17 @@ def compare_audited_portfolio(
         )
         if remaining_cycle_spend == 0:
             blockers.append("limite_ciclo_esgotado")
-    if (baseline is not None and gross_cash_ceiling is not None
+    if (cash_budget and baseline is not None and gross_cash_ceiling is not None
+            and current_reserve is not None and captured_amount is not None and live_amount is not None
+            and all(observed[name] is not None for name in
+                    ("pending_orders_incremental", "future_commitments_incremental", "operational_reserve"))
+            and pending_count == 0 and pending_exposure == 0 and commitments_verified is True):
+        reserve = max(baseline[2], current_reserve, observed["operational_reserve"])
+        commitments = baseline[1] + observed["pending_orders_incremental"] + observed["future_commitments_incremental"]
+        budget = max(0.0, gross_cash_ceiling - reserve - commitments)
+        if budget == 0:
+            blockers.append("saldo_apos_compromissos_insuficiente")
+    elif not cash_budget and (baseline is not None and gross_cash_ceiling is not None
             and all(value is not None for value in observed.values())
             and current_reserve is not None and remaining_spend is not None
             and remaining_acquisitions is not None and remaining_cycle_spend is not None):
@@ -825,6 +850,9 @@ def compare_audited_portfolio(
     candidates = []
     for row in prepared:
         identity = row["identity"]
+        if selected_model_id is not None and identity["model_id"] != selected_model_id:
+            excluded["fora_do_modelo_configurado"] += 1
+            continue
         hub_id = identity["hub_id"]
         economics_id = row["economics_id"]
         components = row["components"]
@@ -846,7 +874,7 @@ def compare_audited_portfolio(
         if maximum_payback is not None and payback > maximum_payback:
             excluded["retorno_acima_do_limite"] += 1
             continue
-        if single_limit is None or investment > single_limit:
+        if not cash_budget and (single_limit is None or investment > single_limit):
             excluded["limite_por_aquisicao"] += 1
             continue
         if budget is None or investment > budget:
@@ -957,6 +985,8 @@ def compare_audited_portfolio(
         "eligible_count": len(candidates),
         "excluded": dict(sorted(excluded.items())),
         "budget_after_reservations_and_limits": budget if commitments_verified is True else None,
+        "aircraft_budget_mode": aircraft_budget_mode,
+        "selected_model_id": selected_model_id,
         "cash_limits": {
             "required": require_independent_cash,
             "audited_available": baseline[0] if baseline is not None else None,

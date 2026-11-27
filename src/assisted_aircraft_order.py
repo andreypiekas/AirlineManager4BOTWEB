@@ -151,6 +151,12 @@ class AssistedAircraftOrder:
                 configuration_yjf=dict(zip("yjf", request.seats)),
                 expected_checkout_cost=request.expected_checkout_cost,
             ) as (quote, submit):
+                registration = quote.get("registration")
+                if registration:
+                    registrations = roster.get("registrations_by_id", {})
+                    if (registrations.keys() != set(roster["fleet_ids"])
+                            or not all(registrations.values()) or registration in registrations.values()):
+                        return ["matricula_do_checkout_indisponivel_ou_em_uso"]
                 observation = {
                     **readiness, "source": "game_checkout_dom", "session_authenticated": True,
                     "model_id": quote["model_id"], "engine_selected_id": quote["engine_id"],
@@ -178,6 +184,7 @@ class AssistedAircraftOrder:
                     return self.journal.claim_submission(key, owner, baseline={
                         "company_id": company_id, "delivery_hub_id": request.delivery_hub_id,
                         "fleet_ids": roster["fleet_ids"], "observed_at": roster["observed_at"],
+                        **({"registration": registration} if registration else {}),
                         "cash": observation["cash"],
                         "ledger_rows": ledger["ledger_rows"], "ledger_observed_at": ledger["observed_at"],
                     })
@@ -190,6 +197,7 @@ class AssistedAircraftOrder:
         baseline = self.journal.submission_baseline(key)
         intent = self.journal.get(key)
         debit = True if "observed_checkout_debit_at" in intent else None
+        aircraft_id = intent.get("observed_aircraft_id")
         if baseline is not None:
             company = baseline["company_id"]
             if (baseline.get("ledger_rows") and debit is None
@@ -201,6 +209,15 @@ class AssistedAircraftOrder:
                             debit = self.journal.observe_checkout_debit(key, ledger, company_id=company)
                 except Exception:
                     # An unavailable ledger cannot prevent reading an independent receipt.
+                    pass
+            if (baseline.get("registration") and aircraft_id is None
+                    and 0 <= time.time() - baseline["submitted_at"] <= MAX_WINDOW):
+                try:
+                    roster = read_pilot_pending(self.bot, baseline=True)
+                    if roster:
+                        aircraft_id = self.journal.observe_checkout_aircraft(key, roster)
+                except Exception:
+                    # A failed fleet read must still leave the single submission reserved.
                     pass
             try:
                 if callable(self.read_receipt) and self._company() == company:
@@ -216,7 +233,7 @@ class AssistedAircraftOrder:
         if expected == "SUBMITTED":
             self.journal.transition(key, "SUBMITTED", "UNKNOWN")
         return {"state": "UNKNOWN", "intent_key": key, "reasons": ["pedido_ou_debito_sem_comprovacao"],
-                "isolated_checkout_debit": debit}
+                "isolated_checkout_debit": debit, "observed_aircraft_id": aircraft_id}
 
     def reconcile(self, key: str) -> dict:
         """Read the recorded checkout after restart without sending another order."""
@@ -237,7 +254,7 @@ def reconcile_submitted_aircraft(bot) -> None:
     candidates = [intent for intent in pending if intent["kind"] == "aircraft"
                   and intent["state"] in ("SUBMITTED", "UNKNOWN")
                   and (intent["state"] == "SUBMITTED" or (
-                      "observed_checkout_debit_at" not in intent
+                      ("observed_checkout_debit_at" not in intent or "observed_aircraft_id" not in intent)
                       and 0 <= time.time() - intent["updated_at"] <= MAX_WINDOW))]
     if not candidates:
         return

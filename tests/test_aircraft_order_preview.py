@@ -308,6 +308,43 @@ def test_assisted_claim_is_durable_before_one_native_click_and_restart_reconcile
     assert bot.actions.count("Order") == 1
 
 
+@pytest.mark.parametrize(("case", "observed"), [
+    ("exact", "21"), ("different_tail", None), ("two_arrivals", None),
+    ("departed_owner", None), ("tail_in_use", None), ("other_company", None),
+])
+def test_registered_tail_correlates_a_single_new_aircraft(assisted, monkeypatch, case, observed):
+    bot = assisted.bot
+    bot.drift["registration"] = "PP-258"
+    def roster(_, *, baseline):
+        assert baseline
+        rows = {"19": "PP-19", "20": "PP-20"}
+        after = "Order" in bot.actions
+        if case == "tail_in_use":
+            rows["19"] = "PP-258"
+        if after:
+            rows["21"] = "PP-99" if case == "different_tail" else "PP-258"
+            if case == "two_arrivals":
+                rows["22"] = "PP-22"
+            if case == "departed_owner":
+                del rows["19"]
+        return {"registrations_by_id": rows, "fleet_ids": sorted(rows),
+                "company_id": "999" if after and case == "other_company" else bot._observation_company_id,
+                "profile_id": assisted.journal.profile_id, "pending": {"rows": [{"id": "20"}]},
+                "observed_at": time.time(), "observed_until": time.time()}
+
+    monkeypatch.setattr(assisted_aircraft_order, "read_pilot_pending", roster)
+    result = assisted.executor.run(assisted.plan, **assisted.arguments)
+    if case == "tail_in_use":
+        assert result["state"] == "BLOCKED" and "Order" not in bot.actions
+        return
+    key = result["intent_key"]
+    assert result["state"] == "UNKNOWN" and result["isolated_checkout_debit"]
+    assert assisted.journal.submission_baseline(key)["registration"] == "PP-258"
+    assert result["observed_aircraft_id"] == assisted.journal.get(key).get("observed_aircraft_id") == observed
+    assert assisted.executor.run(assisted.plan, **assisted.arguments)["state"] == "UNKNOWN"
+    assert bot.actions.count("Order") == 1
+
+
 def test_worker_recovers_checkout_debit_without_resending(assisted, monkeypatch):
     bot = assisted.bot
     monkeypatch.setattr(paths.Profile, "data", property(lambda _: assisted.journal.path.parent))
