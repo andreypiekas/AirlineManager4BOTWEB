@@ -1,5 +1,12 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-27 — Implantação do comprovante e busca de alternativa em hub próprio
+
+- Backup de dados e configuração do AM4, checkout de `96741e9` e reinício apenas de `am4bot@principal.service`. O painel autenticado retornou `RUNNING`. A comparação dos processos vizinhos confirmou os mesmos PIDs e horários de início. Às 17h40 BRT a unidade estava ativa com zero reinícios automáticos. O planejador registrou zero elegíveis e `hangar_sem_vaga`.
+- Na primeira consulta, CCS–AUA ainda tinha zero aptas e demanda diária Y/J/F de 1.416/290/175. O formulário do PP-113 em Oslo permitiu prévia de OSL–CPH (517 km, demanda diária 1.143/503/366, tarifa Y de US$ 378 e taxa US$ 49.759). Oslo não constava entre os 30 hubs próprios. No hub próprio de Ashgabat, o detalhe ASB–GYD mostrou 768 km, pista de 13.123 ft no destino, zero aeronaves na rota, uma apta (PP-113-4) e demanda diária 1.199/187/256. Sem linha residual. A prévia do MC-21-400 mostrou tarifa Y de US$ 478, campos J/F sem valor, taxa US$ 58.983 e combustível de 14.579 lb. Nenhuma rota criada.
+- Às 17h39 BRT, o saldo bruto de US$ 223.446.344 conferiu no servidor e no Chrome. Os sete serviços na agenda totalizaram US$ 29.936.272. Dois lançamentos, correspondentes aos A-checks 340-200-16 (US$ 1.238.684) e 340-200-13 (US$ 1.254.069), conferiram por matrícula e valor. Os demais somaram US$ 27.443.519 sem débito individual identificado na janela. Se ainda devidos integralmente, a dedução desse valor e da reserva de US$ 100.000 deixaria US$ 195.902.825 antes de outros compromissos. O resumo de 24 horas indicou US$ 61.413.335 de receitas, US$ 20.308.471 de despesas e US$ 41.104.864 de resultado.
+- O worker leu 226/226 no hangar PAX, zero Parked, sete manutenções e uma entrega. A tela Pending identificou essa entrega como **A380-800 PP-258, 600 assentos, Chapecó**. O journal do perfil não contém intenção nem tentativa de submissão. A leitura não identifica o autor ou o débito desse pedido. O Cessna ficou sem envio e a compra automática por modelo segue desligada.
+
 ## 2026-11-27 — Caixa no Chrome autenticado e comprovante do pedido assistido
 
 - Entre 12h44 e 12h48 BRT o Chrome aberto confirmou Caracas–Oranjestad, 392 km, pistas de 11.483 e 9.000 ft, zero aeronaves na rota e zero aptas. A única linha de passageiros foi `Daily`, com 1.416/290/175. O detalhe mencionou o evento. Faltaram residual e taxa do Cessna. O hangar confirmou 225/226 e uma vaga. Nenhum pedido enviado.
