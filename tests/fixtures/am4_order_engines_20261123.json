@@ -1,0 +1,42 @@
+{
+  "observed_on": "2026-11-23",
+  "source": "Authenticated AM4 web UI, Routes > Order > Aircraft details; no engine or hub selection changes",
+  "selector_id": "engSelection",
+  "selector_class": "form-control",
+  "cost_selector": "#acModel #acCost",
+  "model_id_attribute_present": false,
+  "final_price_verified": false,
+  "models": [
+    {
+      "model": "Cessna 172",
+      "displayed_cost": 51000,
+      "selected": "23",
+      "options": [{"value": "23", "label": "Lycomming IO-360-L2A"}]
+    },
+    {
+      "model": "B737-800",
+      "displayed_cost": 4407858,
+      "selected": "8",
+      "options": [{"value": "8", "label": "CFM56-7B27"}]
+    },
+    {
+      "model": "A320-200",
+      "displayed_cost": 6770196,
+      "selected": "10",
+      "options": [
+        {"value": "10", "label": "CFM56-5"},
+        {"value": "9", "label": "IAE V2500"}
+      ]
+    },
+    {
+      "model": "A380-800",
+      "displayed_cost": 215629503,
+      "selected": "5",
+      "options": [
+        {"value": "5", "label": "GP7270"},
+        {"value": "6", "label": "RR Trent 970"},
+        {"value": "7", "label": "RR Trent 972"}
+      ]
+    }
+  ]
+}

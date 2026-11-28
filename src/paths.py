@@ -17,6 +17,7 @@ import os
 import re
 import time
 from configparser import ConfigParser
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -106,6 +107,27 @@ def data_path(path: Path) -> Path:
     if not path.is_absolute() and path.parts and path.parts[0] == "data":
         return current().data.joinpath(*path.parts[1:])
     return path
+
+
+@contextmanager
+def worker_lock(directory: Path):
+    """One worker for this on-disk directory, released by the OS on exit."""
+    directory = directory.resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / ".am4-worker.lock").open("a+b") as handle:
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise RuntimeError("Outro worker usa o diretório de dados ou do perfil Chrome.") from exc
+        yield
 
 
 def write_atomic(path: Path, text: str, private: bool = False) -> None:

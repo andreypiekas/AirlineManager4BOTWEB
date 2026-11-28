@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,55 @@ import paths
 
 WINDOW_SECONDS = 1800
 MIN_SAMPLES = 12  # half a day of prices before the percentile rule is trusted
+
+
+@dataclass(frozen=True)
+class MarketQuote:
+    price: int
+    observed_at: float
+    expires_at: float
+
+    def evidence(self, now: float) -> Optional[dict]:
+        if not self.observed_at <= now < self.expires_at:
+            return None
+        return {"price": self.price, "observed_at": self.observed_at,
+                "expires_at": self.expires_at, "unit": "USD/1000",
+                "source": "game_market"}
+
+
+def observed_market_quote(price_text: Optional[str], timer_before: Optional[str],
+                          timer_after: Optional[str], started: float,
+                          finished: float) -> Optional[MarketQuote]:
+    """Accept a selected current price only inside a consistent countdown window."""
+    price_match = re.fullmatch(r"\s*\$\s*(\d{1,3}(?:,\d{3})+|\d+)\s*", price_text or "")
+    if not price_match:
+        return None
+    price = int(price_match[1].replace(",", ""))
+    if not 0 < price < 100000:
+        return None
+
+    def countdown(value: Optional[str]) -> Optional[int]:
+        match = re.fullmatch(r"\s*(\d{1,2}):([0-5]\d):([0-5]\d)\s*", value or "")
+        if not match:
+            return None
+        h, m, s = map(int, match.groups())
+        return h * 3600 + m * 60 + s
+
+    before, after = countdown(timer_before), countdown(timer_after)
+    elapsed = finished - started
+    if (before is None or after is None or not 1 < after <= before <= WINDOW_SECONDS
+            or not 0 <= elapsed < before - 1 or before - after > elapsed + 2
+            or elapsed - (before - after) > 2):
+        return None
+    expires_at = min(started + before - 1, finished + after - 1, started + 900)
+    return MarketQuote(price, finished, expires_at) if expires_at > finished else None
+
+
+def recent_market_quotes(stats: object, now: Optional[float] = None) -> dict:
+    now = time.time() if now is None else now
+    return {kind: quote.evidence(now) if isinstance(quote, MarketQuote) else None
+            for kind in ("fuel", "co2")
+            for quote in (getattr(stats, f"{kind}_quote", None),)}
 
 _CHART_RE = {
     "fuel": re.compile(r"fuel_startFuelChart\(\s*\[([\d,\s]*)\]"),

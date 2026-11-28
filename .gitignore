@@ -10,3 +10,4 @@ bin/
 test/
 profiles/
 *.tmp
+/docs/codex_multipart_commit.raw.md.gz

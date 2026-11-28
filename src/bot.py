@@ -16,9 +16,11 @@ import socket
 import threading
 import time
 from concurrent.futures import Future, TimeoutError as FutureTimeout
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, Optional
+from urllib.parse import urlsplit
 
 from selenium.common.exceptions import (
     JavascriptException,
@@ -33,21 +35,26 @@ from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from aircraft_order_preview import AircraftPreviewRequest, probe_aircraft_order
 from checklist import check_checklist
 from config import AppConfig
-from driver import create_driver
+from driver import chrome_session_path, create_driver
 from fleet import manage_fleet
+from finance_observations import read_aircraft_cash_observation
+from fleet_commitment_observations import read_pilot_pending
 from gamemode import EASY, GameMode, from_difficulty
-from helpers import clean_response, first_int, fmt, fmt_duration, timer_seconds, to_int
+from helpers import clean_response, first_int, fmt, fmt_duration, game_whole_number, timer_seconds, to_int
 from economy import (add_money_sample, fmt_days, fmt_money, goal_progress, income_per_day, revenue_per_day, state_file,
                      usage_per_day)
 from maintenance import run_maintenance
-from market import PriceHistory, buy_thresholds, chart_prices
+from market import MarketQuote, PriceHistory, buy_thresholds, chart_prices, observed_market_quote
 from marketing import run_marketing
 from notify import Telegram, esc
-from paths import write_atomic
+from paths import current, worker_lock, write_atomic
 from reroute import has_pending_reroute
 from game_audit import audit_active
+from native_demand_scan import prepare_requested_scan, requested_work, run_demand_slice
+from native_demand_store import DemandStore
 from route_registry import RouteRegistry
 from selective_depart import selective_dispatch
 from seats import optimize_seats
@@ -62,6 +69,8 @@ log_telegram = logging.getLogger("am4bot.telegram")
 # Fuel and CO2 prices change every 30 minutes: buy at most once per price window.
 PRICE_WINDOW_SECONDS = 1800
 PROBE_MIN_IDLE_SECONDS = 5.0
+FLIGHT_HISTORY_MIN_IDLE_SECONDS = 8.0
+AIRCRAFT_PREVIEW_MIN_IDLE_SECONDS = 40.0
 
 COUNTER_KEYS = ("fuel_bought", "fuel_spent", "co2_bought", "co2_spent", "departures", "routes", "aircraft", "repairs", "checks",
                 "hangar", "campaigns", "campaign_spent", "seats", "seats_spent", "mods", "mods_spent")
@@ -111,6 +120,8 @@ class Stats:
     co2: Optional[int] = None
     co2_capacity: Optional[int] = None
     co2_price: Optional[int] = None
+    fuel_quote: Optional[MarketQuote] = None
+    co2_quote: Optional[MarketQuote] = None
     fuel_buy_at: Optional[int] = None
     co2_buy_at: Optional[int] = None
     fleet_size: Optional[int] = None
@@ -126,12 +137,21 @@ class Stats:
     reputation: Optional[int] = None
     campaign_ends: Optional[int] = None   # epoch of the first running campaign's end, 0 = none running
     mode: Optional[str] = None            # game mode label: "fácil" / "realista"
+    mode_read_at: Optional[float] = None
     updated_at: Optional[float] = None
 
 
 class Bot:
-    def __init__(self, config: AppConfig):
+    _observation_only = False
+    _wait_for_login = False
+
+    def __init__(self, config: AppConfig, *, observation_only: bool = False, wait_for_login: bool = False):
+        if wait_for_login and not observation_only:
+            raise ValueError("A espera pelo login manual exige o modo de observação.")
         self.config = config
+        self._observation_only = observation_only
+        self._wait_for_login = wait_for_login
+        self._observation_company_id: Optional[str] = None
         self.driver: Optional[WebDriver] = None
         self.state = BotState.IDLE
         self.last_error: Optional[str] = None
@@ -139,10 +159,12 @@ class Bot:
 
         self._stats = Stats()
         self._stats_lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._probe_condition = threading.Condition()
         self._probe_request: Optional[Future] = None
+        self._probe_target: str | AircraftPreviewRequest | None = None
         self._probe_ready = False
         self._thread: Optional[threading.Thread] = None
         self.history = PriceHistory()
@@ -164,21 +186,23 @@ class Bot:
 
     # ------------------------------------------------------------------ lifecycle
     def start(self) -> None:
-        if self.is_alive():
-            return
-        self._stop.clear()
-        self._wake.clear()
-        self.last_error = None
-        self.marketing_next_check = 0.0
-        self._language_checked = False
-        self._thread = threading.Thread(target=self._run, name="am4bot", daemon=True)
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self.is_alive():
+                return
+            self._stop.clear()
+            self._wake.clear()
+            self.last_error = None
+            self.marketing_next_check = 0.0
+            self._language_checked = False
+            self._thread = threading.Thread(target=self._run, name="am4bot", daemon=True)
+            self._thread.start()
 
     def stop(self) -> None:
-        if self.is_alive():
-            self.state = BotState.STOPPING
-        self._stop.set()
-        self._wake.set()
+        with self._lifecycle_lock:
+            if self.is_alive():
+                self.state = BotState.STOPPING
+            self._stop.set()
+            self._wake.set()
         with self._probe_condition:
             self._probe_condition.notify_all()
 
@@ -194,6 +218,25 @@ class Bot:
         HTTP threads never read Selenium. A busy cycle, unavailable session,
         concurrent request or expired wait returns a generic status immediately.
         """
+        return self._request_diagnostic_probe(None, timeout)
+
+    def request_flight_history_probe(self, aircraft_id: str, timeout: float = 9.0) -> tuple[str, Optional[dict]]:
+        """Read structural flight-history evidence for one explicit aircraft ID."""
+        if type(aircraft_id) is not str or re.fullmatch(r"[1-9][0-9]{0,13}", aircraft_id) is None:
+            raise ValueError("Invalid aircraft ID")
+        return self._request_diagnostic_probe(aircraft_id, timeout)
+
+    def request_aircraft_order_preview(
+        self, preview: AircraftPreviewRequest, timeout: float = 70.0,
+    ) -> tuple[str, Optional[dict]]:
+        """Recheck a configured quote on an idle observation-only worker."""
+        if not self._observation_only:
+            return "unavailable", None
+        return self._request_diagnostic_probe(preview, timeout)
+
+    def _request_diagnostic_probe(
+        self, target: str | AircraftPreviewRequest | None, timeout: float,
+    ) -> tuple[str, Optional[dict]]:
         if threading.current_thread() is self._thread:
             return "busy", None
         with self._probe_condition:
@@ -204,6 +247,7 @@ class Bot:
                 return "busy", None
             request = Future()
             self._probe_request = request
+            self._probe_target = target
             self._probe_condition.notify_all()
         try:
             return request.result(timeout=timeout)
@@ -211,33 +255,60 @@ class Bot:
             request.cancel()
             return "timeout", None
 
-    def _execute_game_source_probe(self, request: Future) -> None:
+    def _execute_game_source_probe(
+        self, request: Future, target: str | AircraftPreviewRequest | None = None,
+    ) -> None:
         """Run the diagnostic on the Selenium-owning worker thread only."""
         outcome: tuple[str, Optional[dict]] = ("unavailable", None)
         try:
             if (threading.current_thread() is self._thread and not self._stop.is_set()
                     and not self._wake.is_set() and self.driver is not None
                     and self.state == BotState.RUNNING and self._is_logged_in(timeout=0)):
-                from game_source_probe import probe_game_sources
+                if isinstance(target, AircraftPreviewRequest):
+                    if not self._observation_only:
+                        return
+                    self._require_observation_session()
+                    self._verify_observation_company()
+                    report = probe_aircraft_order(self, target)
+                    if report["status"] == "matched":
+                        baseline = read_pilot_pending(self, baseline=True)
+                        report["fleet_baseline"] = ({
+                            "status": "verified", "fleet_total": baseline["fleet_total"],
+                            "pending_total": baseline["pending"]["total"],
+                            "observed_at": baseline["observed_at"],
+                        } if baseline is not None else {"status": "unverified"})
+                        pending = baseline if baseline is not None else read_pilot_pending(self)
+                        report["order_and_debit_observation"] = read_aircraft_cash_observation(
+                            self, pending, target.expected_checkout_cost,
+                        )
+                    self._require_observation_session()
+                    self._verify_observation_company()
+                elif isinstance(target, str):
+                    from game_source_probe import probe_flight_history_structure
 
-                report = probe_game_sources(self)
-                sources = report.get("sources", {})
-                if (getattr(self.config, "get_bool", lambda *_args: False)(
-                        "options", "collect_market_observations")
-                        and sources.get("purchase_hub_cost", {}).get("count")
-                        and sources.get("purchase_hub_airport_info", {}).get("count")
-                        and sources.get("purchase_hub_selector", {}).get("count")):
-                    from game_observations import collect_visible_hub_price
+                    report = probe_flight_history_structure(self, target)
+                else:
+                    from game_source_probe import probe_game_sources
 
-                    try:
-                        collect_visible_hub_price(self)
-                    except Exception:  # noqa: BLE001 - keep the sanitized diagnostic available
-                        log.debug("Preço de compra não confirmado durante diagnóstico.")
+                    report = probe_game_sources(self)
+                    sources = report.get("sources", {})
+                    if (getattr(self.config, "get_bool", lambda *_args: False)(
+                            "options", "collect_market_observations")
+                            and sources.get("purchase_hub_cost", {}).get("count")
+                            and sources.get("purchase_hub_airport_info", {}).get("count")
+                            and sources.get("purchase_hub_selector", {}).get("count")):
+                        from game_observations import collect_visible_hub_price
+
+                        try:
+                            collect_visible_hub_price(self)
+                        except Exception:  # noqa: BLE001 - keep the sanitized diagnostic available
+                            log.debug("Preço de compra não confirmado durante diagnóstico.")
                 outcome = ("ok", report)
         except Exception:
             # Driver exceptions sometimes embed the page URL, cookie or session ID.
             outcome = ("unavailable", None)
-        request.set_result(outcome)
+        finally:
+            request.set_result(outcome)
 
     def is_alive(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
@@ -248,7 +319,8 @@ class Bot:
 
     def kill_browser(self) -> None:
         """Last resort on shutdown when the bot thread does not finish in time."""
-        self._quit_driver()
+        if not self._observation_only:
+            self._quit_driver()
 
     @property
     def stopping(self) -> bool:
@@ -265,6 +337,8 @@ class Bot:
 
     def update_stats(self, **values: Optional[int]) -> None:
         with self._stats_lock:
+            if "money" in values or "money_read_at" in values:
+                self._stats.money_read_at = values.get("money_read_at")
             for key, value in values.items():
                 if value is not None:
                     setattr(self._stats, key, value)
@@ -276,11 +350,11 @@ class Bot:
         The reserve is the cushion for what keeps the fleet flying: *essential* spending (repairs, A-checks,
         the route of an aircraft already bought) may use it, everything else stays above it.
         """
-        if cost is None:
+        if type(cost) is not int or cost < 0:
             log_money.warning("Não consegui ler o custo de %s; operação ignorada.", what)
             return False
         money = self.stats().money
-        if money is None:
+        if type(money) is not int or money < 0:
             log_money.warning("Saldo desconhecido; ignorando %s.", what)
             return False
         reserve = 0 if essential else self.config.get_int("settings", "cash_reserve", 0)
@@ -312,9 +386,27 @@ class Bot:
     def read_money(self) -> Optional[int]:
         """The balance the game header shows right now (None when it cannot be read)."""
         try:
-            return to_int(self._text(self._sel("money"), timeout=2))
+            return game_whole_number(self._text(self._sel("money"), timeout=2), currency=True)
         except WebDriverException:
             return None
+
+    def record_route_expense(self, intent_id: str, fee: int) -> None:
+        """Persist the route fee and counter together, once per outstanding intent."""
+        if self._state.get("last_route_creation_intent") != intent_id:
+            counters = dict(self._state.get("counters", {}))
+            counters["routes"] = int(counters.get("routes", 0)) + 1
+            state = {**self._state, "counters": counters, "last_route_creation_intent": intent_id,
+                     "spent_total": int(self._state.get("spent_total", 0)) + fee,
+                     "invested": int(self._state.get("invested", 0)) + fee}
+            write_atomic(state_file(), json.dumps(state, indent=1))
+            self._state = state
+        # A restart may already have observed the debited balance. Refresh it
+        # instead of subtracting the quoted fee from a possibly newer balance.
+        balance = self.read_money()
+        if balance is None:
+            with self._stats_lock:
+                self._stats.money = None
+        self.update_stats(money=balance, money_read_at=time.time() if balance is not None else None)
 
     def confirm_purchase(self, before: Optional[int], cost: Optional[int], what: str, container: Optional[str] = None,
                          check: Optional[Callable[[], bool]] = None, timeout: float = 8) -> bool:
@@ -398,7 +490,7 @@ class Bot:
 
         Legacy calls without an event category remain supported.
         """
-        if not self.config.get_bool("options", "telegram") or not self.telegram.enabled:
+        if self._observation_only or not self.config.get_bool("options", "telegram") or not self.telegram.enabled:
             return False
         if category and not self.config.get_bool("options", f"telegram_{category}", True):
             return False
@@ -531,27 +623,47 @@ class Bot:
 
     # ------------------------------------------------------------------ main loop
     def _run(self) -> None:
+        locks = ExitStack()
         try:
             self.state = BotState.STARTING
-            self.config.reload_secrets()
-            self.telegram = Telegram(*self.config.telegram)
-            if self.config.get_bool("options", "telegram") and not self.telegram.enabled:
-                log_telegram.info("As notificações estão ativadas, mas faltam bot_token / chat_id em config/secrets.ini.")
-            self.notify(f"🟢 <b>Bot iniciado</b>{' (simulação)' if self.dry_run else ''}", silent=True, category="status")
+            url = self.config.get("app", "url", "https://www.airlinemanager.com/")
+            keep_session = self.config.get_bool("options", "keep_session")
+            if self._observation_only:
+                if not keep_session:
+                    raise RuntimeError("A observação exige o perfil Chrome persistente do worker.")
+                self._require_game_origin(url)
+            else:
+                self.config.reload_secrets()
+                self.telegram = Telegram(*self.config.telegram)
+                if self.config.get_bool("options", "telegram") and not self.telegram.enabled:
+                    log_telegram.info("As notificações estão ativadas, mas faltam bot_token / chat_id em config/secrets.ini.")
+                self.notify(f"🟢 <b>Bot iniciado</b>{' (simulação)' if self.dry_run else ''}",
+                            silent=True, category="status")
+            directories = {current().data.resolve()}
+            if keep_session:
+                directories.add(chrome_session_path())
+            for directory in sorted(directories):
+                locks.enter_context(worker_lock(directory))
             log.info("Abrindo Chrome ...")
             self.driver = create_driver(
-                url=self.config.get("app", "url", "https://www.airlinemanager.com/"),
-                keep_session=self.config.get_bool("options", "keep_session"),
-                headless=self.config.get_bool("options", "headless"),
+                url=url,
+                keep_session=keep_session,
+                headless=not self._wait_for_login and self.config.get_bool("options", "headless"),
             )
             self.state = BotState.LOGGING_IN
-            if not self._login():
+            if self._observation_only:
+                if self._wait_for_login and not self._wait_for_observation_login():
+                    return
+                self._require_observation_session()
+            elif not self._login():
                 raise RuntimeError("O login falhou ou excedeu o tempo limite")
             self.state = BotState.RUNNING
             while not self._stop.is_set():
                 self._cycle()
                 if self._stop.is_set():
                     break
+                if not self._observation_only:
+                    self._guard(lambda: prepare_requested_scan(self), "preparar pesquisa de demanda")
                 self._sleep_until_next_cycle()
         except Exception as exc:  # noqa: BLE001 - every failure must reach the GUI log
             if self._stop.is_set():
@@ -574,13 +686,25 @@ class Bot:
             log.info("Bot parado.")
             self.notify("⏹ Bot parado.", silent=True, category="status")
         finally:
-            self._quit_driver()
+            try:
+                self._quit_driver()
+            finally:
+                locks.close()
             self.next_cycle_at = None
             if self.state is not BotState.ERROR:
                 self.state = BotState.IDLE
 
     def _cycle(self) -> None:
+        if self._observation_only:
+            self._require_observation_session()
+            self._verify_observation_company()
+            self._observation_cycle()
+            return
         self._ensure_session()
+        if not self.dry_run:
+            from assisted_aircraft_order import reconcile_submitted_aircraft
+
+            self._guard(lambda: reconcile_submitted_aircraft(self), "conciliar pedidos de aeronave enviados")
         opt = lambda key: self.config.get_bool("options", key)  # noqa: E731
         if opt("collect_market_observations"):
             from game_observations import collect_hub_market_prices
@@ -612,9 +736,33 @@ class Bot:
         # The registry is also updated when automatic buying and routing are off.
         self._guard(lambda: manage_fleet(self), "auditar rotas e gerenciar a frota")
         if opt("collect_market_observations"):
-            from game_observations import collect_owned_hub_demand
+            from game_observations import (collect_external_hub_demand, collect_external_route_details,
+                                           collect_owned_hub_demand,
+                                           collect_owned_route_details)
 
             self._guard(lambda: collect_owned_hub_demand(self), "coletar demanda dos hubs")
+            if self.config.get_bool("investment", "planning_enabled"):
+                from owned_delivery_coverage import collect_owned_delivery_coverage
+
+                self._guard(lambda: collect_owned_delivery_coverage(self), "conferir cobertura dos hubs de entrega")
+                self._guard(lambda: collect_owned_route_details(self), "coletar detalhes das rotas")
+                self._guard(lambda: collect_external_hub_demand(self), "coletar demanda de hubs externos")
+                self._guard(lambda: collect_external_route_details(self), "coletar detalhes de rotas externas")
+        if opt("collect_engine_catalog"):
+            from game_observations import collect_aircraft_engine_catalog
+
+            self._guard(lambda: collect_aircraft_engine_catalog(
+                self, per_cycle=max(1, min(10, self.config.get_int("settings", "engine_models_per_cycle", 2)))),
+                "pesquisar motores de aeronaves")
+        if opt("collect_market_observations") or opt("collect_engine_catalog"):
+            if opt("collect_market_observations") and self.config.get_bool("investment", "planning_enabled"):
+                from game_observations import collect_hub_stopovers
+
+                self._guard(lambda: collect_hub_stopovers(self), "pesquisar escalas e pistas por trecho")
+            from owned_hub_research_ingestion import ingest_owned_hub_research_inputs
+
+            self._guard(ingest_owned_hub_research_inputs,
+                        "consolidar pesquisas pendentes de hubs e aeronaves")
         if opt("auto_depart"):
             self._guard(self._depart_all, "decolar aeronaves")
         else:
@@ -627,11 +775,94 @@ class Bot:
                 "mode": "desativado",
                 "simulation": self.dry_run,
             }), "registrar status de decolagem")
-        if opt("autobuy_fuel") or opt("autobuy_co2"):
+        if (opt("autobuy_fuel") or opt("autobuy_co2")
+                or (opt("collect_market_observations")
+                    and self.config.get_bool("investment", "planning_enabled"))):
             self._guard(self._check_market, "verificar o mercado de combustível / CO₂")
         if opt("auto_checklist"):
             self._guard(lambda: check_checklist(self), "verificar a lista de tarefas")
+        if self.config.get_bool("investment", "planning_enabled"):
+            from planning_cycle import capture_and_plan
+            from finance_observations import collect_finance_observations
+            from staff_observations import collect_staff_observations
+
+            self._guard(lambda: collect_finance_observations(self),
+                        "conferir resumo financeiro das últimas 24 horas")
+            self._guard(lambda: collect_staff_observations(self),
+                        "conferir quadro de pessoal e salários diários")
+            self._guard(self._read_header, "atualizar saldo para o planejamento")
+            self._guard(lambda: capture_and_plan(self), "consolidar evidências e replanejar expansão")
+        if (self.config.get_bool("investment", "planning_enabled")
+                and opt("telegram_expansion")):
+            from expansion_alerts import publish_expansion_alert
+
+            self._guard(lambda: publish_expansion_alert(self), "enviar recomendações de expansão")
+        if opt("telegram_investment_daily"):
+            from investment_daily import publish_investment_daily
+
+            self._guard(lambda: publish_investment_daily(self), "enviar resumo diário de investimentos")
+        if opt("telegram_investment_events"):
+            from investment_events import publish_investment_event
+
+            self._guard(lambda: publish_investment_event(self), "notificar evento de investimento")
         self._guard(self._maybe_daily_summary, "enviar o resumo diário")
+
+    def _observation_cycle(self) -> None:
+        """Read the native evidence on the browser-owning thread, independent of automation settings."""
+        from audited_game_snapshot import capture_game_snapshot
+        from demand_events import collect_demand_events
+        from finance_observations import collect_finance_observations
+        from game_observations import (collect_aircraft_engine_catalog, collect_external_hub_demand,
+                                       collect_external_route_details, collect_hub_market_prices,
+                                       collect_owned_hub_demand, collect_owned_route_details,
+                                       collect_owned_route_search_universe)
+        from hub_operations import collect_hub_operations
+        from owned_delivery_coverage import collect_owned_delivery_coverage
+        from staff_observations import collect_staff_observations
+
+        log.info("Consultando a companhia aérea [SOMENTE LEITURA].")
+        started_at = time.time()
+        country_windows = []
+        delivery_hubs = {}
+        operational_evidence = {"country_search_windows": country_windows, "delivery_hubs": delivery_hubs}
+        self._next_event = None
+        for action, label in (
+            (self._read_mode, "ler o modo de jogo"),
+            (lambda: self._check_market(observation_only=True), "consultar combustível / CO₂"),
+            (lambda: operational_evidence.update(pending=manage_fleet(self, observation_only=True)),
+             "conferir frota e prévia de rota"),
+            (lambda: operational_evidence.update(demand_events=collect_demand_events(self)),
+             "consultar eventos de demanda"),
+            (lambda: operational_evidence.update(route_search_universe=collect_owned_route_search_universe(self)),
+             "enumerar países pesquisáveis por hub próprio"),
+            (lambda: collect_owned_hub_demand(self, country_windows=country_windows), "coletar demanda dos hubs"),
+            (lambda: operational_evidence.update(hubs=collect_hub_operations(self)),
+             "conferir operações dos hubs"),
+            (lambda: collect_owned_route_details(self), "coletar detalhes das rotas"),
+            (lambda: collect_hub_market_prices(self), "consultar preços de novos hubs"),
+            (lambda: collect_external_hub_demand(self, observation_only=True), "pesquisar demanda externa"),
+            (lambda: collect_external_route_details(self, observation_only=True), "conferir detalhe de rota externa"),
+            (lambda: collect_aircraft_engine_catalog(self), "pesquisar catálogo de aeronaves e motores"),
+            (lambda: collect_owned_delivery_coverage(self, observation=delivery_hubs),
+             "conferir cobertura dos hubs de entrega"),
+            (lambda: collect_finance_observations(self), "conferir resumo financeiro"),
+            (lambda: collect_staff_observations(self), "conferir quadro de pessoal"),
+            (self._read_header, "consultar saldo e pontos"),
+        ):
+            if self.stopping:
+                break
+            self._guard(action, label)
+        if self.stopping:
+            return
+        self._require_observation_session()
+        self._verify_observation_company()
+        confirmed_at = time.time()
+        if not self.stopping:
+            self._guard(lambda: capture_game_snapshot(self, read_only_window=(started_at, confirmed_at),
+                                                      operational_evidence=operational_evidence),
+                        "gravar captura auditada")
+            self._guard(lambda: prepare_requested_scan(self, operational_evidence.get("route_search_universe")),
+                        "preparar pesquisa de demanda")
 
     def _guard(self, action: Callable[[], None], what: str) -> None:
         """Run one step of the cycle; a failing step is logged and the next ones still run.
@@ -670,6 +901,7 @@ class Bot:
         """
         if self._stop.is_set() or self.driver is None:
             return False
+        self.update_stats(money_read_at=None)
         self.driver.refresh()
         if self._stop.is_set():
             return False
@@ -700,8 +932,12 @@ class Bot:
         self.next_cycle_at = time.time() + seconds
         log.info("Próxima verificação em %d min %02d s%s.", seconds // 60, seconds % 60, reason)
         deadline = time.monotonic() + seconds
-        interval = max(30, min(600, self.config.get_int("settings", "cash_sync_seconds", 60)))
-        next_cash_check = time.monotonic() + interval
+        demand_store = DemandStore()
+        next_cash_check = deadline
+        if not self._observation_only:
+            interval = max(30, min(600, self.config.get_int("settings", "cash_sync_seconds", 60)))
+            next_cash_check = time.monotonic() + interval
+        next_demand_poll = 0.0
         try:
             with self._probe_condition:
                 self._probe_ready = True
@@ -709,32 +945,60 @@ class Bot:
                 if self._wake.is_set() or time.monotonic() >= deadline:
                     break
                 request = None
+                target = None
+                now = time.monotonic()
+                work = None
+                if (now >= next_demand_poll
+                        and min(deadline, next_cash_check) - now >= (40 if self._observation_only else 20)):
+                    work = requested_work(demand_store)
+                demand_ready = work == "batch" or (self._observation_only and work == "catalog")
+                demand_reserved = False
                 with self._probe_condition:
                     if self._probe_request is None and not self._wake.is_set() and not self._stop.is_set():
-                        remaining = max(0.0, min(deadline, next_cash_check) - time.monotonic())
-                        self._probe_condition.wait(remaining)
+                        if demand_ready:
+                            self._probe_ready = False
+                            demand_reserved = True
+                        else:
+                            remaining = max(0.0, min(deadline, next_cash_check) - time.monotonic())
+                            if self._observation_only:
+                                remaining = min(remaining, 5.0)
+                            self._probe_condition.wait(remaining)
                     if self._wake.is_set() or self._stop.is_set():
                         break
                     if self._probe_request is not None:
                         queued = self._probe_request
                         self._probe_request = None
+                        queued_target = getattr(self, "_probe_target", None)
+                        self._probe_target = None
                         if queued.set_running_or_notify_cancel():
                             # Leave the scheduled cycle and cash sync their time window.
-                            if min(deadline, next_cash_check) - time.monotonic() < PROBE_MIN_IDLE_SECONDS:
+                            minimum_idle = PROBE_MIN_IDLE_SECONDS
+                            if isinstance(queued_target, str):
+                                minimum_idle = FLIGHT_HISTORY_MIN_IDLE_SECONDS
+                            elif isinstance(queued_target, AircraftPreviewRequest):
+                                minimum_idle = AIRCRAFT_PREVIEW_MIN_IDLE_SECONDS
+                            if min(deadline, next_cash_check) - time.monotonic() < minimum_idle:
                                 queued.set_result(("busy", None))
                             else:
                                 self._probe_ready = False
                                 request = queued
-                if request is not None:
+                                target = queued_target
+                if request is not None or demand_reserved:
                     try:
-                        self._execute_game_source_probe(request)
+                        if request is not None:
+                            self._execute_game_source_probe(request, target)
+                        elif work == "catalog":
+                            self._guard(lambda: prepare_requested_scan(self), "preparar pesquisa de demanda")
+                            next_demand_poll = time.monotonic() + 5
+                        else:
+                            self._guard(lambda: run_demand_slice(self, demand_store), "coletar lote de demanda")
                     finally:
                         with self._probe_condition:
                             self._probe_ready = True
                     continue
                 if time.monotonic() >= deadline:
                     break
-                if time.monotonic() >= next_cash_check:
+                if not self._observation_only and time.monotonic() >= next_cash_check:
                     with self._probe_condition:
                         self._probe_ready = False
                     try:
@@ -752,6 +1016,7 @@ class Bot:
                 self._probe_ready = False
                 pending = self._probe_request
                 self._probe_request = None
+                self._probe_target = None
                 if pending is not None and pending.set_running_or_notify_cancel():
                     pending.set_result(("busy", None))
             self._wake.clear()
@@ -764,11 +1029,73 @@ class Bot:
         if self._next_event is None or seconds < self._next_event[0]:
             self._next_event = (int(seconds), what)
 
+    @staticmethod
+    def _require_game_origin(url: str) -> None:
+        origin = urlsplit(url)
+        if origin.scheme != "https" or origin.netloc.lower() not in {"www.airlinemanager.com", "airlinemanager.com"}:
+            raise RuntimeError("Origem do AM4 não reconhecida no modo de observação.")
+
+    def _require_observation_session(self) -> None:
+        self._require_game_origin(self.driver.current_url)
+        if not self._is_logged_in(timeout=5):
+            self.update_stats(money_read_at=None)
+            raise RuntimeError("Sessão do worker indisponível. Autentique o perfil Chrome antes da observação.")
+
+    def _wait_for_observation_login(self) -> bool:
+        timeout_seconds = 300
+        deadline = time.monotonic() + timeout_seconds
+        log_login.info("Aguardando login manual no Chrome do worker por até %d s.", timeout_seconds)
+        while not self._stop.is_set():
+            self._require_game_origin(self.driver.current_url)
+            if self._is_logged_in(timeout=0):
+                return not self._stop.is_set()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.update_stats(money_read_at=None)
+                raise RuntimeError("Tempo limite para login manual no Chrome do worker.")
+            self._stop.wait(min(1, remaining))
+        return False
+
+    def _verify_observation_company(self) -> None:
+        selector = (By.CSS_SELECTOR, "#popup #companyAction .font-weight-bold")
+        previous_fields = self.driver.find_elements(*selector)
+
+        def read_company_id(driver):
+            matches = []
+            for field in driver.find_elements(*selector):
+                if field not in previous_fields and field.is_displayed():
+                    match = re.fullmatch(
+                        r"(?:User\s+ID|ID\s+do\s+usuário)\s*:\s*([1-9][0-9]{0,13})",
+                        field.text.strip(),
+                        re.IGNORECASE,
+                    )
+                    if match:
+                        matches.append(match[1])
+            return matches[0] if len(matches) == 1 else None
+
+        wait = WebDriverWait(self.driver, 15, ignored_exceptions=(StaleElementReferenceException,))
+        try:
+            try:
+                button = wait.until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "#smallMainMenu #mapAcList"))
+                )
+                # Dispatch on the menu control itself, independent of pointer hit-testing.
+                self.js("arguments[0].click();", button)
+                company_id = wait.until(read_company_id)
+            except TimeoutException as exc:
+                raise RuntimeError("Identidade da companhia sem confirmação no modo de observação.") from exc
+            if self._observation_company_id not in (None, company_id):
+                raise RuntimeError("Identidade da companhia mudou durante o ciclo de observação.")
+            self._observation_company_id = company_id
+        finally:
+            self.close_popup(quiet=True)
+
     def _ensure_session(self) -> None:
         # Raises WebDriverException (fatal) when the user closed the browser.
         self.driver.current_url  # noqa: B018
         if self._is_logged_in(timeout=5):
             return
+        self.update_stats(money_read_at=None)
         log_login.warning("Sessão perdida; tentando entrar novamente ...")
         self.state = BotState.LOGGING_IN
         self.driver.get(self.config.get("app", "url", "https://www.airlinemanager.com/"))
@@ -893,16 +1220,20 @@ class Bot:
 
     def _read_mode(self) -> None:
         # The page's `difficulty` is the flight speed multiplier: 1.5 in easy mode, 1 in realism (gamemode.py).
-        mode = from_difficulty(self.js("return typeof difficulty === 'undefined' ? null : difficulty;"))
+        with self._stats_lock:
+            self._stats.mode_read_at = None
+        difficulty = self.js("return typeof difficulty === 'undefined' ? null : difficulty;")
+        mode = from_difficulty(difficulty)
         if mode is None:
             return
         if mode is not self.mode or self.stats().mode is None:
             log.info("Modo de jogo: %s (voos com velocidade x%s da aeronave).", mode.label, f"{mode.speed:g}")
         self.mode = mode
-        self.update_stats(mode=mode.label)
+        self.update_stats(mode=mode.label, mode_read_at=time.time() if str(difficulty) in ("1", "1.0", "1.5") else None)
 
     def _read_header(self) -> None:
-        money = to_int(self._text(self._sel("money"), timeout=5))
+        self.update_stats(money_read_at=None)
+        money = game_whole_number(self._text(self._sel("money"), timeout=5), currency=True)
         points = to_int(self._text(self._sel("points"), timeout=3))
         self.update_stats(money=money, points=points,
                           money_read_at=time.time() if money is not None else None)
@@ -1044,19 +1375,36 @@ class Bot:
         })
         self.close_popup()
 
-    def _check_market(self) -> None:
+    def _check_market(self, *, observation_only: bool = False) -> None:
+        planning = observation_only or (self.config.get_bool("investment", "planning_enabled")
+                                        and self.config.get_bool("options", "collect_market_observations"))
+        buy_fuel = not observation_only and self.config.get_bool("options", "autobuy_fuel")
+        buy_co2 = not observation_only and self.config.get_bool("options", "autobuy_co2")
+        with self._stats_lock:
+            if planning or buy_fuel:
+                self._stats.fuel_quote = None
+            if planning or buy_co2:
+                self._stats.co2_quote = None
         self.open_popup("fuel.php", "Fuel", "nav_fuel")
-        if self.config.get_bool("options", "autobuy_fuel"):
-            self._trade("fuel")
-        if self.config.get_bool("options", "autobuy_co2"):
-            self._click(self._sel("co2_tab"))
-            WebDriverWait(self.driver, 10).until(
-                EC.visibility_of_element_located((By.XPATH, self._sel("co2_main")))
-            )
-            self._trade("co2")
-        self.close_popup()
+        try:
+            if planning or buy_fuel:
+                self._trade("fuel", allow_purchase=buy_fuel)
+            if planning or buy_co2:
+                selector = self._sel("co2_tab")
+                if observation_only:
+                    selector = ('//*[@id="popup"]//*[@id="popBtn2"'
+                                ' and contains(@onclick, "Ajax(\'co2.php\',\'fuelMain\'")]')
+                self._click(selector)
+                WebDriverWait(self.driver, 10).until(
+                    EC.visibility_of_element_located((By.XPATH, self._sel("co2_main")))
+                )
+                self._trade("co2", allow_purchase=buy_co2)
+        finally:
+            self.close_popup()
 
-    def _trade(self, kind: str) -> None:
+    def _trade(self, kind: str, *, allow_purchase: bool = True) -> None:
+        with self._stats_lock:
+            setattr(self._stats, f"{kind}_quote", None)
         label = "CO₂" if kind == "co2" else "combustível"
         tlog = logging.getLogger(f"am4bot.{kind}")
         panel = self._find(self._sel(f"{kind}_main"), timeout=10)
@@ -1065,7 +1413,15 @@ class Bot:
             return
         panel_text = panel.text
 
-        price = to_int(self._text(self._sel(f"{kind}_price"), timeout=5))
+        started = time.time()
+        timer_before = self._text(self._sel(f"{kind}_timer"), timeout=2)
+        price_text = self._text(self._sel(f"{kind}_price"), timeout=5)
+        timer_after = self._text(self._sel(f"{kind}_timer"), timeout=2)
+        finished = time.time()
+        quote = observed_market_quote(price_text, timer_before, timer_after, started, finished)
+        with self._stats_lock:
+            setattr(self._stats, f"{kind}_quote", quote)
+        price = to_int(price_text)
         if price is None:
             price = first_int(_PRICE_RE, panel_text)
         holding = to_int(self._text(self._sel(f"{kind}_holding"), timeout=2))
@@ -1081,6 +1437,9 @@ class Bot:
         change_in = timer_seconds(self._text(self._sel(f"{kind}_timer"), timeout=2))
         self.update_stats(**{f"{kind}_price": price, kind: holding, f"{kind}_capacity": capacity})
         self.note_event(change_in, f"a mudança do preço de {label}")
+
+        if not allow_purchase:
+            return
 
         if price is None:
             tlog.warning("Não consegui consultar o preço de %s.", label)
@@ -1342,6 +1701,7 @@ class Bot:
         element.send_keys(text)
 
     def _quit_driver(self) -> None:
+        self.update_stats(money_read_at=None)
         driver, self.driver = self.driver, None
         if driver is None:
             return

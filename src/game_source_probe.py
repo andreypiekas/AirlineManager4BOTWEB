@@ -9,12 +9,29 @@ navigate, send requests, persist state, or invoke game controls.
 
 The result contains only fixed selector names, element counts, numeric game IDs,
 bounded page numbers, and booleans indicating whether allowlisted DOM
-attributes exist. IDs are sampled up to 40 per source, with separate total
-counts and truncation flags. ID-bearing sources additionally report the number
+attributes exist, plus fixed labels for comparisons of demand cells. IDs are
+sampled up to 40 per source, with separate total counts and truncation flags.
+ID-bearing sources additionally report the number
 of nodes with an explicit, parseable ID. ``pagination`` records only page
 numbers supported by DOM evidence, flags conflicting observations, and reports
 which known selectors and attributes supplied numeric evidence. A loading
 indicator is reported without exposing its URL.
+``aircraft_order_hub_selection`` checks the currently selected option against
+the live ``#hubSelection`` value. This proves consistency of a visible DOM
+selection only, and cannot establish a purchase or ownership of that hub.
+``aircraft_checkout_diagnostics`` reports the structural location of possible
+price fields and engine controls inside ``#acModel``. Candidate counts are
+diagnostic only: they never verify the final price for a selected motor.
+``model_hub_correlated`` requires a single, idle aircraft detail panel that
+actually contains the selected hub control. It only describes one DOM snapshot.
+``pair_comparisons`` describes the order of two numbers in each of three
+aircraft demand cells. It does not identify the cabins, establish which number
+is residual demand, or qualify a route for economic evaluation.
+``probe_flight_history_structure(session, aircraft_id)`` is a separate, explicit
+read-only GET of one aircraft's details through the session owner. It returns
+only structural counts and availability hints for A9 calibration research.
+No flight IDs, dates, revenues, costs, or HTML leave the browser. The probe
+cannot establish complete history, unique flights, or verified ledger costs.
 The source view depends on the popup currently displayed. Missing selectors are
 expected when their corresponding game pane is closed.
 
@@ -38,10 +55,13 @@ import json
 import re
 from typing import Any
 
+from engine_detail import MODEL_DETAIL_IDENTITY_JS
+
 
 SAMPLE_LIMIT = 40
 _NUMERIC_ID = re.compile(r"^[1-9][0-9]{0,13}$")
 _MAX_COUNT = 10_000_000
+_DEMAND_PAIR_COMPARISONS = ("first_lower", "equal", "first_higher", "unreadable")
 _PAGINATION_EVIDENCE = (
     "popup_present",
     "pagination_present",
@@ -52,6 +72,37 @@ _PAGINATION_EVIDENCE = (
     "total_pages_route_count_numeric",
     "loading_indicator_present",
 )
+
+# Structural leads for inspecting the actual aircraft checkout DOM. The game
+# has not yet supplied an authenticated, verified final-price selector. These
+# fixed selectors expose counts and currency-shape flags, never text or prices.
+_CHECKOUT_PRICE_CANDIDATES = (
+    ("observed_cost", "#acModel #acCost"),
+    ("data_price", "#acModel [data-price]"),
+    ("data_final_price", "#acModel [data-final-price]"),
+    ("data_total_price", "#acModel [data-total-price]"),
+    ("id_price", "#acModel [id*='price' i]"),
+    ("id_cost", "#acModel [id*='cost' i]"),
+    ("class_price", "#acModel [class*='price' i]"),
+    ("class_cost", "#acModel [class*='cost' i]"),
+)
+
+_CHECKOUT_CONTROL_SELECTORS = {
+    "all_selects": "#acModel select",
+    "all_radios": "#acModel input[type='radio']",
+    "native_engine_selects": "#acModel select#engSelection",
+    "engine_named_selects": (
+        "#acModel select[name*='engine' i], #acModel select[id*='engine' i], "
+        "#acModel select[name*='motor' i], #acModel select[id*='motor' i]"
+    ),
+    "engine_named_radios": (
+        "#acModel input[type='radio'][name*='engine' i], "
+        "#acModel input[type='radio'][name*='motor' i]"
+    ),
+    "purchase_buttons": "#acModel #btnPurchaseIntro",
+    "order_intro_buttons": "#acModel #btnPurchaseIntroA",
+    "insufficient_balance_warnings": "#acModel #accountLow",
+}
 
 # Only these literal selectors and attribute *names* may appear in the result.
 # Attribute values are examined exclusively to extract strictly numeric IDs.
@@ -115,11 +166,30 @@ _SOURCES = (
      "attrs": ["class"], "id_source": "none"},
     {"key": "route_details", "selector": "#rDetails",
      "attrs": ["id", "data-dep", "data-arr"], "id_source": "none"},
+    {"key": "route_capable_aircraft", "selector": "#rDetails #capAc option",
+     "attrs": ["value", "disabled"], "id_source": "none"},
+    {"key": "aircraft_seat_layout", "selector": "#detailsAction #seat-layout .col-4",
+     "attrs": ["class"], "id_source": "none"},
+    {"key": "aircraft_route_demand", "selector": "#detailsAction #list-demand .col-4",
+     "attrs": ["class"], "id_source": "none"},
+    {"key": "aircraft_ticket_fields",
+     "selector": "#detailsAction #eTicket, #detailsAction #bTicket, #detailsAction #fTicket",
+     "attrs": ["id", "disabled"], "id_source": "none"},
+    {"key": "route_form_demand_table", "selector": "#newRouteInfo #newRouteContainer table.s-text",
+     "attrs": ["class"], "id_source": "none"},
+    {"key": "route_form_fee_candidates",
+     "selector": "#newRouteInfo #newRouteContainer .text-danger.font-weight-bold",
+     "attrs": ["class"], "id_source": "none"},
+    {"key": "route_form_fare_fields",
+     "selector": "#newRouteInfo #eSeat, #newRouteInfo #bSeat, #newRouteInfo #fSeat",
+     "attrs": ["id", "disabled"], "id_source": "none"},
 )
 
 # This script is intentionally self-contained and uses only synchronous DOM reads.
 # It never serializes source nodes, arbitrary attribute values or global objects.
-PROBE_JS = "const specs = " + json.dumps(_SOURCES) + ";\n" + r"""
+PROBE_JS = ("const specs = " + json.dumps(_SOURCES) + ";\n"
+            + "const checkoutPriceSpecs = " + json.dumps(_CHECKOUT_PRICE_CANDIDATES) + ";\n"
+            + "const checkoutControlSpecs = " + json.dumps(_CHECKOUT_CONTROL_SELECTORS) + ";\n") + r"""
 const sampleLimit = 40;
 const isNumericId = value => /^[1-9][0-9]{0,13}$/.test(String(value ?? '').trim());
 const pageNumber = value => {
@@ -173,6 +243,17 @@ function summarizeIds(ids) {
           ids_truncated: ids.size > numericIds.length};
 }
 
+function compareDemandPair(node) {
+  // Accept two whole numbers only, separated by a slash or rendered line break.
+  const text = String(node.innerText ?? node.textContent ?? '').trim();
+  const pair = text.split(/\s*\/\s*|\r?\n\s*/).map(value => value.trim());
+  const wholeNumber = /^(?:[0-9]{1,12}|[0-9]{1,3}(?:,[0-9]{3}){1,3})$/;
+  if (pair.length !== 2 || !pair.every(value => wholeNumber.test(value))) return 'unreadable';
+  const [first, second] = pair.map(value => Number(value.replace(/,/g, '')));
+  if (first === second) return 'equal';
+  return first < second ? 'first_lower' : 'first_higher';
+}
+
 const result = {schema_version: 1, sources: {}, status_data: {}, pagination: {}};
 for (const spec of specs) {
   const nodes = Array.from(document.querySelectorAll(spec.selector));
@@ -206,6 +287,13 @@ for (const spec of specs) {
     result.sources[spec.key].linked_aircraft_id_count = linked.size;
     result.sources[spec.key].linked_aircraft_ids_truncated =
       linked.size > result.sources[spec.key].linked_aircraft_ids.length;
+  }
+  if (spec.key === 'aircraft_route_demand' && nodes.length === 3 &&
+      document.querySelectorAll('#detailsAction').length === 1 &&
+      document.querySelectorAll('#detailsAction #list-demand').length === 1 &&
+      nodes.every(node => node.getClientRects().length > 0 &&
+                          window.getComputedStyle(node).visibility === 'visible')) {
+    result.sources[spec.key].pair_comparisons = nodes.map(compareDemandPair);
   }
 }
 
@@ -275,6 +363,99 @@ result.pagination = {
   }
 };
 
+// The selected property reflects the live select state; the HTML 'selected'
+// attribute can remain stale after a user/script changes the current value.
+const orderHubSelectors = Array.from(document.querySelectorAll('#hubSelection'));
+const orderHubOptions = Array.from(document.querySelectorAll('#hubSelection option'));
+const orderHubSelection = {
+  selector_count: orderHubSelectors.length,
+  option_count: orderHubOptions.length,
+  selected_option_count: orderHubOptions.filter(option => option.selected === true).length,
+  selected_hub_id: null,
+  status: orderHubSelectors.length === 0 ? 'missing' :
+    orderHubSelectors.length !== 1 ? 'ambiguous' : 'unverified'
+};
+if (orderHubSelectors.length === 1) {
+  const selector = orderHubSelectors[0];
+  if (selector.disabled === true) {
+    orderHubSelection.status = 'disabled';
+  } else {
+    const chosen = String(selector.value ?? '').trim();
+    const matching = orderHubOptions.filter(option =>
+      String(option.value ?? '').trim() === chosen);
+    const selected = orderHubOptions.filter(option => option.selected === true);
+    if (isNumericId(chosen) && matching.length === 1 && selected.length === 1 &&
+        selected[0] === matching[0] && matching[0].disabled === false &&
+        selector.disabled === false) {
+      orderHubSelection.selected_hub_id = chosen;
+      orderHubSelection.status = 'dom_consistent';
+    }
+  }
+}
+result.aircraft_order_hub_selection = orderHubSelection;
+
+// Snapshot only structural clues for the unverified final-price field.
+// Never emit checkout text, attributes, registration, or potential balances.
+const checkoutPanels = Array.from(document.querySelectorAll('#acModel'));
+const checkoutIdentity = checkoutPanels.length === 1 ?
+  """ + MODEL_DETAIL_IDENTITY_JS + r"""(checkoutPanels[0]) : null;
+const checkoutModelId = checkoutIdentity ?
+  (checkoutIdentity.model_id ?? checkoutIdentity.script_model_id) : null;
+const checkoutAjaxIdleConfirmed = typeof window !== 'undefined' &&
+  !!window.jQuery && window.jQuery.active === 0;
+const checkoutAjaxActive = typeof window !== 'undefined' &&
+  !!window.jQuery && typeof window.jQuery.active === 'number' &&
+  window.jQuery.active > 0;
+const checkoutLoading = checkoutPanels.some(panel =>
+  safeAttribute(panel, 'aria-busy') === 'true' ||
+  (typeof panel.querySelector === 'function' &&
+    !!panel.querySelector('img[src*="loader"], [aria-busy="true"]')));
+const modelHubCorrelated = checkoutPanels.length === 1 &&
+  isNumericId(checkoutModelId) && orderHubSelection.status === 'dom_consistent' &&
+  orderHubSelectors.length === 1 &&
+  typeof checkoutPanels[0].contains === 'function' &&
+  checkoutPanels[0].contains(orderHubSelectors[0]) &&
+  checkoutAjaxIdleConfirmed && !checkoutLoading;
+const checkoutControls = {};
+for (const [key, selector] of Object.entries(checkoutControlSpecs)) {
+  checkoutControls[key] = document.querySelectorAll(selector).length;
+}
+const checkoutPrices = {};
+for (const [key, selector] of checkoutPriceSpecs) {
+  const nodes = Array.from(document.querySelectorAll(selector));
+  let currencyTextNodes = 0;
+  let numericPriceAttributeNodes = 0;
+  for (const node of nodes) {
+    // The observed #acCost span holds digits; its h4 parent carries the currency.
+    const display = key === 'observed_cost' && node.parentElement?.tagName === 'H4'
+      ? node.parentElement : node;
+    const text = String(display.textContent || '').slice(0, 256);
+    if (/(?:US\s*\$|USD\s*|\$)\s*[1-9][0-9,.]{0,14}/i.test(text)) {
+      currencyTextNodes++;
+    }
+    if (['data-price', 'data-final-price', 'data-total-price'].some(name =>
+      isNumericId(safeAttribute(node, name)))) {
+      numericPriceAttributeNodes++;
+    }
+  }
+  checkoutPrices[key] = {
+    count: nodes.length,
+    currency_text_nodes: currencyTextNodes,
+    numeric_price_attribute_nodes: numericPriceAttributeNodes
+  };
+}
+result.aircraft_checkout_diagnostics = {
+  detail_panel_count: checkoutPanels.length,
+  detail_model_id: isNumericId(checkoutModelId) ?
+    String(checkoutModelId).trim() : null,
+  ajax_active: checkoutAjaxActive,
+  ajax_idle_confirmed: checkoutAjaxIdleConfirmed,
+  detail_loading: checkoutLoading,
+  model_hub_correlated: modelHubCorrelated,
+  controls: checkoutControls,
+  price_candidates: checkoutPrices
+};
+
 const hasStatus = typeof window !== 'undefined' &&
   window.statusData !== null && typeof window.statusData === 'object' &&
   !Array.isArray(window.statusData);
@@ -283,6 +464,101 @@ const statusIds = new Set();
 for (const key of keys) addNumericId(statusIds, key);
 result.status_data = {present: hasStatus, count: keys.length, ...summarizeIds(statusIds)};
 return result;
+"""
+
+
+# The legacy financial reader fetches the same aircraft-details fragment.
+# This diagnostic keeps the response entirely inside the authenticated browser
+# and returns counts of candidate evidence, never individual flight records.
+FLIGHT_HISTORY_PROBE_JS = r"""
+const aircraftId = String(arguments[0] ?? '');
+const done = arguments[arguments.length - 1];
+const numericId = value => /^[1-9][0-9]{0,13}$/.test(String(value ?? ''));
+const absoluteTime = value => {
+  const text = String(value ?? '').trim();
+  if (/^[0-9]{10}(?:[0-9]{3})?$/.test(text)) {
+    const timestamp = Number(text) * (text.length === 10 ? 1000 : 1);
+    return timestamp >= 946684800000 && timestamp < 4102444800000;
+  }
+  return /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/i.test(text)
+    && Number.isFinite(Date.parse(text));
+};
+const newReport = status => ({
+  schema_version: 1, status, aircraft_id: aircraftId,
+  history_present: false, row_count: 0, four_column_rows: 0,
+  numeric_cost_rows: 0, currency_revenue_rows: 0,
+  id_candidates: Object.fromEntries(['data_flight_id', 'data_id', 'dom_id']
+    .map(key => [key, {rows: 0, distinct: 0, duplicates: 0}])),
+  absolute_time_sources: {time_datetime: 0, data_completed_at: 0, data_timestamp: 0},
+  pagination_controls_present: false
+});
+const inspect = html => {
+  const report = newReport('inspected');
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  report.history_present = doc.querySelectorAll('#flight-history').length === 1;
+  if (!report.history_present) {
+    report.status = 'missing_history';
+    return report;
+  }
+  const rows = Array.from(doc.querySelectorAll('#flight-history > .row'));
+  report.row_count = rows.length;
+  report.pagination_controls_present =
+    doc.querySelectorAll('#flight-history .pagination, #flight-history [data-page]').length > 0;
+  const ids = {data_flight_id: new Set(), data_id: new Set(), dom_id: new Set()};
+  for (const row of rows) {
+    const values = {
+      data_flight_id: row.getAttribute('data-flight-id'),
+      data_id: row.getAttribute('data-id'),
+      dom_id: row.getAttribute('id')
+    };
+    for (const [key, value] of Object.entries(values)) {
+      if (!numericId(value)) continue;
+      report.id_candidates[key].rows++;
+      ids[key].add(String(value));
+    }
+    const time = row.querySelector('time[datetime]');
+    if (time && absoluteTime(time.getAttribute('datetime'))) {
+      report.absolute_time_sources.time_datetime++;
+    }
+    if (absoluteTime(row.getAttribute('data-completed-at'))) {
+      report.absolute_time_sources.data_completed_at++;
+    }
+    if (absoluteTime(row.getAttribute('data-timestamp'))) {
+      report.absolute_time_sources.data_timestamp++;
+    }
+    const cells = Array.from(row.querySelectorAll(':scope > .col-3'));
+    if (cells.length !== 4) continue;
+    report.four_column_rows++;
+    const looksNumeric = value => /[0-9]/.test(String(value || ''));
+    if (looksNumeric(cells[1].textContent) && looksNumeric(cells[2].textContent)) {
+      report.numeric_cost_rows++;
+    }
+    if (/(?:US\s*\$|USD\s*|\$)\s*[0-9]/i.test(String(cells[3].textContent || ''))) {
+      report.currency_revenue_rows++;
+    }
+  }
+  for (const [key, values] of Object.entries(ids)) {
+    report.id_candidates[key].distinct = values.size;
+    report.id_candidates[key].duplicates = report.id_candidates[key].rows - values.size;
+  }
+  return report;
+};
+(async () => {
+  if (!numericId(aircraftId)) return newReport('invalid_id');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch('fleet_details.php?id=' + aircraftId, {
+      credentials: 'same-origin', signal: controller.signal
+    });
+    if (!response.ok) return newReport('http_error');
+    return inspect(await response.text());
+  } catch (error) {
+    return newReport(error && error.name === 'AbortError' ? 'timeout' : 'fetch_error');
+  } finally {
+    clearTimeout(timeout);
+  }
+})().then(done, () => done(newReport('fetch_error')));
 """
 
 
@@ -330,7 +606,7 @@ def _sanitize(raw: Any) -> dict:
             "selector": spec["selector"],
             "count": _count(entry.get("count")),
             "attribute_presence": {name: attrs.get(name) is True for name in spec["attrs"]},
-            **_id_fields(entry),
+            **_id_fields(entry if spec["id_source"] != "none" else {}),
         }
         if spec["id_source"] != "none":
             matched = entry.get("id_parseable_nodes")
@@ -345,6 +621,13 @@ def _sanitize(raw: Any) -> dict:
                 _count(entry.get("linked_aircraft_id_count")), len(linked))
             cleaned_entry["linked_aircraft_ids_truncated"] = (
                 cleaned_entry["linked_aircraft_id_count"] > len(linked))
+        if spec["key"] == "aircraft_route_demand":
+            relations = entry.get("pair_comparisons")
+            if (cleaned_entry["count"] == 3 and type(relations) is list
+                    and len(relations) == 3
+                    and all(type(relation) is str and relation in _DEMAND_PAIR_COMPARISONS
+                            for relation in relations)):
+                cleaned_entry["pair_comparisons"] = relations.copy()
         cleaned[spec["key"]] = cleaned_entry
 
     status = raw.get("status_data")
@@ -355,9 +638,79 @@ def _sanitize(raw: Any) -> dict:
     evidence = evidence if isinstance(evidence, dict) else {}
     current_page = _page(pagination.get("current_page"))
     total_pages = _page(pagination.get("total_pages"))
+    selection = raw.get("aircraft_order_hub_selection")
+    selection = selection if isinstance(selection, dict) else {}
+    selector_count = _count(selection.get("selector_count"))
+    option_count = _count(selection.get("option_count"))
+    selected_count = _count(selection.get("selected_option_count"))
+    hub_id = selection.get("selected_hub_id")
+    selection_status = selection.get("status")
+    if selection_status not in ("missing", "ambiguous", "disabled", "unverified",
+                                "dom_consistent"):
+        selection_status = "unverified"
+    if (selection_status != "dom_consistent" or selector_count != 1
+            or selected_count != 1
+            or option_count < 1 or type(hub_id) is not str
+            or _NUMERIC_ID.fullmatch(hub_id) is None):
+        hub_id = None
+        if selection_status == "dom_consistent":
+            selection_status = "unverified"
+    checkout = raw.get("aircraft_checkout_diagnostics")
+    checkout = checkout if isinstance(checkout, dict) else {}
+    detail_panel_count = _count(checkout.get("detail_panel_count"))
+    detail_model_id = checkout.get("detail_model_id")
+    if (detail_panel_count != 1 or type(detail_model_id) is not str
+            or _NUMERIC_ID.fullmatch(detail_model_id) is None):
+        detail_model_id = None
+    model_hub_correlated = (
+        checkout.get("model_hub_correlated") is True
+        and checkout.get("ajax_active") is False
+        and checkout.get("ajax_idle_confirmed") is True
+        and checkout.get("detail_loading") is False
+        and detail_model_id is not None
+        and hub_id is not None
+        and selection_status == "dom_consistent"
+    )
+    checkout_controls = checkout.get("controls")
+    checkout_controls = checkout_controls if isinstance(checkout_controls, dict) else {}
+    checkout_prices = checkout.get("price_candidates")
+    checkout_prices = checkout_prices if isinstance(checkout_prices, dict) else {}
+    price_candidates = {}
+    for key, selector in _CHECKOUT_PRICE_CANDIDATES:
+        candidate = checkout_prices.get(key)
+        candidate = candidate if isinstance(candidate, dict) else {}
+        count = _count(candidate.get("count"))
+        price_candidates[key] = {
+            "selector": selector,
+            "count": count,
+            "currency_text_nodes": min(count, _count(candidate.get("currency_text_nodes"))),
+            "numeric_price_attribute_nodes": min(
+                count, _count(candidate.get("numeric_price_attribute_nodes"))),
+        }
     return {
         "schema_version": 1,
         "sources": cleaned,
+        "aircraft_order_hub_selection": {
+            "selector_count": selector_count,
+            "option_count": option_count,
+            "selected_option_count": selected_count,
+            "selected_hub_id": hub_id,
+            "status": selection_status,
+            "read_only": True,
+        },
+        "aircraft_checkout_diagnostics": {
+            "detail_panel_count": detail_panel_count,
+            "detail_model_id": detail_model_id,
+            "ajax_active": checkout.get("ajax_active") is True,
+            "ajax_idle_confirmed": checkout.get("ajax_idle_confirmed") is True,
+            "detail_loading": checkout.get("detail_loading") is True,
+            "model_hub_correlated": model_hub_correlated,
+            "controls": {key: _count(checkout_controls.get(key))
+                         for key in _CHECKOUT_CONTROL_SELECTORS},
+            "price_candidates": price_candidates,
+            "price_verified": False,
+            "read_only": True,
+        },
         "pagination": {
             "current_page": current_page,
             "total_pages": total_pages,
@@ -389,3 +742,70 @@ def probe_game_sources(session: Any) -> dict:
     if not callable(execute):
         raise TypeError("Expected an existing Bot or Selenium WebDriver session")
     return _sanitize(execute(PROBE_JS))
+
+
+_FLIGHT_ID_CANDIDATES = ("data_flight_id", "data_id", "dom_id")
+_FLIGHT_TIME_SOURCES = ("time_datetime", "data_completed_at", "data_timestamp")
+_FLIGHT_STATUSES = {"inspected", "missing_history", "http_error", "timeout", "fetch_error"}
+
+
+def _sanitize_flight_history(raw: Any, aircraft_id: str) -> dict:
+    """Keep only bounded structural signals, even if the driver is compromised."""
+    if (not isinstance(raw, dict) or type(raw.get("schema_version")) is not int
+            or raw["schema_version"] != 1 or raw.get("aircraft_id") != aircraft_id):
+        raise ValueError("Unexpected flight-history probe response")
+    status = raw.get("status")
+    if status not in _FLIGHT_STATUSES:
+        status = "fetch_error"
+    present = status == "inspected" and raw.get("history_present") is True
+    if status == "inspected" and not present:
+        status = "missing_history"
+    count = _count(raw.get("row_count")) if present else 0
+    candidates = raw.get("id_candidates")
+    candidates = candidates if isinstance(candidates, dict) else {}
+    ids = {}
+    for key in _FLIGHT_ID_CANDIDATES:
+        entry = candidates.get(key)
+        entry = entry if isinstance(entry, dict) else {}
+        rows = min(count, _count(entry.get("rows")))
+        distinct = min(rows, _count(entry.get("distinct")))
+        # Duplicate counts are derived from rows and distinct IDs, never trusted.
+        ids[key] = {"rows": rows, "distinct": distinct,
+                    "duplicates": rows - distinct}
+    times = raw.get("absolute_time_sources")
+    times = times if isinstance(times, dict) else {}
+    return {
+        "schema_version": 1, "aircraft_id": aircraft_id,
+        "status": status, "history_present": present, "row_count": count,
+        "four_column_rows": min(count, _count(raw.get("four_column_rows"))),
+        "numeric_cost_rows": min(count, _count(raw.get("numeric_cost_rows"))),
+        "currency_revenue_rows": min(count, _count(raw.get("currency_revenue_rows"))),
+        "id_candidates": ids,
+        "absolute_time_sources": {
+            key: min(count, _count(times.get(key))) for key in _FLIGHT_TIME_SOURCES
+        },
+        "pagination_controls_present": present and raw.get("pagination_controls_present") is True,
+        "possible_truncation": count >= 20,
+        "flight_identity_verified": False,
+        "complete_history_verified": False,
+        "financial_ledger_verified": False,
+        "read_only": True,
+    }
+
+
+def probe_flight_history_structure(session: Any, aircraft_id: str | int) -> dict:
+    """Inspect one aircraft's history through the authenticated Selenium owner.
+
+    Performs one read-only GET for ``fleet_details.php``. Results are
+    diagnostics for source research only, never accounting evidence for A9.
+    """
+    if type(aircraft_id) not in (str, int) or not _NUMERIC_ID.fullmatch(str(aircraft_id)):
+        raise ValueError("Expected a positive numeric aircraft ID")
+    driver = getattr(session, "driver", session)
+    execute = getattr(driver, "execute_async_script", None)
+    if not callable(execute):
+        raise TypeError("Expected an existing Selenium WebDriver async session")
+    normalized_id = str(aircraft_id)
+    return _sanitize_flight_history(
+        execute(FLIGHT_HISTORY_PROBE_JS, normalized_id), normalized_id
+    )

@@ -15,6 +15,20 @@ def to_int(text: Optional[str]) -> Optional[int]:
     return int(digits) if digits else None
 
 
+def game_whole_number(value: object, *, currency: bool = False) -> Optional[int]:
+    """Read a complete unsigned game number, rejecting mixed text and decimals."""
+    if type(value) is int:
+        return value if value >= 0 else None
+    if not isinstance(value, str):
+        return None
+    pattern = r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)"
+    if currency:
+        pattern = r"(?:\$\s*)?" + pattern
+    if not re.fullmatch(pattern, value.strip()):
+        return None
+    return int(value.strip().removeprefix("$").strip().replace(",", ""))
+
+
 def first_int(pattern: re.Pattern[str], text: str, group: int = 1) -> Optional[int]:
     match = pattern.search(text or "")
     return to_int(match.group(group)) if match else None

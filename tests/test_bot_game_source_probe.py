@@ -6,12 +6,14 @@ import time
 from concurrent.futures import Future
 from contextlib import contextmanager
 
+from aircraft_order_preview import AircraftPreviewRequest
 from bot import Bot, BotState
 
 
 class Driver:
     def __init__(self):
         self.calls: list[int] = []
+        self.history_calls: list[tuple[int, str]] = []
         self.started = threading.Event()
         self.release = threading.Event()
         self.release.set()
@@ -23,6 +25,14 @@ class Driver:
         assert self.release.wait(3)
         return {"schema_version": 1, "sources": {}, "pagination": {}, "status_data": {}}
 
+    def execute_async_script(self, script, aircraft_id):
+        assert "fleet_details.php?id=" in script
+        self.history_calls.append((threading.get_ident(), aircraft_id))
+        self.started.set()
+        assert self.release.wait(3)
+        return {"schema_version": 1, "aircraft_id": aircraft_id, "status": "missing_history",
+                "history_present": False, "password": "HIDDEN_SECRET"}
+
 
 def make_bot():
     bot = Bot.__new__(Bot)
@@ -30,6 +40,7 @@ def make_bot():
     bot.state = BotState.RUNNING
     bot._stop = threading.Event()
     bot._wake = threading.Event()
+    bot._lifecycle_lock = threading.Lock()
     bot._probe_condition = threading.Condition()
     bot._probe_ready = False
     bot._probe_request = None
@@ -94,6 +105,127 @@ def test_probe_executes_on_worker_without_ending_sleep_early():
         assert bot.next_cycle_at == next_cycle
         assert bot.cash_reads == 0
         assert bot._thread.is_alive()
+
+
+def test_flight_history_probe_uses_worker_and_returns_only_structural_data():
+    bot = make_bot()
+    with running_worker(bot):
+        wait_until_idle(bot)
+        scheduled = bot.next_cycle_at
+        status, report = bot.request_flight_history_probe("42")
+        assert status == "ok"
+        assert bot.driver.history_calls == [(bot._thread.ident, "42")]
+        assert bot.login_threads == [bot._thread.ident]
+        assert report["aircraft_id"] == "42"
+        assert report["complete_history_verified"] is False
+        assert report["financial_ledger_verified"] is False
+        assert "HIDDEN_SECRET" not in str(report)
+        assert bot.next_cycle_at == scheduled
+        assert bot.request_game_source_probe(timeout=2)[0] == "ok"
+
+
+def test_aircraft_preview_runs_only_on_observation_worker_and_rechecks_company(monkeypatch):
+    bot = make_bot()
+    request = AircraftPreviewRequest("12", "24323457", "23", (3, 0, 0), 51000)
+    assert bot.request_aircraft_order_preview(request) == ("unavailable", None)
+    bot._observation_only = True
+    monkeypatch.setattr("bot.requested_work", lambda _store: None)
+    calls = []
+
+    def verify(label):
+        calls.append((label, threading.get_ident()))
+
+    def quote(worker, payload):
+        assert worker is bot and payload == request
+        verify("quote")
+        return {"status": "matched", "execution_available": False}
+
+    pending = {"fleet_total": 224, "pending": {"total": 0}, "observed_at": 42,
+               "company_id": "123", "fleet_ids": ["456"]}
+
+    def read_pending(worker, *, baseline):
+        assert worker is bot
+        verify("baseline" if baseline else "pending")
+        return pending
+
+    def read_cash(worker, roster, checkout_amount):
+        assert worker is bot and roster is pending and checkout_amount == 51000
+        verify("cash evidence")
+        return {"receipt_verified": False}
+
+    bot._require_observation_session = lambda: verify("session")
+    bot._verify_observation_company = lambda: verify("company")
+    monkeypatch.setattr("bot.probe_aircraft_order", quote)
+    monkeypatch.setattr("bot.read_pilot_pending", read_pending)
+    monkeypatch.setattr("bot.read_aircraft_cash_observation", read_cash)
+    with running_worker(bot):
+        wait_until_idle(bot)
+        status, report = bot.request_aircraft_order_preview(request, timeout=2)
+        assert status == "ok" and report["status"] == "matched"
+        assert report["fleet_baseline"] == {"status": "verified", "fleet_total": 224,
+                                            "pending_total": 0, "observed_at": 42}
+        assert report["order_and_debit_observation"] == {"receipt_verified": False}
+        assert calls == [(label, bot._thread.ident) for label in
+                         ("session", "company", "quote", "baseline", "cash evidence", "session", "company")]
+        assert bot.cash_reads == 0
+
+        monkeypatch.setattr("bot.read_pilot_pending", lambda worker, *, baseline=False: (
+            None if baseline else read_pending(worker, baseline=False)
+        ))
+        calls.clear()
+        status, report = bot.request_aircraft_order_preview(request, timeout=2)
+        assert status == "ok" and report["fleet_baseline"] == {"status": "unverified"}
+        assert report["order_and_debit_observation"] == {"receipt_verified": False}
+
+        def changed_company():
+            if calls[-1][0] == "session" and any(label == "quote" for label, _ in calls):
+                raise RuntimeError("sensitive session detail")
+            verify("company")
+
+        bot._verify_observation_company = changed_company
+        calls.clear()
+        assert bot.request_aircraft_order_preview(request, timeout=2) == ("unavailable", None)
+        assert any(label == "quote" for label, _ in calls)
+
+
+def test_flight_history_probe_validates_id_and_recovers_after_timeout():
+    bot = make_bot()
+    for invalid in ("", "0", "1;2", " 123", "1" * 15):
+        try:
+            bot.request_flight_history_probe(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid aircraft ID was accepted")
+    assert not bot.driver.history_calls
+    bot.driver.release.clear()
+    with running_worker(bot):
+        wait_until_idle(bot)
+        assert bot.request_flight_history_probe("77", timeout=0.1) == ("timeout", None)
+        assert bot.driver.history_calls == [(bot._thread.ident, "77")]
+        assert bot.request_game_source_probe(timeout=0.1) == ("busy", None)
+        bot.driver.release.set()
+        wait_until_idle(bot)
+        assert bot.request_game_source_probe(timeout=2)[0] == "ok"
+
+
+def test_flight_history_probe_and_game_source_probe_share_queue():
+    bot = make_bot()
+    bot.driver.release.clear()
+    results = []
+    with running_worker(bot):
+        wait_until_idle(bot)
+        caller = threading.Thread(target=lambda: results.append(
+            bot.request_flight_history_probe("314", timeout=2)), daemon=True)
+        caller.start()
+        assert bot.driver.started.wait(2)
+        assert bot.request_game_source_probe(timeout=0.1) == ("busy", None)
+        assert bot.request_flight_history_probe("315", timeout=0.1) == ("busy", None)
+        bot.driver.release.set()
+        caller.join(timeout=3)
+        assert not caller.is_alive()
+        assert results[0][0] == "ok"
+        assert bot.driver.history_calls == [(bot._thread.ident, "314")]
 
 
 def test_request_during_active_cycle_rejects_without_touching_driver():

@@ -215,6 +215,42 @@ def load_market(path: Optional[Path] = None) -> list[dict]:
         return []
 
 
+def load_market_evidence(path: Optional[Path] = None, *, now: Optional[int | float] = None) -> dict:
+    """Read advertised model data with the original observation time.
+
+    Use a fresh native list when the default cache has no newer usable data.
+    Final prices still require confirmation for each engine and delivery hub.
+    """
+    now = time.time() if now is None else now
+    try:
+        document = json.loads(Path(path or market_file()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        document = None
+    if not isinstance(document, dict):
+        document = {}
+    raw_models = document.get("models")
+    models = ([item for item in raw_models if isinstance(item, dict)
+               and isinstance(item.get("name"), str) and item["name"].strip()]
+              if isinstance(raw_models, list) else [])
+    stamp = document.get("updated")
+    observed_at = stamp if type(stamp) is int and stamp > 0 else None
+    fresh = (observed_at is not None and 0 <= int(now) - observed_at <= 3 * 86400)
+    evidence = {
+        "source": "bot_aircraft_market_cache",
+        "observed_at": observed_at,
+        "fresh": fresh,
+        "models": models,
+        "engine_prices_verified": False,
+    }
+    if path is None:
+        from engine_catalog import EngineCatalogRegistry
+
+        native = EngineCatalogRegistry().advertised_market(now=now)
+        if native is not None and (not fresh or not models or native["observed_at"] >= observed_at):
+            evidence.update(native, fresh=True)
+    return evidence
+
+
 def find_model(models: list[dict], name: str) -> Optional[dict]:
     """Exact (case-insensitive) match first, then substring."""
     wanted = (name or "").strip().lower()

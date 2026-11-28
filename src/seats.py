@@ -35,6 +35,7 @@ from gamemode import EASY, GameMode
 from helpers import clean_response, fmt, to_int
 from maintenance import read_fleet
 from notify import esc
+from route_registry import RouteRegistry
 
 if TYPE_CHECKING:
     from bot import Bot
@@ -382,6 +383,7 @@ def apply_plan(bot: "Bot", plan: SeatPlan, max_payback: float, do_seats: bool = 
            "window.mod1 = arguments[3]; window.mod2 = arguments[4]; window.mod3 = arguments[5];",
            *layout.seats, *(1 if mod in chosen else 0 for mod in MODS))
     before = bot.read_money()
+    RouteRegistry().invalidate_fleet_coverage()
     bot.click_element(buttons[0])
     response = bot.wait_text("//*[@id='maintPlanActionDo']", timeout=15)
     if not bot.confirm_purchase(before, cost, f"a oficina da aeronave {plan.reg}", "maintPlanActionDo"):

@@ -20,6 +20,7 @@ from route_registry import HOME_HUB_EVIDENCE, RouteRegistry
 _LOCK = threading.RLock()
 _AIRPORT_ID = re.compile(r"^[0-9]{1,12}$")
 _MAX_ESTIMATE_AGE = 3 * 86400
+_MAX_CATALOG_AGE = 3 * 86400
 
 
 def _hub_id(value: object) -> str:
@@ -158,6 +159,8 @@ class HubRegistry:
         relations = (route_report.get("current_relations", [])
                      if route_report.get("current_roster_available")
                      else route_report.get("relations", []))
+        valid_relations = isinstance(relations, list)
+        relations = relations if valid_relations else []
         confirmed = {hub["id"]: [] for hub in hubs}
         owned_hub_ids = set(confirmed)
         unknown = []
@@ -181,7 +184,39 @@ class HubRegistry:
                            "estimated_profit_per_day": round(sum(current_estimates), 2) if current_estimates else None,
                            "estimated_routes": len(current_estimates),
                            "estimates_pending": len(aircraft) - len(current_estimates)})
+        stamp = saved.get("observed_at")
+        catalog_fresh = (bool(hubs) and saved.get("source") == "game_hub_select"
+                         and type(stamp) in (int, float) and 0 <= now - stamp <= _MAX_CATALOG_AGE)
+        fleet_coverage = route_report.get("fleet_coverage")
+        identities = {str(row.get("aircraft_id") or "") for row in relations if isinstance(row, dict)}
+        fleet_verified = (route_report.get("current_fleet_coverage_verified") is True
+                          and route_report.get("current_roster_available") is True
+                          and valid_relations
+                          and isinstance(fleet_coverage, dict)
+                          and fleet_coverage.get("source") == "game_roster_and_route_audit"
+                          and type(fleet_coverage.get("total")) is int
+                          and fleet_coverage["total"] == len(relations) == len(identities)
+                          and all(re.fullmatch(r"[0-9]{1,14}", identity) for identity in identities))
+        links_verified = fleet_verified and catalog_fresh and not unknown
+        from owned_delivery_coverage import coverage_snapshot
+        from fleet_commitment_observations import FILENAME, observations_snapshot, reconcile_route_coverage
+        from finance_observations import FILENAME as FINANCE_FILENAME, finance_snapshot
+        from staff_observations import FILENAME as STAFF_FILENAME, staff_snapshot
+
+        commitments = observations_snapshot(self.path.with_name(FILENAME), now=now)
         return {"hubs": result, "unconfirmed_aircraft": unknown,
+                "delivery_coverage": coverage_snapshot(self.path.with_name("owned_delivery_coverage.json"), now=now),
+                "fleet_commitment_observations": commitments,
+                "fleet_route_reconciliation": reconcile_route_coverage(
+                    commitments, fleet_coverage if fleet_verified else None, now=now),
+                "finance_observations": finance_snapshot(self.path.with_name(FINANCE_FILENAME), now=now),
+                "staff_observations": staff_snapshot(self.path.with_name(STAFF_FILENAME), now=now),
                 "observed_at": saved.get("observed_at"), "source": saved.get("source"),
-                "partial_fleet": True, "known_aircraft": len(relations),
-                "last_fleet_scan": route_report.get("last_scan")}
+                "partial_fleet": not links_verified, "known_aircraft": len(relations),
+                "fleet_coverage": fleet_coverage if fleet_verified else None,
+                "current_fleet_coverage_verified": fleet_verified,
+                "home_hub_coverage_verified": links_verified,
+                "hub_catalog_fresh": catalog_fresh,
+                "current_roster_available": route_report.get("current_roster_available") is True,
+                "last_fleet_scan": route_report.get("last_scan"),
+                "last_verified_full_audit": route_report.get("last_verified_full_audit")}

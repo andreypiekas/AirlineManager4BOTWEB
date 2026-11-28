@@ -34,6 +34,7 @@ FLEET_FIELDS = [
 ]
 AIRCRAFT_FIELDS = [
     ("aircraft_max_price", "Preço máximo sem meta (0 = livre)"),
+    ("engine_models_per_cycle", "Modelos de motor pesquisados por ciclo (1-10)"),
 ]
 MARKETING_FIELDS = [
     ("marketing_campaign", "Campanha de reputação (1-4)"),
@@ -59,6 +60,7 @@ FLEET_SWITCHES = [
     ("auto_mods", "Melhorias: velocidade, combustível e CO₂"),
 ]
 AIRCRAFT_SWITCHES = [
+    ("collect_engine_catalog", "Pesquisar variantes de motores (somente leitura)"),
     ("autobuy_aircraft", "Comprar aeronaves"),
     ("save_for_goal", "Economizar para uma aeronave desejada"),
     ("goal_invest", "Permitir compras intermediárias antes da meta"),
@@ -97,6 +99,9 @@ TELEGRAM_SWITCHES = [
     ("telegram_marketing", "Campanhas de marketing"),
     ("telegram_checklist", "Recompensas e tarefas"),
     ("telegram_simulation", "Eventos da simulação"),
+    ("telegram_expansion", "Recomendações verificadas de novos hubs"),
+    ("telegram_investment_daily", "Relatório diário de investimentos e impedimentos"),
+    ("telegram_investment_events", "Atualizações por compra e etapa do investimento"),
 ]
 ALL_SWITCHES = MARKET_SWITCHES + FLEET_SWITCHES + AIRCRAFT_SWITCHES + OPTION_SWITCHES + TELEGRAM_SWITCHES
 
@@ -121,6 +126,7 @@ OPTION_DEFAULTS = {"auto_restart": True, "auto_hangar": True, "goal_invest": Tru
                    "auto_marketing": True, "marketing_eco": True, "auto_checklist": True}
 
 _LIMITS = {
+    "engine_models_per_cycle": (1, 10),
     "summary_hour": (0, 23),
     "cash_sync_seconds": (30, 600),
     "marketing_campaign": (1, 4),

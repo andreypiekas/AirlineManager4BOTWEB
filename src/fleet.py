@@ -22,7 +22,9 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from math import isfinite
 from typing import TYPE_CHECKING, Callable, Optional
 
 from selenium.common.exceptions import TimeoutException
@@ -30,20 +32,24 @@ from selenium.webdriver.common.by import By
 
 from economy import (find_model, fmt_days, fmt_money, goal_progress, is_auto_goal, load_market, pick_ladder,
                      save_market)
+from aircraft_order_hub import AircraftOrderHubError, prepare_order_hub
 from gamemode import EASY, GameMode
-from helpers import clean_response, fmt, to_int
+from helpers import clean_response, fmt, game_whole_number, to_int
 from notify import esc
-from route_optimizer import estimate_route, rank_candidates
+from native_route_quotes import record_native_route_quote
+from route_optimizer import estimate_route, operating_prices_valid, rank_candidates
 from route_strategy import best_reroute, profitable_candidates
 from route_airports import HubMatch, match_hub_options, code_from_candidate, explain_hub_options
 from airport_catalog import by_code, game_code
 from hub_registry import HubRegistry
 from hub_expansion import HubExpansionRegistry
 from route_registry import HOME_HUB_EVIDENCE, RouteRegistry, reroute_block_reason, endpoint, route_key
-from reroute import (aircraft_details_missing, confirm_stopover, has_pending_reroute,
-                     landed_departure, recover_pending, replace_route)
+from reroute import (aircraft_details_missing, confirm_direct_route, confirm_stopover, has_pending_reroute,
+                     landed_departure, read_direct_form, recover_pending, replace_route)
 from reroute_preflight import check_existing_route
-from route_stopover import Stopover, find_stopover, parked_specs, read_form, research_details
+from route_creation import has_pending_creation, stage_creation, finish_creation, recover_pending_creation
+from route_stopover import (ROUTE_EVENT_WARNING_JS, Stopover, find_stopover, parked_specs, read_form,
+                            read_route_fares, research_details)
 
 if TYPE_CHECKING:
     from bot import Bot
@@ -79,7 +85,9 @@ if (!status || typeof status !== 'object' || Array.isArray(status)) return null;
 return Object.entries(status).map(([id, row]) => ({
   aircraft_id: id,
   registration: typeof row?.reg === 'string' ? row.reg : '',
-  route_id: Number.isSafeInteger(Number(row?.routeId)) && Number(row.routeId) >= 0
+  route_id: row?.routeId !== null && row?.routeId !== undefined &&
+    /^[0-9]{1,14}$/.test(String(row.routeId)) &&
+    Number.isSafeInteger(Number(row.routeId)) && Number(row.routeId) >= 0
     ? Number(row.routeId) : null
 }));
 """
@@ -132,14 +140,8 @@ Promise.all(ids.map(async aircraft_id => {
 })).then(done, () => done([]));
 """
 
-# Everything below reads the game by structure (ids, classes, data attributes, onclick handlers),
-# never by visible text, so the bot works with the game in English, Spanish or any other language.
+# Read game identities and numeric values from IDs, classes, data attributes and handlers.
 
-# Route fee: the only bold red figure of the new-route panel.
-_ROUTE_FEE_JS = """
-const figures = document.querySelectorAll("#newRouteInfo .text-danger.font-weight-bold");
-return figures.length ? figures[figures.length - 1].textContent : null;
-"""
 # "A/C on route": first row of the small table under the demand table in the route details.
 _ON_ROUTE_JS = """
 const cell = document.querySelector("#rDetails table.m-text:not(.table-bordered) tr td.text-right");
@@ -155,16 +157,18 @@ return Array.from(document.querySelectorAll("#routesContainer [id^='routeMainPar
 });
 """
 
-_CANDIDATES_JS = """
+
+_CANDIDATES_JS = r"""
 return Array.from(document.querySelectorAll("#resResult #list .sorter")).map(el => {
-  const arr = ((el.getAttribute("onclick") || "").match(/arr=(\\d+)/) || [])[1];
+  const arr = ((el.getAttribute("onclick") || "").match(/arr=(\d+)/) || [])[1];
   const title = el.querySelector(".exo");
   return {arr: arr || null, name: title ? title.textContent.trim() : "?",
           code: el.dataset.iata || el.dataset.icao || el.dataset.code || (title ? title.getAttribute("data-code") || title.title || "" : ""),
           distance: el.dataset.distance || "0",
-          y: el.dataset.yclass || "0", j: el.dataset.jclass || "0", f: el.dataset.fclass || "0", rwy: el.dataset.rwy || "0"};
+          y: el.dataset.yclass || "0", j: el.dataset.jclass || "0", f: el.dataset.fclass || "0", rwy: el.dataset.rwy || "0",
+          event_demand_boosted: EVENT_WARNING.test(el.textContent || "")};
 });
-"""
+""".replace("EVENT_WARNING", ROUTE_EVENT_WARNING_JS)
 
 _HUB_OPTIONS_JS = """
 const select = document.getElementById("hubSelect");
@@ -206,6 +210,7 @@ class RouteCandidate:
     f: int
     runway: int
     code: str = ""  # game-confirmed IATA/ICAO when available
+    event_demand_boosted: bool = False
 
 
 @dataclass
@@ -254,13 +259,22 @@ _ROUTE_AUDIT_JS = """
 // Capture pagination from the same DOM snapshot as the route rows. A numeric
 // active page is evidence of a page index; absence means page unknown.
 const popup = typeof document.querySelector === "function" ? document.querySelector("#popContent") : null;
-const pagination = popup && popup.querySelector ? popup.querySelector(".pagination") : null;
+const pagination = popup && popup.querySelector ?
+  popup.querySelector('#routeAction #routesContainer .pagination') || popup.querySelector('.pagination') : null;
 const active = pagination && pagination.querySelector ?
   pagination.querySelector(".page-item.not-active > .page-link, .page-item.active > .page-link, .page-link[aria-current='page']") : null;
 const pageNumber = value => /^[1-9][0-9]{0,2}$/.test(String(value || "").trim()) ?
   Number(String(value).trim()) : null;
 const scanPage = pageNumber(active && active.textContent) ||
   pageNumber(popup && popup.getAttribute && popup.getAttribute("data-current-page"));
+// The native pager may expose only Previous, the current number, and Next.
+const pagerLabels = active && pagination.querySelectorAll ?
+  Array.from(pagination.querySelectorAll('a.page-link'), link => link.textContent.trim()) : [];
+const nativeLabels = [String(scanPage), ...(scanPage > 1 ? ['Previous'] : [])];
+const hasNativeNext = pagerLabels.includes('Next');
+if (hasNativeNext) nativeLabels.push('Next');
+const scanHasNext = scanPage && pagerLabels.length === nativeLabels.length &&
+  nativeLabels.every(label => pagerLabels.includes(label)) ? hasNativeNext : null;
 const routeCount = Array.from(document.querySelectorAll(
   '#popContent .row.font-weight-bold > .col-12.exo.text-center.p-2'))
   .map(node => String(node.textContent || '').trim())
@@ -270,7 +284,7 @@ const totalFromRouteCount = routeCount ? Math.ceil(Number(routeCount[1]) / 20) :
 const scanTotalPages = pageNumber(pagination && pagination.getAttribute &&
   pagination.getAttribute("data-total-pages")) ||
   pageNumber(popup && popup.getAttribute && popup.getAttribute("data-total-pages")) ||
-  pageNumber(totalFromRouteCount);
+  (scanHasNext === null ? pageNumber(totalFromRouteCount) : null);
 return Array.from(document.querySelectorAll("#popContent #routeAction #routesContainer [id^='routeMainList']")).map(row => {
   // The existing seats module identifies routes by this real game link.
   const detailLink = row.querySelector("a[onclick*='fleet_details.php']");
@@ -310,6 +324,7 @@ return Array.from(document.querySelectorAll("#popContent #routeAction #routesCon
     route_id: routeIdMatch ? Number(routeIdMatch[1]) : null,
     scan_page: scanPage,
     scan_total_pages: scanTotalPages,
+    scan_has_next: scanHasNext,
     scan_route_count: routeCount ? Number(routeCount[1]) : null,
     registration: label.split(" - ")[0] || aircraftId,
     model: label.includes(" - ") ? label.split(" - ").slice(1).join(" - ") : "",
@@ -384,7 +399,7 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
         if not identity or identity in seen_aircraft:
             continue
         seen_aircraft.add(identity)
-        registration = row.get("registration") or identity
+        registration = row.get("registration")
         model = row.get("model") or ""
         base = row.get("at_base")
         if identity in grounded:
@@ -409,6 +424,7 @@ def audit_routes(bot: "Bot", registry: RouteRegistry, *,
             "origin": origin, "destination": destination, "at_base": base,
             "observed_route_id": row.get("route_id"),
             "home_hub_id": home_hub_id,
+            "scan_has_next": row.get("scan_has_next"),
             **home_hub_evidence,
         })
     missing = sum(1 for row in rows
@@ -468,14 +484,46 @@ return Array.from(document.querySelectorAll('#popContent .pagination [onclick]')
 """
 
 
-def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cycle: int = 3) -> list[int]:
+def _native_route_bindings(pages: list[tuple[int, list[dict]]], expected_routes: Optional[int]
+                           ) -> Optional[dict[str, tuple]]:
+    """Fingerprint complete native route assignments independently of pagination and direction."""
+    bindings = {}
+    route_ids = set()
+    for _, rows in pages:
+        for row in rows:
+            aircraft_id = row["aircraft_id"]
+            route_id = row.get("route_id")
+            origin = endpoint(row.get("origin_id"), row.get("origin_code"))
+            destination = endpoint(row.get("destination_id"), row.get("destination_code"))
+            if (type(route_id) is not int or route_id <= 0 or route_id in route_ids
+                    or aircraft_id in bindings or not row.get("registration") or not row.get("model")
+                    or not route_key(origin, destination)):
+                return None
+            route_ids.add(route_id)
+            airports = tuple(sorted((airport["id"], airport["code"])
+                                    for airport in (origin, destination)))
+            bindings[aircraft_id] = (route_id, row["registration"], row["model"],
+                                     row.get("home_hub_id"), airports)
+    return bindings if len(bindings) == expected_routes else None
+
+
+def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cycle: int = 3,
+                            attempt_full: bool = False) -> list[int]:
     """Audit verified AJAX pages across bounded cycles, restoring the initial view."""
 
     if pages_per_cycle <= 0 or getattr(bot, "stopping", False):
         return []
 
+    page_limit = 25
+    deadline = time.monotonic() + 120 if attempt_full else None
+    declared_total: Optional[int] = None
+
+    def expired() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
     def snapshot(expected_total: Optional[int] = None,
-                 expected_count: Optional[int] = None) -> Optional[tuple[int, int, list[dict]]]:
+                 expected_count: Optional[int] = None
+                 ) -> Optional[tuple[int, Optional[int], list[dict]]]:
         """Accept only two identical, internally consistent page reads."""
         rows = bot.js(_ROUTE_AUDIT_JS) or []
         if not isinstance(rows, list) or not 0 < len(rows) <= 20:
@@ -488,12 +536,19 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
             return None
         page = RouteRegistry._valid_page(rows[0].get("scan_page"))
         total = RouteRegistry._valid_page(rows[0].get("scan_total_pages"))
-        if (page is None or total is None or page > total or
-                (expected_total is not None and total != expected_total) or
+        has_next = rows[0].get("scan_has_next")
+        if (page is None or (total is None and type(has_next) is not bool) or
+                (expected_total is not None and declared_total is not None and total != declared_total) or
+                (total is not None and (page > total or expected_total not in (None, total))) or
+                (expected_total is not None and page > expected_total) or
                 (expected_count is not None and rows[0].get("scan_route_count") != expected_count)):
+            return None
+        end = total if total is not None else expected_total
+        if end is not None and type(has_next) is bool and has_next != (page < end):
             return None
         if any(RouteRegistry._valid_page(row.get("scan_page")) != page or
                RouteRegistry._valid_page(row.get("scan_total_pages")) != total or
+               row.get("scan_has_next") != has_next or
                row.get("scan_route_count") != rows[0].get("scan_route_count")
                for row in rows):
             return None
@@ -503,14 +558,19 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
 
     try:
         initial = snapshot()
-        if initial is None:
+        if initial is None or expired() or getattr(bot, "stopping", False):
             return []
-        start, total, initial_rows = initial
+        start, declared_total, initial_rows = initial
+        total = declared_total
         route_count = initial_rows[0].get("scan_route_count")
         if type(route_count) is not int or not 0 < route_count <= 50000:
             route_count = None
         audit_run_id = uuid.uuid4().hex
-        if total == 1:
+        if total == 1 or (total is None and start == 1 and
+                          initial_rows[0]["scan_has_next"] is False and route_count == len(initial_rows)):
+            if total is None:
+                total = 1
+                initial_rows = [dict(row, scan_total_pages=1) for row in initial_rows]
             return [start] if audit_routes(bot, registry, page=start, total_pages=total,
                                            _rows=initial_rows,
                                            _audit_run_id=audit_run_id) else []
@@ -522,7 +582,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     if not isinstance(links, list):
         return []
     adjacent = {20 * (page - 1) for page in (start - 1, start + 1)
-                if 1 <= page <= total}
+                if page >= 1 and (total is None or page <= total)}
 
     def valid_link(link: object, offset: int) -> bool:
         if not isinstance(link, dict) or type(link.get("offset")) is not int:
@@ -570,7 +630,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
 
     def load(page: int, *, restore: bool = False) -> bool:
         nonlocal unverified_navigation, verified_rows
-        if not restore and getattr(bot, "stopping", False):
+        if not restore and (getattr(bot, "stopping", False) or expired()):
             return False
         try:
             captured = snapshot(None if restore else total,
@@ -582,8 +642,8 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
                 verified_rows = current_rows
                 return True
 
-            for _ in range(max(total, current)):
-                if not restore and getattr(bot, "stopping", False):
+            for _ in range(max(total or page_limit, current)):
+                if not restore and (getattr(bot, "stopping", False) or expired()):
                     return False
                 if current == page:
                     verified_rows = current_rows
@@ -614,20 +674,89 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
 
     staged: list[tuple[int, list[dict]]] = []
     staged_ids: set[str] = set()
-    restored: Optional[tuple[int, int, list[dict]]] = None
+    restored: Optional[tuple[int, Optional[int], list[dict]]] = None
+    overlap = False
+
+    def stage(page: int) -> bool:
+        nonlocal overlap
+        if not load(page):
+            return False
+        page_ids = {row["aircraft_id"] for row in verified_rows}
+        if staged_ids.intersection(page_ids):
+            overlap = True
+            log.warning("Auditoria paginada: aeronaves repetidas entre páginas do ciclo; "
+                        "amostragem descartada por possível deslocamento da frota.")
+            staged.clear()
+            return False
+        staged_ids.update(page_ids)
+        staged.append((page, verified_rows))
+        return True
+
+    # This estimate schedules partial reads only. A full native audit must
+    # reach the last page using actual Next links, within the cycle bounds.
+    first_page_shortfall = 20 - len(initial_rows) if start == 1 else 0
+    partial_total = max(start + int(initial_rows[0].get("scan_has_next") is True),
+                        ((route_count or 0) + first_page_shortfall + 19) // 20)
+    discover = total is None and attempt_full and partial_total <= page_limit
     try:
-        for page in registry.next_scan_pages(total, limit=pages_per_cycle, max_pages=25):
-            if not load(page):
+        full_attempt = attempt_full and (discover or (total is not None and total <= page_limit))
+        if discover:
+            selected_pages = range(1, page_limit + 1)
+        elif full_attempt:
+            # Travel to one end first, then sweep the remaining pages in order.
+            if start <= (total + 1) / 2:
+                selected_pages = list(range(start, 0, -1)) + list(range(start + 1, total + 1))
+            else:
+                selected_pages = list(range(start, total + 1)) + list(range(start - 1, 0, -1))
+        else:
+            selected_pages = registry.next_scan_pages(total or partial_total, limit=pages_per_cycle,
+                                                       max_pages=page_limit)
+            if attempt_full:
+                log.info("Auditoria integral adiada: %d páginas excedem o limite de 25; "
+                         "mantendo cobertura parcial.", total or partial_total)
+        for attempt in range(2 if full_attempt else 1):
+            if attempt:
+                # Restart from the first selected page with fresh IDs and the
+                # original count, within the same deadline and roster window.
+                log.info("Auditoria paginada: repetindo a varredura após sobreposição de páginas.")
+                staged_ids.clear()
+                total = declared_total
+                overlap = False
+            for page in selected_pages:
+                if total is not None and page > total:
+                    continue
+                if not stage(page):
+                    break
+                if total is None and verified_rows[0].get("scan_has_next") is False:
+                    total = page
+                    if discover:
+                        break
+            if not overlap or expired() or getattr(bot, "stopping", False):
                 break
-            # Keep page evidence until the original view and total are verified.
-            page_ids = {row["aircraft_id"] for row in verified_rows}
-            if staged_ids.intersection(page_ids):
-                log.warning("Auditoria paginada: aeronaves repetidas entre páginas do ciclo; "
-                            "amostragem descartada por possível deslocamento da frota.")
-                staged.clear()
-                break
-            staged_ids.update(page_ids)
-            staged.append((page, verified_rows))
+        if (total is not None and len(staged) == total and
+                {page for page, _ in staged} == set(range(1, total + 1))):
+            # Reread every page before publishing a full-cycle audit.
+            recheck = reversed(staged) if full_attempt else staged
+            recaptured = {}
+            for page, original_rows in recheck:
+                if not load(page) or (not full_attempt and verified_rows != original_rows):
+                    log.warning("Auditoria paginada: conteúdo da página %d mudou na "
+                                "releitura integral; lote descartado.", page)
+                    staged.clear()
+                    break
+                recaptured[page] = verified_rows
+            if full_attempt and staged:
+                latest = [(page, recaptured[page]) for page, _ in staged]
+                if latest != staged:
+                    # Rows can move between pages or display the return direction.
+                    # Both passes must independently reconcile every native binding.
+                    bindings = _native_route_bindings(staged, route_count)
+                    if bindings is None or bindings != _native_route_bindings(latest, route_count):
+                        log.warning("Auditoria paginada: vínculos divergentes entre as varreduras; "
+                                    "lote descartado.")
+                        staged.clear()
+                    else:
+                        staged = latest
     finally:
         try:
             current = snapshot()
@@ -654,7 +783,7 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     if restored is None or restored[0] != start:
         log.warning("Auditoria paginada: página inicial %d não confirmada; cobertura descartada.", start)
         return []
-    if (restored[1] != total or
+    if (restored[1] != declared_total or
             (route_count is not None and restored[2][0].get("scan_route_count") != route_count)):
         # The fleet size or pagination changed while browsing. Invalidate
         # prior coverage using the verified current page before continuing.
@@ -664,17 +793,32 @@ def audit_routes_live_pages(bot: "Bot", registry: RouteRegistry, *, pages_per_cy
     if unverified_navigation:
         log.warning("Auditoria paginada: navegação AJAX não confirmada; lote descartado.")
         return []
+    if expired() or getattr(bot, "stopping", False):
+        log.info("Auditoria paginada interrompida por prazo ou cancelamento; lote descartado.")
+        return []
+    if (total is not None and len(staged) == total and
+            {page for page, _ in staged} == set(range(1, total + 1))):
+        original_start_rows = next(rows for page, rows in staged if page == start)
+        if restored[2] != original_start_rows:
+            log.warning("Auditoria paginada: página inicial mudou durante a "
+                        "restauração; lote integral descartado.")
+            return []
 
+    if total is None:
+        staged = staged[:pages_per_cycle]
+    recorded_total = total or max(partial_total, max((page for page, _ in staged), default=start))
     visited = []
     for page, rows in staged:
-        if not audit_routes(bot, registry, page=page, total_pages=total, _rows=rows,
-                            _audit_run_id=audit_run_id):
+        if declared_total is None:
+            rows = [dict(row, scan_total_pages=recorded_total) for row in rows]
+        if not audit_routes(bot, registry, page=page, total_pages=recorded_total, _rows=rows,
+                            _audit_run_id=audit_run_id if total is not None else None):
             break
         visited.append(page)
     coverage = registry.snapshot().get("scan_coverage") or {}
     log.info("Auditoria paginada: %d páginas confirmadas neste ciclo; cobertura %s/%s, "
              "IDs repetidos=%s, total conferido=%s.",
-             len(visited), coverage.get("observed_pages", 0), total,
+             len(visited), coverage.get("observed_pages", 0), recorded_total,
              coverage.get("repeated_aircraft_across_pages", 0),
              bool(coverage.get("full_page_coverage_verified")))
     if coverage.get("full_page_coverage_verified"):
@@ -733,13 +877,36 @@ return {routes: Number(routeLabel[1]), parked, pending};
 """
 
 
-def manage_fleet(bot: "Bot") -> None:
+def manage_fleet(bot: "Bot", *, observation_only: bool = False) -> dict | None:
     cfg = bot.config
     registry = RouteRegistry()
-    reroute_ready = recover_pending(bot, registry)
+    planning_enabled = observation_only or cfg.get_bool("investment", "planning_enabled", False)
+    if planning_enabled:
+        registry.invalidate_fleet_coverage()
+    if observation_only:
+        creation_ready = not has_pending_creation()
+        reroute_ready = not has_pending_reroute() and creation_ready
+    else:
+        creation_ready = recover_pending_creation(bot, registry)
+        reroute_ready = recover_pending(bot, registry) and creation_ready
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
-    measure_load(bot)
     counters = bot.js(_GAME_FLEET_COUNTS_JS)
+    quoted_early = False
+    if (observation_only and reroute_ready and not bot.stopping and isinstance(counters, dict)
+            and type(counters.get("parked")) is int and counters["parked"] > 0):
+        from parked_route_quote import collect_parked_quote_before_audit
+
+        def quote_parked() -> None:
+            nonlocal quoted_early
+            quoted_early = collect_parked_quote_before_audit(bot)
+
+        bot._guard(quote_parked, "consultar primeiro a prévia de rota em Parked")
+        if bot.stopping:
+            return None
+        bot.open_popup("routes_main.php", "Routes", "nav_routes")
+        counters = bot.js(_GAME_FLEET_COUNTS_JS)
+    measure_load(bot)
+    roster_verified = False
     if (isinstance(counters, dict) and all(
             type(counters.get(key)) is int and 0 <= counters[key] <= 50000
             for key in ("routes", "parked", "pending"))):
@@ -749,7 +916,8 @@ def manage_fleet(bot: "Bot") -> None:
         log_fleet.info("Contagem do jogo: %d com rota + %d estacionadas + %d pendentes = %d aeronaves.",
                        counters["routes"], parked, pending, counters["routes"] + parked + pending)
         roster = bot.js(_GAME_ROSTER_JS)
-        if not registry.record_game_roster(roster, counters["routes"] + parked + pending):
+        roster_verified = registry.record_game_roster(roster, counters["routes"] + parked + pending)
+        if not roster_verified:
             log_fleet.warning("Lista completa de IDs do jogo não comprovada; mantendo última coleta válida.")
     else:
         parked = to_int(bot.js("return $('#hParked').text();")) or 0
@@ -758,34 +926,42 @@ def manage_fleet(bot: "Bot") -> None:
         # complete read so new partial counters cannot look verified.
         bot.update_stats(parked=parked, pending=pending, fleet_count_read_at=0)
         log_fleet.warning("Contagem total da frota não confirmada no cabeçalho de rotas do jogo.")
-    log_fleet.info("%d aeronaves estacionadas sem rota, %d pendentes de entrega.", parked, pending)
+    log_fleet.info("%d aeronaves estacionadas sem rota, %d pendências na frota.", parked, pending)
 
     audit_routes(bot, registry)
-    if cfg.get_bool("options", "audit_route_pages", False):
-        audit_routes_live_pages(bot, registry,
-                                pages_per_cycle=cfg.get_int("settings", "fleet_audit_pages_per_cycle", 3))
-    budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))
-    if not cfg.get_bool("options", "allow_duplicate_routes", True):
-        if reroute_ready:
-            reconcile_missing_duplicate_aircraft(bot, registry)
-        repaired = resolve_duplicate_routes(bot, registry, budget, reroute_ready=reroute_ready)
-        budget -= repaired
-    if not has_pending_reroute() and cfg.get_bool("options", "auto_route") and parked > 0 and budget > 0:
-        # Duplicate-route research and preflight navigate away from the routes
-        # list. Restore it before read_parked needs its routesContainer element.
-        bot.open_popup("routes_main.php", "Routes", "nav_routes")
-        created = create_routes(bot, budget)
-        budget -= created
-        parked -= created
-    if cfg.get_bool("options", "autobuy_aircraft") and budget > 0:
-        pending_duplicates = (not cfg.get_bool("options", "allow_duplicate_routes", False)
-                              and registry.snapshot(allow_duplicates=False)["duplicate_routes"] > 0)
-        if pending_duplicates:
-            log_market.info("Compra de aeronave adiada: existem rotas duplicadas aguardando correção.")
-        elif parked > 0:
-            log_market.info("Não comprarei aeronaves enquanto houver %d estacionadas sem rota.", parked)
-        else:
-            buy_aircraft(bot)
+    native_identity_evidence = {}
+    if planning_enabled or cfg.get_bool("options", "audit_route_pages", False):
+        visited = audit_routes_live_pages(
+            bot, registry, pages_per_cycle=cfg.get_int("settings", "fleet_audit_pages_per_cycle", 3),
+            attempt_full=planning_enabled)
+        if planning_enabled and not getattr(bot, "stopping", False):
+            from fleet_commitment_observations import collect_fleet_commitment_observations
+
+            # Read the independent lists immediately before the final roster
+            # check, before any route repairs or aircraft purchases in this step.
+            bot._guard(lambda: collect_fleet_commitment_observations(bot, identity_evidence=native_identity_evidence),
+                       "conferir hangar e pendências da frota")
+            if getattr(bot, "stopping", False):
+                return
+            bot.open_popup("routes_main.php", "Routes", "nav_routes")
+        if (planning_enabled and roster_verified and reroute_ready
+                and not getattr(bot, "stopping", False)):
+            after_counts = bot.js(_GAME_FLEET_COUNTS_JS)
+            after_roster = bot.js(_GAME_ROSTER_JS)
+            confirmed = registry.confirm_fleet_coverage(
+                after_roster, before_counts=counters, after_counts=after_counts, audited_pages=visited,
+                native_identity_evidence=native_identity_evidence)
+            log_fleet.info("Inventário e auditoria de rotas: cobertura %s.",
+                           "integral correlacionada" if confirmed else "parcial")
+    parked_ids = native_identity_evidence.get("parked_ids")
+    if (reroute_ready and parked_ids and not quoted_early and not bot.stopping
+            and (observation_only or cfg.get_bool("options", "collect_market_observations"))):
+        from parked_route_quote import collect_parked_route_quote
+
+        bot._guard(lambda: collect_parked_route_quote(bot, parked_ids, refresh_demand=observation_only),
+                   "consultar a prévia de rota de uma aeronave estacionada")
+    if not observation_only:
+        _manage_fleet_actions(bot, registry, parked, creation_ready=creation_ready, reroute_ready=reroute_ready)
     flight_reader = getattr(registry, "next_flight_read_ids", None)
     read_ids = flight_reader(limit=8) if callable(flight_reader) else []
     if read_ids and not bot.stopping:
@@ -798,6 +974,34 @@ def manage_fleet(bot: "Bot") -> None:
         except Exception as exc:  # noqa: BLE001 - read-only financial enrichment must not halt operations
             log_fleet.warning("Histórico financeiro indisponível neste ciclo (%s).", type(exc).__name__)
     bot.close_popup()
+    return native_identity_evidence if observation_only else None
+
+
+def _manage_fleet_actions(bot: "Bot", registry: RouteRegistry, parked: int, *,
+                          creation_ready: bool, reroute_ready: bool) -> None:
+    cfg = bot.config
+    budget = max(1, cfg.get_int("settings", "fleet_actions_per_cycle", 2))
+    if not cfg.get_bool("options", "allow_duplicate_routes", True):
+        if reroute_ready:
+            reconcile_missing_duplicate_aircraft(bot, registry)
+        repaired = resolve_duplicate_routes(bot, registry, budget, reroute_ready=reroute_ready)
+        budget -= repaired
+    if creation_ready and not has_pending_reroute() and cfg.get_bool("options", "auto_route") and parked > 0 and budget > 0:
+        # Duplicate-route research and preflight navigate away from the routes
+        # list. Restore it before read_parked needs its routesContainer element.
+        bot.open_popup("routes_main.php", "Routes", "nav_routes")
+        created = create_routes(bot, budget)
+        budget -= created
+        parked -= created
+    if reroute_ready and not has_pending_creation() and not has_pending_reroute() and cfg.get_bool("options", "autobuy_aircraft") and budget > 0:
+        pending_duplicates = (not cfg.get_bool("options", "allow_duplicate_routes", False)
+                              and registry.snapshot(allow_duplicates=False)["duplicate_routes"] > 0)
+        if pending_duplicates:
+            log_market.info("Compra de aeronave adiada: existem rotas duplicadas aguardando correção.")
+        elif parked > 0:
+            log_market.info("Não comprarei aeronaves enquanto houver %d estacionadas sem rota.", parked)
+        else:
+            buy_aircraft(bot)
 
 
 # ---------------------------------------------------------------------- duplicate-route correction
@@ -973,6 +1177,10 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
         if seats <= 0:
             pending(aircraft_id, "aguardando_dados_do_modelo")
             continue
+        fuel_price, co2_price = bot.fuel_cost_basis(), bot.co2_cost_basis()
+        if not operating_prices_valid(fuel_price, co2_price):
+            pending(aircraft_id, "aguardando_custos_operacionais_validos")
+            continue
         limit = cfg.get_int("settings", "route_max_distance_big" if seats >= BIG_SEATS else "route_max_distance", 6000)
         if model.get("range"):
             limit = min(limit, int(model["range"]))
@@ -1082,8 +1290,8 @@ def resolve_duplicate_routes(bot: "Bot", registry: RouteRegistry, budget: int,
             continue
         ranked = rank_candidates(
             destination_options, seats=seats, model=model, mode=bot.mode,
-            load_factor=bot.load_factor(), fuel_price=bot.fuel_cost_basis(),
-            co2_price=bot.co2_cost_basis(), premium=cfg.get_bool("options", "auto_seats"),
+            load_factor=bot.load_factor(), fuel_price=fuel_price,
+            co2_price=co2_price, premium=cfg.get_bool("options", "auto_seats"),
         )
         alternative, required_profit = best_reroute(
             ranked, current_profit=row.get("profit_per_day"),
@@ -1199,6 +1407,18 @@ def search_routes(bot: "Bot", hub_id: str, max_distance: int, min_runway: int, *
         f"research_main.php?mode=search&rwy={min_runway}&dist={max_distance}&depId={hub_id}&arr=0&arrId=0&charter=0",
         "resResult",
     )
+    candidates = read_route_candidates(bot)
+    if persist_demand and candidates:
+        samples = [{"arr_id": item.arr_id, "distance": item.distance,
+                    "y": item.y, "j": item.j, "f": item.f,
+                    "event_demand_boosted": item.event_demand_boosted} for item in candidates]
+        count = HubExpansionRegistry().record_demand(hub_id, samples)
+        log.info("Pesquisa de rotas: %d amostras de demanda persistidas para hub %s.", count, hub_id)
+    return candidates
+
+
+def read_route_candidates(bot: "Bot") -> list[RouteCandidate]:
+    """Parse the native result list after a search has loaded."""
     candidates = []
     for row in bot.js(_CANDIDATES_JS) or []:
         if not row.get("arr"):
@@ -1210,13 +1430,8 @@ def search_routes(bot: "Bot", hub_id: str, max_distance: int, min_runway: int, *
         candidates.append(RouteCandidate(
             row["arr"], row["name"], distance,
             to_int(row["y"]) or 0, to_int(row["j"]) or 0, to_int(row["f"]) or 0, to_int(row["rwy"]) or 0,
-            code_from_candidate(row),
+            code_from_candidate(row), event_demand_boosted=row.get("event_demand_boosted") is True,
         ))
-    if persist_demand and candidates:
-        samples = [{"arr_id": item.arr_id, "distance": item.distance,
-                    "y": item.y, "j": item.j, "f": item.f} for item in candidates]
-        count = HubExpansionRegistry().record_demand(hub_id, samples)
-        log.info("Pesquisa de rotas: %d amostras de demanda persistidas para hub %s.", count, hub_id)
     return candidates
 
 
@@ -1233,7 +1448,16 @@ def _route_demand(candidate: RouteCandidate, premium: bool) -> int:
     return candidate.y + 2 * candidate.j + 3 * candidate.f if premium else candidate.y
 
 
+def _valid_route_profit(value: object) -> bool:
+    try:
+        return type(value) in (int, float) and isfinite(value) and value > 0
+    except OverflowError:
+        return False
+
+
 def _try_stopover(bot, aircraft, origin, reach, limit, runway, economics, available, allow_duplicates):
+    if not operating_prices_valid(economics.get("fuel_price"), economics.get("co2_price")):
+        return "none", None
     hub_id = origin["id"]
     candidates = [
         candidate for candidate in search_routes(bot, hub_id, limit, runway)
@@ -1262,6 +1486,10 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
     parked = read_parked(bot)
     if not parked:
         log.info("Não há aeronaves estacionadas na lista da frota.")
+        return 0
+    fuel_price, co2_price = bot.fuel_cost_basis(), bot.co2_cost_basis()
+    if not operating_prices_valid(fuel_price, co2_price):
+        log.warning("Criação de rotas adiada: custos operacionais de combustível ou CO₂ inválidos.")
         return 0
     max_distance = cfg.get_int("settings", "route_max_distance", 2000)
     max_distance_big = cfg.get_int("settings", "route_max_distance_big", 6000)
@@ -1308,7 +1536,7 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
 
         economics = dict(
             seats=aircraft.seats, model=known, mode=bot.mode, load_factor=bot.load_factor(),
-            fuel_price=bot.fuel_cost_basis(), co2_price=bot.co2_cost_basis(), premium=premium,
+            fuel_price=fuel_price, co2_price=co2_price, premium=premium,
         )
         outcome = "none"
         if origin and known and limit < configured_limit and not bot.stopping:
@@ -1373,16 +1601,19 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
                 if not capable:
                     log.debug("%s não pode voar para %s (alcance ou pista).", aircraft.reg, candidate.name)
                     continue
-                on_route = to_int(bot.js(_ON_ROUTE_JS)) or 0
-                if on_route and not allow_duplicates:
-                    log.debug("%s já tem %d aeronaves.", candidate.name, on_route)
+                on_route = game_whole_number(bot.js(_ON_ROUTE_JS))
+                if not allow_duplicates and on_route != 0:
+                    log.debug("%s: ocupação diferente de zero ou desconhecida.", candidate.name)
                     continue
                 estimated = estimates.get(candidate.arr_id)
                 outcome = create_route(
                     bot, aircraft, candidate, origin_id=hub_id,
                     profit_per_day=estimated.profit_per_day if estimated is not None else None,
+                    allow_duplicates=allow_duplicates,
+                    route_economics=economics,
                 )
-                break
+                if outcome != "none":
+                    break
         if outcome in ("created", "dry"):
             created += 1
             if not allow_duplicates:
@@ -1397,8 +1628,11 @@ def create_routes(bot: "Bot", max_routes: int) -> int:
 def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate,
                  *, origin_id: str = "", reroute: bool = False,
                  profit_per_day: Optional[float] = None, stopover: Optional[Stopover] = None,
-                 stopover_economics: Optional[dict] = None, allow_duplicates: bool = True) -> str:
+                 stopover_economics: Optional[dict] = None, allow_duplicates: bool = True,
+                 route_economics: Optional[dict] = None) -> str:
     """Return the outcome, including 'none' when a stopover candidate is rejected before submission."""
+    if has_pending_creation():
+        return "stop"
     bot.js("if (typeof hideFlightInfo === 'function') { hideFlightInfo(); } arrId = arguments[0];", int(candidate.arr_id))
     url = f"new_route_info.php?id={aircraft.id}&airportId={candidate.arr_id}"
     if stopover:
@@ -1410,6 +1644,9 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
     else:
         panel = bot.ajax(f"{url}&mode=res", "newRouteInfo")
     stop = endpoint(stopover.id, code=game_code(stopover.id)) if stopover else None
+    origin = endpoint(origin_id, code=game_code(origin_id))
+    destination_code = game_code(candidate.arr_id, "" if stop else candidate.code)
+    destination = endpoint(candidate.arr_id, code=destination_code, name=candidate.name)
     name = f"{candidate.name} via {stop['code'] or stop['id']}" if stop else candidate.name
     if stopover:
         verified = read_form(bot, aircraft.id, origin_id, candidate.arr_id, stopover)
@@ -1420,75 +1657,119 @@ def create_route(bot: "Bot", aircraft: ParkedAircraft, candidate: RouteCandidate
         distance, (y, j, f), fee, _ = verified
         candidate = replace(candidate, distance=distance, y=y, j=j, f=f)
     else:
-        fee = to_int(bot.js(_ROUTE_FEE_JS))
+        direct = read_direct_form(bot, aircraft.id, origin, destination, allow_duplicates=allow_duplicates)
+        if direct is None:
+            log.info("%s: formulário da rota direta não confirmou %s.", aircraft.reg, name)
+            bot.js("$('#newRouteInfo').hide();")
+            return "none"
+        native_distance, fee, _ = direct
+        if abs(native_distance - candidate.distance) > 5:
+            bot.js("$('#newRouteInfo').hide();")
+            return "none"
+        candidate = replace(candidate, distance=native_distance)
     if not bot.can_spend(fee, f"a rota {candidate.name}", essential=not reroute):  # reroutes must preserve cash reserve
         bot.js("$('#newRouteInfo').hide();")
         return "none" if stop else "stop"
 
     autoprice = panel.find_elements(By.XPATH, ".//*[@id='introAuto']")
-    if autoprice:
-        bot.click_element(autoprice[0])
-        bot.pause(0.8, 1.2)
-    prices = bot.js(
-        "return ['eSeat', 'bSeat', 'fSeat'].map(i => { const e = document.getElementById(i); return e ? e.value : ''; });"
-    ) or ["", "", ""]
-    if not prices[0]:
+    if len(autoprice) != 1:
+        bot.js("$('#newRouteInfo').hide();")
+        return "none" if stop else "stop"
+    bot.click_element(autoprice[0])
+    bot.pause(0.8, 1.2)
+    prices = read_route_fares(bot)
+    if prices is None:
         log.warning("O preço automático não preencheu as passagens de %s; a rota não será criada.", candidate.name)
         bot.js("$('#newRouteInfo').hide();")
         return "none" if stop else "stop"
-    if stop:
-        fares = tuple(to_int(price) or 0 for price in prices)
-        estimate = estimate_route(candidate, **stopover_economics, prices=fares, extra_stops=1)
-        if not estimate or estimate.profit_per_day <= 0:
+    economics = stopover_economics if stop else route_economics
+    if stop or economics:
+        if not stop:
+            # The market-price estimate is only a ranking hint. The live form
+            # fares must determine the profit stored with a direct route.
+            profit_per_day = None
+        estimate = estimate_route(
+            candidate, **economics, prices=prices, extra_stops=1 if stop else 0,
+        )
+        if estimate is None:
+            if stop or not bot.dry_run:
+                log.info("%s: lucro da rota %s não pôde ser confirmado com as tarifas do jogo.",
+                         aircraft.reg, name)
+                bot.js("$('#newRouteInfo').hide();")
+                return "none"
+        elif not _valid_route_profit(estimate.profit_per_day):
             log.info("%s: rota %s sem lucro estimado positivo com os preços do jogo.", aircraft.reg, name)
             bot.js("$('#newRouteInfo').hide();")
             return "none"
-        profit_per_day = estimate.profit_per_day
+        else:
+            profit_per_day = estimate.profit_per_day
+    if ((profit_per_day is None and not bot.dry_run)
+            or (profit_per_day is not None and not _valid_route_profit(profit_per_day))):
+        log.warning("%s: lucro diário da rota %s desconhecido ou não positivo. A taxa não será paga.",
+                    aircraft.reg, name)
+        bot.js("$('#newRouteInfo').hide();")
+        return "none"
     reg = bot.js("return $('#routeReg').val();") or ""
     summary = (
         f"{name} ({candidate.distance:,.0f} km, demanda Y {candidate.y} / J {candidate.j} / F {candidate.f}) "
         f"para {aircraft.reg} ({aircraft.model}), passagens ${prices[0]} / ${prices[1]} / ${prices[2]}, "
         f"matrícula {reg}, taxa da rota ${fmt(fee)}"
     )
+    if bot.stopping:
+        bot.js("$('#newRouteInfo').hide();")
+        return "stop"
+    before = bot.read_money() if not bot.dry_run else None
+    if stopover:
+        current = read_form(bot, aircraft.id, origin_id, candidate.arr_id, stopover)
+        unchanged = current == verified
+    else:
+        current = read_direct_form(bot, aircraft.id, origin, destination, allow_duplicates=allow_duplicates)
+        unchanged = current == direct
+    reserve = bot.config.get_int("settings", "cash_reserve", 0) if reroute else 0
+    if not unchanged or read_route_fares(bot) != prices:
+        log.warning("%s: formulário ou tarifas da rota mudaram antes da criação.", aircraft.reg)
+        bot.js("$('#newRouteInfo').hide();")
+        return "stop"
+    record_native_route_quote(
+        bot, aircraft_id=aircraft.id, origin_id=origin_id, destination_id=candidate.arr_id,
+        stopover_id=stopover.id if stopover else None, distance=current[0], fee=fee,
+        occupied=current[3] if stopover else current[2], fares=prices,
+        total_demand=current[1] if stopover else None,
+    )
     if bot.dry_run:
         log.info("[SIMULAÇÃO] Criaria a rota %s.", summary)
         bot.notify(f"🧪 SIMULAÇÃO: criaria a rota {esc(summary)}.", silent=True, category="simulation")
         bot.js("$('#newRouteInfo').hide();")
         return "dry"
-
-    if bot.stopping:
+    if before is None or before - fee < reserve:
+        log.warning("%s: saldo da rota mudou antes da criação.", aircraft.reg)
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
-    origin = endpoint(origin_id, code=game_code(origin_id))
-    destination_code = game_code(candidate.arr_id, "" if stop else candidate.code)
-    destination = endpoint(candidate.arr_id, code=destination_code, name=candidate.name)
-    before = bot.read_money() if not stop else None
-    bot.click_element(panel.find_element(By.XPATH, ".//*[@id='btnCreateNewRoute']"))
+    button = panel.find_element(By.XPATH, ".//*[@id='btnCreateNewRoute']")
+    origin["name"] = bot.js(
+        "var e=document.getElementById('hubSelect');"
+        "return e && e.selectedIndex>=0 ? e.options[e.selectedIndex].text : '';"
+    ) or ""
+    registry = RouteRegistry()
+    registry.invalidate_fleet_coverage()
+    job = stage_creation(aircraft, origin, destination, stop, fee, profit_per_day, reroute=reroute)
+    if job is None:
+        bot.js("$('#newRouteInfo').hide();")
+        return "stop"
+    bot.click_element(button)
     response = bot.wait_text("//*[@id='routeNewAction']", timeout=15)
     if stop:
         confirmed = confirm_stopover(bot, aircraft.id, origin, destination, stop)
-        if not confirmed:
-            log.warning("%s: o jogo ainda não confirmou a rota %s. Será conferida na próxima leitura da frota.",
-                        aircraft.reg, name)
     else:
-        confirmed = bot.confirm_purchase(before, fee, f"a rota {candidate.name}", "routeNewAction")
+        confirmed = confirm_direct_route(bot, aircraft.id, origin, destination)
     if not confirmed:
+        log.warning("%s: o jogo ainda não confirmou a rota %s. Será conferida na próxima leitura da frota.",
+                    aircraft.reg, name)
         bot.js("$('#newRouteInfo').hide();")
         return "stop"
-    bot.spent(fee, invest=True)
-    bot.count("routes")
-    if origin_id:
-        origin["name"] = bot.js(
-            "var e=document.getElementById('hubSelect');"
-            "return e && e.selectedIndex>=0 ? e.options[e.selectedIndex].text : '';"
-        ) or ""
-        RouteRegistry().record(
-            aircraft.id, aircraft.reg, aircraft.model, origin, destination,
-            source="redirecionamento" if reroute else "criacao_confirmada",
-            profit_per_day=profit_per_day,
-            at_base=True,
-            stopover=stop,
-        )
+    if not finish_creation(bot, registry, job, at_base=True):
+        bot.js("$('#newRouteInfo').hide();")
+        return "stop"
     log.info("%s: %s. %s", "Rota alterada" if reroute else "Rota criada", summary, clean_response(response))
     bot.notify(f"🛫 <b>Rota criada</b>: {esc(summary)}.\n{esc(clean_response(response, 200))}".rstrip(), category="routes")
     bot.js("$('#newRouteInfo').hide();")
@@ -1527,6 +1808,9 @@ def payback_days(model: AircraftModel) -> float:
 
 
 def buy_aircraft(bot: "Bot") -> None:
+    if has_pending_creation():
+        log_market.warning("Compra adiada: criação de rota pendente de conciliação.")
+        return
     cfg = bot.config
     bot.open_popup("routes_main.php", "Routes", "nav_routes")
     bot.ajax("ac_orders.php?first=true", "routeAction")
@@ -1644,38 +1928,234 @@ def save_for_goal(bot: "Bot", models: list[AircraftModel], goal_name: str, budge
     order_aircraft(bot, choice)
 
 
-def order_aircraft(bot: "Bot", choice: AircraftModel, goal: bool = False) -> bool:
+def order_aircraft(
+    bot: "Bot", choice: AircraftModel, goal: bool = False,
+    hub_id: str | int | None = None,
+    *, expected_checkout_cost: int | None = None,
+    expected_engine_id: str | None = None,
+    investment_plan: Mapping | None = None,
+) -> bool:
+    """Order using the native #hubSelection value when a delivery ID is supplied.
+
+    For a planned purchase, the caller must resolve the plan's airport ID via
+    verified delivery-hub mapping before passing it as ``hub_id``. The two
+    native selectors use distinct identifier namespaces. In dry-run, an
+    explicit investment plan stages the exact cabin and checks the displayed
+    quote. The prepared quote does not authorize submission.
+    """
+    configuration = None
+    if investment_plan is not None:
+        from investment_journal import _validated_plan
+
+        try:
+            if not isinstance(investment_plan, Mapping):
+                raise ValueError("Plano de investimento inválido.")
+            plan = _validated_plan(investment_plan)
+            if (plan["kind"] != "aircraft" or plan["model_id"] != str(choice.id)
+                    or "configuration_yjf" not in plan or "checkout_cost" not in plan
+                    or expected_checkout_cost is not None or expected_engine_id is not None):
+                raise ValueError("A prévia exige um único plano com modelo, cabine e preço da rota.")
+        except ValueError as exc:
+            log_market.warning("Prévia de %s bloqueada: %s", choice.name, exc)
+            return False
+        configuration = plan["configuration_yjf"]
+        expected_checkout_cost = plan["checkout_cost"]
+        expected_engine_id = plan["engine_id"]
+
+    plan_requested = any(value is not None for value in (
+        hub_id, expected_checkout_cost, expected_engine_id,
+    ))
+    if plan_requested:
+        if type(hub_id) is int:
+            normalized_hub_id = str(hub_id)
+        elif type(hub_id) is str:
+            normalized_hub_id = hub_id.strip()
+        else:
+            normalized_hub_id = ""
+        if not re.fullmatch(r"[1-9][0-9]{0,13}", normalized_hub_id):
+            log_market.warning(
+                "Compra planejada de %s bloqueada: ID de base ausente ou inválido.",
+                choice.name,
+            )
+            return False
+        if type(expected_checkout_cost) is not int or expected_checkout_cost <= 0:
+            log_market.warning(
+                "Compra planejada de %s bloqueada: preço final ausente ou inválido.",
+                choice.name,
+            )
+            return False
+        if type(expected_engine_id) is not str or not expected_engine_id.strip():
+            log_market.warning(
+                "Compra planejada de %s bloqueada: ID da variante de motor ausente ou inválido.",
+                choice.name,
+            )
+            return False
+        hub_id = normalized_hub_id
+        expected_engine_id = expected_engine_id.strip()
+
+    if plan_requested and not bot.dry_run:
+        from investment_policy import InvestmentPolicy
+
+        policy_report = InvestmentPolicy.from_config(bot.config).report()
+        log_market.warning(
+            "Encomenda planejada de %s requer o executor homologado (gate %s).",
+            choice.name, policy_report["release_gate"],
+        )
+        return False
+
+    if configuration is not None:
+        from aircraft_order_preview import preview_aircraft_order
+
+        try:
+            preview = preview_aircraft_order(
+                bot, model_id=str(choice.id), hub_id=hub_id, engine_id=expected_engine_id,
+                configuration_yjf=configuration, expected_checkout_cost=expected_checkout_cost,
+            )
+        except Exception as exc:
+            log_market.warning("Prévia de %s não confirmada: %s", choice.name, exc)
+            return False
+        seats = "/".join(str(preview["configuration_yjf"][key]) for key in ("y", "j", "f"))
+        summary = (
+            f"1 x {choice.name} | {preview['engine']} | base {preview['delivery_hub_id']} | "
+            f"{seats} assentos Y/J/F | ${fmt(preview['displayed_cost_usd'])}"
+        )
+        log_market.info("[PRÉVIA NATIVA] %s. Preço exibido antes do pedido.", summary)
+        bot.notify(f"🧪 Prévia nativa: {esc(summary)}.", silent=True, category="simulation")
+        return True
+
     detail = bot.ajax(f"ac_orders.php?mode=detail&id={choice.id}&charter=0", "acModel")
     # O motor só pode ser escolhido antes de encomendar. Uma preferência
     # explícita NÃO aceita fallback silencioso para a seleção padrão do jogo.
-    from engine_selection import EngineSelectionError, prepare_engine
+    from engine_selection import (
+        EngineSelectionError, prepare_engine, read_engine_catalog,
+        require_verified_checkout_price, verify_engine_selection,
+    )
+    from engine_detail import FinalCheckoutPrice
+    from aircraft_order_hub import verify_order_hub_selection
 
     try:
-        motor = prepare_engine(bot, bot.config.get("settings", "engine_preference", "default"))
+        selected_hub_id, hub_changed = prepare_order_hub(bot, hub_id)
+        preference = bot.config.get("settings", "engine_preference", "default")
+        if plan_requested:
+            motor = prepare_engine(bot, preference, expected_engine_id=expected_engine_id)
+            if selected_hub_id != hub_id:
+                raise AircraftOrderHubError("O ID da base preparada diverge do plano aprovado.")
+        else:
+            motor = prepare_engine(bot, preference)
     except EngineSelectionError as exc:
         log_market.warning("Compra de %s bloqueada: %s", choice.name, exc)
         return False
-    if motor and not bot.dry_run:
-        # A alteração de motor pode reconstruir todo o fragmento Ajax.
+    except AircraftOrderHubError as exc:
+        log_market.warning("Compra de %s bloqueada: %s", choice.name, exc)
+        return False
+
+    if (motor and not bot.dry_run) or hub_changed:
+        # Alterações de motor ou base podem reconstruir todo o fragmento Ajax.
         detail = bot.driver.find_element(By.ID, "acModel")
     low = detail.find_elements(By.XPATH, ".//*[@id='accountLow']")
     if low and low[0].is_displayed():
         log_market.info("O jogo informa que não há saldo suficiente para um %s.", choice.name)
         return False
     reg = bot.js("return $('#acReg').val();") or ""
-    summary = f"1 x {choice.name} por ${fmt(choice.price)} (matrícula {reg}, {choice.capacity} passageiros, {fmt(choice.range_km)} km de autonomia)"
+    quoted_cost = expected_checkout_cost if plan_requested else choice.price
+    summary = f"1 x {choice.name} por ${fmt(quoted_cost)} (matrícula {reg}, {choice.capacity} passageiros, {fmt(choice.range_km)} km de autonomia)"
     if motor:
         summary += f" | motor: {motor}"
+    summary += f" | base: {selected_hub_id}"
+    if bot.dry_run and not plan_requested:
+        log_market.info("[SIMULAÇÃO] Encomendaria %s.", summary)
+        bot.notify(f"🧪 SIMULAÇÃO: encomendaria {esc(summary)}.", silent=True, category="simulation")
+        return True
+
+    # Releia a chave imediatamente antes do pré-voo, pois o operador pode
+    # suspender a compra automática durante a pesquisa do mercado.
+    if not bot.dry_run and not plan_requested:
+        get_bool = getattr(bot.config, "get_bool", None)
+        if callable(get_bool) and not get_bool("options", "autobuy_aircraft", True):
+            log_market.warning("Encomenda de %s cancelada: compra automática desativada.", choice.name)
+            return False
+
+    confirmed_cost = choice.price
+    # Aquisições planejadas exigem preço integral modelo+motor, identidade
+    # exata aprovada e duas leituras estáveis do checkout.
+    if plan_requested:
+        try:
+            engine_snapshot = read_engine_catalog(bot)
+            from game_source_probe import probe_game_sources
+
+            if engine_snapshot.selected_engine_id != expected_engine_id:
+                raise EngineSelectionError("O ID do motor selecionado diverge do plano aprovado.")
+
+            def verified_checkout() -> tuple[int, str]:
+                report = probe_game_sources(bot)
+                checkout = report.get("aircraft_checkout_diagnostics")
+                selection = report.get("aircraft_order_hub_selection")
+                if not isinstance(checkout, dict) or not isinstance(selection, dict):
+                    raise ValueError("O diagnóstico do formulário de encomenda está ausente.")
+                if checkout.get("detail_model_id") != str(choice.id):
+                    raise ValueError("O modelo aberto no formulário diverge do plano.")
+                if (checkout.get("model_hub_correlated") is not True
+                        or selection.get("selected_hub_id") != selected_hub_id
+                        or selection.get("status") != "dom_consistent"):
+                    raise ValueError("A base e o modelo não correspondem ao painel aprovado.")
+                if (checkout.get("ajax_idle_confirmed") is not True
+                        or checkout.get("detail_loading") is not False
+                        or checkout.get("ajax_active") is not False):
+                    raise ValueError("O formulário de encomenda ainda está atualizando.")
+                if checkout.get("price_verified") is not True:
+                    raise ValueError("O preço final ainda não possui fonte verificada.")
+                cost = checkout.get("checkout_cost")
+                source = checkout.get("price_source")
+                if (type(cost) is not int or cost <= 0
+                        or cost != expected_checkout_cost
+                        or checkout.get("price_includes_engine") is not True
+                        or source not in ("data_final_price", "data_total_price")):
+                    raise ValueError("O custo final com motor diverge do plano ou não foi comprovado.")
+                return cost, source
+
+            first_price = verified_checkout()
+
+            verified_motor = verify_engine_selection(bot, engine_snapshot)
+            if motor and verified_motor != motor:
+                raise EngineSelectionError("O motor confirmado diverge do motor preparado para o plano.")
+            selected_hub_id = verify_order_hub_selection(bot, selected_hub_id)
+            second_price = verified_checkout()
+            if second_price != first_price:
+                raise ValueError("O preço final mudou durante as verificações de motor e base.")
+            verify_engine_selection(bot, engine_snapshot)
+            checkout_price = FinalCheckoutPrice(
+                engine_id=engine_snapshot.selected_engine_id,
+                amount_usd=second_price[0],
+                source=second_price[1],
+                status="verified",
+                reason=None,
+            )
+            confirmed_cost = require_verified_checkout_price(
+                engine_snapshot,
+                expected_engine_id=expected_engine_id,
+                checkout_price=checkout_price,
+            )
+            # Consultar o painel atual após as leituras, pois o aviso pode
+            # aparecer durante uma atualização do formulário.
+            detail = bot.driver.find_element(By.ID, "acModel")
+            if any(warning.is_displayed() for warning in detail.find_elements(By.XPATH, ".//*[@id='accountLow']")):
+                raise ValueError("O jogo informa saldo insuficiente após a validação do checkout.")
+        except Exception as exc:
+            log_market.warning("Pré-voo de %s não confirmado. Encomenda bloqueada: %s", choice.name, exc)
+            return False
+
     if bot.dry_run:
         log_market.info("[SIMULAÇÃO] Encomendaria %s.", summary)
         bot.notify(f"🧪 SIMULAÇÃO: encomendaria {esc(summary)}.", silent=True, category="simulation")
         return True
+
     before = bot.read_money()
+    RouteRegistry().invalidate_fleet_coverage()
     bot.click_element(detail.find_element(By.XPATH, ".//*[@id='btnPurchaseIntro']"))
     response = bot.wait_text("//*[@id='orderAction']", timeout=15)
-    if not bot.confirm_purchase(before, choice.price, f"o pedido de {choice.name}", "orderAction"):
+    if not bot.confirm_purchase(before, confirmed_cost, f"o pedido de {choice.name}", "orderAction"):
         return False
-    bot.spent(choice.price, invest=True)
+    bot.spent(confirmed_cost, invest=True)
     bot.count("aircraft")
     free = bot.stats().hangar_free
     if free is not None:

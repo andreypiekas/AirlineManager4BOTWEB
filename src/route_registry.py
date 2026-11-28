@@ -6,11 +6,13 @@ not prove removal. The registry is a cache/audit trail, not game authority.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
 import time
 import unicodedata
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import Optional
@@ -26,7 +28,7 @@ _MAX_PAGE_AIRCRAFT = 40
 _MAX_PAGES_PER_CYCLE = 5
 _MAX_LIVE_AUDIT_PAGES = 25
 _LIVE_ROSTER_MAX_AGE = 900
-_GAME_AIRCRAFT_ID_RE = re.compile(r"^[0-9]{1,14}$")
+_GAME_AIRCRAFT_ID_RE = re.compile(r"^[1-9][0-9]{0,13}$")
 _AIRPORT_ID_RE = re.compile(r"^\d{1,12}$")
 _IATA_RE = re.compile(r"^[A-Z]{3,4}$")
 # The route-card DOM hook is a candidate until a reader supplies the exact,
@@ -92,6 +94,16 @@ def same_route(first: dict, second: dict) -> bool:
                 (endpoint_matches(a, d) and endpoint_matches(b, c)))
 
 
+def _flight_matches_route(label: object, route: dict) -> bool:
+    if not isinstance(label, str):
+        return False
+    match = re.fullmatch(r"([A-Z]{3,4})\s*[-–]\s*([A-Z]{3,4})", label.strip())
+    if not match or match[1] == match[2]:
+        return False
+    return same_route(route, {"origin": endpoint(code=match[1]),
+                              "destination": endpoint(code=match[2])})
+
+
 def reroute_block_reason(row: dict, now: Optional[float] = None,
                          *, verified_hub: bool = False) -> Optional[str]:
     """Return the exact reason a duplicate cannot be moved safely.
@@ -137,6 +149,7 @@ def _state(path: Path) -> dict:
         return {"version": 1, "aircraft": {}, "history": []}
     if not isinstance(data, dict) or not isinstance(data.get("aircraft", {}), dict):
         return {"version": 1, "aircraft": {}, "history": []}
+    data.setdefault("aircraft", {})
     data.setdefault("history", [])
     return data
 
@@ -148,31 +161,158 @@ class RouteRegistry:
     def _save(self, data: dict) -> None:
         paths.write_atomic(self.path, json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
 
-    def record_game_roster(self, rows: object, expected_total: int) -> bool:
-        """Store IDs from the complete game status map, only if its count agrees with the header."""
+    @staticmethod
+    def _parse_game_roster(rows: object, expected_total: int) -> Optional[dict]:
         if (type(expected_total) is not int or not 0 <= expected_total <= 50000
                 or not isinstance(rows, list) or len(rows) != expected_total):
-            return False
+            return None
         aircraft = {}
         for item in rows:
             if not isinstance(item, dict):
-                return False
+                return None
             identity = str(item.get("aircraft_id") or "")
             if not _GAME_AIRCRAFT_ID_RE.fullmatch(identity) or identity in aircraft:
-                return False
+                return None
             reg = item.get("registration")
             route_id = item.get("route_id")
-            if route_id is not None and (type(route_id) is not int or route_id < 0):
-                return False
+            if route_id is not None and (type(route_id) is not int or not 0 <= route_id <= 99999999999999):
+                return None
             aircraft[identity] = {
                 "registration": reg[:80] if isinstance(reg, str) else "",
                 "route_id": route_id,
             }
+        return aircraft
+
+    def record_game_roster(self, rows: object, expected_total: int) -> bool:
+        """Store IDs from the complete game status map, only if its count agrees with the header."""
+        aircraft = self._parse_game_roster(rows, expected_total)
+        if aircraft is None:
+            with _LOCK:
+                data = _state(self.path)
+                if data.pop("fleet_coverage", None) is not None:
+                    self._save(data)
+            return False
         with _LOCK:
             data = _state(self.path)
-            data["game_roster"] = {"observed_at": int(time.time()), "aircraft": aircraft}
+            data.pop("fleet_coverage", None)
+            data["game_roster"] = {"observed_at": int(time.time()), "aircraft": aircraft,
+                                   "observation_id": uuid.uuid4().hex}
             self._save(data)
         return True
+
+    def invalidate_fleet_coverage(self) -> None:
+        """Withdraw the current combined proof before new observations or mutations."""
+        from fleet_commitment_observations import FILENAME, invalidate_observations
+
+        with _LOCK:
+            invalidate_observations(self.path.parent / FILENAME)
+            data = _state(self.path)
+            changed = data.pop("fleet_coverage", None) is not None
+            roster = data.get("game_roster")
+            if isinstance(roster, dict) and not roster.get("coverage_finalized"):
+                roster["coverage_finalized"] = True
+                changed = True
+            if changed:
+                self._save(data)
+
+    def confirm_fleet_coverage(self, rows: object, *, before_counts: dict,
+                               after_counts: object, audited_pages: list[int], native_identity_evidence=None) -> bool:
+        """Correlate the roster before and after the paginated route audit."""
+        from fleet_commitment_observations import native_identity_proof
+
+        # An observation can certify coverage only once. Revoking an existing
+        # proof must never allow a previous audit to certify it again.
+        with _LOCK:
+            data = _state(self.path)
+            if data.pop("fleet_coverage", None) is not None:
+                self._save(data)
+        keys = ("routes", "parked", "pending")
+        if (not isinstance(before_counts, dict) or not isinstance(after_counts, dict)
+                or any(type(counts.get(key)) is not int or not 0 <= counts[key] <= 50000
+                       for counts in (before_counts, after_counts) for key in keys)
+                or any(before_counts[key] != after_counts[key] for key in keys)):
+            return False
+        total = sum(before_counts[key] for key in keys)
+        aircraft = self._parse_game_roster(rows, total)
+        if aircraft is None or any(type(row["route_id"]) is not int or not row["registration"].strip()
+                                   for row in aircraft.values()):
+            return False
+        with _LOCK:
+            data = _state(self.path)
+            roster = data.get("game_roster")
+            if (not isinstance(roster, dict) or not roster.get("observation_id")
+                    or roster.get("coverage_finalized")):
+                return False
+            now = int(time.time())
+            started_at = roster.get("observed_at")
+            if (roster.get("aircraft") != aircraft or type(started_at) is not int
+                    or not 0 <= now - started_at <= _LIVE_ROSTER_MAX_AGE):
+                return False
+            proof = native_identity_proof(native_identity_evidence, aircraft, before_counts,
+                                          started_at=started_at, now=now)
+            maintenance_with_route = set(proof.get("maintenance_with_map_route", ()))
+            routed = {identity: row for identity, row in aircraft.items()
+                      if row["route_id"] > 0 and identity not in maintenance_with_route}
+            if (len(routed) != before_counts["routes"]
+                    or len({row["route_id"] for row in routed.values()}) != len(routed)):
+                return False
+            coverage = data.get("scan_coverage")
+            coverage = coverage if isinstance(coverage, dict) else {}
+            run = coverage.get("audit_run")
+            run = run if isinstance(run, dict) else {}
+            run_id = None
+            if routed:
+                pages = coverage.get("pages")
+                total_pages = self._valid_page(coverage.get("total_pages"))
+                if (coverage.get("full_page_coverage_verified") is not True
+                        or coverage.get("expected_routes") != len(routed)
+                        or run.get("invalidated") is not False
+                        or run.get("roster_observation_id") != roster["observation_id"]
+                        or type(run.get("started_at")) is not int
+                        or not started_at <= run["started_at"] <= now
+                        or not run.get("id")
+                        or total_pages is None or not isinstance(pages, dict)
+                        or not isinstance(audited_pages, list)
+                        or any(type(page) is not int for page in audited_pages)
+                        or sorted(audited_pages) != list(range(1, total_pages + 1))
+                        or set(pages) != {str(page) for page in audited_pages}):
+                    return False
+                evidence = {}
+                for page in pages.values():
+                    if not isinstance(page, dict) or page.get("audit_run_id") != run["id"]:
+                        return False
+                    observations = page.get("route_evidence")
+                    if not isinstance(observations, dict) or evidence.keys() & observations.keys():
+                        return False
+                    evidence.update(observations)
+                if evidence.keys() != routed.keys():
+                    return False
+                for identity, observed in routed.items():
+                    route = evidence[identity]
+                    stored = data["aircraft"].get(identity)
+                    if (not isinstance(route, dict) or route != observed
+                            or not isinstance(stored, dict)
+                            or stored.get("observed_route_id") != observed["route_id"]
+                            or stored.get("registration") != observed["registration"]
+                            or not stored.get("route_key")):
+                        return False
+                run_id = run["id"]
+            else:
+                last_scan = data.get("last_scan")
+                if (audited_pages != [] or (isinstance(last_scan, dict)
+                        and type(last_scan.get("at")) is int and last_scan["at"] >= started_at
+                        and last_scan.get("visible") != 0)):
+                    return False
+            data["fleet_coverage"] = {
+                "source": "game_roster_and_route_audit", "observed_at": now,
+                "roster_observed_at": started_at, "audit_run_id": run_id,
+                "roster_observation_id": roster["observation_id"],
+                "total": total, **{key: before_counts[key] for key in keys},
+                **proof,
+            }
+            roster["coverage_finalized"] = True
+            self._save(data)
+            return True
 
     def next_flight_read_ids(self, *, limit: int = 4) -> list[str]:
         """Rotate through current routed aircraft without rereading the same details each cycle."""
@@ -198,14 +338,18 @@ class RouteRegistry:
         """Record the displayed flight value and an explicitly approximate operating margin."""
         if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
             return 0
-        if not all(isinstance(price, (int, float)) and 0 < price < 100000
+        if not all(type(price) in (int, float) and 0 < price < 100000
                    for price in (fuel_price, co2_price)):
             return 0
         now = int(time.time())
         saved = 0
         with _LOCK:
             data = _state(self.path)
-            roster = (data.get("game_roster") or {}).get("aircraft") or {}
+            roster_observation = data.get("game_roster") or {}
+            stamp = roster_observation.get("observed_at")
+            if type(stamp) not in (int, float) or not 0 <= now - stamp <= _LIVE_ROSTER_MAX_AGE:
+                return 0
+            roster = roster_observation.get("aircraft") or {}
             for row in rows[:8]:
                 identity = str(row.get("aircraft_id") or "")
                 if (not _GAME_AIRCRAFT_ID_RE.fullmatch(identity) or identity not in roster
@@ -214,20 +358,30 @@ class RouteRegistry:
                     continue
                 entry = dict(data["aircraft"].get(identity) or {"aircraft_id": identity})
                 entry["flight_finance_checked_at"] = now
+                # Each read supersedes the previous sample. A route change or
+                # incomplete response cannot renew financial observations.
+                entry.pop("last_flight", None)
+                entry.pop("last_24h", None)
+                data["aircraft"][identity] = entry
+                seen = entry.get("last_seen")
+                route_id = roster[identity]["route_id"]
+                if (entry.get("source") != "game" or entry.get("observed_route_id") != route_id
+                        or entry.get("registration") != roster[identity].get("registration")
+                        or not entry.get("route_key") or type(seen) not in (int, float)
+                        or not 0 <= now - seen <= _SCAN_WINDOW_SECONDS):
+                    continue
                 amount, fuel, co2 = (row.get(key) for key in ("flight_value", "fuel_lbs", "co2_quotas"))
                 if not all(type(value) is int and 0 <= value <= 100000000000
                            for value in (amount, fuel, co2)):
-                    data["aircraft"][identity] = entry
                     continue
                 label = row.get("flight_route")
-                if not isinstance(label, str) or not re.fullmatch(
-                        r"[A-Z]{3,4}\s*[-–]\s*[A-Z]{3,4}", label.strip()):
-                    data["aircraft"][identity] = entry
+                if not _flight_matches_route(label, entry):
                     continue
                 cost = fuel * float(fuel_price) / 1000 + co2 * float(co2_price) / 1000
                 entry["last_flight"] = {
                     "observed_at": now, "route": label.strip(), "value": amount,
-                    "game_route_id": roster[identity]["route_id"],
+                    "game_route_id": route_id, "route_key": entry["route_key"],
+                    "route_correlation": "observed_endpoints",
                     "fuel_lbs": fuel, "co2_quotas": co2,
                     "estimated_operating_margin": round(amount - cost, 2),
                     "fuel_price_per_1000": round(float(fuel_price), 2),
@@ -236,7 +390,7 @@ class RouteRegistry:
                 }
                 recent_flights = row.get("recent_flights")
                 if isinstance(recent_flights, list) and len(recent_flights) <= 20:
-                    recent_total = 0.0
+                    revenue_total = fuel_total = co2_total = 0
                     valid = 0
                     for flight in recent_flights:
                         if not isinstance(flight, dict):
@@ -244,24 +398,31 @@ class RouteRegistry:
                         age = flight.get("age_hours")
                         values = [flight.get(key) for key in
                                   ("flight_value", "fuel_lbs", "co2_quotas")]
-                        if (not isinstance(age, (int, float)) or not 0 <= age < 24
+                        if (type(age) not in (int, float) or not 0 <= age < 24
+                                or not _flight_matches_route(flight.get("flight_route"), entry)
                                 or not all(type(value) is int and 0 <= value <= 100000000000
                                            for value in values)):
                             continue
                         revenue, used_fuel, used_co2 = values
-                        recent_total += (revenue - used_fuel * float(fuel_price) / 1000
-                                         - used_co2 * float(co2_price) / 1000)
+                        revenue_total += revenue
+                        fuel_total += used_fuel
+                        co2_total += used_co2
                         valid += 1
                     if valid:
+                        recent_total = (revenue_total - fuel_total * float(fuel_price) / 1000
+                                        - co2_total * float(co2_price) / 1000)
                         entry["last_24h"] = {
-                            "observed_at": now, "game_route_id": roster[identity]["route_id"],
+                            "observed_at": now, "game_route_id": route_id,
+                            "route_key": entry["route_key"], "route_correlation": "observed_endpoints",
+                            "coverage_complete": False,
                             "flight_count": valid,
+                            "observed_revenue": revenue_total,
+                            "fuel_lbs": fuel_total, "co2_quotas": co2_total,
+                            "fuel_price_per_1000": round(float(fuel_price), 2),
+                            "co2_price_per_1000": round(float(co2_price), 2),
                             "estimated_operating_margin": round(recent_total, 2),
                             "source": "game_flight_history",
                         }
-                    else:
-                        entry.pop("last_24h", None)
-                data["aircraft"][identity] = entry
                 saved += 1
             if rows:
                 self._save(data)
@@ -342,16 +503,30 @@ class RouteRegistry:
     def record(self, aircraft_id: str, registration: str, model: str,
                origin: dict, destination: dict, *, source: str = "game",
                profit_per_day: Optional[float] = None, at_base: Optional[bool] = None,
-               stopover: Optional[dict] = None) -> bool:
+               stopover: Optional[dict] = None, observed_route_id: Optional[int] = None) -> bool:
         """Record a verified route; never overwrite another aircraft's identity."""
         aircraft_id = str(aircraft_id or "").strip()
         if not aircraft_id or route_key(origin, destination) is None:
             return False
         with _LOCK:
             data = _state(self.path)
+            previous = data["aircraft"].get(aircraft_id, {})
+            route_id_verified = (type(observed_route_id) is int
+                                 and 0 < observed_route_id <= 99999999999999)
+            compatible = (source == "game" and route_id_verified
+                          and previous.get("observed_route_id") == observed_route_id
+                          and previous.get("origin") == origin and previous.get("destination") == destination
+                          and previous.get("registration") == registration and previous.get("model") == model
+                          and (stopover is None or previous.get("stopover") == stopover))
+            if not compatible:
+                data.pop("fleet_coverage", None)
             self._record_in(data, aircraft_id, registration, model, origin, destination,
                             source=source, profit_per_day=profit_per_day, at_base=at_base,
                             stopover=stopover, now=int(time.time()))
+            if route_id_verified:
+                data["aircraft"][aircraft_id]["observed_route_id"] = observed_route_id
+            elif previous.get("route_key") != route_key(origin, destination) or source != "game":
+                data["aircraft"][aircraft_id].pop("observed_route_id", None)
             self._save(data)
             return True
 
@@ -363,6 +538,7 @@ class RouteRegistry:
             return False
         with _LOCK:
             data = _state(self.path)
+            data.pop("fleet_coverage", None)
             self._observe_in(data, aircraft_id, registration, model, at_base, int(time.time()))
             self._save(data)
             return True
@@ -375,6 +551,12 @@ class RouteRegistry:
         with _LOCK:
             data = _state(self.path)
             previous = data["aircraft"].get(aircraft_id, {})
+            roster = data.get("game_roster")
+            entries = roster.get("aircraft", {}) if isinstance(roster, dict) else {}
+            observed = entries.get(aircraft_id) if isinstance(entries, dict) else None
+            if (not isinstance(observed, dict) or observed.get("route_id") != 0
+                    or registration != observed.get("registration")):
+                data.pop("fleet_coverage", None)
             row = dict(previous)
             if previous.get("route_key"):
                 data["history"].append({
@@ -385,7 +567,7 @@ class RouteRegistry:
                 data["history"] = data["history"][-_MAX_HISTORY:]
             for field in ("origin", "destination", "stopover", "route_key", "proposal", "profit_per_day",
                           "profit_route_key", "profit_estimated_at",
-                          "game_verified_at"):
+                          "game_verified_at", "observed_route_id"):
                 row.pop(field, None)
             row.update({
                 "aircraft_id": aircraft_id,
@@ -407,6 +589,10 @@ class RouteRegistry:
             row = data["aircraft"].get(aircraft_id)
             if not row or not expected_route or row.get("route_key") != expected_route:
                 return False
+            roster = data.get("game_roster")
+            entries = roster.get("aircraft") if isinstance(roster, dict) else None
+            if not isinstance(entries, dict) or aircraft_id in entries:
+                data.pop("fleet_coverage", None)
             data["history"].append({
                 "at": int(time.time()), "aircraft_id": aircraft_id,
                 "registration": row.get("registration", aircraft_id),
@@ -471,7 +657,9 @@ class RouteRegistry:
         """
         with _LOCK:
             data = _state(self.path)
+            previous_fleet_coverage = data.pop("fleet_coverage", None)
             now = int(time.time())
+            observed_ids = None
             if route_observations is not None:
                 identified = 0
                 processed: set[str] = set()
@@ -521,6 +709,7 @@ class RouteRegistry:
                             entry["home_hub_evidence"] = HOME_HUB_EVIDENCE
                             entry["home_hub_evidence_aircraft_id"] = identity
                             entry["home_hub_verified_at"] = now
+                observed_ids = processed
             data["last_scan"] = {
                 "at": now,
                 "visible": max(0, int(visible)),
@@ -528,16 +717,45 @@ class RouteRegistry:
                 "missing_airports": max(0, int(missing_airports)),
             }
             if aircraft_ids is not None:
+                raw_page, raw_total_pages = page, total_pages
                 page = self._valid_page(page)
                 total_pages = self._valid_page(total_pages)
                 if type(expected_routes) is not int or not 0 < expected_routes <= 50000:
                     expected_routes = None
                 if not isinstance(audit_run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", audit_run_id):
                     audit_run_id = None
+                previous_coverage = data.get("scan_coverage")
+                native_rows = isinstance(route_observations, list) and any(
+                    isinstance(row, dict) and row.get("scan_has_next") is not None
+                    for row in route_observations
+                )
+                # A single native page has no global page counter. Reuse the
+                # prior total only for a compatible refresh of verified coverage.
+                if (total_pages is None and native_rows and audit_run_id is None
+                        and isinstance(previous_fleet_coverage, dict) and previous_fleet_coverage
+                        and isinstance(previous_coverage, dict)
+                        and previous_coverage.get("full_page_coverage_verified") is True
+                        and previous_coverage.get("expected_routes") == expected_routes):
+                    raw_total_pages = previous_coverage.get("total_pages")
+                    total_pages = self._valid_page(raw_total_pages)
+                native_boundary = (
+                    native_rows
+                    and page is not None and total_pages is not None
+                    and all(isinstance(row, dict)
+                            and row.get("scan_has_next") is (page < total_pages)
+                            for row in route_observations)
+                )
+                pagination_verified = (
+                    type(raw_page) is int and type(raw_total_pages) is int
+                    and page is not None and total_pages is not None
+                    and page <= total_pages and expected_routes is not None
+                    and (native_boundary or (not native_rows and total_pages == (expected_routes + 19) // 20))
+                )
                 if total_pages and page and page > total_pages:
                     page = None
-                coverage = data.get("scan_coverage")
-                updated_at = coverage.get("updated_at") if isinstance(coverage, dict) else None
+                coverage = previous_coverage if isinstance(previous_coverage, dict) else {}
+                prior_run = coverage.get("audit_run")
+                updated_at = coverage.get("updated_at")
                 if not isinstance(updated_at, (int, float)) or now < updated_at or \
                         now - updated_at >= _SCAN_WINDOW_SECONDS or \
                         (total_pages and coverage.get("total_pages") not in (None, total_pages)) or \
@@ -555,15 +773,131 @@ class RouteRegistry:
                 }
                 if total_pages:
                     coverage["total_pages"] = total_pages
+                raw_ids = ([str(aircraft_id).strip() for aircraft_id in aircraft_ids]
+                           if isinstance(aircraft_ids, list) else [])
                 recorded_ids = list(dict.fromkeys(
-                    str(aircraft_id).strip() for aircraft_id in aircraft_ids
-                    if _GAME_AIRCRAFT_ID_RE.fullmatch(str(aircraft_id).strip())
+                    identity for identity in raw_ids
+                    if _GAME_AIRCRAFT_ID_RE.fullmatch(identity)
                 ))[:_MAX_PAGE_AIRCRAFT]
+                # If raw DOM pagination fields are provided with route observations,
+                # every row must confirm the same loaded page and header count.
+                metadata_keys = ("scan_page", "scan_total_pages", "scan_route_count")
+                has_row_metadata = isinstance(route_observations, list) and any(
+                    isinstance(row, dict) and any(key in row for key in metadata_keys)
+                    for row in route_observations
+                )
+                row_metadata_verified = not has_row_metadata or all(
+                    isinstance(row, dict)
+                    and type(row.get("scan_page")) is int and row["scan_page"] == page
+                    and type(row.get("scan_total_pages")) is int
+                    and row["scan_total_pages"] == total_pages
+                    and type(row.get("scan_route_count")) is int
+                    and row["scan_route_count"] == expected_routes
+                    for row in route_observations
+                )
+                # Filtering or deduplicating malformed captures must never turn
+                # a partial read into a certified full audit.
+                page_ids_verified = (
+                    type(visible) is int and 0 < visible <= 20
+                    and len(raw_ids) == visible
+                    and len(recorded_ids) == len(raw_ids)
+                    and row_metadata_verified
+                    and (route_observations is None or (
+                        isinstance(route_observations, list)
+                        and len(route_observations) == visible
+                        and observed_ids == set(recorded_ids)
+                    ))
+                )
+                previous_pages = (previous_coverage.get("pages")
+                                  if isinstance(previous_coverage, dict) else {})
+                previous_page = (previous_pages.get(str(page))
+                                 if isinstance(previous_pages, dict) and page else None)
+                # Preserve stable identity and assignment evidence across reads,
+                # independently of row order or the aircraft's flight status.
+                fingerprint = None
+                if route_observations is not None and page_ids_verified:
+                    fields = ("aircraft_id", "registration", "model", "origin", "destination",
+                              "observed_route_id", "home_hub_id", "home_hub_evidence",
+                              "home_hub_evidence_aircraft_id")
+                    stable_rows = sorted(
+                        ({field: row.get(field) for field in fields} for row in route_observations),
+                        key=lambda row: str(row["aircraft_id"]),
+                    )
+                    fingerprint = hashlib.sha256(json.dumps(
+                        stable_rows, sort_keys=True, ensure_ascii=False, default=str,
+                    ).encode("utf-8")).hexdigest()
+                if (isinstance(previous_fleet_coverage, dict) and previous_fleet_coverage
+                        and audit_run_id is None
+                        and isinstance(previous_coverage, dict)
+                        and previous_coverage.get("full_page_coverage_verified") is True
+                        and pagination_verified and page_ids_verified
+                        and isinstance(previous_page, dict)
+                        and previous_page.get("audit_run_id") == previous_fleet_coverage.get("audit_run_id")
+                        and fingerprint is not None
+                        and previous_page.get("observation_fingerprint") == fingerprint
+                        and previous_coverage.get("expected_routes") == expected_routes
+                        and previous_coverage.get("total_pages") == total_pages
+                        and identified == visible):
+                    # A compatible dispatch refresh updates the records, but
+                    # cannot extend the lifetime of the original full audit.
+                    data["fleet_coverage"] = previous_fleet_coverage
+                    self._save(data)
+                    return identified
+                if audit_run_id:
+                    same_run = (isinstance(prior_run, dict)
+                                and prior_run.get("id") == audit_run_id)
+                    audit_run = dict(prior_run) if same_run else {
+                        "id": audit_run_id, "started_at": now,
+                        "total_pages": total_pages, "expected_routes": expected_routes,
+                        "invalidated": False,
+                        "roster_observation_id": (data["game_roster"].get("observation_id")
+                                                  if isinstance(data.get("game_roster"), dict) else None),
+                    }
+                    changed_page = (
+                        isinstance(previous_page, dict)
+                        and previous_page.get("audit_run_id") == audit_run_id
+                        and (set(previous_page.get("aircraft_ids") or []) != set(recorded_ids)
+                             or previous_page.get("visible") != visible
+                             or previous_page.get("page_ids_verified") is not True
+                             or previous_page.get("observation_fingerprint") != fingerprint)
+                    )
+                    audit_run["invalidated"] = bool(
+                        audit_run.get("invalidated") or not pagination_verified
+                        or not page_ids_verified or changed_page
+                        or (same_run and (
+                            audit_run.get("total_pages") != total_pages
+                            or audit_run.get("expected_routes") != expected_routes
+                            or not isinstance(audit_run.get("started_at"), (int, float))
+                            or not 0 <= now - audit_run["started_at"] < _SCAN_WINDOW_SECONDS
+                        ))
+                    )
+                elif isinstance(prior_run, dict):
+                    # An interleaved untagged read cannot later complete this run.
+                    audit_run = {**prior_run, "invalidated": True}
+                else:
+                    audit_run = None
+                if audit_run is not None:
+                    coverage["audit_run"] = audit_run
                 observation = {
                     **data["last_scan"], "aircraft_ids": recorded_ids,
+                    "page_ids_verified": page_ids_verified,
+                    "page": page, "total_pages": total_pages,
+                    "expected_routes": expected_routes,
                 }
                 if audit_run_id:
                     observation["audit_run_id"] = audit_run_id
+                if fingerprint is not None:
+                    observation["observation_fingerprint"] = fingerprint
+                    observation["route_evidence"] = {
+                        str(row["aircraft_id"]): {
+                            "route_id": row["observed_route_id"],
+                            "registration": row["registration"],
+                        }
+                        for row in route_observations
+                        if type(row.get("observed_route_id")) is int and row["observed_route_id"] > 0
+                        and row.get("registration") and row.get("model")
+                        and route_key(row.get("origin") or {}, row.get("destination") or {})
+                    }
                 if page:
                     coverage["sequence"] = max(0, int(coverage.get("sequence") or 0)) + 1
                     observation["sequence"] = coverage["sequence"]
@@ -579,22 +913,35 @@ class RouteRegistry:
                 combined_ids = [aircraft_id for entry in pages.values()
                                 for aircraft_id in entry.get("aircraft_ids", [])]
                 repeated_ids = len(combined_ids) - len(set(combined_ids))
-                complete = (audit_run_id is not None and expected_routes is not None
-                            and total_pages is not None
-                            and len(pages) == total_pages and repeated_ids == 0
-                            and len(combined_ids) == expected_routes
-                            and total_pages == (expected_routes + 19) // 20
-                            and all(isinstance(entry, dict)
-                                    and entry.get("audit_run_id") == audit_run_id
-                                    and 0 < entry.get("visible", 0) <= 20
-                                    and len(entry.get("aircraft_ids", [])) == entry["visible"]
-                                    for entry in page_rows))
+                complete = (
+                    audit_run_id is not None and pagination_verified
+                    and audit_run is not None and not audit_run["invalidated"]
+                    and len(pages) == total_pages and repeated_ids == 0
+                    and len(combined_ids) == expected_routes
+                    and all(
+                        isinstance(entry, dict)
+                        and entry.get("audit_run_id") == audit_run_id
+                        and entry.get("page") == number
+                        and entry.get("total_pages") == total_pages
+                        and entry.get("expected_routes") == expected_routes
+                        and type(entry.get("visible")) is int and 0 < entry["visible"] <= 20
+                        and len(entry.get("aircraft_ids", [])) == entry["visible"]
+                        and entry.get("page_ids_verified") is True
+                        for number, entry in enumerate(page_rows, 1)
+                    )
+                )
                 if complete:
                     data["last_verified_full_audit"] = {
                         "at": now, "audit_run_id": audit_run_id,
                         "expected_routes": expected_routes,
                         "total_pages": total_pages, "unique_aircraft": len(combined_ids),
                     }
+                elif audit_run_id and audit_run and audit_run["invalidated"]:
+                    # A later contradictory sample revokes a certification made
+                    # earlier using the very same audit-run identity.
+                    last_full = data.get("last_verified_full_audit")
+                    if isinstance(last_full, dict) and last_full.get("audit_run_id") == audit_run_id:
+                        data.pop("last_verified_full_audit", None)
                 unknown = coverage.get("unknown_page")
                 unknown_at = unknown.get("at") if isinstance(unknown, dict) else None
                 if isinstance(unknown_at, (int, float)) and \
@@ -717,6 +1064,15 @@ class RouteRegistry:
     def snapshot(self, *, allow_duplicates: bool = True) -> dict:
         with _LOCK:
             data = deepcopy(_state(self.path))
+        coverage = data.get("scan_coverage")
+        if isinstance(coverage, dict) and coverage.get("full_page_coverage_verified"):
+            run = coverage.get("audit_run")
+            run = run if isinstance(run, dict) else {}
+            started_at = run.get("started_at")
+            if (not isinstance(started_at, (int, float))
+                    or not 0 <= time.time() - started_at < _SCAN_WINDOW_SECONDS):
+                coverage["full_page_coverage_verified"] = False
+                coverage["expired"] = True
         rows = list(data["aircraft"].values())
         rows.sort(key=lambda r: (r.get("registration", ""), r.get("aircraft_id", "")))
         roster = data.get("game_roster") or {}
@@ -726,6 +1082,40 @@ class RouteRegistry:
                             and roster_at <= time.time() and isinstance(roster_entries, dict))
         roster_verified = (roster_available and
                            time.time() - roster_at <= _LIVE_ROSTER_MAX_AGE)
+        fleet_coverage = data.get("fleet_coverage")
+        fleet_coverage = fleet_coverage if isinstance(fleet_coverage, dict) else {}
+        run = coverage.get("audit_run") if isinstance(coverage, dict) else None
+        fleet_verified = (
+            roster_verified and fleet_coverage.get("source") == "game_roster_and_route_audit"
+            and fleet_coverage.get("roster_observed_at") == roster_at
+            and bool(roster.get("observation_id"))
+            and fleet_coverage.get("roster_observation_id") == roster.get("observation_id")
+            and fleet_coverage.get("total") == len(roster_entries)
+            and all(type(fleet_coverage.get(key)) is int and fleet_coverage[key] >= 0
+                    for key in ("total", "routes", "parked", "pending"))
+            and fleet_coverage["total"] == sum(fleet_coverage[key] for key in ("routes", "parked", "pending"))
+            and type(fleet_coverage.get("observed_at")) is int
+            and roster_at <= fleet_coverage["observed_at"] <= time.time()
+            and all(isinstance(row, dict) and type(row.get("route_id")) is int
+                    and 0 <= row["route_id"] <= 99999999999999
+                    and isinstance(row.get("registration"), str) and row["registration"].strip()
+                    for row in roster_entries.values())
+            and (fleet_coverage.get("routes") == 0 or (
+                isinstance(coverage, dict) and coverage.get("full_page_coverage_verified") is True
+                and isinstance(run, dict) and run.get("invalidated") is False
+                and run.get("id") == fleet_coverage.get("audit_run_id")
+                and run.get("roster_observation_id") == roster.get("observation_id")
+            ))
+        )
+        maintenance_with_route = fleet_coverage.get("maintenance_with_map_route", [])
+        if fleet_verified and (not isinstance(maintenance_with_route, list)
+                or not all(isinstance(identity, str) and identity in roster_entries
+                           and roster_entries[identity]["route_id"] > 0 for identity in maintenance_with_route)
+                or (maintenance_with_route and (fleet_coverage.get("native_identity_status") != "matched"
+                    or len(set(maintenance_with_route)) != len(maintenance_with_route)
+                    or len(maintenance_with_route) > fleet_coverage["pending"]))):
+            fleet_verified = False
+        maintenance_with_route = set(maintenance_with_route) if fleet_verified else set()
         indexed = {str(row.get("aircraft_id")): row for row in rows}
         current_rows = []
         if roster_available:
@@ -734,29 +1124,42 @@ class RouteRegistry:
                     continue
                 item = deepcopy(indexed.get(identity, {"aircraft_id": identity}))
                 item["registration"] = observed.get("registration") or item.get("registration") or identity
-                item["game_route_id"] = observed.get("route_id")
+                route_id = observed.get("route_id")
+                if identity in maintenance_with_route:
+                    item["pending_game_route_id"] = route_id
+                    route_id = 0
+                item["game_route_id"] = route_id
                 item["route_data_stale"] = (
                     not roster_verified
                     or not isinstance(item.get("last_seen"), (int, float))
                     or not 0 <= time.time() - item["last_seen"] <= 3600
-                    or item.get("observed_route_id") != observed.get("route_id")
+                    or item.get("observed_route_id") != route_id
                 )
-                if observed.get("route_id") == 0:
+                if route_id == 0:
                     item["status"] = "sem_rota_ou_pendente"
                 elif item["route_data_stale"] or not item.get("route_key"):
                     item["status"] = "rota_a_identificar"
-                if item["route_data_stale"] or observed.get("route_id") == 0:
+                if item["route_data_stale"] or route_id == 0:
                     item.pop("origin", None)
                     item.pop("destination", None)
                     item.pop("route_key", None)
                     item.pop("profit_per_day", None)
                 for financial_key in ("last_flight", "last_24h"):
                     financial = item.get(financial_key)
-                    if (not roster_verified or not isinstance(financial, dict)
-                            or financial.get("game_route_id") != observed.get("route_id")):
+                    if (not roster_verified or item["route_data_stale"] or not isinstance(financial, dict)
+                            or financial.get("game_route_id") != route_id
+                            or financial.get("route_key") != item.get("route_key")
+                            or financial.get("route_correlation") != "observed_endpoints"):
                         item.pop(financial_key, None)
                 current_rows.append(item)
             current_rows.sort(key=lambda r: (r.get("registration", ""), r["aircraft_id"]))
+        if fleet_verified:
+            routed_rows = [row for row in current_rows if type(row.get("game_route_id")) is int
+                           and row["game_route_id"] > 0]
+            fleet_verified = (len(current_rows) == fleet_coverage.get("total")
+                              and len(routed_rows) == fleet_coverage.get("routes")
+                              and all(not row["route_data_stale"] and row.get("route_key")
+                                      for row in routed_rows))
         duplicates: list[list[dict]] = []
         visited: set[str] = set()
         for row in rows:
@@ -795,6 +1198,8 @@ class RouteRegistry:
             "current_roster_verified": roster_verified,
             "current_roster_observed_at": roster_at,
             "current_roster_total": len(current_rows) if roster_available else None,
+            "fleet_coverage": fleet_coverage if fleet_verified else None,
+            "current_fleet_coverage_verified": bool(fleet_verified),
             "current_duplicate_routes": len(current_duplicates),
             "current_affected_aircraft": len(current_duplicate_ids),
             "current_duplicates": [{"route": group[0].get("route_key"), "aircraft": [

@@ -6,6 +6,31 @@
 
 **Idioma padrão: Português (Brasil).** Inglês disponível como alternativa.
 
+## Instalação com Docker
+
+Com Docker e Docker Compose, execute na raiz do repositório.
+
+~~~shell
+docker compose up -d --build --wait
+docker compose exec am4bot python scripts/configurar_linux.py --perfil docker --mostrar-acesso --ip 127.0.0.1
+~~~
+
+Abra o endereço completo mostrado no terminal. O painel usa a porta local
+**8745** e exige o token do link. O perfil **docker** começa em **Simulação
+(sem gastos)**, com o bot parado, e guarda configuração, dados e sessão do
+Chromium no volume `airlinemanager4botweb_profiles`.
+
+Para configurar a conta do jogo, use o terminal interativo. A senha fica
+oculta. Ao reiniciar, o bot usa as credenciais salvas.
+
+~~~shell
+docker compose exec am4bot python scripts/configurar_linux.py --perfil docker --configurar-login
+docker compose restart am4bot
+~~~
+
+Para atualizar, use `git pull --ff-only` na branch instalada e repita
+`docker compose up -d --build --wait`. Para parar, use `docker compose stop`.
+
 ## Instalação fácil no Raspberry Pi OS e Ubuntu
 
 No terminal do servidor, execute como usuário normal com acesso a `sudo`:
@@ -130,6 +155,21 @@ as possibilidades de expansão e os cenários da próxima aeronave por base.
 As classificações exigem pesquisa e custos atuais confirmados no jogo.
 A navegação real entre páginas e a coleta dos dados de compra e pesquisa
 continuam em homologação.
+
+Em **Hubs → Pesquisa histórica de rotas**, filtre os destinos dos hubs da
+captura por alcance, pista e demanda diária Y/J/F coletada no início de 2020.
+Para disponibilizar a pesquisa em um perfil, instale `duckdb==1.4.3` em um
+ambiente de auditoria e baixe `airports.parquet` e `routes.parquet` da
+[revisão fixada de abc8747/am4](https://github.com/abc8747/am4/tree/795aaa4be38dc4bb4216d5ea6506896921dff2ae/src/am4/utils/data).
+Da raiz do repositório, execute:
+
+```sh
+python scripts/audit_bulk_demand.py data/audited_game_snapshot.json <diretorio-dos-parquets> --install-profile principal
+```
+
+Use o nome do perfil e o snapshot correspondente para outras companhias.
+O bot lê o SQLite local. Consulte a demanda atual no jogo antes de usar
+uma rota para planejar investimento.
 
 ## Interface — AM/04 Torre de Controle
 

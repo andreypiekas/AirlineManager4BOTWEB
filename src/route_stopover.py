@@ -4,11 +4,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from selenium.common.exceptions import WebDriverException
+
 from airport_catalog import game_code
-from helpers import to_int
+from helpers import game_whole_number, to_int
 from route_registry import endpoint, endpoint_matches
 
 _ID = re.compile(r"[0-9]{1,14}")
+ROUTE_EVENT_WARNING_JS = r"/\bDemand is currently boosted due to a special event\b/i"
 
 # The fragments contain map callbacks. Parse their data in detached documents
 # so research does not change the map state or run any of the returned scripts.
@@ -20,6 +23,26 @@ fetch(url, {cache:'no-store', signal:AbortSignal.timeout(5000), redirect:'error'
   .then(async response => {
     if (!response.ok) return null;
     const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+    if (url.pathname.endsWith('/fleet_details.php')) {
+      const reg = page.querySelectorAll('#newReg');
+      const bindings = reg.length === 1 ? reg[0].parentElement.querySelectorAll('[onclick]') : [];
+      const boundId = handler => /\bAjax\('fleet_details\.php\?id=([1-9][0-9]{0,13})&mode=reg&reg=/.exec(handler)?.[1];
+      const ids = Array.from(bindings, node => boundId(node.getAttribute('onclick'))).filter(Boolean);
+      const layout = page.querySelectorAll('#seat-layout');
+      if (ids.length !== 1 || ids[0] !== aircraft || layout.length !== 1) return null;
+      const cells = Array.from(layout[0].querySelectorAll('.col-4'));
+      if (cells.length !== 3) return null;
+      return ['economy', 'business', 'first'].map((cabin, index) => {
+        const cell = cells[index];
+        const icons = cell.querySelectorAll('img');
+        if (icons.length !== 1 ||
+            icons[0].getAttribute('src') !== 'assets/img/aircraft/configuration/' + cabin + '_seat.png') return null;
+        const counts = Array.from(cell.childNodes)
+          .filter(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())
+          .map(node => node.textContent.trim());
+        return counts.length === 1 ? counts[0] : null;
+      });
+    }
     if (aircraft) {
       const script = Array.from(page.scripts, node => node.textContent).join('\n');
       const reg = page.getElementById('ac-reg-' + aircraft);
@@ -35,13 +58,46 @@ fetch(url, {cache:'no-store', signal:AbortSignal.timeout(5000), redirect:'error'
         Math.abs(Number(a.lon) - Number(lon[1])) < 0.001);
       return airports.length === 1 ? {id:String(airports[0].Id), range:model[1], runway:model[2]} : null;
     }
-    const roads = page.querySelectorAll('.glyphicons-road');
-    const onRoute = page.querySelector('table.m-text:not(.table-bordered) tr td.text-right');
-    const codes = Array.from(page.querySelectorAll('.row .col-4 .xl-text'), node => node.textContent.trim());
+    const detail = page.getElementById('rDetails') || page.body;
+    const roads = detail.querySelectorAll('.glyphicons-road');
+    const countRows = Array.from(detail.querySelectorAll('table.m-text:not(.table-bordered) tr'));
+    const countCell = label => {
+      const rows = countRows.filter(row => row.cells.length === 2 && row.cells[0].textContent.trim() === label
+        && row.cells[1].classList.contains('text-right'));
+      return rows.length === 1 ? rows[0].cells[1].textContent.trim() : null;
+    };
+    const onRoute = countCell('A/C on route');
+    const capableMenus = detail.querySelectorAll('select#capAc');
+    const capableAircraft = capableMenus.length === 1
+      ? Array.from(capableMenus[0].options).filter(option => !option.disabled && option.value !== '')
+          .map(option => /^([1-9][0-9]{0,13});/.exec(option.value)?.[1] ?? null)
+      : null;
+    const rowTexts = table => Array.from(table.rows, row => Array.from(row.cells, cell => cell.textContent.trim()));
+    const paxTables = Array.from(detail.querySelectorAll('table.table-bordered'), rowTexts)
+      .filter(rows => rows[0]?.join('|') === '|Y class|J class|F class');
+    const paxRows = [];
+    if (paxTables.length === 1) {
+      // Cargo shares the table and repeats the same row labels under a new header.
+      for (const row of paxTables[0].slice(1)) {
+        if (row[0] !== 'Daily' && row[0] !== 'Today') break;
+        paxRows.push(row);
+      }
+    }
+    const demandRow = label => {
+      const rows = paxRows.filter(row => row[0] === label);
+      if (rows.length !== 1 || rows[0].length !== 4) return null;
+      const [, y, j, f] = rows[0];
+      return {y, j, f};
+    };
+    const codes = Array.from(detail.querySelectorAll('.row .col-4 .xl-text'), node => node.textContent.trim());
     return {codes, runways:Array.from(roads, node => node.parentElement.textContent.trim()),
-            occupied:onRoute?.textContent.trim()};
+            occupied:onRoute, occupancy_label:onRoute !== null ? 'A/C on route' : null,
+            observed_capable_aircraft:countCell('A/C capable'),
+            capable_aircraft_ids:capableAircraft,
+            observed_daily_demand:demandRow('Daily'), observed_today_demand:demandRow('Today'),
+            event_demand_boosted:EVENT_WARNING.test(detail.textContent || '') ? true : null};
   }).then(done, () => done(null));
-"""
+""".replace("EVENT_WARNING", ROUTE_EVENT_WARNING_JS)
 
 _CANDIDATES = r"""
 const [from, to, range, limit] = arguments;
@@ -83,6 +139,37 @@ return {codes, via, bound, ready:!!button && !button.disabled && !button.classLi
 """
 
 
+_FARES = r"""
+const roots = document.querySelectorAll('#newRouteInfo');
+if (roots.length !== 1) return null;
+const root = roots[0];
+const buttons = root.querySelectorAll('#btnCreateNewRoute');
+if (buttons.length !== 1 || buttons[0].disabled || buttons[0].classList.contains('not-active')) return null;
+return ['eSeat', 'bSeat', 'fSeat'].map(id => {
+    const fields = root.querySelectorAll('[id="' + id + '"]');
+    if (fields.length !== 1) return null;
+    return {value:fields[0].value, disabled:fields[0].disabled === true};
+});
+"""
+
+
+def read_route_fares(bot):
+    """Read all three fares from the active native route form without changing it."""
+    fields = bot.js(_FARES)
+    if not isinstance(fields, list) or len(fields) != 3:
+        return None
+    fares = []
+    for field in fields:
+        if not isinstance(field, dict) or type(field.get("disabled")) is not bool:
+            return None
+        value = field.get("value")
+        price = 0 if field["disabled"] and value == "" else game_whole_number(value)
+        if price is None or (price == 0 and not field["disabled"]):
+            return None
+        fares.append(price)
+    return tuple(fares) if any(fares) else None
+
+
 @dataclass(frozen=True)
 class Stopover:
     id: str
@@ -102,6 +189,20 @@ def parked_specs(bot, aircraft_id):
     if not specs and bot.js("return Number(window.statusData?.[arguments[0]]?.routeId) === 0;", aircraft_id):
         specs = bot.driver.execute_async_script(_READ, f"{url}&mode=reroute", aircraft_id)
     return specs
+
+
+def parked_seat_layout(bot, aircraft_id):
+    """Read Y/J/F from the native details fragment, bound to this aircraft ID."""
+    if not _ID.fullmatch(aircraft_id):
+        return None
+    try:
+        raw = bot.driver.execute_async_script(_READ, f"fleet_details.php?id={aircraft_id}", aircraft_id)
+    except WebDriverException:
+        return None
+    if not isinstance(raw, list) or len(raw) != 3:
+        return None
+    counts = tuple(game_whole_number(value) for value in raw)
+    return counts if None not in counts and any(counts) else None
 
 
 def research_details(bot, origin_id, destination):
@@ -136,10 +237,10 @@ def read_form(bot, aircraft_id, origin, destination, stop):
         return None
     if not _same_airports((origin, destination, stop.id), (*form["codes"], form.get("via"))):
         return None
-    distance = to_int(form["distance"])
-    demand = [to_int(value) for value in form["demand"]]
-    fee = to_int(form["fee"])
-    occupied = to_int(form["occupied"])
+    distance = game_whole_number(form["distance"])
+    demand = [game_whole_number(value) for value in form["demand"]]
+    fee = game_whole_number(form["fee"], currency=True)
+    occupied = game_whole_number(form["occupied"])
     if (distance is None or abs(distance - stop.distance) > 5 or fee is None or fee < 0
             or occupied is None or len(demand) != 3 or any(value is None for value in demand)):
         return None

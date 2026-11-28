@@ -10,6 +10,11 @@ assets/web/index.html and a JSON API:
 * POST /api/control           {"action": "start" | "stop" | "run_now" | "quit"}  (quit: stop the bot and close
                               the program; used by scripts/web_parar.ps1)
 * POST /api/admin/game-source-probe  authorized, read-only snapshot of the active game's DOM
+* POST /api/admin/flight-history-probe  authorized, read-only structural history for one aircraft
+* POST /api/admin/aircraft-order-preview  authorized, configured quote in the observation worker
+* GET  /api/research/demand          scan progress or one observation by origin_id/destination_id
+* POST /api/research/demand/request {"confirm": true} queues a read-only scan
+* GET  /api/research/historical     historical origins and candidates filtered by distance, runway and cabin
 
 Safety: by default it only listens on 127.0.0.1. To open it to the local network ([web] host = 0.0.0.0)
 a token is required ([web] token in config/secrets.ini); without one the server stays on 127.0.0.1.
@@ -22,9 +27,13 @@ import hmac
 import ipaddress
 import json
 import logging
+import math
 import os
+import re
+import sqlite3
 import socket
 import threading
+import time
 import urllib.request
 from configparser import ConfigParser
 from http import HTTPStatus
@@ -35,13 +44,34 @@ from urllib.parse import parse_qs, urlparse
 
 import paths
 from dashboard import snapshot, recent_verified_money, fleet_summary
-from economy import AUTO_GOAL_LABEL, is_auto_goal, load_market, load_state
+from economy import AUTO_GOAL_LABEL, is_auto_goal, load_market, load_market_evidence, load_state
 from i18n import language, t, tip
 from route_registry import RouteRegistry, endpoint
 from hub_registry import HubRegistry
 from hub_expansion import HubExpansionRegistry
+from engine_catalog import EngineCatalogRegistry
 from hub_aircraft_research import HubAircraftResearchRegistry
+from owned_hub_research_ingestion import OwnedHubResearchInputsRegistry
+from owned_hub_research_feed import build_owned_hub_research_queue
+from research_economics_preview import configured_price_assumptions
+from route_detail_evidence import RouteDetailRegistry
 from hub_recommendations import rank_next_aircraft
+from investment_policy import AUDITED_POLICY_LIMITS, InvestmentPolicy, MODES, audited_policy_values
+from investment_journal import InvestmentJournal
+from native_demand_store import DemandStore
+from historical_routes import HistoricalRoutes
+from route_creation import has_pending_creation
+from reroute import has_pending_reroute
+from investment_plan_bridge import build_aircraft_intent_plan
+from aircraft_order_preview import AircraftPreviewRequest
+from expansion_metrics import build_expansion_metrics
+from portfolio_planner import compare_portfolio
+from portfolio_planner import compare_audited_portfolio
+from expansion_economics import rank_expansion_economics
+from audited_economics_registry import AuditedEconomicsRegistry
+from audited_game_snapshot import replay_external_research_page, replay_research_page, snapshot_summary
+from planning_cycle import planning_cycle_summary
+from expansion_feasibility import assess_expansion
 from settings_schema import ALL_FIELDS, ALL_SWITCHES, OPTION_DEFAULTS, TABS, TEXT_SETTINGS, clamp_settings, parse_int
 
 if TYPE_CHECKING:
@@ -54,6 +84,100 @@ log = logging.getLogger("am4bot.app")
 PAGE = Path("assets/web/index.html")
 COOKIE = "am4token"
 MAX_BODY = 64 * 1024
+
+
+def _local_investment_snapshot() -> dict:
+    try:
+        return {
+            **InvestmentJournal.read_existing(since=time.time() - 86400),
+            "read_only": True, "execution_available": False,
+        }
+    except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+        return {
+            "intents": [], "count": None, "estimated_exposure": None,
+            "period_usage": None, "cycle_usage": None, "read_only": True, "execution_available": False,
+            "blocking_reasons": ["diario_indisponivel"],
+        }
+
+
+def _local_investment_blockers(journal: dict) -> list[str]:
+    reasons = list(journal.get("blocking_reasons", []))
+    if journal.get("estimated_exposure") is None or journal.get("count") is None:
+        reasons.append("diario_indisponivel")
+    elif journal["count"] > 0:
+        reasons.append("intencoes_locais_a_conciliar")
+    try:
+        if has_pending_creation():
+            reasons.append("criacao_rota_a_conciliar")
+        if has_pending_reroute():
+            reasons.append("redirecionamento_a_conciliar")
+    except OSError:
+        reasons.append("diario_rotas_indisponivel")
+    return list(dict.fromkeys(reasons))
+
+
+def _block_local_investment(portfolio: dict, journal: dict) -> None:
+    _block_portfolio(portfolio, _local_investment_blockers(journal))
+
+
+def _block_portfolio(portfolio: dict, blockers: list[str]) -> None:
+    if blockers:
+        portfolio["blocking_reasons"] = list(dict.fromkeys([*portfolio["blocking_reasons"], *blockers]))
+        portfolio["status"] = "inconclusivo"
+        if "decision" in portfolio:
+            portfolio["decision"] = "nao_comprar"
+
+
+def _selected_aircraft_id(cfg) -> str | None:
+    """Resolve the configured model exactly; an unresolved selection excludes every candidate."""
+    goal = cfg.get("settings", "goal_model", "") if cfg.get_bool("options", "save_for_goal", False) else ""
+    if goal and is_auto_goal(goal):
+        return None
+    name = (goal or cfg.get("settings", "aircraft_model", "")).strip().casefold()
+    if not name:
+        return None
+    market = load_market_evidence()
+    if market.get("fresh") is not True:
+        return ""
+    models = market["models"]
+    matches = [str(row.get("id")) for row in models if row["name"].strip().casefold() == name]
+    if len(matches) != 1 or not re.fullmatch(r"[1-9][0-9]{0,11}", matches[0]):
+        return ""
+    return matches[0] if sum(str(row.get("id")) == matches[0] for row in models) == 1 else ""
+
+
+def _current_audited_finance_blockers(bot, evaluation: dict, record: dict, journal: dict,
+                                      controls: dict, passenger_hangar: dict,
+                                      cash_limits: dict) -> list[str]:
+    """Require the audited snapshot to agree with the current account and ledger."""
+    blockers = []
+    money, observed_at = recent_verified_money(bot)
+    cash = evaluation["provenance"]["cash"]
+    previous_stamps = [cash["observed_at"]]
+    for key in ("captured_observed_at", "live_observed_at"):
+        stamp = cash_limits.get(key)
+        if stamp is not None:
+            previous_stamps.append(stamp)
+    if (type(money) is not int or money < 0 or type(observed_at) not in (int, float)
+            or not math.isfinite(observed_at) or observed_at < max(previous_stamps)):
+        blockers.append("saldo_vivo_a_confirmar")
+    elif money != cash["value"]["available"]:
+        blockers.append("saldo_vivo_divergente_a3")
+    # A new confirmation may alter the balance, hangar, fleet and spending
+    # controls even if the current balance happens to equal the old amount.
+    last_confirmed = journal["period_usage"]["last_confirmed_at"]
+    if last_confirmed is not None:
+        if type(last_confirmed) not in (int, float) or not math.isfinite(last_confirmed):
+            blockers.append("diario_indisponivel")
+        else:
+            evidence = {**record["portfolio_evidence"], "controls": controls}
+            timestamps = [row["observed_at_oldest"] for row in record["evaluations"]]
+            for group in ("controls", "confidence_evidence", "diversification_evidence"):
+                timestamps.extend(proof["observed_at"] for proof in evidence.get(group, {}).values())
+            timestamps.append(passenger_hangar["observed_at"])
+            if any(last_confirmed > stamp for stamp in timestamps):
+                blockers.append("snapshot_anterior_compra_confirmada")
+    return blockers
 
 
 def _is_loopback(host: str) -> bool:
@@ -180,35 +304,322 @@ class WebDashboard:
         report["fleet_counts"] = fleet_summary(self.bot.stats())
         return report
 
-    def hub_expansion(self) -> dict:
+    def hub_expansion(self, *, owned_inventory: dict | None = None,
+                      owned_research: dict | None = None) -> dict:
         """Compare candidate hubs against a recently verified balance."""
-        owned = {hub["id"] for hub in self.hubs()["hubs"]}
-        cash, observed_at = recent_verified_money(self.bot, load_state())
+        if owned_inventory is None:
+            owned_inventory = self.hubs()
+        capture = snapshot_summary()
+        capture_id = capture.get("snapshot_id") if capture.get("status") == "parcial" else None
+        captured_inventory = capture.get("owned_inventory") if capture_id else None
+        owned = {hub["id"] for hub in owned_inventory["hubs"]}
+        live_ownership_verified = owned_inventory.get("hub_catalog_fresh") is True
+        ownership_verified = live_ownership_verified
+        if captured_inventory is not None:
+            captured_owned = {hub["id"] for hub in captured_inventory["hubs"]}
+            ownership_verified = not live_ownership_verified or owned == captured_owned
+            if not ownership_verified:
+                # Exclude any hub currently reported as owned while waiting for
+                # a capture that reconciles the two inventories.
+                owned |= captured_owned
+                captured_inventory = None
+            else:
+                owned = captured_owned
+        cash, observed_at = recent_verified_money(self.bot)
         report = HubExpansionRegistry().snapshot(
             cash=cash,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
             owned_hub_ids=owned,
+            external_ownership_verified=ownership_verified,
         )
         report["cash_observed_at"] = observed_at
+        if owned_research is None:
+            recommendations_reader = getattr(self, "hub_recommendations", None)
+            owned_research = recommendations_reader() if callable(recommendations_reader) else {}
+        report["planning_snapshot_id"] = capture_id
+        report["planning_owned_inventory"] = captured_inventory
+        report["expansion_decision"] = assess_expansion(
+            captured_inventory,
+            owned_research,
+            owned_research.get("portfolio") if isinstance(owned_research, dict) else None,
+            report,
+            coverage=owned_research.get("opportunity_coverage")
+            if isinstance(owned_research, dict) else None,
+            profile_id=paths.current().label,
+            snapshot_id=capture_id,
+            require_snapshot_scope=True,
+            policy=InvestmentPolicy.from_config(self.cfg),
+        )
         return report
 
-    def hub_recommendations(self) -> dict:
+    def external_hub_research(self, *, research_offset: int = 0,
+                              research_fingerprint: str | None = None) -> dict:
+        """Serve external combinations from the worker's audited capture."""
+        return replay_external_research_page(offset=research_offset, expected_fingerprint=research_fingerprint)
+
+    def hub_recommendations(self, *, research_offset: int = 0,
+                            research_fingerprint: str | None = None) -> dict:
         """Rank proven research for owned hubs using independent cached reads."""
         routes = self.routes()
-        cash, observed_at = recent_verified_money(self.bot, load_state())
-        return rank_next_aircraft(
-            HubRegistry().snapshot(routes),
-            HubAircraftResearchRegistry().snapshot(),
+        cash, observed_at = recent_verified_money(self.bot)
+        inventory = HubRegistry().snapshot(routes)
+        verified_scenarios = HubAircraftResearchRegistry().snapshot()
+        pending_inputs = OwnedHubResearchInputsRegistry().snapshot(verified=verified_scenarios)
+        engines = EngineCatalogRegistry().snapshot()
+        # Replace embedded proofs with the independent route-detail registry.
+        # A failed subsequent read must revoke any previously cached detail.
+        details = RouteDetailRegistry().enrich([
+            {"origin_id": row["origin"].get("id") if isinstance(row.get("origin"), dict) else None,
+             "destination_id": row["destination"].get("id") if isinstance(row.get("destination"), dict) else None}
+            for row in verified_scenarios
+        ])
+        verified_scenarios = [
+            {**{key: value for key, value in row.items() if key != "route_detail"},
+             **({"route_detail": sample["route_detail"]} if "route_detail" in sample else {})}
+            for row, sample in zip(verified_scenarios, details)
+        ]
+        report = rank_next_aircraft(
+            inventory,
+            [*verified_scenarios, *pending_inputs],
             route_report=routes,
             cash=cash,
             cash_observed_at=observed_at,
             reserve=self.cfg.get_int("settings", "cash_reserve", 0),
+            engine_catalog=engines,
         )
+        report["research_ingestion"] = {
+            "saved_verified_scenarios": len(verified_scenarios),
+            "saved_pending_inputs": len(pending_inputs),
+            "coverage": "partial", "read_only": True,
+        }
+        report["engine_order_list_coverage"] = engines.get("order_list_coverage")
+        report["fleet_commitment_observations"] = inventory.get("fleet_commitment_observations")
+        report["fleet_route_reconciliation"] = inventory.get("fleet_route_reconciliation")
+        report["finance_observations"] = inventory.get("finance_observations")
+        owned_ids = {hub["id"] for hub in inventory.get("hubs", [])
+                     if isinstance(hub, dict) and isinstance(hub.get("id"), str)}
+        demand_snapshot = HubExpansionRegistry().demand_research_snapshot(owned_ids)
+        stats_reader = getattr(self.bot, "stats", None)
+        report["research_queue"] = build_owned_hub_research_queue(
+            inventory,
+            demand_snapshot["samples"],
+            load_market_evidence(),
+            engines=engines,
+            hub_progress=demand_snapshot["hub_progress"],
+            offset=research_offset,
+            expected_fingerprint=research_fingerprint,
+            operating_market_stats=stats_reader() if callable(stats_reader) else None,
+            preview_margin=max(0, min(100, self.cfg.get_int("investment", "preview_margin_pct", 10))) / 100,
+            configured_prices=configured_price_assumptions(self.cfg),
+            route_report=routes,
+        )
+        investment_policy = InvestmentPolicy.from_config(self.cfg)
+        report["investment_policy"] = investment_policy.report()
+        report["investment_journal"] = _local_investment_snapshot()
+        report["portfolio"] = compare_portfolio(
+            report,
+            known_local_commitments=report["investment_journal"]["estimated_exposure"],
+            local_period_usage=report["investment_journal"].get("period_usage"),
+            max_daily_spend=(investment_policy.max_daily_spend
+                             if investment_policy.enabled and investment_policy.max_daily_spend > 0 else None),
+            max_acquisitions_per_day=(investment_policy.max_acquisitions_per_day
+                                      if investment_policy.enabled and investment_policy.max_acquisitions_per_day > 0 else None),
+            max_single_investment=(investment_policy.max_single_investment
+                                   if investment_policy.enabled and investment_policy.max_single_investment > 0
+                                   else None),
+            min_daily_profit=investment_policy.min_daily_profit if investment_policy.enabled else 0,
+            max_payback_days=(investment_policy.max_payback_days
+                              if investment_policy.enabled and investment_policy.max_payback_days > 0
+                              else None),
+            profit_weight=investment_policy.profit_weight,
+            efficiency_weight=investment_policy.efficiency_weight,
+            return_weight=investment_policy.return_weight,
+            risk_weight=investment_policy.risk_weight,
+            confidence_weight=investment_policy.confidence_weight,
+            diversification_weight=investment_policy.diversification_weight,
+            policy_valid=investment_policy.valid,
+        )
+        _block_local_investment(report["portfolio"], report["investment_journal"])
+        return report
+
+    def investment_metrics(self) -> tuple[int, dict]:
+        """Expose local investment history and proven research without game mutations."""
+        try:
+            journal = InvestmentJournal()
+            try:
+                research = self.hub_recommendations()
+            except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+                research = None
+            try:
+                audited = self.audited_expansion() if not journal.simulation else None
+            except (OSError, sqlite3.Error, ValueError, KeyError, TypeError, AttributeError):
+                audited = None
+            metrics = build_expansion_metrics(
+                journal, opportunity_report=research, audited_report=audited,
+            )
+            if not journal.simulation:
+                metrics["worker_planning"] = planning_cycle_summary()
+            return HTTPStatus.OK, metrics
+        except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+            return HTTPStatus.SERVICE_UNAVAILABLE, {
+                "read_only": True,
+                "status": "diario_indisponivel",
+                "message": "Não foi possível auditar o diário de investimentos.",
+            }
+
+    def audited_expansion(self) -> dict:
+        """Expose A3/A4 accounting from independently stored game evidence."""
+        record = AuditedEconomicsRegistry().snapshot()
+        policy = InvestmentPolicy.from_config(self.cfg)
+        proof = record["portfolio_evidence"]
+        evaluations = record["evaluations"]
+        game_snapshot = snapshot_summary()
+        snapshot_id = record["snapshot_id"] or game_snapshot.get("snapshot_id") or ""
+        matching_capture = (game_snapshot["status"] == "parcial" and bool(snapshot_id)
+                            and game_snapshot.get("snapshot_id") == snapshot_id)
+        scopes = game_snapshot.get("scopes", {}) if matching_capture else {}
+        fleet_verified = scopes.get("fleet") is True
+        research_verified = (proof.get("research_coverage_verified") is True
+                             and all(scopes.get(scope) is True for scope in
+                                     ("hubs", "routes", "models", "engines", "prices")))
+        stored_controls = proof.get("controls")
+        controls = dict(stored_controls) if isinstance(stored_controls, dict) else {}
+        current_reserve = self.cfg.get_int("settings", "cash_reserve", -1)
+        if matching_capture and "policy_controls" in game_snapshot:
+            # Policy is local configuration, captured with the game snapshot.
+            # Never reuse a previous policy control after its value changes.
+            current_policy = audited_policy_values(policy, current_reserve)
+            for name in AUDITED_POLICY_LIMITS:
+                controls.pop(name, None)
+                captured = game_snapshot["policy_controls"].get(name)
+                if captured is not None and captured["value"] == current_policy.get(name):
+                    controls[name] = captured
+        controls.pop("unrouted_aircraft_count", None)
+        if fleet_verified and game_snapshot.get("unrouted_aircraft_control") is not None:
+            controls["unrouted_aircraft_count"] = game_snapshot["unrouted_aircraft_control"]
+        passenger_hangar = game_snapshot.get("passenger_hangar_control") if matching_capture else None
+        journal = _local_investment_snapshot()
+        try:
+            live_cash = recent_verified_money(self.bot)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            live_cash = (None, None)
+        portfolio = compare_audited_portfolio(
+            evaluations,
+            aircraft_budget_mode=self.cfg.get("investment", "aircraft_budget_mode", "fixed"),
+            selected_model_id=_selected_aircraft_id(self.cfg),
+            profile_id=paths.current().label,
+            snapshot_id=snapshot_id,
+            controls=controls,
+            passenger_hangar=passenger_hangar,
+            confidence_evidence=proof.get("confidence_evidence"),
+            diversification_evidence=proof.get("diversification_evidence"),
+            coverage_snapshot=proof.get("coverage_snapshot"),
+            fleet_coverage_verified=fleet_verified,
+            research_coverage_verified=research_verified,
+            commitments_verified=proof.get("commitments_verified") is True,
+            current_cash_reserve=current_reserve,
+            max_daily_spend=policy.max_daily_spend,
+            max_cycle_spend=policy.max_cycle_spend,
+            max_acquisitions_per_day=policy.max_acquisitions_per_day,
+            local_journal=journal,
+            historical_investment_spending=(game_snapshot.get("historical_investment_spending")
+                                            if matching_capture else None),
+            captured_cash=game_snapshot.get("cash_control") if matching_capture else None,
+            live_cash=live_cash,
+            require_independent_cash=True,
+            max_single_investment=(policy.max_single_investment
+                                   if policy.enabled and policy.max_single_investment > 0 else None),
+            min_daily_profit=policy.min_daily_profit,
+            max_payback_days=policy.max_payback_days or None,
+            profit_weight=policy.profit_weight,
+            efficiency_weight=policy.efficiency_weight,
+            return_weight=policy.return_weight,
+            risk_weight=policy.risk_weight,
+            confidence_weight=policy.confidence_weight,
+            diversification_weight=policy.diversification_weight,
+            policy_valid=policy.valid and policy.enabled,
+        )
+        if record["status"] == "registro_invalido":
+            portfolio["blocking_reasons"].append("registro_a3_invalido")
+            portfolio["status"] = "inconclusivo"
+            portfolio["decision"] = "nao_comprar"
+        _block_local_investment(portfolio, journal)
+        # A fresh capture supersedes the economic proof even when the balance
+        # is unchanged. Keep historical evaluations visible for diagnosis.
+        if game_snapshot["status"] == "registro_invalido":
+            _block_portfolio(portfolio, ["coleta_jogo_invalida"])
+        elif game_snapshot["status"] == "expirado":
+            _block_portfolio(portfolio, ["coleta_jogo_expirada"])
+        elif game_snapshot["status"] == "sem_coleta":
+            _block_portfolio(portfolio, ["coleta_jogo_ausente"])
+        elif (record["snapshot_id"]
+              and game_snapshot.get("snapshot_id") != record["snapshot_id"]):
+            _block_portfolio(portfolio, ["snapshot_a3_divergente_coleta"])
+        purchase_plan = None
+        purchase_plan_blockers = []
+        if portfolio.get("decision") == "sugestao_para_analise":
+            winner = portfolio.get("best")
+            economics_id = winner.get("economics_id") if isinstance(winner, dict) else None
+            matches = [
+                row for row in evaluations
+                if isinstance(row, dict) and isinstance(economics_id, str)
+                and row.get("economics_id") == economics_id
+            ]
+            if len(matches) != 1:
+                purchase_plan_blockers.append("economia_a3_vencedora_ausente_ou_ambigua")
+            else:
+                try:
+                    finance_blockers = _current_audited_finance_blockers(
+                        self.bot, matches[0], record, journal, controls, passenger_hangar,
+                        portfolio.get("cash_limits", {}),
+                    )
+                except (AttributeError, ValueError, TypeError, KeyError, OverflowError):
+                    finance_blockers = ["conciliacao_financeira_a_confirmar"]
+                _block_portfolio(portfolio, finance_blockers)
+                purchase_plan_blockers.extend(finance_blockers)
+                if not finance_blockers:
+                    try:
+                        purchase_plan = build_aircraft_intent_plan(portfolio, matches[0])
+                    except (ValueError, TypeError, KeyError) as exc:
+                        purchase_plan_blockers.append(str(exc))
+        else:
+            purchase_plan_blockers.extend(portfolio.get("blocking_reasons") or [])
+            if not purchase_plan_blockers:
+                purchase_plan_blockers.append("nenhum_plano_elegivel")
+        ranking = rank_expansion_economics(evaluations)
+        return {
+            "status": record["status"], "snapshot_id": record["snapshot_id"],
+            "profile_id": paths.current().label,
+            "game_observation_snapshot": game_snapshot,
+            "evaluation_count": len(evaluations),
+            "evaluations": evaluations,
+            "a3_ranking": ranking,
+            "portfolio": portfolio,
+            "purchase_plan_preview": purchase_plan,
+            "purchase_plan_blockers": purchase_plan_blockers,
+            "read_only": True, "execution_available": False,
+        }
 
     def game_source_probe(self) -> tuple[int, dict]:
         """Ask the bot worker to read its own game session during an idle wait."""
+        return self._admin_probe_result(self.bot.request_game_source_probe)
+
+    def flight_history_probe(self, aircraft_id: str) -> tuple[int, dict]:
+        """Inspect one aircraft's history through the existing Selenium owner."""
+        return self._admin_probe_result(lambda: self.bot.request_flight_history_probe(aircraft_id))
+
+    def aircraft_order_preview(self, payload: dict) -> tuple[int, dict]:
+        """Check a one-unit quote through the authenticated observation worker."""
         try:
-            result, report = self.bot.request_game_source_probe()
+            preview = AircraftPreviewRequest.from_payload(payload)
+        except ValueError as exc:
+            return HTTPStatus.BAD_REQUEST, {"ok": False, "message": str(exc)}
+        return self._admin_probe_result(lambda: self.bot.request_aircraft_order_preview(preview))
+
+    @staticmethod
+    def _admin_probe_result(request: Callable[[], tuple[str, Optional[dict]]]) -> tuple[int, dict]:
+        try:
+            result, report = request()
             if result == "ok" and isinstance(report, dict):
                 return HTTPStatus.OK, {"ok": True, "report": report}
             if result == "busy":
@@ -269,6 +680,66 @@ class WebDashboard:
         return {"tabs": tabs, "text": text, "goal_options": [t(AUTO_GOAL_LABEL)] + model_names,
                 "aircraft_options": model_names, "auto_goal_label": t(AUTO_GOAL_LABEL),
                 "lang": language()}
+
+    def investment_settings(self) -> dict:
+        """Per-profile controls for the separate, gated investment workflow."""
+        return {
+            "policy": InvestmentPolicy.from_config(self.cfg).report(),
+            "version": self.cfg.version,
+            "cash_reserve": self.cfg.get_int("settings", "cash_reserve", 0),
+            "engine_preference": self.cfg.get("settings", "engine_preference", "default"),
+        }
+
+    def update_investment_settings(self, payload: dict) -> tuple[bool, str]:
+        """Validate the entire policy before an atomic per-profile config save."""
+        fields = {"planning_enabled", "mode", "auto_buy_aircraft", "auto_buy_hub",
+                  "max_single_investment", "max_hub_investment", "max_hub_points",
+                  "max_daily_spend", "max_cycle_spend", "max_acquisitions_per_day",
+                  "min_daily_profit", "max_payback_days", "profit_weight", "efficiency_weight",
+                  "return_weight", "risk_weight", "confidence_weight", "diversification_weight"}
+        values = payload.get("policy")
+        version = payload.get("expected_version")
+        if (not isinstance(values, dict) or set(values) != fields
+                or type(version) is not int):
+            return False, "Política incompleta ou versão inválida. Atualize o painel."
+        for key in ("planning_enabled", "auto_buy_aircraft", "auto_buy_hub"):
+            if type(values[key]) is not bool:
+                return False, f"{key} deve ser verdadeiro ou falso."
+        if not isinstance(values["mode"], str) or values["mode"] not in MODES:
+            return False, "Modo de investimento inválido."
+        for key, upper in (("max_single_investment", 10**15), ("max_hub_investment", 10**15),
+                           ("max_hub_points", 10**9), ("max_daily_spend", 10**15),
+                           ("max_cycle_spend", 10**15),
+                           ("max_acquisitions_per_day", 100), ("min_daily_profit", 10**15),
+                           ("max_payback_days", 3650), ("profit_weight", 100),
+                           ("efficiency_weight", 100), ("return_weight", 100), ("risk_weight", 100),
+                           ("confidence_weight", 100), ("diversification_weight", 100)):
+            amount = values[key]
+            if type(amount) is not int or amount < 0 or amount > upper:
+                return False, f"{key} deve ser um inteiro entre 0 e {upper}."
+        if not any(values[key] for key in ("profit_weight", "efficiency_weight", "return_weight", "risk_weight",
+                                               "confidence_weight", "diversification_weight")):
+            return False, "Configure pelo menos um peso positivo para o ranking."
+        with self.cfg._lock:
+            if version != self.cfg.version:
+                return False, "Configurações alteradas em outra sessão. Atualize antes de salvar."
+            for key in fields:
+                value = values[key]
+                self.cfg.set("investment", key, "on" if value is True else "off" if value is False else value)
+            self.cfg.save()
+        log.info("Política de investimento do perfil salva pelo painel (gate G0).")
+        return True, "Política salva. Execução de compras permanece indisponível em G0."
+
+    def stop_investment(self) -> tuple[bool, str]:
+        """Disable new investment and the existing automatic aircraft buyer."""
+        with self.cfg._lock:
+            self.cfg.set("investment", "planning_enabled", "off")
+            self.cfg.set("investment", "auto_buy_aircraft", "off")
+            self.cfg.set("investment", "auto_buy_hub", "off")
+            self.cfg.set("options", "autobuy_aircraft", "off")
+            self.cfg.save()
+        log.warning("Novas aquisições de aeronaves/hubs suspensas manualmente pelo painel.")
+        return True, "Novas compras de aeronaves e hubs suspensas, incluindo a compra automática legada."
 
     def update_settings(self, payload: dict) -> tuple[bool, str]:
         known_fields = {k for k, _ in ALL_FIELDS}
@@ -384,6 +855,38 @@ class WebDashboard:
                 self._send(HTTPStatus.FORBIDDEN, "Acesso negado: abra a página com ?token=...".encode("utf-8"),
                            "text/plain; charset=utf-8")
 
+            def _native_demand(self, *, queue: bool = False, pair: tuple[str, str] | None = None) -> None:
+                try:
+                    store = DemandStore()
+                    if queue:
+                        report = {"queued": store.request()}
+                    elif pair is not None:
+                        report = {"observation": store.lookup(*pair)}
+                    else:
+                        report = store.status()
+                except (OSError, sqlite3.Error):
+                    return self._json({"ok": False, "message": "Varredura de demanda indisponível."},
+                                      HTTPStatus.SERVICE_UNAVAILABLE)
+                return self._json(report)
+
+            def _historical_routes(self, query: str) -> None:
+                params = parse_qs(query, keep_blank_values=True)
+                fields = {"origin_id", "max_km", "min_runway_ft", "min_y", "min_j", "min_f"}
+                try:
+                    if (params.keys() - fields
+                            or any(len(values) != 1 or not re.fullmatch(r"[0-9]{1,5}", values[0])
+                                   for values in params.values())):
+                        raise ValueError("Informe filtros numéricos válidos.")
+                    filters = {key: int(values[0]) for key, values in params.items()}
+                    if filters.get("origin_id", 1) == 0 or filters.get("max_km", 1) == 0:
+                        raise ValueError("Informe um hub e um alcance válidos.")
+                    return self._json(HistoricalRoutes().report(**filters))
+                except ValueError as error:
+                    return self._json({"ok": False, "message": str(error)}, HTTPStatus.BAD_REQUEST)
+                except (OSError, sqlite3.Error):
+                    return self._json({"ok": False, "message": "Pesquisa histórica indisponível."},
+                                      HTTPStatus.SERVICE_UNAVAILABLE)
+
             def do_GET(self) -> None:  # noqa: N802 - http.server API
                 if not self._allowed():
                     return self._deny()
@@ -405,21 +908,73 @@ class WebDashboard:
                     return self._json({"lines": dashboard.buffer.since(since)})
                 if url.path == "/api/settings":
                     return self._json(dashboard.settings())
+                if url.path == "/api/investment/policy":
+                    return self._json(dashboard.investment_settings())
+                if url.path == "/api/research/historical":
+                    return self._historical_routes(url.query)
+                if url.path == "/api/research/demand":
+                    params = parse_qs(url.query, keep_blank_values=True)
+                    origin = params.get("origin_id", [])
+                    destination = params.get("destination_id", [])
+                    if not origin and not destination:
+                        return self._native_demand()
+                    if (not all(len(ids) == 1 and re.fullmatch(r"[1-9][0-9]{0,11}", ids[0])
+                                for ids in (origin, destination)) or origin == destination):
+                        return self._json({"ok": False, "message": "Informe IDs válidos de origem e destino distintos."},
+                                          HTTPStatus.BAD_REQUEST)
+                    return self._native_demand(pair=(origin[0], destination[0]))
+                if url.path == "/api/investment/metrics":
+                    status, report = dashboard.investment_metrics()
+                    return self._json(report, status)
+                if url.path == "/api/investment/audited-expansion":
+                    return self._json(dashboard.audited_expansion())
+                if url.path == "/api/investment/audited-expansion/research":
+                    params = parse_qs(url.query)
+                    raw_offset = params.get("research_offset", ["0"])[0]
+                    offset = int(raw_offset) if raw_offset.isdecimal() and len(raw_offset) <= 9 else 0
+                    return self._json(replay_research_page(
+                        offset=offset, expected_snapshot=params.get("snapshot_id", [None])[0],
+                        expected_fingerprint=params.get("research_snapshot", [None])[0],
+                    ))
                 if url.path == "/api/routes":
                     return self._json(dashboard.routes())
                 if url.path == "/api/hubs":
                     return self._json(dashboard.hubs())
                 if url.path == "/api/hubs/expansion":
                     return self._json(dashboard.hub_expansion())
+                if url.path == "/api/hubs/expansion/research":
+                    params = parse_qs(url.query)
+                    raw_offset = params.get("research_offset", ["0"])[0]
+                    research_offset = (int(raw_offset) if raw_offset.isdecimal()
+                                       and len(raw_offset) <= 9 else 0)
+                    return self._json(dashboard.external_hub_research(
+                        research_offset=research_offset,
+                        research_fingerprint=params.get("research_snapshot", [None])[0],
+                    ))
                 if url.path == "/api/hubs/recommendations":
+                    params = parse_qs(url.query)
+                    raw_offset = params.get("research_offset", ["0"])[0]
+                    research_offset = (int(raw_offset) if raw_offset.isdecimal()
+                                       and len(raw_offset) <= 9 else 0)
+                    if research_offset:
+                        return self._json(dashboard.hub_recommendations(
+                            research_offset=research_offset,
+                            research_fingerprint=params.get("research_snapshot", [None])[0],
+                        ))
                     return self._json(dashboard.hub_recommendations())
                 self._send(HTTPStatus.NOT_FOUND, b"Not found", "text/plain")
 
             def do_POST(self) -> None:  # noqa: N802 - http.server API
                 path = urlparse(self.path).path
-                admin_probe = path == "/api/admin/game-source-probe"
+                admin_probe = path in (
+                    "/api/admin/game-source-probe", "/api/admin/flight-history-probe",
+                    "/api/admin/aircraft-order-preview",
+                )
+                protected_action = path in (
+                    "/api/investment/policy", "/api/investment/stop", "/api/research/demand/request",
+                )
                 if (not self._allowed(require_token=admin_probe,
-                                      allow_query_token=not admin_probe)
+                                      allow_query_token=not (admin_probe or protected_action))
                         or self.headers.get("X-AM4") != "1"):
                     return self._deny()
                 length = parse_int(self.headers.get("Content-Length", "0")) or 0
@@ -431,13 +986,32 @@ class WebDashboard:
                     return self._json({"ok": False, "message": "JSON inválido."}, 400)
                 if not isinstance(payload, dict):
                     return self._json({"ok": False, "message": "JSON inválido."}, 400)
+                if path == "/api/research/demand/request":
+                    if set(payload) != {"confirm"} or payload["confirm"] is not True:
+                        return self._json({"ok": False, "message": "Confirme a varredura de demanda."}, 400)
+                    return self._native_demand(queue=True)
                 if admin_probe:
-                    if payload:
-                        return self._json({"ok": False, "message": "Envie um objeto JSON vazio."}, 400)
-                    status, report = dashboard.game_source_probe()
+                    if path == "/api/admin/game-source-probe":
+                        if payload:
+                            return self._json({"ok": False, "message": "Envie um objeto JSON vazio."}, 400)
+                        status, report = dashboard.game_source_probe()
+                    elif path == "/api/admin/flight-history-probe":
+                        aircraft_id = payload.get("aircraft_id")
+                        if (set(payload) != {"aircraft_id"} or type(aircraft_id) is not str
+                                or re.fullmatch(r"[1-9][0-9]{0,13}", aircraft_id) is None):
+                            return self._json({"ok": False, "message": "Informe um ID de aeronave válido."}, 400)
+                        status, report = dashboard.flight_history_probe(aircraft_id)
+                    else:
+                        status, report = dashboard.aircraft_order_preview(payload)
                     return self._json(report, status)
                 if path == "/api/settings":
                     ok, message = dashboard.update_settings(payload)
+                elif path == "/api/investment/policy":
+                    ok, message = dashboard.update_investment_settings(payload)
+                elif path == "/api/investment/stop":
+                    if payload:
+                        return self._json({"ok": False, "message": "Envie um objeto JSON vazio."}, 400)
+                    ok, message = dashboard.stop_investment()
                 elif path == "/api/routes":
                     ok, message = dashboard.update_routes(payload)
                 elif path == "/api/control":

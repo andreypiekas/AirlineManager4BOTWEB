@@ -1,7 +1,7 @@
 """Read-only acquisition scenarios backed by separately verified game observations.
 
 The catalog and route research are collected independently. An airport cannot
-be ranked until both observations are present and the investment is complete.
+be ranked conclusively until its route, engine and cost evidence is complete.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import math
 import re
 import threading
 import time
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Optional
@@ -19,7 +20,10 @@ from airport_catalog import game_code
 
 _LOCK = threading.RLock()
 _ID = re.compile(r"^[1-9][0-9]{0,11}$")
+_ENGINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_AGE_SECONDS = 3 * 86400
+MAX_FINANCIAL_VALUE = 10**15
+_UNSET = object()
 
 
 def _amount(value: object) -> Optional[float]:
@@ -30,7 +34,7 @@ def _amount(value: object) -> Optional[float]:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
         return None
-    return round(number, 2) if math.isfinite(number) and number >= 0 else None
+    return round(number, 2) if math.isfinite(number) and 0 <= number <= MAX_FINANCIAL_VALUE else None
 
 
 def _profit(value: object) -> Optional[float]:
@@ -41,7 +45,7 @@ def _profit(value: object) -> Optional[float]:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
         return None
-    return round(number, 2) if math.isfinite(number) else None
+    return round(number, 2) if math.isfinite(number) and abs(number) <= MAX_FINANCIAL_VALUE else None
 
 
 def _airport_id(value: object) -> Optional[str]:
@@ -57,6 +61,304 @@ def _points(value: object) -> Optional[int]:
     if type(value) is not int or not 0 <= value <= 10_000_000:
         return None
     return value
+
+
+def _engine_id(value: object) -> Optional[str]:
+    """Accept only an explicit selection ID, never a derived engine name."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    identifier = str(value).strip()
+    return identifier if _ENGINE_ID.fullmatch(identifier) else None
+
+
+def _fresh(stamp: object, now: float, max_age_seconds: int = MAX_AGE_SECONDS) -> bool:
+    if type(stamp) not in (int, float) or type(now) not in (int, float):
+        return False
+    try:
+        observed, current = float(stamp), float(now)
+    except (OverflowError, ValueError):
+        return False
+    return (math.isfinite(observed) and math.isfinite(current) and observed > 0
+            and 0 <= current - observed <= max_age_seconds)
+
+
+def native_scenario_identity(scenario: Mapping) -> tuple | None:
+    """Require explicit native model, engine, endpoints and itinerary."""
+    model = _airport_id(scenario.get("model_id"))
+    engine = _engine_id(scenario.get("engine_id"))
+    origin = _airport_id(scenario.get("origin_id"))
+    destination = _airport_id(scenario.get("destination_id"))
+    stopover = _airport_id(scenario.get("stopover_id"))
+    if (None in (model, engine, origin, destination) or origin == destination
+            or "stopover_id" not in scenario
+            or (scenario["stopover_id"] is not None
+                and stopover in (None, origin, destination))):
+        return None
+    return model, engine, origin, destination, stopover
+
+
+def _scenario_identity(scenario: dict) -> tuple:
+    """Keep native identities independent of labels and historical records."""
+    native = native_scenario_identity(scenario)
+    if native is not None:
+        return ("native", *native)
+    return ("historical", str(scenario.get("model") or "").strip().casefold(),
+            _airport_id(scenario.get("model_id")), _engine_id(scenario.get("engine_id")),
+            _airport_id(scenario.get("origin_id")),
+            _airport_id(scenario.get("destination_id")),
+            "stopover_id" in scenario, str(scenario.get("stopover_id")),
+            str(scenario.get("route") or "").strip().casefold())
+
+
+def _native_fields(source: Mapping) -> dict:
+    """Retain missing and malformed IDs without turning them into direct routes."""
+    fields = {}
+    if "model_id" in source:
+        fields["model_id"] = _airport_id(source["model_id"]) or ""
+    if "stopover_id" in source:
+        value = source["stopover_id"]
+        fields["stopover_id"] = None if value is None else _airport_id(value) or ""
+    return fields
+
+
+def _scope_fields(source: Mapping) -> dict:
+    return {key: source[key] if isinstance(source[key], str) else ""
+            for key in ("profile_id", "snapshot_id") if key in source}
+
+
+def scenario_scope_consistent(*proofs: Mapping, profile_id: str | None = None,
+                              snapshot_id: str | None = None) -> bool:
+    """Reject contradictory scope metadata, including in historical proofs."""
+    for key, expected in (("profile_id", profile_id), ("snapshot_id", snapshot_id)):
+        values = [proof[key] for proof in proofs if key in proof]
+        if expected is not None:
+            values.append(expected)
+        if any(not isinstance(value, str) or not value.strip() for value in values):
+            return False
+        if len(set(values)) > 1:
+            return False
+    return True
+
+
+def _scenarios(candidate: dict) -> list[dict]:
+    """Combine the old single-slot format with variant-aware observations."""
+    stored = candidate.get("scenarios")
+    scenarios = [item for item in stored if isinstance(item, dict)] if isinstance(stored, list) else []
+    legacy_slot = candidate.get("scenario")
+    if (isinstance(legacy_slot, dict) and legacy_slot
+            and not any(_scenario_identity(item) == _scenario_identity(legacy_slot)
+                        and _same_research_proof(item, legacy_slot) for item in scenarios)):
+        scenarios.append(legacy_slot)
+    return scenarios
+
+
+def _research_stamp(scenario: dict) -> float:
+    stamp = scenario.get("observed_at")
+    if type(stamp) not in (int, float):
+        return float("-inf")
+    try:
+        stamp = float(stamp)
+    except OverflowError:
+        return float("-inf")
+    return stamp if math.isfinite(stamp) and stamp > 0 else float("-inf")
+
+
+def _future_research(scenario: dict, now: float) -> bool:
+    return any(_research_stamp(proof) > now for proof in (
+        scenario, scenario.get("costs"), scenario.get("financial")) if isinstance(proof, dict))
+
+
+_RESEARCH_PROOF_FIELDS = (
+    "source", "observed_at", "profile_id", "snapshot_id", "route_feasible", "demand_verified",
+    "external_demand_verified", "event_demand_boosted", "engine_verified", "costs", "financial",
+    "aircraft_price", "route_fee", "hangar_price", "other_fees",
+    "aircraft_price_includes_engine", "engine_delta_cost", "profit_per_day", "excluded_costs",
+)
+
+
+def _same_research_proof(first: dict, second: dict) -> bool:
+    """Ignore display labels while comparing decision-making evidence."""
+    def proof_value(scenario: dict, field: str):
+        value = scenario.get(field)
+        if field in ("costs", "financial") and isinstance(value, dict):
+            return {key: item for key, item in value.items() if key not in ("model", "route")}
+        return value
+
+    return all(proof_value(first, field) == proof_value(second, field)
+               for field in _RESEARCH_PROOF_FIELDS)
+
+
+def _latest_research(candidate: dict) -> list[tuple[dict, bool]]:
+    """Exclude stale variants and quarantine contradictory latest observations."""
+    groups = {}
+    for scenario in _scenarios(candidate):
+        identity = _scenario_identity(scenario)
+        stamp = _research_stamp(scenario)
+        current = groups.get(identity)
+        if current is None or stamp > current[0]:
+            groups[identity] = (stamp, [scenario])
+        elif stamp == current[0] and not any(
+                _same_research_proof(scenario, saved) for saved in current[1]):
+            current[1].append(scenario)
+    return [(scenario, len(group) > 1) for _, group in groups.values()
+            for scenario in group]
+
+
+def _excluded_costs(value: object) -> list[str] | None:
+    if not isinstance(value, list) or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 200 for item in value):
+        return None
+    return sorted({item.strip() for item in value})
+
+
+def excluded_research_costs(scenario: Mapping) -> list[str] | None:
+    """Preserve declared exclusions at every evidence level; malformed data is unknown."""
+    exclusions = set()
+    for proof in (scenario, scenario.get("costs"), scenario.get("financial")):
+        if isinstance(proof, Mapping) and "excluded_costs" in proof:
+            values = _excluded_costs(proof["excluded_costs"])
+            if values is None:
+                return None
+            exclusions.update(values)
+    return sorted(exclusions)
+
+
+def _evaluate_scenario(scenario: dict, candidate: dict, *, now: int,
+                       price_fresh: bool, points_fresh: bool,
+                       available: Optional[float], reserve: Optional[float],
+                       research_conflict: bool = False) -> dict:
+    """Prove each external-hub alternative independently before ranking it."""
+    engine_id = _engine_id(scenario.get("engine_id"))
+    model = scenario.get("model")
+    model = model.strip() if isinstance(model, str) else ""
+    route = scenario.get("route")
+    route = route.strip() if isinstance(route, str) else ""
+    origin = _airport_id(scenario.get("origin_id"))
+    destination = _airport_id(scenario.get("destination_id"))
+    costs = scenario.get("costs") if isinstance(scenario.get("costs"), dict) else {}
+    financial = scenario.get("financial") if isinstance(scenario.get("financial"), dict) else {}
+    explicit_engine = "engine_id" in scenario and engine_id is not None
+    native_identity = native_scenario_identity(scenario)
+
+    # Old flat prices are useful historical information, but cannot prove the
+    # selected engine's price or operating profit.
+    aircraft_price = _amount(costs.get("aircraft_price") if explicit_engine
+                             else scenario.get("aircraft_price"))
+    route_fee = _amount(costs.get("route_fee") if explicit_engine
+                        else scenario.get("route_fee"))
+    hangar_price = _amount(costs.get("hangar_price") if explicit_engine
+                           else scenario.get("hangar_price"))
+    other_fees = _amount(costs.get("other_fees")) if explicit_engine else None
+    engine_delta = _amount(costs.get("engine_delta_cost")) if explicit_engine else None
+    includes_engine = costs.get("aircraft_price_includes_engine") if explicit_engine else None
+    engine_extra = (0 if includes_engine is True and engine_delta in (None, 0) else engine_delta
+                    if includes_engine is False else None)
+    components = [candidate.get("hub_price"), aircraft_price, route_fee, hangar_price]
+    if explicit_engine:
+        components.extend((engine_extra, other_fees))
+    valid_costs = [_amount(value) for value in components]
+    total_cost = sum(valid_costs) if all(value is not None for value in valid_costs) else None
+    investment = _amount(total_cost)
+    profit = _profit(financial.get("profit_per_day") if explicit_engine
+                     else scenario.get("profit_per_day"))
+
+    pending = []
+    if scenario.get("event_demand_boosted") is True:
+        pending.append("demanda_evento_temporario")
+    if research_conflict:
+        pending.append("pesquisa_externa_conflitante")
+    if candidate.get("hub_price_conflict_at") is not None:
+        pending.append("preco_hub_conflitante")
+    if candidate.get("hub_points_conflict_at") is not None:
+        pending.append("pontos_hub_conflitantes")
+    if not price_fresh or _amount(candidate.get("hub_price")) is None:
+        pending.append("preco_hub_a_confirmar")
+    if candidate.get("hub_points") is None:
+        pending.append("pontos_a_confirmar")
+    elif not points_fresh:
+        pending.append("pontos_desatualizados")
+    elif candidate["hub_points"] > 0:
+        pending.append("pontos_necessarios")
+    if scenario.get("source") != "game_research" or not _fresh(scenario.get("observed_at"), now):
+        pending.append("pesquisa_desatualizada")
+    if not model:
+        pending.append("modelo_a_confirmar")
+    if native_identity is None:
+        pending.append("identidade_nativa_a_confirmar")
+    elif native_identity[-1] is not None:
+        pending.append("regras_escala_a_confirmar")
+    if not scenario_scope_consistent(scenario, costs, financial):
+        pending.append("escopo_pesquisa_divergente")
+    if not route or origin != candidate["id"] or destination in (None, origin):
+        pending.append("rota_da_base_a_confirmar")
+    if not explicit_engine or scenario.get("engine_verified") is not True:
+        pending.append("motor_a_confirmar")
+    if scenario.get("route_feasible") is not True:
+        pending.append("rota_a_confirmar")
+    if scenario.get("demand_verified") is not True or scenario.get("external_demand_verified") is not True:
+        pending.append("demanda_externa_a_confirmar")
+
+    def matches_identity(block: dict) -> bool:
+        return (native_identity is not None
+                and native_scenario_identity(block) == native_identity)
+
+    if (not explicit_engine or costs.get("source") not in ("game_market", "game_research")
+            or not _fresh(costs.get("observed_at"), now)
+            or not matches_identity(costs)
+            or type(includes_engine) is not bool
+            or costs.get("engine_delta_invalid") is True
+            or ("engine_delta_cost" in costs and costs["engine_delta_cost"] is not None
+                and engine_delta is None)
+            or investment is None):
+        pending.append("custos_motor_rota_a_confirmar")
+    if (not explicit_engine or financial.get("source") not in ("route_optimizer", "game_research")
+            or not _fresh(financial.get("observed_at"), now)
+            or not matches_identity(financial) or profit is None):
+        pending.append("lucro_motor_rota_a_confirmar")
+    if available is None:
+        pending.append("saldo_ou_reserva_a_confirmar")
+    if investment is not None and investment <= 0:
+        pending.append("investimento_invalido")
+    cash_required = _amount(investment + reserve) if investment is not None and reserve is not None else None
+    if investment is not None and reserve is not None and cash_required is None:
+        pending.append("investimento_invalido")
+    payback = _amount(investment / profit) if investment is not None and profit is not None and profit > 0 else None
+    if investment is not None and profit is not None and profit > 0 and payback is None:
+        pending.append("retorno_invalido")
+    excluded = excluded_research_costs(scenario)
+    if excluded is None:
+        pending.append("custos_excluidos_invalidos")
+    conditional = (not pending and bool(excluded) and profit > 0 and investment <= available)
+    if excluded:
+        pending.append("custos_recorrentes_excluidos")
+    ready = not pending
+    status = ("projecao_condicional" if conditional else "dados_a_confirmar" if not ready
+              else "sem_lucro" if profit <= 0 else "saldo_insuficiente" if investment > available else "viavel")
+    return {
+        **scenario,
+        "engine_id": engine_id,
+        "investment": investment,
+        "profit_per_day": profit,
+        "payback_days": round(investment / profit, 1) if (ready or conditional) and profit > 0 else None,
+        "status": status,
+        "pending": pending,
+        "ranking_conclusive": ready,
+        "purchase_evidence": status == "viavel",
+        "cost_breakdown": {
+            "hub_price": _amount(candidate.get("hub_price")),
+            "hub_points": candidate.get("hub_points"),
+            "aircraft_price": aircraft_price,
+            "aircraft_price_includes_engine": includes_engine,
+            "engine_delta_cost": engine_delta,
+            "engine_extra_charged": engine_extra,
+            "route_fee": route_fee,
+            "hangar_price": hangar_price,
+            "other_fees": other_fees,
+            "reserve": reserve,
+            "cash_required": cash_required,
+            "total": investment,
+        },
+    }
 
 
 def _stored_candidates(value: object) -> list[dict]:
@@ -77,12 +379,16 @@ def _stored_candidates(value: object) -> list[dict]:
             "name": str(raw.get("name") or "").strip()[:160],
             "code": game_code(airport_id, raw.get("code")),
             "hub_price": _amount(raw.get("hub_price")),
-            "hub_points": _points(raw.get("hub_points", 0)),
+            "hub_price_observed_at": raw.get("hub_price_observed_at"),
+            "hub_points": _points(raw.get("hub_points")),
+            "hub_points_observed_at": raw.get("hub_points_observed_at"),
             "scenario": raw.get("scenario") if isinstance(raw.get("scenario"), dict) else {},
+            "scenarios": raw.get("scenarios") if isinstance(raw.get("scenarios"), list) else [],
         }
         if airport_id in candidates:
             # Conflicting persisted duplicates cannot be treated as fresh evidence.
-            candidates[airport_id].update({"observed_at": None, "scenario": {}})
+            candidates[airport_id].update({"observed_at": None, "scenario": {},
+                                           "scenarios": []})
             duplicate_ids.add(airport_id)
             continue
         candidates[airport_id] = normalized
@@ -104,10 +410,16 @@ def _demand_sample(origin: str, row: object) -> Optional[dict]:
     if (not math.isfinite(distance) or not 0 < distance <= 25000
             or any(type(value) is not int or not 0 <= value <= 100_000_000 for value in demand)):
         return None
-    return {"origin_id": origin, "destination_id": destination,
-            "distance_km": round(distance, 3),
-            "y": demand[0], "j": demand[1], "f": demand[2],
-            "source": "game_route_search"}
+    sample = {"origin_id": origin, "destination_id": destination,
+              "distance_km": round(distance, 3),
+              "y": demand[0], "j": demand[1], "f": demand[2],
+              "source": "game_route_search"}
+    if row.get("event_demand_boosted") is True:
+        sample["event_demand_boosted"] = True
+    runway = row.get("destination_runway_ft")
+    if type(runway) is int and 0 < runway <= 30000:
+        sample["destination_runway_ft"] = runway
+    return sample
 
 
 def _stored_demand(value: object) -> dict[str, dict]:
@@ -120,14 +432,76 @@ def _stored_demand(value: object) -> dict[str, dict]:
             continue
         origin = _airport_id(row.get("origin_id"))
         timestamp = row.get("observed_at")
-        if origin is None or type(timestamp) is not int or timestamp <= 0:
+        if (origin is None or type(timestamp) not in (int, float)
+                or not math.isfinite(timestamp) or timestamp <= 0):
             continue
         sample = _demand_sample(origin, {"arr_id": row.get("destination_id"),
                                          "distance": row.get("distance_km"),
-                                         "y": row.get("y"), "j": row.get("j"), "f": row.get("f")})
+                                         "y": row.get("y"), "j": row.get("j"), "f": row.get("f"),
+                                         "destination_runway_ft": row.get("destination_runway_ft"),
+                                         "event_demand_boosted": row.get("event_demand_boosted")})
         if sample is not None and key == f"{origin}:{sample['destination_id']}":
             valid[key] = {**sample, "observed_at": timestamp}
     return valid
+
+
+def _stored_demand_conflicts(value: object) -> dict[str, dict]:
+    """Retain time-bound quarantine markers without accepting disputed demand."""
+    if not isinstance(value, dict):
+        return {}
+    conflicts = {}
+    for key, row in value.items():
+        if not isinstance(row, dict) or row.get("source") != "game_route_search":
+            continue
+        parts = key.split(":") if isinstance(key, str) else []
+        stamp = row.get("observed_at")
+        if (len(parts) != 2 or any(_airport_id(part) != part for part in parts)
+                or parts[0] == parts[1] or type(stamp) not in (int, float)
+                or not math.isfinite(stamp) or stamp <= 0):
+            continue
+        conflicts[key] = {"observed_at": stamp, "source": "game_route_search"}
+    return conflicts
+
+
+def _trusted_demand(saved: dict) -> tuple[dict[str, dict], dict[str, dict]]:
+    """A persisted conflict wins unless a strictly later reading resolved it."""
+    samples = _stored_demand(saved.get("route_demand"))
+    conflicts = _stored_demand_conflicts(saved.get("route_demand_conflicts"))
+    for key in samples.keys() & conflicts.keys():
+        if samples[key]["observed_at"] > conflicts[key]["observed_at"]:
+            conflicts.pop(key)
+        else:
+            samples.pop(key)
+    return samples, conflicts
+
+
+def _stored_demand_attempts(value: object) -> dict[str, dict]:
+    """Recover valid research cursor entries, including inconclusive reads."""
+    if not isinstance(value, dict):
+        return {}
+    attempts = {}
+    for key, raw in value.items():
+        if (_airport_id(key) != key or not isinstance(raw, dict)
+                or type(raw.get("attempted_at")) is not int or raw["attempted_at"] <= 0
+                or raw.get("status") not in ("inconclusive", "samples_observed")
+                or type(raw.get("sequence")) is not int or raw["sequence"] <= 0):
+            continue
+        attempts[key] = {"attempted_at": raw["attempted_at"],
+                         "status": raw["status"], "sequence": raw["sequence"]}
+        scope = _demand_scope(raw.get("search_scope"), raw.get("max_distance"), raw.get("min_runway"))
+        if scope is not None:
+            attempts[key].update(scope)
+    return attempts
+
+
+def _demand_scope(scope: object, distance: object, runway: object) -> dict | None:
+    if (scope not in ("configured", "broad") or type(distance) is not int
+            or not 300 <= distance <= 25000 or type(runway) is not int
+            or not 0 <= runway <= 30000):
+        return None
+    if scope == "broad" and (distance, runway) != (20000, 0):
+        return None
+    return {"search_scope": scope, "max_distance": distance, "min_runway": runway}
 
 
 class HubExpansionRegistry:
@@ -209,45 +583,175 @@ class HubExpansionRegistry:
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
 
-    def record_catalog(self, options: object, *, complete: bool = False) -> bool:
+    def record_catalog(self, options: object, *, complete: bool = False,
+                       observed_at: Optional[float] = None) -> bool:
         """Persist a game-confirmed purchasable catalog or partial page.
 
         Missing and empty responses cannot erase previous observations.
         A partial page merges by airport ID instead of dropping unseen pages.
         """
+        explicit_time = observed_at is not None
+        now = time.time()
+        if (explicit_time and (type(observed_at) not in (int, float)
+                               or not _fresh(observed_at, now))):
+            return False
         if not isinstance(options, list):
             return False
         incoming = {}
+        unavailable = set()
+        purchasability = {}
         incomplete = False
         for item in options:
             if not isinstance(item, dict):
                 incomplete = True
                 continue
-            if item.get("purchasable") is not True:
+            purchasable = item.get("purchasable")
+            if type(purchasable) is not bool:
+                incomplete = True
                 continue
             airport_id = _airport_id(item.get("id"))
             if airport_id is None:
                 incomplete = True
+                continue
+            if (airport_id in purchasability
+                    and purchasability[airport_id] is not purchasable):
+                # A duplicate airport with contradictory purchase eligibility
+                # cannot establish whether the hub is actually purchasable.
+                return False
+            purchasability[airport_id] = purchasable
+            if not purchasable:
+                unavailable.add(airport_id)
                 continue
             candidate = {
                 "id": airport_id,
                 "name": str(item.get("name") or "").strip()[:160],
                 "code": game_code(airport_id, item.get("code")),
                 "hub_price": _amount(item.get("hub_price")),
-                "hub_points": _points(item.get("hub_points", 0)),
             }
-            if candidate["hub_points"] is None:
-                return False
+            if "hub_points" in item:
+                candidate["hub_points"] = _points(item["hub_points"])
+                if candidate["hub_points"] is None:
+                    return False
             if airport_id in incoming and incoming[airport_id] != candidate:
                 return False
             incoming[airport_id] = candidate
-        if not incoming:
+        if not incoming and not unavailable:
             return False
         verified_complete = complete is True and not incomplete
         with _LOCK:
             current = self._load()
-            observed_at = int(time.time())
+            observed_at = observed_at if explicit_time else int(time.time())
             previous = {c["id"]: c for c in _stored_candidates(current.get("candidates"))}
+
+            def valid_stamp(value: object) -> bool:
+                return type(value) in (int, float) and 0 < value <= now
+
+            catalog_at = current.get("observed_at")
+            if not valid_stamp(catalog_at):
+                catalog_at = 0
+            saved_unavailable = current.get("catalog_unavailable_at")
+            unavailable_at = {
+                airport_id: stamp
+                for raw_id, stamp in (saved_unavailable.items()
+                                      if isinstance(saved_unavailable, dict) else ())
+                if (airport_id := _airport_id(raw_id)) is not None and valid_stamp(stamp)
+            }
+
+            if (explicit_time and observed_at < catalog_at
+                    and current.get("catalog_complete") is True):
+                # Airports absent from a later complete scan cannot be
+                # resurrected by an older page arriving out of order.
+                incoming = {airport_id: item for airport_id, item in incoming.items()
+                            if airport_id in previous}
+                unavailable.intersection_update(previous.keys() | unavailable_at.keys())
+                if not incoming and not unavailable:
+                    return False
+
+            # A complete scan must be newer than every previously ingested
+            # page before it may discard airports absent from that scan.
+            if explicit_time and observed_at <= catalog_at:
+                verified_complete = False
+
+            # Negative purchase eligibility is evidence too. A later partial
+            # page must remove an earlier positive candidate, and a delayed
+            # positive page cannot restore it after a restart.
+            for airport_id in unavailable:
+                older = previous.get(airport_id)
+                older_at = older.get("observed_at", catalog_at) if older else 0
+                if valid_stamp(older_at) and observed_at < older_at:
+                    continue
+                unavailable_at[airport_id] = max(
+                    observed_at, unavailable_at.get(airport_id, 0))
+                previous.pop(airport_id, None)
+            for airport_id in list(incoming):
+                denied_at = unavailable_at.get(airport_id)
+                if denied_at is not None:
+                    if observed_at <= denied_at:
+                        del incoming[airport_id]
+                    else:
+                        del unavailable_at[airport_id]
+
+            def refresh(airport_id: str, item: dict) -> dict:
+                older = previous.get(airport_id, {})
+                if explicit_time and older:
+                    older_at = older.get("observed_at", catalog_at)
+                    if not valid_stamp(older_at):
+                        older_at = catalog_at
+                    # Name and airport identity come from the newest page,
+                    # while each price/points observation has its own clock.
+                    result = {**older, **item, "observed_at": max(observed_at, older_at)}
+                    if observed_at < older_at:
+                        result["name"] = older.get("name")
+                        result["code"] = older.get("code")
+                    for field in ("hub_price", "hub_points"):
+                        stamp_key = f"{field}_observed_at"
+                        conflict_key = f"{field}_conflict_at"
+                        former_at = older.get(stamp_key)
+                        if former_at is None:
+                            former_at = older.get("observed_at", catalog_at)
+                        conflict_at = older.get(conflict_key)
+                        incoming_value = item.get(field)
+                        if incoming_value is None:
+                            result[field] = older.get(field)
+                            result[stamp_key] = older.get(stamp_key, former_at)
+                            if conflict_key in older:
+                                result[conflict_key] = conflict_at
+                            continue
+                        if valid_stamp(conflict_at) and observed_at <= conflict_at:
+                            result[field] = None
+                            result[stamp_key] = None
+                            result[conflict_key] = conflict_at
+                        elif valid_stamp(former_at) and observed_at < former_at:
+                            result[field] = older.get(field)
+                            result[stamp_key] = former_at
+                        elif (observed_at == former_at and older.get(field) != incoming_value):
+                            # Simultaneous contradictory observations cannot
+                            # support a purchase, even after a process restart.
+                            result[field] = None
+                            result[stamp_key] = None
+                            result[conflict_key] = observed_at
+                        else:
+                            result[field] = incoming_value
+                            result[stamp_key] = observed_at
+                            result.pop(conflict_key, None)
+                    return result
+                result = {**older, **item, "observed_at": observed_at}
+                if item["hub_price"] is not None:
+                    result["hub_price_observed_at"] = observed_at
+                else:
+                    # Incomplete game reads may not erase an earlier known price
+                    # or make that earlier observation appear freshly verified.
+                    result["hub_price"] = older.get("hub_price")
+                    result["hub_price_observed_at"] = older.get(
+                        "hub_price_observed_at") or older.get("observed_at", current.get("observed_at"))
+                if "hub_points" in item:
+                    result["hub_points_observed_at"] = observed_at
+                else:
+                    # A price-only read must not silently refresh stale points.
+                    result["hub_points_observed_at"] = older.get(
+                        "hub_points_observed_at") or older.get("observed_at", current.get("observed_at"))
+                return result
+
             if not verified_complete:
                 # Legacy records inherited the catalog timestamp. Capture it
                 # before the partial refresh advances the catalog timestamp.
@@ -256,51 +760,164 @@ class HubExpansionRegistry:
                 for airport_id, item in incoming.items():
                     # New price evidence takes precedence. Previous route research
                     # survives a catalog refresh for the same airport.
-                    previous[airport_id] = {**previous.get(airport_id, {}), **item,
-                                            "observed_at": observed_at}
+                    previous[airport_id] = refresh(airport_id, item)
                 incoming = previous
             else:
-                incoming = {airport_id: {**previous.get(airport_id, {}), **item,
-                                         "observed_at": observed_at}
+                incoming = {airport_id: refresh(airport_id, item)
                             for airport_id, item in incoming.items()}
-            current.update({"source": "game_purchase_catalog", "observed_at": observed_at,
-                            "catalog_complete": verified_complete,
+            # A delayed page cannot roll the catalog clock backward or
+            # revoke an independently newer complete scan.
+            if explicit_time and observed_at < catalog_at:
+                catalog_complete = current.get("catalog_complete") is True
+            else:
+                catalog_complete = verified_complete
+            current.update({"source": "game_purchase_catalog",
+                            "observed_at": max(observed_at, catalog_at) if explicit_time else observed_at,
+                            "catalog_complete": catalog_complete,
+                            "catalog_unavailable_at": unavailable_at,
                             "candidates": sorted(incoming.values(), key=lambda row: (row.get("code") or "", row["id"]))})
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
 
     def record_research(self, airport_id: str, research: dict) -> bool:
-        """Store a game-researched and model-specific projected route scenario."""
+        """Store separate hub/model/route/engine observations without losing legacy data.
+
+        A new observation needs its own timestamps and linked cost/profit proof
+        to rank conclusively. Legacy flat research remains readable but pending.
+        """
         airport_id = _airport_id(airport_id)
         if airport_id is None or not isinstance(research, dict):
             return False
         if research.get("source") != "game_research":
             return False
+        explicit_engine = "engine_id" in research
+        engine_id = _engine_id(research.get("engine_id")) if explicit_engine else None
+        if explicit_engine and engine_id is None:
+            return False
+        native_fields = _native_fields(research)
+        if "" in native_fields.values():
+            return False
+        stopover = native_fields.get("stopover_id")
+        if stopover is not None and stopover in (
+                _airport_id(research.get("origin_id")), _airport_id(research.get("destination_id"))):
+            return False
+
+        costs = research.get("costs") if isinstance(research.get("costs"), dict) else {}
+        financial = research.get("financial") if isinstance(research.get("financial"), dict) else {}
+
+        def proof(block: dict, *, price: bool) -> dict:
+            evidence = {
+                **_native_fields(block),
+                **_scope_fields(block),
+                "source": block.get("source"), "observed_at": block.get("observed_at"),
+                "model": str(block.get("model") or "").strip()[:100],
+                "route": str(block.get("route") or "").strip()[:100],
+                "engine_id": _engine_id(block.get("engine_id")),
+                "origin_id": _airport_id(block.get("origin_id")),
+                "destination_id": _airport_id(block.get("destination_id")),
+            }
+            if price:
+                evidence.update({
+                    "aircraft_price": _amount(block.get("aircraft_price")),
+                    "engine_delta_cost": _amount(block.get("engine_delta_cost")),
+                    "engine_delta_invalid": (
+                        block.get("engine_delta_cost") is not None
+                        and _amount(block.get("engine_delta_cost")) is None),
+                    "aircraft_price_includes_engine": block.get("aircraft_price_includes_engine"),
+                    "route_fee": _amount(block.get("route_fee")),
+                    "hangar_price": _amount(block.get("hangar_price")),
+                    "other_fees": _amount(block.get("other_fees")),
+                })
+            else:
+                evidence["profit_per_day"] = _profit(block.get("profit_per_day"))
+            if "excluded_costs" in block:
+                evidence["excluded_costs"] = _excluded_costs(block["excluded_costs"])
+            return evidence
+
+        scenario = {
+            **native_fields,
+            **_scope_fields(research),
+            "source": "game_research",
+            # Receipt time is not evidence of when an external-hub route was read.
+            "observed_at": research.get("observed_at") if explicit_engine else int(time.time()),
+            "model": str(research.get("model") or "").strip()[:100],
+            "route": str(research.get("route") or "").strip()[:100],
+            "origin_id": _airport_id(research.get("origin_id")),
+            "destination_id": _airport_id(research.get("destination_id")),
+            "route_feasible": research.get("route_feasible") is True,
+            "demand_verified": research.get("demand_verified") is True,
+            "external_demand_verified": research.get("external_demand_verified") is True,
+            "event_demand_boosted": True if research.get("event_demand_boosted") is True else None,
+            "engine_verified": research.get("engine_verified") is True,
+            "aircraft_price": _amount(research.get("aircraft_price", costs.get("aircraft_price"))),
+            "route_fee": _amount(research.get("route_fee", costs.get("route_fee"))),
+            "hangar_price": _amount(research.get("hangar_price", costs.get("hangar_price"))),
+            "other_fees": _amount(research.get("other_fees", costs.get("other_fees"))),
+            "aircraft_price_includes_engine": costs.get("aircraft_price_includes_engine"),
+            "engine_delta_cost": _amount(costs.get("engine_delta_cost")),
+            "profit_per_day": _profit(research.get("profit_per_day", financial.get("profit_per_day"))),
+        }
+        if "excluded_costs" in research:
+            scenario["excluded_costs"] = _excluded_costs(research["excluded_costs"])
+        if explicit_engine:
+            scenario.update({"engine_id": engine_id,
+                             "engine_label": str(research.get("engine_label") or "").strip()[:100],
+                             "costs": proof(costs, price=True),
+                             "financial": proof(financial, price=False)})
+
         with _LOCK:
             current = self._load()
             candidates = _stored_candidates(current.get("candidates"))
             row = next((item for item in candidates if item.get("id") == airport_id), None)
             if row is None:
                 return False
-            row["scenario"] = {
-                "source": "game_research", "observed_at": int(time.time()),
-                "model": str(research.get("model") or "").strip()[:100],
-                "route": str(research.get("route") or "").strip()[:100],
-                "route_feasible": research.get("route_feasible") is True,
-                "demand_verified": research.get("demand_verified") is True,
-                "aircraft_price": _amount(research.get("aircraft_price")),
-                "route_fee": _amount(research.get("route_fee")),
-                "hangar_price": _amount(research.get("hangar_price")),
-                "profit_per_day": _profit(research.get("profit_per_day")),
-            }
+            identity = _scenario_identity(scenario)
+            existing = _scenarios(row)
+            now = time.time()
+            incoming_stamp = _research_stamp(scenario)
+            if _future_research(scenario, now):
+                return False
+            # Discard poisoned future observations only for the identity being
+            # refreshed, preserving independent routes and existing conflicts.
+            valid_existing = [entry for entry in existing
+                              if _scenario_identity(entry) != identity or not _future_research(entry, now)]
+            matching = [entry for entry in valid_existing if _scenario_identity(entry) == identity]
+            latest_stamp = max((_research_stamp(entry) for entry in matching),
+                               default=float("-inf"))
+            if incoming_stamp < latest_stamp:
+                return True
+            if matching and incoming_stamp == latest_stamp and incoming_stamp > 0:
+                latest = [entry for entry in matching
+                          if _research_stamp(entry) == latest_stamp]
+                if any(_same_research_proof(entry, scenario) for entry in latest) or len(latest) >= 2:
+                    if len(valid_existing) == len(existing):
+                        return True
+                    alternatives = valid_existing
+                    scenario = latest[0]
+                else:
+                    # Both readings remain durable so the evaluator can quarantine
+                    # their identity until a genuinely later research observation.
+                    alternatives = [entry for entry in valid_existing
+                                    if _scenario_identity(entry) != identity
+                                    or _research_stamp(entry) == latest_stamp]
+                    alternatives.append(scenario)
+            else:
+                alternatives = [entry for entry in existing
+                                if _scenario_identity(entry) != identity]
+                alternatives.append(scenario)
+            row["scenarios"] = alternatives
+            row["scenario"] = scenario  # Legacy single-slot reader.
             current["candidates"] = candidates
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
         return True
 
-    def record_demand(self, origin_id: object, results: object) -> int:
+    def record_demand(self, origin_id: object, results: object, *,
+                      observed_at: object = _UNSET, search_scope: str | None = None) -> int:
         """Store independently observed route demand keyed by game airport IDs.
 
         A partial search only updates the destinations it actually returned.
+        Delayed reads cannot replace newer observations. Contradictory samples
+        from the same instant quarantine that route until a later verified read.
         These samples provide demand evidence, not investment projections.
         """
         origin = _airport_id(origin_id)
@@ -318,87 +935,345 @@ class HubExpansionRegistry:
             if key in observations and observations[key] != sample:
                 return 0
             observations[key] = sample
+        now = time.time()
+        timestamp = now if observed_at is _UNSET else observed_at
+        if (type(timestamp) not in (int, float) or not math.isfinite(timestamp)
+                or timestamp <= 0 or not 0 <= now - timestamp <= MAX_AGE_SECONDS):
+            return 0
         with _LOCK:
             current = self._load()
-            previous = _stored_demand(current.get("route_demand"))
-            now = int(time.time())
-            previous.update({key: {**sample, "observed_at": now}
-                             for key, sample in observations.items()})
+            previous, conflicts = _trusted_demand(current)
+            accepted = 0
+            changed = False
+            for key, sample in observations.items():
+                prior = previous.get(key)
+                disputed = conflicts.get(key)
+                latest = max(prior["observed_at"] if prior else 0,
+                             disputed["observed_at"] if disputed else 0)
+                if timestamp < latest or (disputed and timestamp == latest):
+                    continue
+                candidate = {**sample, "observed_at": timestamp}
+                if prior and timestamp == latest and candidate != prior:
+                    previous.pop(key)
+                    conflicts[key] = {"observed_at": timestamp,
+                                      "source": "game_route_search"}
+                    changed = True
+                    continue
+                if candidate != prior:
+                    previous[key] = candidate
+                    changed = True
+                if disputed:
+                    conflicts.pop(key)
+                    changed = True
+                accepted += 1
+            if not changed and not accepted:
+                return 0
             # Keep the newest observations when a large airline searches many routes.
             if len(previous) > 5000:
                 previous = dict(sorted(previous.items(),
                                        key=lambda item: item[1].get("observed_at", 0)
                                        if isinstance(item[1], dict) else 0,
                                        reverse=True)[:5000])
+            if len(conflicts) > 5000:
+                conflicts = dict(sorted(conflicts.items(),
+                                        key=lambda item: item[1]["observed_at"],
+                                        reverse=True)[:5000])
             current["route_demand"] = previous
-            current["route_demand_last_at"] = now
+            current["route_demand_conflicts"] = conflicts
+            if accepted:
+                current["route_demand_last_at"] = max(
+                    current.get("route_demand_last_at") or 0, timestamp)
+                attempts = _stored_demand_attempts(current.get("route_demand_attempts"))
+                previous_attempt = attempts.get(origin, {})
+                # Ordinary route searches can contribute observations without
+                # completing or advancing the dedicated planning cursor.
+                if (previous_attempt.get("search_scope") == search_scope
+                        and previous_attempt.get("attempted_at", 0) <= timestamp):
+                    scope = _demand_scope(previous_attempt.get("search_scope"),
+                                          previous_attempt.get("max_distance"),
+                                          previous_attempt.get("min_runway"))
+                    self._write_demand_attempt(current, origin, int(now), "samples_observed", scope=scope)
             paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
-        return len(observations)
+        return accepted
+
+    @staticmethod
+    def _write_demand_attempt(current: dict, origin: str, now: int, status: str,
+                              *, scope: dict | None = None) -> None:
+        """Update the per-hub research cursor in the same atomic JSON write."""
+        attempts = _stored_demand_attempts(current.get("route_demand_attempts"))
+        sequence = max((entry["sequence"] for entry in attempts.values()), default=0) + 1
+        attempts[origin] = {"attempted_at": now, "status": status, "sequence": sequence}
+        if scope is not None:
+            attempts[origin].update(scope)
+        current["route_demand_attempts"] = attempts
+
+    def record_demand_attempt(self, origin_id: object, *, search_scope: str | None = None,
+                              max_distance: int | None = None, min_runway: int | None = None) -> bool:
+        """Persist an inconclusive attempt before search, even if Selenium fails.
+
+        This is scheduling evidence only. It never implies zero demand or
+        completed coverage, and verified samples are preserved independently.
+        """
+        origin = _airport_id(origin_id)
+        scope = _demand_scope(search_scope, max_distance, min_runway)
+        if origin is None or (search_scope is not None and scope is None):
+            return False
+        with _LOCK:
+            current = self._load()
+            self._write_demand_attempt(current, origin, int(time.time()), "inconclusive", scope=scope)
+            paths.write_atomic(self.path, json.dumps(current, ensure_ascii=False, indent=2))
+        return True
+
+    def next_demand_scope(self, origin_id: str) -> str:
+        """Alternate requested envelopes per hub, including after failed reads."""
+        with _LOCK:
+            attempt = _stored_demand_attempts(self._load().get("route_demand_attempts")).get(origin_id, {})
+        return "broad" if attempt.get("search_scope") == "configured" else "configured"
 
     def next_demand_origin(self, owned_ids: list[str]) -> Optional[str]:
-        """Rotate research toward the owned hub least recently sampled."""
+        """Rotate on attempted research, even when a hub has no valid results."""
         hubs = sorted({_airport_id(value) for value in owned_ids} - {None}, key=int)
         if not hubs:
             return None
         with _LOCK:
-            records = _stored_demand(self._load().get("route_demand"))
-        now = int(time.time())
+            saved = self._load()
+            records, _ = _trusted_demand(saved)
+            attempts = _stored_demand_attempts(saved.get("route_demand_attempts"))
+        now = time.time()
         last_seen = {hub: 0 for hub in hubs}
         for row in records.values():
             origin = row.get("origin_id")
             when = row.get("observed_at")
             if origin in last_seen and when <= now:
                 last_seen[origin] = max(last_seen[origin], when)
-        return min(hubs, key=lambda hub: (last_seen[hub], int(hub)))
+        sequences = {hub: 0 for hub in hubs}
+        for hub in hubs:
+            attempt = attempts.get(hub)
+            if attempt and attempt["attempted_at"] <= now:
+                last_seen[hub] = max(last_seen[hub], attempt["attempted_at"])
+                sequences[hub] = attempt["sequence"]
+        return min(hubs, key=lambda hub: (last_seen[hub], sequences[hub], int(hub)))
+
+    def demand_research_snapshot(self, owned_hub_ids: set[str], *,
+                                 now: Optional[float] = None,
+                                 max_age_seconds: int = MAX_AGE_SECONDS) -> dict:
+        """Read demand, unresolved conflicts and research attempts atomically.
+
+        Search attempts only prove that research was tried. They never certify
+        complete coverage, zero demand or a route's remaining availability.
+        """
+        owned = {_airport_id(value) for value in owned_hub_ids} - {None}
+        now = time.time() if now is None else now
+        with _LOCK:
+            saved = self._load()
+            samples, conflicts = _trusted_demand(saved)
+            attempts = _stored_demand_attempts(saved.get("route_demand_attempts"))
+        rows = [deepcopy(row) for row in samples.values()
+                if row["origin_id"] in owned
+                and 0 <= now - row["observed_at"] <= max_age_seconds]
+        rows.sort(key=lambda row: (int(row["origin_id"]), int(row["destination_id"])))
+        progress = []
+        for hub in sorted(owned, key=int):
+            attempt = attempts.get(hub)
+            attempted_at = attempt["attempted_at"] if attempt else None
+            if attempted_at is not None and not 0 <= now - attempted_at:
+                attempted_at = None
+            progress.append({
+                "hub_id": hub,
+                "last_attempt_at": attempted_at,
+                "last_attempt_status": (attempt["status"] if attempted_at is not None
+                                        else "unattempted"),
+                "last_search_scope": attempt.get("search_scope") if attempted_at is not None else None,
+                "last_requested_max_distance_km": attempt.get("max_distance") if attempted_at is not None else None,
+                "last_requested_min_runway_ft": attempt.get("min_runway") if attempted_at is not None else None,
+                "conflicted_routes": sum(
+                    key.startswith(hub + ":")
+                    and 0 <= now - conflict["observed_at"] <= max_age_seconds
+                    for key, conflict in conflicts.items()),
+                "coverage": "partial",
+            })
+        details = self.route_detail_registry().enrich(rows, now=now)
+        return {"samples": self.stopover_research_registry().enrich(details, now),
+                "hub_progress": progress, "coverage": "partial"}
+
+    def route_detail_registry(self):
+        from route_detail_evidence import RouteDetailRegistry
+
+        return RouteDetailRegistry(self.path.with_name(self.path.stem + "_route_details.json"))
+
+    def stopover_research_registry(self):
+        from stopover_research import StopoverResearchRegistry
+
+        return StopoverResearchRegistry(self.path.with_name(self.path.stem + "_stopovers.json"))
+
+    def external_demand_registry(self):
+        """Keep pre-purchase observations and cursors separate from owned hubs."""
+        return HubExpansionRegistry(self.path.with_name(self.path.stem + "_external_demand.json"))
+
+    def external_research_candidates(self, owned_ids: set[str], *,
+                                     now: Optional[float] = None,
+                                     max_age_seconds: int = MAX_AGE_SECONDS) -> list[dict]:
+        """Return fresh catalog evidence outside a verified ownership inventory."""
+        owned = {_airport_id(value) for value in owned_ids}
+        if not owned or None in owned:
+            return []
+        now = time.time() if now is None else now
+        with _LOCK:
+            saved = self._load()
+        if saved.get("source") != "game_purchase_catalog":
+            return []
+        candidates = []
+        for row in _stored_candidates(saved.get("candidates")):
+            if row["id"] in owned or not _fresh(row.get("observed_at"), now, max_age_seconds):
+                continue
+            candidate = {"id": row["id"], "code": row.get("code"),
+                         "observed_at": row["observed_at"]}
+            # Each cost has its own observation clock. A fresh identity or a
+            # price-only refresh must not renew the other cost component.
+            for field in ("hub_price", "hub_points"):
+                stamp = row.get(f"{field}_observed_at")
+                if (row.get(f"{field}_conflict_at") is None
+                        and row.get(field) is not None and _fresh(stamp, now, max_age_seconds)):
+                    candidate[field] = row[field]
+                    candidate[f"{field}_observed_at"] = stamp
+            candidates.append(candidate)
+        return sorted(candidates, key=lambda row: int(row["id"]))
+
+    def external_research_origins(self, owned_ids: set[str], *,
+                                  now: Optional[float] = None,
+                                  max_age_seconds: int = MAX_AGE_SECONDS) -> list[str]:
+        return [row["id"] for row in self.external_research_candidates(
+            owned_ids, now=now, max_age_seconds=max_age_seconds)]
+
+    def external_demand_snapshot(self, owned_ids: set[str], *,
+                                 now: Optional[float] = None,
+                                 max_age_seconds: int = MAX_AGE_SECONDS) -> dict:
+        now = time.time() if now is None else now
+        candidates = self.external_research_candidates(owned_ids, now=now, max_age_seconds=max_age_seconds)
+        snapshot = self.external_demand_registry().demand_research_snapshot(
+            {row["id"] for row in candidates}, now=now, max_age_seconds=max_age_seconds)
+        return {**snapshot, "origin_scope": "external_catalog", "candidate_hubs": len(candidates),
+                "candidate_inventory": candidates, "candidate_source": "game_purchase_catalog"}
+
+    def demand_observations(self, owned_hub_ids: set[str], *,
+                            now: Optional[float] = None) -> list[dict]:
+        """Return fresh raw traffic samples for owned hubs without inferred demand."""
+        return self.demand_research_snapshot(owned_hub_ids, now=now)["samples"]
 
     def snapshot(self, *, cash: object = None, reserve: object = 0,
-                 now: Optional[int] = None, owned_hub_ids: Optional[set[str]] = None) -> dict:
+                 now: Optional[int] = None, owned_hub_ids: Optional[set[str]] = None,
+                 external_ownership_verified: bool = True) -> dict:
         """Evaluate evidence age, affordability and payback without game writes."""
         with _LOCK:
             saved = deepcopy(self._load())
-        now = int(time.time() if now is None else now)
+        now = time.time() if now is None else now
         cash_value = _amount(cash)
         reserve_value = _amount(reserve)
-        available = max(0, cash_value - reserve_value) if cash_value is not None and reserve_value is not None else None
+        available = round(max(0, cash_value - reserve_value), 2) if cash_value is not None and reserve_value is not None else None
         catalog_time = saved.get("observed_at")
         stored_candidates = _stored_candidates(saved.get("candidates"))
-        demand = _stored_demand(saved.get("route_demand"))
+        demand, demand_conflicts = _trusted_demand(saved)
+        attempts = _stored_demand_attempts(saved.get("route_demand_attempts"))
         fresh_demand = {key: item for key, item in demand.items()
                         if 0 <= now - item["observed_at"] <= MAX_AGE_SECONDS}
-        owned = {_airport_id(value) for value in (owned_hub_ids or set())}
+        owned = {_airport_id(value) for value in (owned_hub_ids or set())} - {None}
+        external_ownership_verified = (external_ownership_verified is True and bool(owned)
+                                       and all(_airport_id(value) is not None for value in owned_hub_ids or set()))
+        external = self.external_demand_snapshot(
+            (owned_hub_ids or set()) if external_ownership_verified else set(), now=now)
+        external_progress = {row["hub_id"]: {**row, "fresh_sample_count": 0, "fresh_detail_count": 0}
+                             for row in external["hub_progress"]}
+        for sample in external["samples"]:
+            external_progress[sample["origin_id"]]["fresh_sample_count"] += 1
+            if sample.get("route_detail"):
+                external_progress[sample["origin_id"]]["fresh_detail_count"] += 1
+        attempted_owned = {hub for hub in owned if hub in attempts and
+                           0 <= now - attempts[hub]["attempted_at"]}
+        sampled_owned = {item["origin_id"] for item in demand.values()} & owned
+        fresh_sampled_owned = {item["origin_id"] for item in fresh_demand.values()} & owned
+        progress = {
+            hub: {"hub_id": hub, "last_attempt_at": attempts[hub]["attempted_at"]
+                  if hub in attempted_owned else None,
+                  "last_attempt_status": attempts[hub]["status"]
+                  if hub in attempted_owned else "unattempted",
+                  "sample_count": 0, "fresh_sample_count": 0,
+                  "conflict_count": 0,
+                  "last_sample_at": None, "coverage": "partial"}
+            for hub in sorted(owned, key=int)
+        }
+        for key, sample in demand.items():
+            hub = progress.get(sample["origin_id"])
+            if hub is None:
+                continue
+            hub["sample_count"] += 1
+            hub["last_sample_at"] = max(hub["last_sample_at"] or 0,
+                                        sample["observed_at"])
+            if key in fresh_demand:
+                hub["fresh_sample_count"] += 1
+        for key in demand_conflicts:
+            hub = progress.get(key.split(":", 1)[0])
+            if hub is not None:
+                hub["conflict_count"] += 1
         candidates = []
         for raw in stored_candidates:
             if raw["id"] in owned:
                 continue
-            row = {k: raw.get(k) for k in ("id", "name", "code", "hub_price", "hub_points")}
-            scenario = raw.get("scenario") if isinstance(raw.get("scenario"), dict) else {}
+            row = {k: raw.get(k) for k in (
+                "id", "name", "code", "hub_price", "hub_points",
+                "hub_price_conflict_at", "hub_points_conflict_at")}
             row_time = raw.get("observed_at", catalog_time)
-            catalog_fresh = (type(row_time) is int and 0 <= now - row_time <= MAX_AGE_SECONDS)
-            row.update({"scenario": scenario, "observed_at": row_time})
-            costs = [raw.get("hub_price"), scenario.get("aircraft_price"),
-                     scenario.get("route_fee"), scenario.get("hangar_price")]
-            valid_costs = [_amount(v) for v in costs]
-            investment = round(sum(valid_costs), 2) if all(v is not None for v in valid_costs) else None
-            profit = _profit(scenario.get("profit_per_day"))
-            research_time = scenario.get("observed_at")
-            fresh_research = (type(research_time) is int and
-                              0 <= now - research_time <= MAX_AGE_SECONDS)
-            ready = (catalog_fresh and raw.get("hub_points") == 0 and fresh_research
-                     and scenario.get("source") == "game_research"
-                     and scenario.get("route_feasible") is True and scenario.get("demand_verified") is True
-                     and bool(scenario.get("model")) and bool(scenario.get("route"))
-                     and investment is not None and profit is not None and available is not None)
-            if not ready:
-                status = "dados_a_confirmar"
-            elif profit <= 0:
-                status = "sem_lucro"
-            elif investment > available:
-                status = "saldo_insuficiente"
-            else:
-                status = "viavel"
-            row.update({"investment": investment, "profit_per_day": profit,
-                        "payback_days": round(investment / profit, 1) if ready and profit > 0 else None,
-                        "status": status})
+            price_time = raw.get("hub_price_observed_at")
+            if price_time is None:
+                price_time = row_time
+            points_time = raw.get("hub_points_observed_at")
+            if points_time is None:
+                points_time = row_time
+            evaluated = [_evaluate_scenario(
+                scenario, raw, now=now, research_conflict=conflict,
+                price_fresh=saved.get("source") == "game_purchase_catalog"
+                and _fresh(row_time, now) and _fresh(price_time, now),
+                points_fresh=_fresh(points_time, now), available=available,
+                reserve=reserve_value) for scenario, conflict in _latest_research(raw)]
+            evaluated.sort(key=lambda option: (
+                option["status"] != "viavel",
+                option["status"] == "dados_a_confirmar",
+                not option["ranking_conclusive"],
+                option["engine_id"] is None,
+                -(option["profit_per_day"] or 0) if option["ranking_conclusive"]
+                or option["status"] == "projecao_condicional" else 0,
+                option["investment"] if option["investment"] is not None else float("inf"),
+                str(option.get("model") or "").casefold(),
+                str(option.get("model_id") or ""),
+                option.get("engine_id") or "",
+                str(option.get("origin_id") or ""),
+                str(option.get("destination_id") or ""),
+                "stopover_id" not in option,
+                str(option.get("stopover_id") or ""),
+                str(option.get("route") or "").casefold()))
+            best = evaluated[0] if evaluated else None
+            row.update({
+                "scenario": {key: value for key, value in best.items()
+                             if key not in ("investment", "payback_days", "status", "pending",
+                                            "ranking_conclusive", "purchase_evidence", "cost_breakdown")}
+                if best is not None else {},
+                "alternatives": evaluated,
+                "observed_at": row_time,
+                "hub_price_observed_at": price_time,
+                "hub_points_observed_at": points_time,
+                "investment": best["investment"] if best else None,
+                "profit_per_day": best["profit_per_day"] if best else None,
+                "payback_days": best["payback_days"] if best else None,
+                "engine_id": best["engine_id"] if best else None,
+                "status": best["status"] if best else "dados_a_confirmar",
+                "pending": best["pending"] if best else [
+                    *(["preco_hub_conflitante"] if raw.get("hub_price_conflict_at") is not None else []),
+                    *(["pontos_hub_conflitantes"] if raw.get("hub_points_conflict_at") is not None else []),
+                    "pesquisa_externa_a_confirmar"],
+                "ranking_conclusive": best["ranking_conclusive"] if best else False,
+                "purchase_evidence": best["purchase_evidence"] if best else False,
+                "cost_breakdown": best["cost_breakdown"] if best else None,
+                "route_research": external_progress.get(raw["id"]),
+            })
             candidates.append(row)
         candidates.sort(key=lambda row: (row["status"] != "viavel",
                                          -(row["profit_per_day"] or 0) if row["status"] == "viavel" else 0,
@@ -407,7 +1282,26 @@ class HubExpansionRegistry:
         return {"candidates": candidates, "source": saved.get("source"),
                 "observed_at": catalog_time, "catalog_complete": saved.get("catalog_complete") is True,
                 "available_cash": available, "cash": cash_value, "reserve": reserve_value,
-                "availability_pending": not bool(stored_candidates),
+                "availability_pending": (not bool(stored_candidates)
+                                         and not (saved.get("catalog_complete") is True
+                                                  and _fresh(catalog_time, now))),
                 "demand_samples": len(demand),
+                "demand_conflicts": len(demand_conflicts),
                 "demand_fresh_samples": len(fresh_demand),
-                "demand_observed_at": max((item["observed_at"] for item in demand.values()), default=None)}
+                "demand_observed_at": max((item["observed_at"] for item in demand.values()), default=None),
+                "demand_owned_hubs_total": len(owned),
+                "demand_owned_hubs_attempted": len(attempted_owned),
+                "demand_owned_hubs_inconclusive": sum(
+                    attempts[hub]["status"] == "inconclusive" for hub in attempted_owned),
+                "demand_owned_hubs_with_samples": len(sampled_owned),
+                "demand_owned_hubs_fresh_samples": len(fresh_sampled_owned),
+                "demand_last_attempt_at": max(
+                    (attempts[hub]["attempted_at"] for hub in attempted_owned), default=None),
+                "demand_hub_progress": list(progress.values()),
+                "external_demand_candidate_hubs": external["candidate_hubs"],
+                "external_demand_ownership_verified": external_ownership_verified,
+                "external_demand_attempted_hubs": sum(
+                    row["last_attempt_at"] is not None for row in external["hub_progress"]),
+                "external_demand_fresh_samples": len(external["samples"]),
+                "external_demand_coverage": external["coverage"],
+                "demand_coverage": "partial"}

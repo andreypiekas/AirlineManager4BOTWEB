@@ -75,6 +75,7 @@ def test_poll_le_paginas_do_jogo_e_atualiza_valor_externo(caplog):
 
 def test_mantem_ultimo_saldo_se_leitura_nao_concluir():
     bot = bot_for_cash(money=1990)
+    bot.update_stats(money=1990, money_read_at=time.time())
     bot.read_money = lambda: None
     assert bot._sync_cash_from_game() is False
     assert bot.stats().money == 1990
@@ -105,9 +106,50 @@ def test_desconexao_do_webdriver_eh_propagada_ao_supervisor():
 
 def test_valor_estimado_apos_compra_nao_finge_ser_leitura_do_jogo():
     bot = bot_for_cash()
+    bot.update_stats(money=1000, money_read_at=time.time())
     bot.update_stats(money=800)
     assert bot.stats().money == 800
     assert bot.stats().money_read_at is None
+
+
+def test_header_read_failure_revokes_cash_evidence():
+    bot = bot_for_cash()
+    bot.update_stats(money=1000, money_read_at=time.time())
+    bot._sel = lambda name: name
+
+    def disconnected(*args, **kwargs):
+        raise WebDriverException("disconnected")
+
+    bot._text = disconnected
+    with pytest.raises(WebDriverException):
+        bot._read_header()
+    assert bot.stats().money == 1000
+    assert bot.stats().money_read_at is None
+
+
+def test_closing_driver_revokes_cash_evidence():
+    bot = bot_for_cash()
+    bot.update_stats(money=1000, money_read_at=time.time())
+    bot.driver.quit = lambda: None
+    bot._quit_driver()
+    assert bot.driver is None
+    assert bot.stats().money == 1000
+    assert bot.stats().money_read_at is None
+
+
+@pytest.mark.parametrize("raw,expected", [("$ 1,250", 1250), ("0", 0), ("-$ 10", None),
+                                         ("$ 1.25", None), ("$ 1 / 2", None), ("$ 1,25", None)])
+def test_leitura_de_saldo_exige_valor_inteiro_completo(raw, expected):
+    bot = bot_for_cash()
+    bot._sel = lambda name: name
+    bot._text = lambda *args, **kwargs: raw
+    assert Bot.read_money(bot) == expected
+
+
+@pytest.mark.parametrize("money,cost", [(1000, -1), (1000, True), (1000, 1.5),
+                                        (-1000, 1), (True, 1), (1000.5, 1)])
+def test_valores_invalidos_nao_autorizam_gastos(money, cost):
+    assert not bot_for_cash(money=money).can_spend(cost, "teste")
 
 
 def test_durante_espera_sincroniza_sem_disparar_ciclo(monkeypatch):

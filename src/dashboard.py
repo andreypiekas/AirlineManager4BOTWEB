@@ -26,30 +26,20 @@ def last_money(bot: "Bot", state: dict) -> Optional[int]:
     return money
 
 
-def recent_verified_money(bot: "Bot", state: dict, *, now: Optional[float] = None,
+def recent_verified_money(bot: "Bot", *, now: Optional[float] = None,
                           max_age: int = 900) -> tuple[Optional[int], Optional[float]]:
-    """Cash evidence for investment decisions, from a recent game read or sample.
+    """Cash evidence for investment decisions, from a recent live game read.
 
-    A cached balance remains visible in the general dashboard through
-    ``last_money`` but must not qualify an investment after it goes stale.
+    Historical samples remain visible through ``last_money`` and support
+    income calculations, but cannot reauthorize a revoked balance.
     """
     now = time.time() if now is None else now
-
-    def valid(money: object, observed_at: object) -> bool:
-        return (isinstance(money, (int, float)) and not isinstance(money, bool)
-                and math.isfinite(money) and money >= 0
-                and isinstance(observed_at, (int, float)) and not isinstance(observed_at, bool)
-                and math.isfinite(observed_at) and 0 <= now - observed_at <= max_age)
-
     stats = bot.stats()
-    if valid(stats.money, stats.money_read_at):
-        return int(stats.money), float(stats.money_read_at)
-
-    samples = state.get("money_samples") or []
-    if isinstance(samples, list):
-        for sample in reversed(samples):
-            if isinstance(sample, (list, tuple)) and len(sample) >= 2 and valid(sample[1], sample[0]):
-                return int(sample[1]), float(sample[0])
+    money, observed_at = stats.money, stats.money_read_at
+    if (type(money) is int and money >= 0
+            and type(observed_at) in (int, float)
+            and math.isfinite(observed_at) and 0 <= now - observed_at <= max_age):
+        return money, float(observed_at)
     return None, None
 
 

@@ -4,9 +4,11 @@ import pytest
 
 import fleet
 import reroute
+import route_creation
 import route_stopover
 from fleet import ParkedAircraft, RouteCandidate
 from gamemode import EASY
+from hub_registry import HubRegistry
 from route_registry import RouteRegistry, endpoint
 from route_stopover import Stopover
 
@@ -20,6 +22,7 @@ def test_plan_stopover_from_parked_base_before_direct_route(tmp_path, monkeypatc
     calls = []
     registry = RouteRegistry(tmp_path / "routes.json")
     monkeypatch.setattr(fleet, "RouteRegistry", lambda: registry)
+    monkeypatch.setattr(fleet, "HubRegistry", lambda: HubRegistry(tmp_path / "hubs.json"))
     monkeypatch.setattr(fleet, "read_parked", lambda bot: [ParkedAircraft("101", "A380", "PP-101", 600)])
     monkeypatch.setattr(fleet, "load_market", lambda: [])
     monkeypatch.setattr(fleet, "find_model", lambda *_: {
@@ -124,6 +127,7 @@ def test_confirm_route_requires_readback_of_stopover(monkeypatch, via):
 @pytest.mark.parametrize("confirmed", [True, False])
 def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, monkeypatch, confirmed):
     registry = RouteRegistry(tmp_path / "routes.json")
+    monkeypatch.setattr(route_creation, "pending_path", lambda: tmp_path / "route_creation_pending.json")
     monkeypatch.setattr(fleet, "RouteRegistry", lambda: registry)
     monkeypatch.setattr(fleet, "read_form", lambda *_: (18052, (900, 400, 150), 1058871, 0))
     monkeypatch.setattr(fleet, "confirm_stopover", lambda *_: confirmed)
@@ -135,7 +139,7 @@ def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, mo
 
         def js(self, script, *args):
             if "'eSeat', 'bSeat', 'fSeat'" in script:
-                return ["6000", "9000", "12500"]
+                return [{"value": price, "disabled": False} for price in ("6000", "9000", "12500")]
             return None
 
         def ajax(self, url, target, timeout):
@@ -144,6 +148,9 @@ def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, mo
 
         def can_spend(self, *_args, **_kwargs):
             return True
+
+        def read_money(self):
+            return 2000000
 
         def click_element(self, element):
             actions.append(element)
@@ -154,24 +161,32 @@ def test_submit_native_form_once_and_record_only_after_confirmation(tmp_path, mo
         def wait_text(self, xpath, timeout):
             return ""
 
-        def spent(self, fee, *, invest):
-            actions.append((fee, invest))
-
-        def count(self, name):
-            assert name == "routes"
+        def record_route_expense(self, intent_id, fee):
+            assert len(intent_id) == 32
+            actions.append((fee, True))
 
         def notify(self, message, *, category):
             assert "via ANC" in message
 
+    bot = Bot()
     result = fleet.create_route(
-        Bot(), ParkedAircraft("101", "A380", "PP-101", 600),
+        bot, ParkedAircraft("101", "A380", "PP-101", 600),
         RouteCandidate("1440", "Los Angeles", 15000, 0, 0, 0, 12000), origin_id="2891",
         stopover=Stopover("2601", 14400, 3652),
         stopover_economics=dict(seats=600, model={"capacity": 600, "speed": 1000, "fuel": 26},
                                 mode=EASY, load_factor=0.8, fuel_price=750, co2_price=150, premium=False),
     )
     assert result == ("created" if confirmed else "stop")
+    from native_route_quotes import native_route_quotes
+
+    quotes = native_route_quotes(bot)
+    assert len(quotes) == 1
+    assert quotes[0]["stopover_id"] == "2601"
+    assert quotes[0]["route_fee"] == 1058871
+    assert quotes[0]["daily_demand_total"] == {"y": 900, "j": 400, "f": 150}
+    assert quotes[0]["purchase_eligible"] is False
     assert sum("btnCreateNewRoute" in action for action in actions if isinstance(action, str)) == 1
     assert ((1058871, True) in actions) is confirmed
+    assert route_creation.has_pending_creation() is not confirmed
     records = registry.snapshot()["relations"]
     assert (records[0]["stopover"]["code"] if records else None) == ("ANC" if confirmed else None)

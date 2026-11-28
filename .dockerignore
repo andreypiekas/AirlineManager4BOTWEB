@@ -1,0 +1,12 @@
+**
+!requirements.txt
+!src/
+!src/**
+!assets/
+!assets/**
+!config/
+!config/defaults.ini
+!scripts/
+!scripts/configurar_linux.py
+**/__pycache__/
+**/*.pyc

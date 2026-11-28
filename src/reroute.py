@@ -7,14 +7,16 @@ import re
 import time
 from dataclasses import dataclass
 
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
 import paths
-from helpers import fmt, to_int
+from helpers import fmt, game_whole_number
+from native_route_quotes import record_native_route_quote
 from notify import esc
 from route_registry import endpoint, endpoint_matches, same_route
+from route_stopover import read_route_fares
 
 log = logging.getLogger("am4bot.rutas")
 _ID = re.compile(r"[0-9]{1,14}")
@@ -65,16 +67,26 @@ if (!panel) return null;
 const root = panel.parentElement;
 const codes = Array.from(panel.querySelectorAll('.row.p-0 > .col-3.m-text > b'),
   e => e.textContent.trim().toUpperCase());
-const counts = panel.querySelectorAll('.row.p-1 > .col-4.px-1.text-right.s-text');
+const counts = panel.querySelectorAll('.row.p-1 > .col-4.text-right.s-text');
 const fees = panel.querySelectorAll('.text-danger.font-weight-bold');
 const specs = panel.querySelector('.row.py-2 .xs-text')?.textContent || '';
 const range = (specs.match(/([\d,]+)\s*km\//i) || [])[1];
 const distance = panel.querySelector('.row.p-0 > .col-2 > span')?.textContent.trim();
-const prefix = 'new_route_info.php?mode=do&id=' + arguments[0] + '&airportId=' + arguments[1] + '&';
+const submissions = Array.from(root.querySelectorAll('script')).flatMap(s =>
+  Array.from(s.textContent.matchAll(/new_route_info\.php\?mode=do&id=([0-9]+)&airportId=([0-9]+)&/g)));
+const readWithUnit = (id, unit) => {
+  const matches = panel.querySelectorAll('#' + id);
+  if (matches.length !== 1) return null;
+  const field = matches[0];
+  const value = field.textContent.trim();
+  const label = field.parentElement.textContent.trim().replace(/\s+/g, ' ');
+  return label.toLowerCase() === `${value} ${unit}` ? value : null;
+};
 return {codes, existing: counts.length === 1 ? counts[0].textContent.trim() : null,
   fee: fees.length === 1 ? fees[0].textContent.trim() : null,
-  range, distance,
-  bound: Array.from(root.querySelectorAll('script')).some(s => s.textContent.includes(prefix))};
+  range, distance, fuel_lbs_per_leg: readWithUnit('departFuelInfo', 'lbs'),
+  co2_kg_per_pax_km: readWithUnit('departCo2Info', 'kg/pax/km'),
+  bound: submissions.length > 0 && submissions.every(m => m[1] === arguments[0] && m[2] === arguments[1])};
 """
 
 # Observe the game's own request and wait for its response. A lost response
@@ -132,11 +144,24 @@ def _live_route(bot, aircraft_id: str) -> LiveRoute | None:
 
 def confirm_stopover(bot, aircraft_id, origin, destination, stopover) -> bool:
     relation = {"origin": origin, "destination": destination}
-    live = _check_route(
-        bot, aircraft_id,
-        lambda route: route.matches(relation) and endpoint_matches(stopover, endpoint(code=route.stopover)),
-    )
-    return bool(live and live.matches(relation) and endpoint_matches(stopover, endpoint(code=live.stopover)))
+
+    def matches(route):
+        return (not route.paused and route.matches(relation)
+                and endpoint_matches(stopover, endpoint(code=route.stopover)))
+
+    live = _check_route(bot, aircraft_id, matches)
+    return bool(live and matches(live))
+
+
+def confirm_direct_route(bot, aircraft_id, origin, destination) -> bool:
+    """Confirm the route through the aircraft's independent detail view."""
+    relation = {"origin": origin, "destination": destination}
+
+    def matches(route):
+        return not route.paused and not route.stopover and route.matches(relation)
+
+    live = _check_route(bot, aircraft_id, matches)
+    return bool(live and matches(live))
 
 
 def landed_departure(bot, row) -> str:
@@ -170,24 +195,45 @@ def _check_route(bot, aircraft_id, condition):
     return last
 
 
-def _prepare_form(bot, aircraft_id, origin, destination):
-    dest_id = destination["id"]
-    panel = bot.ajax(f"new_route_info.php?id={aircraft_id}&airportId={dest_id}&mode=res", "newRouteInfo")
-    form = bot.js(_FORM, aircraft_id, dest_id)
-    if not form or not form["bound"] or len(form["codes"]) != 2:
+def read_direct_form(bot, aircraft_id, origin, destination, *, allow_duplicates=False, include_consumption=False):
+    """Validate the direct route form against the intended endpoints and aircraft."""
+    form = bot.js(_FORM, aircraft_id, destination["id"])
+    if not form or form.get("bound") is not True or len(form.get("codes", [])) != 2:
         return None
     if (not endpoint_matches(origin, endpoint(code=form["codes"][0]))
             or not endpoint_matches(destination, endpoint(code=form["codes"][1]))):
         return None
-    if to_int(form["existing"]) != 0:
+    occupied = game_whole_number(form.get("existing"))
+    if occupied is None or (occupied and not allow_duplicates):
         return None
-    distance, max_range = to_int(form.get("distance")), to_int(form.get("range"))
+    distance, max_range = (game_whole_number(form.get(key)) for key in ("distance", "range"))
     if distance is None or max_range is None or distance <= 0 or distance > max_range:
         return None
-    fee = to_int(form["fee"])
+    fee = game_whole_number(form.get("fee"), currency=True)
+    if fee is None or fee <= 0:
+        return None
+    if not include_consumption:
+        return distance, fee, occupied
+    fuel = game_whole_number(form.get("fuel_lbs_per_leg"))
+    raw_co2 = form.get("co2_kg_per_pax_km")
+    co2 = None
+    if isinstance(raw_co2, str) and re.fullmatch(r"[0-9]+(?:[.,][0-9]+)?", raw_co2):
+        rate = float(raw_co2.replace(",", "."))
+        if rate <= 100:
+            co2 = rate
+    return distance, fee, occupied, fuel or None, co2
+
+
+def _prepare_form(bot, aircraft_id, origin, destination):
+    dest_id = destination["id"]
+    panel = bot.ajax(f"new_route_info.php?id={aircraft_id}&airportId={dest_id}&mode=res", "newRouteInfo")
+    verified = read_direct_form(bot, aircraft_id, origin, destination)
+    if verified is None:
+        return None
+    _, fee, _ = verified
     balance = bot.read_money()
     reserve = bot.config.get_int("settings", "cash_reserve", 0)
-    if fee is None or fee <= 0 or balance is None or balance - fee < reserve:
+    if balance is None or balance - fee < reserve:
         return None
     auto = panel.find_elements(By.ID, "introAuto")
     if len(auto) != 1:
@@ -195,17 +241,23 @@ def _prepare_form(bot, aircraft_id, origin, destination):
     bot.click_element(auto[0])
     # Native autoprice fills business/first prices on 200/400 ms timers.
     # Wait for the game's own validation to activate Create route.
-    def ready(driver):
-        prices_ready = driver.execute_script("""
-            return ['eSeat', 'bSeat', 'fSeat'].every(id => {
-                const field = document.getElementById(id);
-                return !!field && (field.disabled || Number(field.value) > 0);
-            });
-        """)
+    def ready(_driver):
+        fares = read_route_fares(bot)
         buttons = panel.find_elements(By.CSS_SELECTOR, "#btnCreateNewRoute:not(.not-active):not([disabled])")
-        return buttons[0] if prices_ready and len(buttons) == 1 else False
+        return (buttons[0], fares) if fares is not None and len(buttons) == 1 else False
 
-    return WebDriverWait(bot.driver, 5).until(ready), fee
+    try:
+        button, fares = WebDriverWait(bot.driver, 5).until(ready)
+    except TimeoutException:
+        return None
+    balance = bot.read_money()
+    if (read_direct_form(bot, aircraft_id, origin, destination) != verified
+            or read_route_fares(bot) != fares or balance is None or balance - fee < reserve):
+        return None
+    record_native_route_quote(bot, aircraft_id=aircraft_id, origin_id=origin.get("id"),
+                              destination_id=dest_id, distance=verified[0], fee=fee,
+                              occupied=verified[2], fares=fares)
+    return button, fee
 
 
 def _transaction_path():
@@ -313,6 +365,7 @@ def _resolve(bot, registry, job, *, poll=False) -> str:
                 )
                 if stable:
                     _save_job(job, "restoring")
+                    registry.invalidate_fleet_coverage()
                     _toggle(bot, stable.id)
                     live = _check_route(
                         bot, aircraft_id, lambda route: old_route(route) and not route.paused
@@ -383,6 +436,7 @@ def replace_route(bot, registry, row, origin, destination, *, keeper_id, expecte
                registration=row["registration"], model=row["model"], origin=origin, destination=destination,
                profit=profit, fee=form[1])
     _save_job(job, "grounding")
+    registry.invalidate_fleet_coverage()
     try:
         if _toggle(bot, first.id):
             _save_job(job, "ground_answered")

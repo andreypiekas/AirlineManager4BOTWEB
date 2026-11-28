@@ -1,0 +1,24 @@
+{
+  "observed_on": "2026-11-23",
+  "source": "Authenticated order detail, A320-200, reversible native engine selection",
+  "model_identity_verified": false,
+  "final_price_verified": false,
+  "variants": {
+    "10": {
+      "label": "CFM56-5",
+      "rows": [["Cruise speed", "881 kph"], ["Capacity", "164 pax"],
+               ["Runway required", "6,500 ft"], ["Range", "5,700 km"],
+               ["Consumption", "11.55 lbs/km"], ["A-Check", "$524,690"],
+               ["Maint check", "360 Hours"]],
+      "costs": ["6,770,196"]
+    },
+    "9": {
+      "label": "IAE V2500",
+      "rows": [["Cruise speed", "798 kph"], ["Capacity", "164 pax"],
+               ["Runway required", "6,500 ft"], ["Range", "5,700 km"],
+               ["Consumption", "10.67 lbs/km"], ["A-Check", "$524,690"],
+               ["Maint check", "360 Hours"]],
+      "costs": ["6,770,196"]
+    }
+  }
+}

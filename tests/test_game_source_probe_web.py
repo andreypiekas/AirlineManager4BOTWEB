@@ -16,6 +16,8 @@ from web import WebDashboard
 
 
 ENDPOINT = "/api/admin/game-source-probe"
+HISTORY_ENDPOINT = "/api/admin/flight-history-probe"
+QUOTE_ENDPOINT = "/api/admin/aircraft-order-preview"
 TOKEN = "web-admin-secret"
 
 
@@ -27,6 +29,7 @@ class FakeBot:
         self.logged_in = True
         self.error = None
         self.probe_calls = 0
+        self.history_calls = []
         self.login_checks = 0
         self.busy = False
         self.timed_out = False
@@ -66,6 +69,20 @@ class FakeBot:
         }
         return "ok", _sanitize(raw)
 
+    def request_flight_history_probe(self, aircraft_id):
+        if self.busy or not self.alive or self.driver is None or self.state != BotState.RUNNING:
+            return "busy", None
+        if self.timed_out:
+            return "timeout", None
+        if not self._is_logged_in(timeout=0):
+            return "unavailable", None
+        self.history_calls.append(aircraft_id)
+        if self.error:
+            raise RuntimeError(self.error)
+        return "ok", {"schema_version": 1, "aircraft_id": aircraft_id, "status": "inspected",
+                      "row_count": 2, "read_only": True, "complete_history_verified": False,
+                      "financial_ledger_verified": False}
+
 
 @contextmanager
 def served(bot, token=TOKEN):
@@ -99,6 +116,33 @@ def request(port, method="POST", path=ENDPOINT, headers=None, body=b"{}"):
 
 def authorized(**extra):
     return {"X-Token": TOKEN, "X-AM4": "1", **extra}
+
+
+def test_aircraft_order_preview_requires_header_token_and_exact_quote_payload():
+    bot = FakeBot()
+    calls = []
+
+    def preview(request):
+        calls.append(request)
+        return "ok", {"status": "matched", "read_only": True, "execution_available": False}
+
+    bot.request_aircraft_order_preview = preview
+    quote = {"model_id": "12", "delivery_hub_id": "24323457", "engine_id": "23",
+             "configuration_yjf": {"y": 3, "j": 0, "f": 0}, "expected_checkout_cost": 51000}
+    body = json.dumps(quote).encode()
+    with served(bot) as (port, _):
+        assert request(port, path=QUOTE_ENDPOINT + "?token=" + TOKEN,
+                       headers={"X-AM4": "1"}, body=body)[0] == 403
+        assert request(port, path=QUOTE_ENDPOINT, headers={"X-Token": TOKEN}, body=body)[0] == 403
+        for change in ({"submit": True}, {"engine_id": "23&submit=1"}, {"expected_checkout_cost": True},
+                       {"configuration_yjf": {"y": 0, "j": 0, "f": 0}}):
+            invalid_body = json.dumps({**quote, **change}).encode()
+            assert request(port, path=QUOTE_ENDPOINT, headers=authorized(), body=invalid_body)[0] == 400
+        assert not calls
+        status, raw = request(port, path=QUOTE_ENDPOINT, headers=authorized(), body=body)
+
+    assert status == 200 and json.loads(raw)["report"]["execution_available"] is False
+    assert len(calls) == 1 and calls[0].seats == (3, 0, 0)
 
 
 def test_admin_probe_returns_only_sanitized_data_from_existing_bot():
@@ -211,3 +255,46 @@ def test_admin_probe_returns_gateway_timeout_without_session_data():
     assert status == 504
     assert json.loads(raw)["ok"] is False
     assert bot.probe_calls == 0
+
+
+def test_history_probe_requires_token_and_valid_single_aircraft_id():
+    bot = FakeBot()
+    with served(bot) as (port, _):
+        for headers in ({"X-AM4": "1"}, {"X-Token": TOKEN}):
+            status, _ = request(port, path=HISTORY_ENDPOINT, headers=headers,
+                                body=b'{"aircraft_id":"42"}')
+            assert status == 403
+        status, _ = request(port, path=HISTORY_ENDPOINT + "?token=" + TOKEN,
+                            headers={"X-AM4": "1"}, body=b'{"aircraft_id":"42"}')
+        assert status == 403
+        for invalid in (b'{}', b'{"aircraft_id":42}', b'{"aircraft_id":"0"}',
+                        b'{"aircraft_id":"42?token=secret"}',
+                        b'{"aircraft_id":"42","session":"secret"}'):
+            status, _ = request(port, path=HISTORY_ENDPOINT, headers=authorized(), body=invalid)
+            assert status == 400
+        status, raw = request(port, path=HISTORY_ENDPOINT, headers=authorized(),
+                              body=b'{"aircraft_id":"42"}')
+    assert status == 200
+    assert json.loads(raw)["report"]["aircraft_id"] == "42"
+    assert bot.history_calls == ["42"]
+    assert bot.probe_calls == 0
+
+
+@pytest.mark.parametrize("changes,expected", [
+    ({"busy": True}, 409),
+    ({"alive": False}, 409),
+    ({"logged_in": False}, 503),
+    ({"timed_out": True}, 504),
+    ({"error": "session=secret-cookie"}, 503),
+])
+def test_history_probe_is_fail_closed_and_does_not_leak_driver_data(changes, expected, caplog):
+    bot = FakeBot()
+    for attribute, value in changes.items():
+        setattr(bot, attribute, value)
+    with served(bot) as (port, _):
+        status, raw = request(port, path=HISTORY_ENDPOINT, headers=authorized(),
+                              body=b'{"aircraft_id":"42"}')
+    assert status == expected
+    assert json.loads(raw)["ok"] is False
+    assert "secret-cookie" not in raw + caplog.text
+    assert not bot.history_calls or "error" in changes

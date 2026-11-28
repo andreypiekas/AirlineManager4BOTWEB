@@ -236,7 +236,7 @@ def _refresh_landed_routes(bot, registry, landed_ids, *, limit: int) -> None:
             origin, destination = (endpoint(code=code) for code in live.codes)
         refreshed += registry.record(
             aircraft_id, record.get("registration", ""), record.get("model", ""),
-            origin, destination,
+            origin, destination, observed_route_id=int(live.id) if _ID.fullmatch(str(live.id or "")) else None,
         )
     if refreshed:
         log.info("Despacho individual: %d rotas revalidadas nos detalhes de Fleet.", refreshed)
