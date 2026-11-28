@@ -1,5 +1,11 @@
 # Histórico de entregas do roadmap
 
+## 2026-11-27 — Instalação local em Docker
+
+- O Docker Compose construiu e iniciou `airlinemanager4botweb:local` no Windows, com a revisão `ad996bf`, a mais recente da branch de desenvolvimento no GitHub no início da tarefa. O painel escuta em `127.0.0.1:8745` e exige token. A imagem inclui Python 3.13, Chromium e ChromeDriver e executa com usuário sem privilégios. O volume do perfil `docker` guarda configurações, dados e sessão.
+- O contêiner ficou saudável após a instalação e a recriação. O acesso do Windows sem token retornou HTTP 403. Com token, a página retornou HTTP 200 e a API confirmou o bot parado em simulação. O Selenium abriu uma página de teste com Chromium headless. Token, configuração e sessão persistiram após recriar o contêiner.
+- Passaram a validação do Compose, a checagem do Dockerfile, Ruff, a suíte Windows (um teste pulado e o arquivo do instalador Linux executado separadamente) e os 16 testes do instalador em Linux com Python 3.13. O README documenta o primeiro acesso, a configuração do login, a atualização e `docker compose stop`. O perfil Docker aguarda credenciais do jogo. G0 vigente, sem compras ou implantação em produção.
+
 ## 2026-11-27 — Vaga disponível, cinco A-checks e prévia TXL–FRA
 
 - No Chrome entre 19h09 e 19h14 BRT, o painel de hangares mostrou 225/226 PAX e uma vaga, com 220 rotas e cinco manutenções. O extrato trouxe US$ 5.551.358 por uma venda de aeronave. Partindo de US$ 322.221.365, três receitas de decolagem (US$ 1.218.065, US$ 14.560.128 e US$ 7.610.396), duas despesas de combustível (US$ 12.334.100 e US$ 1.207.985) e a venda explicaram integralmente o saldo de US$ 337.619.227.

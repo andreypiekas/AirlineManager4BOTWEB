@@ -1,0 +1,31 @@
+name: airlinemanager4botweb
+
+services:
+  am4bot:
+    build: .
+    image: airlinemanager4botweb:local
+    init: true
+    restart: on-failure
+    stop_grace_period: 30s
+    ports:
+      - "127.0.0.1:8745:8745"
+    volumes:
+      - profiles:/app/profiles
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import paths;
+          from config import AppConfig;
+          from web import instance_answers;
+          paths.activate('docker');
+          cfg = AppConfig();
+          raise SystemExit(not instance_answers(8745, cfg.web_token))
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  profiles:

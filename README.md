@@ -6,6 +6,31 @@
 
 **Idioma padrão: Português (Brasil).** Inglês disponível como alternativa.
 
+## Instalação com Docker
+
+Com Docker e Docker Compose, execute na raiz do repositório.
+
+~~~shell
+docker compose up -d --build --wait
+docker compose exec am4bot python scripts/configurar_linux.py --perfil docker --mostrar-acesso --ip 127.0.0.1
+~~~
+
+Abra o endereço completo mostrado no terminal. O painel usa a porta local
+**8745** e exige o token do link. O perfil **docker** começa em **Simulação
+(sem gastos)**, com o bot parado, e guarda configuração, dados e sessão do
+Chromium no volume `airlinemanager4botweb_profiles`.
+
+Para configurar a conta do jogo, use o terminal interativo. A senha fica
+oculta. Ao reiniciar, o bot usa as credenciais salvas.
+
+~~~shell
+docker compose exec am4bot python scripts/configurar_linux.py --perfil docker --configurar-login
+docker compose restart am4bot
+~~~
+
+Para atualizar, use `git pull --ff-only` na branch instalada e repita
+`docker compose up -d --build --wait`. Para parar, use `docker compose stop`.
+
 ## Instalação fácil no Raspberry Pi OS e Ubuntu
 
 No terminal do servidor, execute como usuário normal com acesso a `sudo`:
